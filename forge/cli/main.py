@@ -3,6 +3,12 @@
 import asyncio
 import os
 
+# Remove CLAUDECODE immediately — before any SDK imports.
+# Claude Code sets this env var in its terminal sessions. The Claude CLI
+# refuses to launch if it's present ("nested session" guard). We are NOT
+# a nested session — we're an orchestrator spawning independent agents.
+os.environ.pop("CLAUDECODE", None)
+
 import click
 
 

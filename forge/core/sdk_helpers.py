@@ -39,10 +39,10 @@ _sdk_client.parse_message = _patched_parse
 async def sdk_query(prompt: str, options: ClaudeCodeOptions) -> ResultMessage | None:
     """Run a claude-code-sdk query with clean environment. Returns the ResultMessage or None.
 
-    Temporarily removes CLAUDECODE from os.environ so the SDK subprocess
-    doesn't reject our call as a 'nested session'.
+    Removes CLAUDECODE from os.environ (also removed at CLI entry, but belt-and-suspenders)
+    so the SDK subprocess doesn't reject our call as a 'nested session'.
     """
-    saved = os.environ.pop("CLAUDECODE", None)
+    os.environ.pop("CLAUDECODE", None)
     last_result: ResultMessage | None = None
     try:
         async for message in query(prompt=prompt, options=options):
@@ -53,7 +53,13 @@ async def sdk_query(prompt: str, options: ClaudeCodeOptions) -> ResultMessage | 
         if "Unknown message type" in str(e):
             logger.debug("Ignoring unknown message type from CLI: %s", e)
             return last_result
+        # Surface the actual error details instead of opaque SDK message
+        error_msg = str(e)
+        if "exit code" in error_msg:
+            logger.error("Claude CLI failed: %s", error_msg)
+            print(f"Claude CLI subprocess failed: {error_msg}")
+            if "CLAUDECODE" in os.environ:
+                print("Note: CLAUDECODE env var is set — this blocks nested sessions.")
         raise
     finally:
-        if saved is not None:
-            os.environ["CLAUDECODE"] = saved
+        pass  # Don't restore CLAUDECODE — it should stay removed for the process lifetime
