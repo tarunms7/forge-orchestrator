@@ -12,8 +12,9 @@ from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.settings import ForgeSettings
 from forge.core.engine import _row_to_record
+from forge.core.events import EventEmitter
 from forge.core.model_router import select_model
-from forge.core.models import TaskState
+from forge.core.models import TaskGraph, TaskState
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
 from forge.core.claude_planner import ClaudePlannerLLM
@@ -32,57 +33,52 @@ console = Console()
 class ForgeDaemon:
     """Main orchestration loop. Ties all components together."""
 
-    def __init__(self, project_dir: str, settings: ForgeSettings | None = None) -> None:
+    def __init__(
+        self,
+        project_dir: str,
+        settings: ForgeSettings | None = None,
+        event_emitter: EventEmitter | None = None,
+    ) -> None:
         self._project_dir = project_dir
         self._settings = settings or ForgeSettings()
         self._state_machine = TaskStateMachine()
+        self._events = event_emitter or EventEmitter()
+        self._strategy = self._settings.model_strategy
 
-    async def run(self, user_input: str) -> None:
-        """Execute the full forge pipeline: plan -> execute -> review -> merge."""
-        db_path = os.path.join(self._project_dir, ".forge", "forge.db")
-        db_url = f"sqlite+aiosqlite:///{db_path}"
+    async def plan(self, user_input: str, db: Database) -> TaskGraph:
+        """Run planning only. Returns the TaskGraph for user approval."""
+        await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
 
-        # Fresh DB per run to avoid stale state from previous runs
-        if os.path.exists(db_path):
-            os.remove(db_path)
-
-        db = Database(db_url)
-        await db.initialize()
-
-        try:
-            await self._run_pipeline(db, user_input)
-        finally:
-            await db.close()
-
-    async def _run_pipeline(self, db: Database, user_input: str) -> None:
         strategy = self._settings.model_strategy
         planner_model = select_model(strategy, "planner", "high")
-        console.print(f"[dim]Strategy: {strategy} | Planner model: {planner_model}[/dim]")
+        console.print(f"[dim]Strategy: {strategy} | Planner: {planner_model}[/dim]")
 
         planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir)
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
-        monitor = ResourceMonitor(
-            cpu_threshold=self._settings.cpu_threshold,
-            memory_threshold_pct=self._settings.memory_threshold_pct,
-            disk_threshold_gb=self._settings.disk_threshold_gb,
-        )
-        worktree_mgr = WorktreeManager(
-            self._project_dir,
-            f"{self._project_dir}/.forge/worktrees",
-        )
-        adapter = ClaudeAdapter()
-        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
-        self._strategy = strategy
-        current_branch = _get_current_branch(self._project_dir)
-        console.print(f"[dim]Merge target: {current_branch}[/dim]")
-        merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
 
-        console.print("[bold blue]Planning...[/bold blue]")
         graph = await planner.plan(user_input, context=self._gather_context())
-        console.print(f"[green]Plan created: {len(graph.tasks)} tasks[/green]")
+        console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
 
         for task_def in graph.tasks:
-            console.print(f"  - {task_def.id}: {task_def.title}")
+            console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
+
+        await self._events.emit("pipeline:plan_ready", {
+            "tasks": [
+                {
+                    "id": t.id, "title": t.title, "description": t.description,
+                    "files": t.files, "depends_on": t.depends_on,
+                    "complexity": t.complexity.value,
+                }
+                for t in graph.tasks
+            ]
+        })
+        return graph
+
+    async def execute(self, graph: TaskGraph, db: Database) -> None:
+        """Execute a previously approved TaskGraph."""
+        await self._events.emit("pipeline:phase_changed", {"phase": "executing"})
+
+        for task_def in graph.tasks:
             await db.create_task(
                 id=task_def.id,
                 title=task_def.title,
@@ -95,7 +91,41 @@ class ForgeDaemon:
         for i in range(self._settings.max_agents):
             await db.create_agent(f"agent-{i}")
 
+        monitor = ResourceMonitor(
+            cpu_threshold=self._settings.cpu_threshold,
+            memory_threshold_pct=self._settings.memory_threshold_pct,
+            disk_threshold_gb=self._settings.disk_threshold_gb,
+        )
+        worktree_mgr = WorktreeManager(
+            self._project_dir,
+            f"{self._project_dir}/.forge/worktrees",
+        )
+        adapter = ClaudeAdapter()
+        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
+        current_branch = _get_current_branch(self._project_dir)
+        console.print(f"[dim]Merge target: {current_branch}[/dim]")
+        merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
+
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor)
+        await self._events.emit("pipeline:phase_changed", {"phase": "complete"})
+
+    async def run(self, user_input: str) -> None:
+        """Full pipeline for CLI: plan + execute. Maintains backward compat."""
+        db_path = os.path.join(self._project_dir, ".forge", "forge.db")
+        db_url = f"sqlite+aiosqlite:///{db_path}"
+
+        # Fresh DB per run to avoid stale state from previous runs
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+        db = Database(db_url)
+        await db.initialize()
+
+        try:
+            graph = await self.plan(user_input, db)
+            await self.execute(graph, db)
+        finally:
+            await db.close()
 
     async def _execution_loop(
         self,
@@ -169,6 +199,8 @@ class ForgeDaemon:
         console.print(f"[cyan]Starting {task_id}: {task.title}[/cyan]")
         console.print(f"[cyan]{'='*50}[/cyan]")
 
+        await self._events.emit("task:state_changed", {"task_id": task_id, "state": "in_progress"})
+
         try:
             worktree_path = worktree_mgr.create(task_id)
         except ValueError:
@@ -179,10 +211,12 @@ class ForgeDaemon:
             if not os.path.isdir(worktree_path):
                 console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
                 await db.update_task_state(task_id, TaskState.ERROR.value)
+                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
                 return
         except Exception as e:
             console.print(f"[red]Worktree creation failed for {task_id}: {e}[/red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
+            await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
             return
 
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
@@ -209,18 +243,27 @@ class ForgeDaemon:
 
         console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
+        await self._events.emit("task:state_changed", {"task_id": task_id, "state": "in_review"})
 
         review_passed = await self._run_review(task, worktree_path, diff)
 
         if review_passed:
             await db.update_task_state(task_id, TaskState.MERGING.value)
+            await self._events.emit("task:state_changed", {"task_id": task_id, "state": "merging"})
             branch = f"forge/{task_id}"
             merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
             if merge_result.success:
                 console.print(f"[bold green]{task_id} merged successfully![/bold green]")
                 await db.update_task_state(task_id, TaskState.DONE.value)
+                await self._events.emit("task:merge_result", {
+                    "task_id": task_id, "success": True, "error": None,
+                })
+                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
             else:
                 console.print(f"[red]{task_id} merge failed: {merge_result.error}[/red]")
+                await self._events.emit("task:merge_result", {
+                    "task_id": task_id, "success": False, "error": merge_result.error,
+                })
                 await self._handle_retry(db, task_id, worktree_mgr)
         else:
             await self._handle_retry(db, task_id, worktree_mgr)
@@ -235,6 +278,10 @@ class ForgeDaemon:
         # Gate 1: lint only the changed files (not full test suite)
         console.print(f"[blue]  Gate 1: Auto-checks for {task.id}...[/blue]")
         gate1_result = await self._gate1(worktree_path)
+        await self._events.emit("task:review_update", {
+            "task_id": task.id, "gate": "gate1", "passed": gate1_result.passed,
+            "details": gate1_result.details,
+        })
         if not gate1_result.passed:
             console.print(f"[red]  Gate 1 failed: {gate1_result.details}[/red]")
             return False
@@ -247,6 +294,10 @@ class ForgeDaemon:
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
         )
+        await self._events.emit("task:review_update", {
+            "task_id": task.id, "gate": "gate2", "passed": gate2_result.passed,
+            "details": gate2_result.details,
+        })
         if not gate2_result.passed:
             console.print(f"[red]  Gate 2 failed: {gate2_result.details}[/red]")
             return False
@@ -335,6 +386,7 @@ class ForgeDaemon:
         else:
             console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
+            await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
 
         try:
             worktree_mgr.remove(task_id)
