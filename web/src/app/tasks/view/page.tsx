@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useTaskStore } from "@/stores/taskStore";
@@ -11,8 +11,8 @@ import PipelineProgress from "@/components/task/PipelineProgress";
 import CompletionSummary from "@/components/task/CompletionSummary";
 
 export default function TaskExecutionPage() {
-  const params = useParams<{ id: string }>();
-  const pipelineId = params.id;
+  const searchParams = useSearchParams();
+  const pipelineId = searchParams.get("id") ?? "";
 
   const token = useAuthStore((s) => s.token);
   const phase = useTaskStore((s) => s.phase);
@@ -29,6 +29,14 @@ export default function TaskExecutionPage() {
   useWebSocket(pipelineId, token, onMessage);
 
   const taskList = Object.values(tasks);
+
+  if (!pipelineId) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black text-zinc-400">
+        No pipeline ID provided.
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-zinc-100">
