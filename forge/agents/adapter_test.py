@@ -33,3 +33,22 @@ def test_claude_adapter_is_agent_adapter():
 def test_adapter_has_run_method():
     adapter = ClaudeAdapter()
     assert callable(getattr(adapter, "run", None))
+
+
+def test_adapter_build_options_sets_cwd():
+    adapter = ClaudeAdapter()
+    options = adapter._build_options("/tmp/test-worktree", [])
+    assert options.cwd == "/tmp/test-worktree"
+
+
+def test_adapter_system_prompt_includes_directory_boundary():
+    adapter = ClaudeAdapter()
+    options = adapter._build_options("/tmp/test-worktree", [])
+    assert "/tmp/test-worktree" in options.system_prompt
+    assert "Do NOT read, write, or execute anything outside" in options.system_prompt
+
+
+def test_adapter_system_prompt_includes_extra_dirs():
+    adapter = ClaudeAdapter()
+    options = adapter._build_options("/tmp/test-worktree", ["/tmp/shared-lib"])
+    assert "/tmp/shared-lib" in options.system_prompt
