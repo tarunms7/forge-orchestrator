@@ -32,6 +32,9 @@ postgres = [
 [project.scripts]
 forge = "forge.cli.main:cli"
 
+[tool.hatch.build.targets.wheel]
+packages = ["forge"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["forge"]

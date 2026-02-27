@@ -49,7 +49,7 @@ def run(task: str, project_dir: str) -> None:
     except KeyboardInterrupt:
         click.echo("\nForge interrupted by user.")
     except Exception as e:
-        click.echo(f"Forge failed: {e}", err=True)
+        click.echo(f"Forge failed: {e}")
         raise SystemExit(1)
 
 
