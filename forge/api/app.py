@@ -70,11 +70,17 @@ def create_app(
     # ── Routers ─────────────────────────────────────────────────────
     from forge.api.routes.auth import router as auth_router
     from forge.api.routes.diff import router as diff_router
+    from forge.api.routes.github import router as github_router
+    from forge.api.routes.history import router as history_router
     from forge.api.routes.tasks import router as tasks_router
+    from forge.api.routes.templates import router as templates_router
 
     app.include_router(auth_router)
     app.include_router(tasks_router)
     app.include_router(diff_router)
+    app.include_router(history_router)
+    app.include_router(github_router)
+    app.include_router(templates_router)
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint
