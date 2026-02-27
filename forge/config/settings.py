@@ -8,6 +8,9 @@ class ForgeSettings(BaseSettings):
 
     model_config = {"env_prefix": "FORGE_"}
 
+    # Model
+    model: str = "sonnet"  # Claude model: "sonnet", "opus", "haiku"
+
     # Agent limits
     max_agents: int = 4
     agent_timeout_seconds: int = 1800

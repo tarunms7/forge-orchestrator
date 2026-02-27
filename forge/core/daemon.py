@@ -54,7 +54,10 @@ class ForgeDaemon:
             await db.close()
 
     async def _run_pipeline(self, db: Database, user_input: str) -> None:
-        planner_llm = ClaudePlannerLLM(cwd=self._project_dir)
+        model = self._settings.model
+        console.print(f"[dim]Using model: {model}[/dim]")
+
+        planner_llm = ClaudePlannerLLM(model=model, cwd=self._project_dir)
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,
@@ -65,9 +68,11 @@ class ForgeDaemon:
             self._project_dir,
             f"{self._project_dir}/.forge/worktrees",
         )
-        adapter = ClaudeAdapter()
+        adapter = ClaudeAdapter(model=model)
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
-        merge_worker = MergeWorker(self._project_dir, main_branch="main")
+        current_branch = _get_current_branch(self._project_dir)
+        console.print(f"[dim]Merge target: {current_branch}[/dim]")
+        merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
 
         console.print("[bold blue]Planning...[/bold blue]")
         graph = await planner.plan(user_input, context=self._gather_context())
@@ -232,6 +237,7 @@ class ForgeDaemon:
         console.print(f"[blue]  Gate 2: LLM review for {task.id}...[/blue]")
         gate2_result = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
+            model=self._settings.model,
         )
         if not gate2_result.passed:
             console.print(f"[red]  Gate 2 failed: {gate2_result.details}[/red]")
@@ -244,6 +250,8 @@ class ForgeDaemon:
 
     async def _gate1(self, worktree_path: str) -> GateResult:
         """Gate 1: Lint check on the worktree. Simple and fast."""
+        import sys
+
         # Only run ruff on changed files vs main
         changed = _get_changed_files_vs_main(worktree_path)
         py_files = [f for f in changed if f.endswith(".py")]
@@ -251,8 +259,43 @@ class ForgeDaemon:
         if not py_files:
             return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
 
+        # Auto-fix trivial lint issues (unused imports, etc.) before checking.
+        # Agents commonly add `import pytest` or unused imports — ruff can fix
+        # these automatically, avoiding wasted retries on mechanical issues.
+        subprocess.run(
+            [sys.executable, "-m", "ruff", "check", "--fix"] + py_files,
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        # Commit any auto-fixes so they're included in the diff
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=worktree_path,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=worktree_path,
+            capture_output=True,
+        )
+        # Only commit if there are staged changes
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if staged.stdout.strip():
+            subprocess.run(
+                ["git", "commit", "-m", "fix: auto-fix lint issues (ruff)"],
+                cwd=worktree_path,
+                capture_output=True,
+            )
+
+        # Use sys.executable so we get the same Python (and venv) as forge itself
         lint_result = subprocess.run(
-            ["python", "-m", "ruff", "check"] + py_files,
+            [sys.executable, "-m", "ruff", "check"] + py_files,
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -262,10 +305,12 @@ class ForgeDaemon:
         if lint_clean:
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
+        # Include both stdout and stderr — ruff errors may go to either
+        output = (lint_result.stdout or lint_result.stderr or "Unknown error")[:500]
         return GateResult(
             passed=False,
             gate="gate1_auto_check",
-            details=f"Lint errors:\n{lint_result.stdout[:500]}",
+            details=f"Lint errors:\n{output}",
         )
 
     async def _handle_retry(self, db: Database, task_id: str, worktree_mgr: WorktreeManager) -> None:
@@ -299,6 +344,18 @@ class ForgeDaemon:
         )
         files = result.stdout.strip()
         return f"Project files:\n{files}" if files else ""
+
+
+def _get_current_branch(repo_path: str) -> str:
+    """Get the current branch name of the repo."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    branch = result.stdout.strip()
+    return branch if branch else "main"
 
 
 def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
