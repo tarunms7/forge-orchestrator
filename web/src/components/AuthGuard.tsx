@@ -1,27 +1,42 @@
 "use client";
-
 import { useAuthStore } from "@/stores/authStore";
 import { useRouter, usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 const PUBLIC_PATHS = ["/login", "/register"];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
+  const refreshToken = useAuthStore((s) => s.refreshToken);
   const router = useRouter();
   const pathname = usePathname();
-
-  const isPublic = PUBLIC_PATHS.includes(pathname);
+  const [checking, setChecking] = useState(!PUBLIC_PATHS.includes(pathname));
 
   useEffect(() => {
-    if (!token && !isPublic) {
-      router.push("/login");
+    if (PUBLIC_PATHS.includes(pathname)) {
+      setChecking(false);
+      return;
     }
-  }, [token, isPublic, router]);
+    if (token) {
+      setChecking(false);
+      return;
+    }
+    // No token in memory — try refresh
+    refreshToken().then((ok) => {
+      if (!ok) router.push("/login");
+      setChecking(false);
+    });
+  }, [token, pathname, router, refreshToken]);
 
-  if (!token && !isPublic) {
-    return null;
+  if (checking) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-zinc-950">
+        <div className="text-zinc-400">Loading...</div>
+      </div>
+    );
   }
+
+  if (!token && !PUBLIC_PATHS.includes(pathname)) return null;
 
   return <>{children}</>;
 }

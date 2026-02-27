@@ -79,6 +79,10 @@ function ReviewGateIcon({ result }: { result: string }) {
   );
 }
 
+function stripAnsi(str: string): string {
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "");
+}
+
 export default function AgentCard({ task }: { task: TaskState }) {
   const outputRef = useRef<HTMLDivElement>(null);
   const badge = STATE_BADGE[task.state];
@@ -135,7 +139,7 @@ export default function AgentCard({ task }: { task: TaskState }) {
         >
           {task.output.map((line, i) => (
             <div key={i} className="whitespace-pre-wrap break-all">
-              {line}
+              {stripAnsi(line)}
             </div>
           ))}
         </div>

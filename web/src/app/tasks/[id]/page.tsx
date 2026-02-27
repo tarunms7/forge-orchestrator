@@ -20,7 +20,7 @@ export default function TaskExecutionPage() {
   const handleEvent = useTaskStore((s) => s.handleEvent);
 
   const onMessage = useCallback(
-    (event: Record<string, unknown>) => {
+    (event: unknown) => {
       handleEvent(event as { event: string; data: Record<string, unknown> });
     },
     [handleEvent],
