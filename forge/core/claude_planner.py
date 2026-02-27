@@ -30,6 +30,8 @@ Rules:
 - complexity is one of: "low", "medium", "high"
 - Keep tasks focused: each task should do ONE thing well.
 - Aim for 2-6 tasks. Only go higher for genuinely large features.
+- MINIMIZE dependencies. Only add depends_on when a task genuinely needs another task's output files. Independent tasks should have empty depends_on so they run in parallel.
+- Never make test tasks depend on implementation tasks — tests should be self-contained with mocks.
 - Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object."""
 
 
