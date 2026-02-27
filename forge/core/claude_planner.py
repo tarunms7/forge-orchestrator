@@ -2,9 +2,10 @@
 
 import re
 
-from claude_code_sdk import ClaudeCodeOptions, ResultMessage, query
+from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.planner import PlannerLLM
+from forge.core.sdk_helpers import sdk_query
 
 PLANNER_SYSTEM_PROMPT = """You are a task decomposition engine for a multi-agent coding system called Forge.
 
@@ -52,13 +53,8 @@ class ClaudePlannerLLM(PlannerLLM):
         if self._cwd:
             options.cwd = self._cwd
 
-        result_text = ""
-        async for message in query(prompt=prompt, options=options):
-            if isinstance(message, ResultMessage):
-                if message.result:
-                    result_text = message.result
-                break
-
+        result = await sdk_query(prompt=prompt, options=options)
+        result_text = result.result if result and result.result else ""
         return _extract_json(result_text)
 
     def _build_prompt(

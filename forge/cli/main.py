@@ -44,7 +44,13 @@ def run(task: str, project_dir: str) -> None:
     from forge.core.daemon import ForgeDaemon
 
     daemon = ForgeDaemon(project_dir)
-    asyncio.run(daemon.run(task))
+    try:
+        asyncio.run(daemon.run(task))
+    except KeyboardInterrupt:
+        click.echo("\nForge interrupted by user.")
+    except Exception as e:
+        click.echo(f"Forge failed: {e}", err=True)
+        raise SystemExit(1)
 
 
 def _write_if_missing(path: str, content: str) -> None:

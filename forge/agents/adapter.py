@@ -4,11 +4,9 @@ import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from claude_code_sdk import (
-    ClaudeCodeOptions,
-    ResultMessage,
-    query,
-)
+from claude_code_sdk import ClaudeCodeOptions
+
+from forge.core.sdk_helpers import sdk_query
 
 AGENT_SYSTEM_PROMPT = """You are a coding agent working on a specific task within the Forge orchestration system.
 
@@ -68,19 +66,21 @@ class ClaudeAdapter(AgentAdapter):
             model=self._model,
         )
 
-        result_text = ""
-        is_error = False
-        cost_usd = 0.0
-
-        async for message in query(prompt=task_prompt, options=options):
-            if isinstance(message, ResultMessage):
-                result_text = message.result or ""
-                is_error = message.is_error
-                cost_usd = message.total_cost_usd or 0.0
-
+        result = await sdk_query(prompt=task_prompt, options=options)
         files_changed = _get_changed_files(worktree_path)
 
-        if is_error:
+        if result is None:
+            return AgentResult(
+                success=False,
+                files_changed=files_changed,
+                summary="No response from Claude SDK",
+                error="SDK returned no result",
+            )
+
+        result_text = result.result or ""
+        cost_usd = result.total_cost_usd or 0.0
+
+        if result.is_error:
             return AgentResult(
                 success=False,
                 files_changed=files_changed,
