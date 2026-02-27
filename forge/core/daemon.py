@@ -178,7 +178,10 @@ class ForgeDaemon:
             return
 
         prompt = _build_agent_prompt(task.title, task.description, task.files)
-        result = await runtime.run_task(agent_id, prompt, worktree_path, task.files)
+        result = await runtime.run_task(
+            agent_id, prompt, worktree_path, task.files,
+            allowed_dirs=self._settings.allowed_dirs,
+        )
 
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
