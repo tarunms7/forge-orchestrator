@@ -31,6 +31,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         worktree_path="/tmp/wt",
         allowed_files=["a.py"],
         timeout_seconds=60,
+        allowed_dirs=None,
     )
 
 

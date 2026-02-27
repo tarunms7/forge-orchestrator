@@ -16,6 +16,7 @@ class AgentRuntime:
         task_prompt: str,
         worktree_path: str,
         allowed_files: list[str],
+        allowed_dirs: list[str] | None = None,
     ) -> AgentResult:
         try:
             return await self._adapter.run(
@@ -23,6 +24,7 @@ class AgentRuntime:
                 worktree_path=worktree_path,
                 allowed_files=allowed_files,
                 timeout_seconds=self._timeout,
+                allowed_dirs=allowed_dirs,
             )
         except TimeoutError:
             return AgentResult(

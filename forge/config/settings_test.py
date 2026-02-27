@@ -18,6 +18,16 @@ def test_override_via_constructor():
     assert s.cpu_threshold == 90.0
 
 
+def test_allowed_dirs_default_empty():
+    s = ForgeSettings()
+    assert s.allowed_dirs == []
+
+
+def test_allowed_dirs_override():
+    s = ForgeSettings(allowed_dirs=["/tmp/shared"])
+    assert s.allowed_dirs == ["/tmp/shared"]
+
+
 def test_postgres_url():
     s = ForgeSettings(db_url="postgresql+asyncpg://localhost/forge")
     assert "postgresql" in s.db_url
