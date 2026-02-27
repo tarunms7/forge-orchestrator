@@ -6,7 +6,7 @@ def test_default_settings():
     assert s.max_agents == 4
     assert s.cpu_threshold == 80.0
     assert s.memory_threshold_pct == 10.0
-    assert s.agent_timeout_seconds == 1800
+    assert s.agent_timeout_seconds == 600
     assert s.max_retries == 3
     assert s.db_url == "sqlite+aiosqlite:///forge.db"
     assert s.context_rotation_tokens == 80_000
