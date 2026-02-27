@@ -16,7 +16,7 @@ class ForgeSettings(BaseSettings):
 
     # Resource thresholds
     cpu_threshold: float = 80.0
-    memory_threshold_pct: float = 20.0
+    memory_threshold_pct: float = 10.0
     disk_threshold_gb: float = 5.0
 
     # Database

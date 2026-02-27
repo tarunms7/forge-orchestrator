@@ -20,12 +20,19 @@ class MergeWorker:
         self._repo = repo_path
         self._main = main_branch
 
-    def merge(self, branch: str) -> MergeResult:
-        """Attempt to rebase branch onto main and fast-forward merge."""
+    def merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
+        """Attempt to rebase branch onto main and fast-forward merge.
+
+        Args:
+            branch: The branch name to merge (e.g. "forge/task-1").
+            worktree_path: If provided, run the rebase inside this worktree
+                           (where the branch is already checked out) instead of
+                           the main repo. This avoids "already checked out" errors.
+        """
         try:
-            self._rebase(branch)
+            self._rebase(branch, worktree_path)
         except _RebaseConflict as e:
-            self._abort_rebase()
+            self._abort_rebase(worktree_path)
             return MergeResult(success=False, conflicting_files=e.files)
         except Exception as e:
             return MergeResult(success=False, error=str(e))
@@ -37,28 +44,39 @@ class MergeWorker:
 
         return MergeResult(success=True)
 
-    def _rebase(self, branch: str) -> None:
-        result = subprocess.run(
-            ["git", "rebase", self._main, branch],
-            cwd=self._repo,
-            capture_output=True,
-            text=True,
-        )
+    def _rebase(self, branch: str, worktree_path: str | None = None) -> None:
+        if worktree_path:
+            # Rebase from within the worktree (branch is already checked out)
+            result = subprocess.run(
+                ["git", "rebase", self._main],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            result = subprocess.run(
+                ["git", "rebase", self._main, branch],
+                cwd=self._repo,
+                capture_output=True,
+                text=True,
+            )
         if result.returncode != 0:
             conflicts = self._find_conflicts()
             raise _RebaseConflict(files=conflicts)
 
-    def _abort_rebase(self) -> None:
+    def _abort_rebase(self, worktree_path: str | None = None) -> None:
+        cwd = worktree_path or self._repo
         subprocess.run(
             ["git", "rebase", "--abort"],
-            cwd=self._repo,
+            cwd=cwd,
             capture_output=True,
         )
-        subprocess.run(
-            ["git", "checkout", self._main],
-            cwd=self._repo,
-            capture_output=True,
-        )
+        if not worktree_path:
+            subprocess.run(
+                ["git", "checkout", self._main],
+                cwd=self._repo,
+                capture_output=True,
+            )
 
     def _fast_forward(self, branch: str) -> None:
         subprocess.run(

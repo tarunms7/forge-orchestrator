@@ -200,7 +200,7 @@ class ForgeDaemon:
         if review_passed:
             await db.update_task_state(task_id, TaskState.MERGING.value)
             branch = f"forge/{task_id}"
-            merge_result = merge_worker.merge(branch)
+            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
             if merge_result.success:
                 console.print(f"[bold green]{task_id} merged successfully![/bold green]")
                 await db.update_task_state(task_id, TaskState.DONE.value)
