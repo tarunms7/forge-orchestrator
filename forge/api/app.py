@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -48,6 +48,11 @@ def create_app(
     # Store jwt_secret on app state for use by auth service
     app.state.jwt_secret = jwt_secret
 
+    # ── WebSocket connection manager ─────────────────────────────────
+    from forge.api.ws.manager import ConnectionManager
+
+    app.state.ws_manager = ConnectionManager()
+
     # Attach DB objects to app.state (if provided)
     if engine is not None:
         app.state.async_engine = engine
@@ -66,6 +71,18 @@ def create_app(
     from forge.api.routes.auth import router as auth_router
 
     app.include_router(auth_router)
+
+    # ── WebSocket endpoint ─────────────────────────────────────────
+    from forge.api.ws.handler import websocket_endpoint
+
+    @app.websocket("/ws/{pipeline_id}")
+    async def ws_route(websocket: WebSocket, pipeline_id: str) -> None:
+        await websocket_endpoint(
+            websocket,
+            pipeline_id,
+            manager=app.state.ws_manager,
+            jwt_secret=app.state.jwt_secret,
+        )
 
     # ── Health check ────────────────────────────────────────────────
     @app.get("/health")
