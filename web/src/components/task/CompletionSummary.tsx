@@ -26,10 +26,6 @@ export default function CompletionSummary({
   const passedCount = taskList.filter((t) => t.state === "done").length;
   const failedCount = taskList.filter((t) => t.state === "error").length;
   const totalFiles = taskList.reduce((sum, t) => sum + t.files.length, 0);
-  const totalOutputLines = taskList.reduce(
-    (sum, t) => sum + t.output.length,
-    0,
-  );
   const allPassed = failedCount === 0 && passedCount === totalTasks;
 
   return (
