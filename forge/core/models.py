@@ -1,0 +1,86 @@
+"""Pydantic models for Forge. All data flows through typed schemas."""
+
+from enum import Enum
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class Complexity(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class TaskState(str, Enum):
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"
+    MERGING = "merging"
+    DONE = "done"
+    CANCELLED = "cancelled"
+    ERROR = "error"
+
+
+class AgentState(str, Enum):
+    IDLE = "idle"
+    WORKING = "working"
+    PAUSED = "paused"
+
+
+class TaskDefinition(BaseModel):
+    """A task as defined by the planner. Immutable spec."""
+
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    description: str
+    files: list[str]
+    depends_on: list[str] = Field(default_factory=list)
+    complexity: Complexity = Complexity.MEDIUM
+
+    @field_validator("files")
+    @classmethod
+    def files_not_empty(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("Task must declare at least one file")
+        return v
+
+
+class TaskGraph(BaseModel):
+    """The planner's output: a validated set of tasks with dependencies."""
+
+    tasks: list[TaskDefinition] = Field(min_length=1)
+
+
+class TaskRecord(BaseModel):
+    """Runtime state of a task. Mutable projection."""
+
+    id: str
+    title: str
+    description: str
+    files: list[str]
+    depends_on: list[str]
+    complexity: Complexity
+    state: TaskState = TaskState.TODO
+    assigned_agent: str | None = None
+    retry_count: int = 0
+    branch_name: str | None = None
+    worktree_path: str | None = None
+
+    @classmethod
+    def from_definition(cls, defn: TaskDefinition) -> "TaskRecord":
+        return cls(
+            id=defn.id,
+            title=defn.title,
+            description=defn.description,
+            files=list(defn.files),
+            depends_on=list(defn.depends_on),
+            complexity=defn.complexity,
+        )
+
+
+class AgentRecord(BaseModel):
+    """Runtime state of an agent."""
+
+    id: str
+    state: AgentState = AgentState.IDLE
+    current_task: str | None = None
