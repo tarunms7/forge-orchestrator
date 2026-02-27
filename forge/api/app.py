@@ -69,8 +69,10 @@ def create_app(
 
     # ── Routers ─────────────────────────────────────────────────────
     from forge.api.routes.auth import router as auth_router
+    from forge.api.routes.tasks import router as tasks_router
 
     app.include_router(auth_router)
+    app.include_router(tasks_router)
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint
