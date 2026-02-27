@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import WebSocket, WebSocketDisconnect
 
 from forge.api.security.jwt import decode_token
@@ -16,9 +18,10 @@ async def websocket_endpoint(
 ) -> None:
     """Handle a WebSocket connection for pipeline events.
 
-    Authenticates the client via a JWT token passed as a ``token`` query
-    parameter, registers the connection with the :class:`ConnectionManager`,
-    and keeps the connection alive until the client disconnects.
+    Accepts the connection first, then authenticates the client via a JWT
+    token sent in the first JSON message (``{"token": "..."}``).  This
+    avoids exposing the token in URL query parameters (server logs,
+    browser history, etc.).
 
     Args:
         websocket: The incoming WebSocket connection.
@@ -26,21 +29,28 @@ async def websocket_endpoint(
         manager: Shared ConnectionManager instance.
         jwt_secret: Secret used to verify JWT tokens.
     """
-    # ── Auth via query-param token ───────────────────────────────────
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001, reason="Missing token")
-        return
+    # ── Accept connection first (unauthenticated) ────────────────────
+    await websocket.accept()
 
+    # ── Read auth from the first message ─────────────────────────────
     try:
+        auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
+        token = auth_message.get("token")
+        if not token:
+            await websocket.close(code=4001, reason="Missing token")
+            return
         payload = decode_token(token, secret=jwt_secret)
         user_id = payload["sub"]
+    except asyncio.TimeoutError:
+        await websocket.close(code=4001, reason="Auth timeout")
+        return
     except Exception:
         await websocket.close(code=4001, reason="Invalid token")
         return
 
-    # ── Accept & register ────────────────────────────────────────────
-    await manager.connect(websocket, user_id=user_id, pipeline_id=pipeline_id)
+    # ── Register as authenticated ────────────────────────────────────
+    manager.register(websocket, user_id=user_id, pipeline_id=pipeline_id)
+    await websocket.send_json({"type": "auth_ok", "user_id": user_id})
 
     try:
         while True:

@@ -28,6 +28,7 @@ class SSHConfig:
     user: str
     key_path: str | None = None
     port: int = 22
+    known_hosts_path: str | None = None  # None = use system default (~/.ssh/known_hosts)
 
 
 class Executor(ABC):
@@ -97,10 +98,11 @@ class RemoteExecutor(Executor):
             "host": self.config.host,
             "username": self.config.user,
             "port": self.config.port,
-            "known_hosts": None,
         }
         if self.config.key_path:
             connect_kwargs["client_keys"] = [self.config.key_path]
+        if self.config.known_hosts_path is not None:
+            connect_kwargs["known_hosts"] = self.config.known_hosts_path
 
         async with asyncssh.connect(**connect_kwargs) as conn:
             result = await conn.run("claude --version", check=False)

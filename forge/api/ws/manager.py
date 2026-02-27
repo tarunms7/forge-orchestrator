@@ -26,6 +26,11 @@ class ConnectionManager:
         self.active_connections[pipeline_id].append(websocket)
         logger.info("WS connected: user=%s pipeline=%s", user_id, pipeline_id)
 
+    def register(self, websocket: Any, *, user_id: str, pipeline_id: str) -> None:
+        """Register an already-accepted WebSocket connection for a pipeline."""
+        self.active_connections[pipeline_id].append(websocket)
+        logger.info("WS registered: user=%s pipeline=%s", user_id, pipeline_id)
+
     def disconnect(self, websocket: Any, *, pipeline_id: str) -> None:
         """Remove a WebSocket connection from a pipeline's list."""
         conns = self.active_connections.get(pipeline_id, [])

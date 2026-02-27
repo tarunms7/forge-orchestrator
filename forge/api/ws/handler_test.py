@@ -2,7 +2,6 @@
 
 import pytest
 from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 
 @pytest.fixture
@@ -25,41 +24,51 @@ class TestWebSocketEndpoint:
     """Tests for /ws/{pipeline_id} endpoint."""
 
     def test_missing_token_closes_with_4001(self, app):
-        """Connecting without a token should close with code 4001."""
+        """Sending a first message without a token should close with code 4001."""
         client = TestClient(app)
         with pytest.raises(Exception) as exc_info:
-            with client.websocket_connect("/ws/pipeline-123"):
-                pass  # pragma: no cover
-        # Starlette TestClient raises an exception when WS is closed by server
-        # The close code should be 4001
+            with client.websocket_connect("/ws/pipeline-123") as ws:
+                # Send auth message without token
+                ws.send_json({"no_token": True})
+                # Server should close connection -- try to receive to trigger it
+                ws.receive_json()
         assert "4001" in str(exc_info.value) or hasattr(exc_info.value, "code")
 
     def test_invalid_token_closes_with_4001(self, app):
-        """Connecting with an invalid/expired token should close with 4001."""
+        """Sending an invalid token in the first message should close with 4001."""
         client = TestClient(app)
         with pytest.raises(Exception):
-            with client.websocket_connect("/ws/pipeline-123?token=bad.jwt.token"):
-                pass  # pragma: no cover
+            with client.websocket_connect("/ws/pipeline-123") as ws:
+                ws.send_json({"token": "bad.jwt.token"})
+                ws.receive_json()
 
     def test_valid_token_connects_successfully(self, app, valid_token):
-        """Connecting with a valid token should accept the WebSocket."""
+        """Sending a valid token in the first message should authenticate."""
         client = TestClient(app)
-        with client.websocket_connect(f"/ws/pipeline-123?token={valid_token}") as ws:
-            # Connection should be accepted — we can verify by sending data
-            # The handler loops on receive_json, so we close from client side
-            assert ws is not None
+        with client.websocket_connect("/ws/pipeline-123") as ws:
+            ws.send_json({"token": valid_token})
+            # Wait for the auth_ok confirmation
+            msg = ws.receive_json()
+            assert msg["type"] == "auth_ok"
+            assert msg["user_id"] == "user-42"
 
     def test_valid_connection_registered_in_manager(self, app, valid_token):
         """A valid connection should be tracked in the ConnectionManager."""
         client = TestClient(app)
-        with client.websocket_connect(f"/ws/pipe-abc?token={valid_token}"):
+        with client.websocket_connect("/ws/pipe-abc") as ws:
+            ws.send_json({"token": valid_token})
+            # Wait for auth_ok to ensure registration is complete
+            msg = ws.receive_json()
+            assert msg["type"] == "auth_ok"
             manager = app.state.ws_manager
             assert len(manager.active_connections.get("pipe-abc", [])) == 1
 
     def test_disconnect_removes_from_manager(self, app, valid_token):
         """After disconnect, the connection should be removed from the manager."""
         client = TestClient(app)
-        with client.websocket_connect(f"/ws/pipe-xyz?token={valid_token}"):
-            pass  # Connection closes when exiting context manager
+        with client.websocket_connect("/ws/pipe-xyz") as ws:
+            ws.send_json({"token": valid_token})
+            ws.receive_json()  # Wait for auth_ok
+        # Connection closes when exiting context manager
         manager = app.state.ws_manager
         assert len(manager.active_connections.get("pipe-xyz", [])) == 0
