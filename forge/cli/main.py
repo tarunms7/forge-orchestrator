@@ -1,5 +1,6 @@
 """Forge CLI. Entry point for all user interaction."""
 
+import asyncio
 import os
 
 import click
@@ -23,6 +24,27 @@ def init(project_dir: str) -> None:
     _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
 
     click.echo(f"Forge initialized in {forge_dir}")
+
+
+@cli.command()
+@click.argument("task")
+@click.option("--project-dir", default=".", help="Project root directory")
+def run(task: str, project_dir: str) -> None:
+    """Run Forge to execute a task.
+
+    TASK is the description of what to build, e.g. "Build a REST API with auth"
+    """
+    project_dir = os.path.abspath(project_dir)
+
+    forge_dir = os.path.join(project_dir, ".forge")
+    if not os.path.isdir(forge_dir):
+        click.echo("Forge not initialized. Run 'forge init' first.")
+        raise SystemExit(1)
+
+    from forge.core.daemon import ForgeDaemon
+
+    daemon = ForgeDaemon(project_dir)
+    asyncio.run(daemon.run(task))
 
 
 def _write_if_missing(path: str, content: str) -> None:

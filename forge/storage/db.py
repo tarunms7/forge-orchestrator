@@ -1,7 +1,7 @@
 """Database layer. SQLAlchemy 2.0 async. SQLite default, Postgres optional."""
 
 from sqlalchemy import String, JSON, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -101,6 +101,25 @@ class Database:
                 task.assigned_agent = agent_id
                 agent.current_task = task_id
                 agent.state = "working"
+                await session.commit()
+
+    async def retry_task(self, task_id: str) -> None:
+        """Reset a task for retry: increment retry_count, set state to todo, unassign agent."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.retry_count += 1
+                task.state = "todo"
+                task.assigned_agent = None
+                await session.commit()
+
+    async def release_agent(self, agent_id: str) -> None:
+        """Set agent back to idle and clear its current task."""
+        async with self._session_factory() as session:
+            agent = await session.get(AgentRow, agent_id)
+            if agent:
+                agent.state = "idle"
+                agent.current_task = None
                 await session.commit()
 
     async def list_agents(self) -> list[AgentRow]:
