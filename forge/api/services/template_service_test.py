@@ -1,7 +1,6 @@
 """Tests for the TemplateService (save, list, get, delete)."""
 
 import os
-import tempfile
 
 import pytest
 

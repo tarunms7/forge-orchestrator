@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 
-from forge.review.pipeline import ReviewPipeline, ReviewOutcome, GateResult
+from forge.review.pipeline import ReviewPipeline, GateResult
 
 
 def _pass():

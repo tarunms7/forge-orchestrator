@@ -2,7 +2,6 @@
 
 import asyncio
 
-import pytest
 
 
 async def test_allows_requests_under_limit():

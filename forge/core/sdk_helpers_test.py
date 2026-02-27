@@ -2,7 +2,6 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage
 
 

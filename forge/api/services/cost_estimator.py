@@ -10,7 +10,6 @@ Where N varies by complexity level.
 
 from __future__ import annotations
 
-from typing import Literal
 
 # Heuristic lookup: complexity -> (total_sessions, estimated_minutes)
 # Sessions breakdown:

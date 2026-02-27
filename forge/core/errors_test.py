@@ -7,7 +7,6 @@ from forge.core.errors import (
     ResourceExhaustedError,
     AgentError,
     AgentTimeoutError,
-    ReviewError,
     MergeError,
     MergeConflictError,
 )
