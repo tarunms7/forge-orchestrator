@@ -1,4 +1,3 @@
-import pytest
 from forge.agents.adapter import AgentAdapter, AgentResult, ClaudeAdapter
 
 

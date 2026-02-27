@@ -1,5 +1,5 @@
 import json
-from forge.registry.index import ModuleRegistry, FunctionEntry
+from forge.registry.index import ModuleRegistry
 
 
 def test_scan_python_file(tmp_path):

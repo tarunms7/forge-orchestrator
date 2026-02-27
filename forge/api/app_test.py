@@ -1,6 +1,5 @@
 """Tests for the FastAPI app factory."""
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 

@@ -1,6 +1,5 @@
 """Tests for SecretScanner service."""
 
-import pytest
 
 from forge.api.services.secret_scanner import SecretFinding, SecretScanner
 

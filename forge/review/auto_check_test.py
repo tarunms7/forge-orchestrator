@@ -1,4 +1,4 @@
-from forge.review.auto_check import AutoCheck, CheckResult
+from forge.review.auto_check import AutoCheck
 
 
 def test_all_pass():

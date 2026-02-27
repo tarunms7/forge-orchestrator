@@ -5,7 +5,6 @@ from forge.core.models import TaskGraph, TaskRecord, TaskState, AgentRecord, Age
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
 from forge.core.scheduler import Scheduler
-from forge.core.state import TaskStateMachine
 from forge.merge.worker import MergeWorker
 from forge.merge.worktree import WorktreeManager
 from forge.review.pipeline import ReviewPipeline

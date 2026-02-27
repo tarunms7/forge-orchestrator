@@ -1,4 +1,4 @@
-from forge.review.standards import StandardsChecker, Violation
+from forge.review.standards import StandardsChecker
 
 
 def test_function_too_long(tmp_path):

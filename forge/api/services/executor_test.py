@@ -1,7 +1,6 @@
 """Tests for Executor interface, LocalExecutor, and RemoteExecutor."""
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from jose import JWTError, jwt
+from jose import jwt
 
 ALGORITHM = "HS256"
 DEFAULT_ACCESS_TTL = 1800  # 30 minutes

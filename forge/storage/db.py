@@ -1,6 +1,6 @@
 """Database layer. SQLAlchemy 2.0 async. SQLite default, Postgres optional."""
 
-from sqlalchemy import String, JSON, select
+from sqlalchemy import String, JSON, func, select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -126,3 +126,10 @@ class Database:
         async with self._session_factory() as session:
             result = await session.execute(select(AgentRow))
             return list(result.scalars().all())
+
+    async def get_task_counts_by_state(self) -> dict[str, int]:
+        """Return a dict mapping each task state to its count using a single GROUP BY query."""
+        async with self._session_factory() as session:
+            stmt = select(TaskRow.state, func.count(TaskRow.id)).group_by(TaskRow.state)
+            result = await session.execute(stmt)
+            return {state: count for state, count in result.all()}

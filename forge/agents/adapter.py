@@ -43,6 +43,7 @@ class AgentAdapter(ABC):
         worktree_path: str,
         allowed_files: list[str],
         timeout_seconds: int,
+        allowed_dirs: list[str] | None = None,
     ) -> AgentResult:
         """Execute a task and return the result."""
 

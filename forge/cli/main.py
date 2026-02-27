@@ -35,7 +35,13 @@ def init(project_dir: str) -> None:
 @cli.command()
 @click.argument("task")
 @click.option("--project-dir", default=".", help="Project root directory")
-def run(task: str, project_dir: str) -> None:
+@click.option(
+    "--model",
+    default=None,
+    envvar="FORGE_MODEL",
+    help="Claude model to use: sonnet, opus, haiku (default: sonnet, or $FORGE_MODEL)",
+)
+def run(task: str, project_dir: str, model: str | None) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -47,9 +53,14 @@ def run(task: str, project_dir: str) -> None:
         click.echo("Forge not initialized. Run 'forge init' first.")
         raise SystemExit(1)
 
+    from forge.config.settings import ForgeSettings
     from forge.core.daemon import ForgeDaemon
 
-    daemon = ForgeDaemon(project_dir)
+    settings = ForgeSettings()
+    if model:
+        settings.model = model
+
+    daemon = ForgeDaemon(project_dir, settings=settings)
     try:
         asyncio.run(daemon.run(task))
     except KeyboardInterrupt:
