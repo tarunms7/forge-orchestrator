@@ -2,6 +2,8 @@
 
 import logging
 import os
+from collections.abc import Callable
+from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage, query
 from claude_code_sdk._internal import client as _sdk_client
@@ -36,16 +38,25 @@ _sdk_parser.parse_message = _patched_parse
 _sdk_client.parse_message = _patched_parse
 
 
-async def sdk_query(prompt: str, options: ClaudeCodeOptions) -> ResultMessage | None:
+async def sdk_query(
+    prompt: str,
+    options: ClaudeCodeOptions,
+    on_message: Callable[[Any], Any] | None = None,
+) -> ResultMessage | None:
     """Run a claude-code-sdk query with clean environment. Returns the ResultMessage or None.
 
     Removes CLAUDECODE from os.environ (also removed at CLI entry, but belt-and-suspenders)
     so the SDK subprocess doesn't reject our call as a 'nested session'.
+
+    If *on_message* is provided it is ``await``-ed for every message yielded by the
+    SDK stream (including non-result messages), enabling real-time streaming to callers.
     """
     os.environ.pop("CLAUDECODE", None)
     last_result: ResultMessage | None = None
     try:
         async for message in query(prompt=prompt, options=options):
+            if on_message is not None:
+                await on_message(message)
             if isinstance(message, ResultMessage):
                 last_result = message
         return last_result

@@ -14,6 +14,9 @@ class ForgeSettings(BaseSettings):
     context_rotation_tokens: int = 80_000
     max_retries: int = 3
 
+    # Agent sandboxing
+    allowed_dirs: list[str] = []  # Extra directories agents can access
+
     # Resource thresholds
     cpu_threshold: float = 80.0
     memory_threshold_pct: float = 10.0

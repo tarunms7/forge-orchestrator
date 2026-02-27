@@ -8,7 +8,9 @@ from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.sdk_helpers import sdk_query
 
-AGENT_SYSTEM_PROMPT = """You are a coding agent working on a specific task within the Forge orchestration system.
+AGENT_SYSTEM_PROMPT_TEMPLATE = """You are a coding agent working on a specific task within the Forge orchestration system.
+
+Your working directory is {cwd}. Do NOT read, write, or execute anything outside this directory{extra_dirs_clause}.
 
 You have access to a git worktree isolated to your task. Write clean, tested code.
 
@@ -51,20 +53,36 @@ class ClaudeAdapter(AgentAdapter):
     def __init__(self, model: str = "sonnet") -> None:
         self._model = model
 
+    def _build_options(
+        self, worktree_path: str, allowed_dirs: list[str]
+    ) -> ClaudeCodeOptions:
+        """Build ClaudeCodeOptions with directory boundary enforcement."""
+        if allowed_dirs:
+            extra_dirs_clause = " and the following allowed directories: " + ", ".join(
+                allowed_dirs
+            )
+        else:
+            extra_dirs_clause = ""
+        system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+            cwd=worktree_path, extra_dirs_clause=extra_dirs_clause
+        )
+        return ClaudeCodeOptions(
+            system_prompt=system_prompt,
+            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+            permission_mode="bypassPermissions",
+            cwd=worktree_path,
+            model=self._model,
+        )
+
     async def run(
         self,
         task_prompt: str,
         worktree_path: str,
         allowed_files: list[str],
         timeout_seconds: int,
+        allowed_dirs: list[str] | None = None,
     ) -> AgentResult:
-        options = ClaudeCodeOptions(
-            system_prompt=AGENT_SYSTEM_PROMPT,
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
-            permission_mode="bypassPermissions",
-            cwd=worktree_path,
-            model=self._model,
-        )
+        options = self._build_options(worktree_path, allowed_dirs or [])
 
         result = await sdk_query(prompt=task_prompt, options=options)
         files_changed = _get_changed_files(worktree_path)
