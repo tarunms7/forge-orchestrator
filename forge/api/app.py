@@ -80,7 +80,7 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # ── Routers ─────────────────────────────────────────────────────
+    # ── Routers (all under /api prefix) ──────────────────────────────
     from forge.api.routes.auth import router as auth_router
     from forge.api.routes.diff import router as diff_router
     from forge.api.routes.github import router as github_router
@@ -89,18 +89,18 @@ def create_app(
     from forge.api.routes.tasks import router as tasks_router
     from forge.api.routes.templates import router as templates_router
 
-    app.include_router(auth_router)
-    app.include_router(tasks_router)
-    app.include_router(diff_router)
-    app.include_router(history_router)
-    app.include_router(github_router)
-    app.include_router(settings_router)
-    app.include_router(templates_router)
+    app.include_router(auth_router, prefix="/api")
+    app.include_router(tasks_router, prefix="/api/tasks")
+    app.include_router(diff_router, prefix="/api")
+    app.include_router(history_router, prefix="/api")
+    app.include_router(github_router, prefix="/api")
+    app.include_router(settings_router, prefix="/api")
+    app.include_router(templates_router, prefix="/api")
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint
 
-    @app.websocket("/ws/{pipeline_id}")
+    @app.websocket("/api/ws/{pipeline_id}")
     async def ws_route(websocket: WebSocket, pipeline_id: str) -> None:
         await websocket_endpoint(
             websocket,
@@ -113,5 +113,11 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "version": app.version}
+
+    # ── Serve built frontend (must be LAST — catch-all) ─────────────
+    frontend_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web", "out")
+    if os.path.isdir(frontend_dir):
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
     return app

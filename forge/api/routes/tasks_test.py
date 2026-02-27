@@ -33,7 +33,7 @@ async def _register_and_get_token(
 ) -> str:
     """Helper: register a user and return the access token."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": email,
             "password": "securepass",
@@ -57,7 +57,7 @@ class TestTaskAuth:
     async def test_create_task_without_auth_returns_401(self, client):
         """POST /tasks without Authorization header should return 401."""
         resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={
                 "description": "Build feature X",
                 "project_path": "/some/path",
@@ -67,18 +67,18 @@ class TestTaskAuth:
 
     async def test_get_tasks_without_auth_returns_401(self, client):
         """GET /tasks without Authorization header should return 401."""
-        resp = await client.get("/tasks")
+        resp = await client.get("/api/tasks")
         assert resp.status_code == 401
 
     async def test_get_task_status_without_auth_returns_401(self, client):
         """GET /tasks/{id} without Authorization header should return 401."""
-        resp = await client.get("/tasks/some-pipeline-id")
+        resp = await client.get("/api/tasks/some-pipeline-id")
         assert resp.status_code == 401
 
     async def test_invalid_token_returns_401(self, client):
         """Requests with an invalid/expired token should return 401."""
         resp = await client.get(
-            "/tasks",
+            "/api/tasks",
             headers={"Authorization": "Bearer bad.token.here"},
         )
         assert resp.status_code == 401
@@ -94,7 +94,7 @@ class TestCreateTask:
         """POST /tasks should return a pipeline_id."""
         token = await _register_and_get_token(client)
         resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={
                 "description": "Implement dark mode",
                 "project_path": "/home/user/project",
@@ -110,7 +110,7 @@ class TestCreateTask:
         """POST /tasks with extra_dirs should succeed."""
         token = await _register_and_get_token(client)
         resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={
                 "description": "Refactor auth module",
                 "project_path": "/home/user/project",
@@ -130,7 +130,7 @@ class TestGetTaskStatus:
 
         # Create a task first
         create_resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={
                 "description": "Add tests",
                 "project_path": "/tmp/project",
@@ -141,7 +141,7 @@ class TestGetTaskStatus:
 
         # Get status
         resp = await client.get(
-            f"/tasks/{pipeline_id}",
+            f"/api/tasks/{pipeline_id}",
             headers=_auth_header(token),
         )
         assert resp.status_code == 200
@@ -154,7 +154,7 @@ class TestGetTaskStatus:
         """GET /tasks/{id} for unknown id should return 404."""
         token = await _register_and_get_token(client)
         resp = await client.get(
-            "/tasks/nonexistent-id",
+            "/api/tasks/nonexistent-id",
             headers=_auth_header(token),
         )
         assert resp.status_code == 404
@@ -166,7 +166,7 @@ class TestListTasks:
     async def test_list_tasks_empty(self, client):
         """GET /tasks should return empty list when no tasks exist."""
         token = await _register_and_get_token(client)
-        resp = await client.get("/tasks", headers=_auth_header(token))
+        resp = await client.get("/api/tasks", headers=_auth_header(token))
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -177,17 +177,17 @@ class TestListTasks:
 
         # Create two tasks
         await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "Task A", "project_path": "/p1"},
             headers=headers,
         )
         await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "Task B", "project_path": "/p2"},
             headers=headers,
         )
 
-        resp = await client.get("/tasks", headers=headers)
+        resp = await client.get("/api/tasks", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
@@ -206,7 +206,7 @@ class TestTaskIDOR:
         # Register user A and create a task
         token_a = await _register_and_get_token(client, email="usera@example.com")
         create_resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "User A task", "project_path": "/proj"},
             headers=_auth_header(token_a),
         )
@@ -215,7 +215,7 @@ class TestTaskIDOR:
         # Register user B and try to access user A's task
         token_b = await _register_and_get_token(client, email="userb@example.com")
         resp = await client.get(
-            f"/tasks/{pipeline_id}",
+            f"/api/tasks/{pipeline_id}",
             headers=_auth_header(token_b),
         )
         assert resp.status_code == 404

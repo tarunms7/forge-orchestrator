@@ -11,6 +11,13 @@ class CreateTaskRequest(BaseModel):
     description: str
     project_path: str
     extra_dirs: list[str] = Field(default_factory=list)
+    model_strategy: str = "auto"
+
+
+class ExecuteRequest(BaseModel):
+    """Optional: edited task graph to execute instead of the planned one."""
+
+    tasks: list[dict] | None = None  # if provided, overrides planned graph
 
 
 class PipelineResponse(BaseModel):

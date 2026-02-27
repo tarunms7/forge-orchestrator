@@ -29,7 +29,7 @@ async def client():
 async def test_register_success(client):
     """POST /auth/register with valid data should return 201 with access token and refresh cookie."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "new@example.com",
             "password": "securepass123",
@@ -56,10 +56,10 @@ async def test_register_duplicate_email(client):
         "password": "password123",
         "display_name": "First",
     }
-    resp1 = await client.post("/auth/register", json=payload)
+    resp1 = await client.post("/api/auth/register", json=payload)
     assert resp1.status_code == 201
 
-    resp2 = await client.post("/auth/register", json=payload)
+    resp2 = await client.post("/api/auth/register", json=payload)
     assert resp2.status_code == 409
     assert "already registered" in resp2.json()["detail"].lower()
 
@@ -67,7 +67,7 @@ async def test_register_duplicate_email(client):
 async def test_register_missing_fields(client):
     """POST /auth/register with missing fields should return 422."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": "missing@example.com"},
     )
     assert resp.status_code == 422
@@ -76,7 +76,7 @@ async def test_register_missing_fields(client):
 async def test_register_short_password_rejected(client):
     """POST /auth/register with password shorter than 8 chars should return 422."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "short@example.com",
             "password": "short",
@@ -90,7 +90,7 @@ async def test_login_success(client):
     """POST /auth/login with valid credentials should return 200 with tokens."""
     # First register
     await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "login@example.com",
             "password": "mypassword1",
@@ -100,7 +100,7 @@ async def test_login_success(client):
 
     # Then login
     resp = await client.post(
-        "/auth/login",
+        "/api/auth/login",
         json={"email": "login@example.com", "password": "mypassword1"},
     )
 
@@ -118,7 +118,7 @@ async def test_login_success(client):
 async def test_login_wrong_password(client):
     """POST /auth/login with wrong password should return 401."""
     await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "wrong@example.com",
             "password": "correctpass1",
@@ -127,7 +127,7 @@ async def test_login_wrong_password(client):
     )
 
     resp = await client.post(
-        "/auth/login",
+        "/api/auth/login",
         json={"email": "wrong@example.com", "password": "incorrect1"},
     )
 
@@ -138,7 +138,7 @@ async def test_login_wrong_password(client):
 async def test_login_nonexistent_user(client):
     """POST /auth/login with unknown email should return 401."""
     resp = await client.post(
-        "/auth/login",
+        "/api/auth/login",
         json={"email": "ghost@example.com", "password": "anything1"},
     )
 
@@ -152,7 +152,7 @@ async def test_refresh_returns_new_access_token(client):
     """POST /auth/refresh with valid refresh cookie should return new access token."""
     # Register to get a refresh cookie
     reg_resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "refresh@example.com",
             "password": "securepass123",
@@ -166,7 +166,7 @@ async def test_refresh_returns_new_access_token(client):
     refresh_token = reg_resp.cookies["refresh_token"]
     client.cookies.set("refresh_token", refresh_token)
 
-    resp = await client.post("/auth/refresh")
+    resp = await client.post("/api/auth/refresh")
     assert resp.status_code == 200
     data = resp.json()
     assert "access_token" in data
@@ -187,7 +187,7 @@ async def test_refresh_without_cookie_returns_401(client):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as fresh_client:
-        resp = await fresh_client.post("/auth/refresh")
+        resp = await fresh_client.post("/api/auth/refresh")
 
     assert resp.status_code == 401
     assert "no refresh token" in resp.json()["detail"].lower()
@@ -199,5 +199,5 @@ async def test_refresh_with_invalid_cookie_returns_401(client):
     """POST /auth/refresh with invalid token in cookie should return 401."""
     # Manually set an invalid refresh cookie
     client.cookies.set("refresh_token", "invalid.token.here", domain="test")
-    resp = await client.post("/auth/refresh")
+    resp = await client.post("/api/auth/refresh")
     assert resp.status_code == 401

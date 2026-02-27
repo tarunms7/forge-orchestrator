@@ -32,7 +32,7 @@ async def _register_and_get_token(
 ) -> str:
     """Helper: register a user and return the access token."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": email,
             "password": "securepass",
@@ -52,14 +52,14 @@ class TestDiffEndpoint:
 
     async def test_diff_requires_auth(self, client):
         """GET /tasks/{id}/diff without auth should return 401."""
-        resp = await client.get("/tasks/some-id/diff")
+        resp = await client.get("/api/tasks/some-id/diff")
         assert resp.status_code == 401
 
     async def test_diff_returns_404_for_unknown_pipeline(self, client):
         """GET /tasks/{id}/diff for unknown pipeline should return 404."""
         token = await _register_and_get_token(client)
         resp = await client.get(
-            "/tasks/nonexistent-id/diff",
+            "/api/tasks/nonexistent-id/diff",
             headers=_auth_header(token),
         )
         assert resp.status_code == 404
@@ -70,7 +70,7 @@ class TestDiffEndpoint:
 
         # Create a task first
         create_resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={
                 "description": "Test diff",
                 "project_path": "/tmp/project",
@@ -81,7 +81,7 @@ class TestDiffEndpoint:
 
         # Get diff
         resp = await client.get(
-            f"/tasks/{pipeline_id}/diff",
+            f"/api/tasks/{pipeline_id}/diff",
             headers=_auth_header(token),
         )
         assert resp.status_code == 200
@@ -98,7 +98,7 @@ class TestDiffIDOR:
         # Register user A and create a task
         token_a = await _register_and_get_token(client, email="diff-a@example.com")
         create_resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "User A diff task", "project_path": "/proj"},
             headers=_auth_header(token_a),
         )
@@ -107,7 +107,7 @@ class TestDiffIDOR:
         # Register user B and try to access user A's diff
         token_b = await _register_and_get_token(client, email="diff-b@example.com")
         resp = await client.get(
-            f"/tasks/{pipeline_id}/diff",
+            f"/api/tasks/{pipeline_id}/diff",
             headers=_auth_header(token_b),
         )
         assert resp.status_code == 404
