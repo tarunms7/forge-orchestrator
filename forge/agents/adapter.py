@@ -44,6 +44,7 @@ class AgentAdapter(ABC):
         allowed_files: list[str],
         timeout_seconds: int,
         allowed_dirs: list[str] | None = None,
+        model: str = "sonnet",
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -51,11 +52,8 @@ class AgentAdapter(ABC):
 class ClaudeAdapter(AgentAdapter):
     """Claude Code agent via claude-code-sdk."""
 
-    def __init__(self, model: str = "sonnet") -> None:
-        self._model = model
-
     def _build_options(
-        self, worktree_path: str, allowed_dirs: list[str]
+        self, worktree_path: str, allowed_dirs: list[str], model: str = "sonnet",
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -70,9 +68,10 @@ class ClaudeAdapter(AgentAdapter):
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
             allowed_tools=["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
-            permission_mode="bypassPermissions",
+            permission_mode="acceptEdits",
             cwd=worktree_path,
-            model=self._model,
+            model=model,
+            max_turns=25,
         )
 
     async def run(
@@ -82,8 +81,9 @@ class ClaudeAdapter(AgentAdapter):
         allowed_files: list[str],
         timeout_seconds: int,
         allowed_dirs: list[str] | None = None,
+        model: str = "sonnet",
     ) -> AgentResult:
-        options = self._build_options(worktree_path, allowed_dirs or [])
+        options = self._build_options(worktree_path, allowed_dirs or [], model=model)
 
         result = await sdk_query(prompt=task_prompt, options=options)
         files_changed = _get_changed_files(worktree_path)

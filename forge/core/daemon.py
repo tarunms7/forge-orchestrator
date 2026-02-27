@@ -12,6 +12,7 @@ from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.settings import ForgeSettings
 from forge.core.engine import _row_to_record
+from forge.core.model_router import select_model
 from forge.core.models import TaskState
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
@@ -54,10 +55,11 @@ class ForgeDaemon:
             await db.close()
 
     async def _run_pipeline(self, db: Database, user_input: str) -> None:
-        model = self._settings.model
-        console.print(f"[dim]Using model: {model}[/dim]")
+        strategy = self._settings.model_strategy
+        planner_model = select_model(strategy, "planner", "high")
+        console.print(f"[dim]Strategy: {strategy} | Planner model: {planner_model}[/dim]")
 
-        planner_llm = ClaudePlannerLLM(model=model, cwd=self._project_dir)
+        planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir)
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,
@@ -68,8 +70,9 @@ class ForgeDaemon:
             self._project_dir,
             f"{self._project_dir}/.forge/worktrees",
         )
-        adapter = ClaudeAdapter(model=model)
+        adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
+        self._strategy = strategy
         current_branch = _get_current_branch(self._project_dir)
         console.print(f"[dim]Merge target: {current_branch}[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
@@ -182,10 +185,14 @@ class ForgeDaemon:
             await db.update_task_state(task_id, TaskState.ERROR.value)
             return
 
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
+
         prompt = _build_agent_prompt(task.title, task.description, task.files)
         result = await runtime.run_task(
             agent_id, prompt, worktree_path, task.files,
             allowed_dirs=self._settings.allowed_dirs,
+            model=agent_model,
         )
 
         if not result.success:
@@ -235,9 +242,10 @@ class ForgeDaemon:
 
         # Gate 2: LLM review
         console.print(f"[blue]  Gate 2: LLM review for {task.id}...[/blue]")
+        reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
         gate2_result = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
-            model=self._settings.model,
+            model=reviewer_model,
         )
         if not gate2_result.passed:
             console.print(f"[red]  Gate 2 failed: {gate2_result.details}[/red]")

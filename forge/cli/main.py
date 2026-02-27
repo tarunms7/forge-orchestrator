@@ -36,12 +36,12 @@ def init(project_dir: str) -> None:
 @click.argument("task")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--model",
+    "--strategy",
     default=None,
-    envvar="FORGE_MODEL",
-    help="Claude model to use: sonnet, opus, haiku (default: sonnet, or $FORGE_MODEL)",
+    envvar="FORGE_MODEL_STRATEGY",
+    help="Model routing: auto, fast, quality (default: auto, or $FORGE_MODEL_STRATEGY)",
 )
-def run(task: str, project_dir: str, model: str | None) -> None:
+def run(task: str, project_dir: str, strategy: str | None) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -57,8 +57,8 @@ def run(task: str, project_dir: str, model: str | None) -> None:
     from forge.core.daemon import ForgeDaemon
 
     settings = ForgeSettings()
-    if model:
-        settings.model = model
+    if strategy:
+        settings.model_strategy = strategy
 
     daemon = ForgeDaemon(project_dir, settings=settings)
     try:
