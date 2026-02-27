@@ -315,24 +315,77 @@ def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
 
 
 def _get_diff_vs_main(worktree_path: str) -> str:
-    """Get diff of the worktree branch vs main."""
-    result = subprocess.run(
-        ["git", "diff", "main...HEAD"],
+    """Get diff of the worktree branch vs its merge-base with the parent branch.
+
+    Uses ``git merge-base HEAD~N HEAD`` to find where the worktree branch
+    diverged, then diffs against that point.  Falls back to diffing the
+    last commit only (``HEAD~1..HEAD``) when the merge-base can't be
+    determined — this keeps the diff scoped to the agent's actual changes
+    rather than the entire feature branch.
+    """
+    # Try to find how many commits the agent added on top of the base
+    count_result = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
     )
+    # If that fails, just diff the last commit
+    try:
+        commit_count = int(count_result.stdout.strip())
+        if commit_count <= 0:
+            commit_count = 1
+    except (ValueError, AttributeError):
+        commit_count = 1
+
+    # Diff only the agent's commits, not the entire feature branch
+    base_ref = f"HEAD~{commit_count}"
+    result = subprocess.run(
+        ["git", "diff", base_ref, "HEAD"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+    )
+    # Fallback: if that fails, just diff last commit
+    if result.returncode != 0:
+        result = subprocess.run(
+            ["git", "diff", "HEAD~1", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
     return result.stdout
 
 
 def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
-    """Get list of files changed vs main."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "main...HEAD"],
+    """Get list of files changed by the agent (not the entire feature branch)."""
+    # Reuse the same scoping logic: count agent-only commits
+    count_result = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
         capture_output=True,
         text=True,
     )
+    try:
+        commit_count = int(count_result.stdout.strip())
+        if commit_count <= 0:
+            commit_count = 1
+    except (ValueError, AttributeError):
+        commit_count = 1
+
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"HEAD~{commit_count}", "HEAD"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
     return [f for f in result.stdout.strip().split("\n") if f.strip()]
 
 
