@@ -25,14 +25,18 @@ async def client():
     await app.state.async_engine.dispose()
 
 
-async def _register_and_get_token(client: AsyncClient) -> str:
+async def _register_and_get_token(
+    client: AsyncClient,
+    email: str = "diff-user@example.com",
+    display_name: str = "Diff User",
+) -> str:
     """Helper: register a user and return the access token."""
     resp = await client.post(
         "/auth/register",
         json={
-            "email": "diff-user@example.com",
+            "email": email,
             "password": "securepass",
-            "display_name": "Diff User",
+            "display_name": display_name,
         },
     )
     assert resp.status_code == 201
@@ -84,3 +88,26 @@ class TestDiffEndpoint:
         data = resp.json()
         assert data["pipeline_id"] == pipeline_id
         assert data["diff"] == ""
+
+
+class TestDiffIDOR:
+    """IDOR protection: users cannot access other users' pipeline diffs."""
+
+    async def test_diff_as_different_user_returns_404(self, client):
+        """GET /tasks/{id}/diff for a pipeline owned by another user should return 404."""
+        # Register user A and create a task
+        token_a = await _register_and_get_token(client, email="diff-a@example.com")
+        create_resp = await client.post(
+            "/tasks",
+            json={"description": "User A diff task", "project_path": "/proj"},
+            headers=_auth_header(token_a),
+        )
+        pipeline_id = create_resp.json()["pipeline_id"]
+
+        # Register user B and try to access user A's diff
+        token_b = await _register_and_get_token(client, email="diff-b@example.com")
+        resp = await client.get(
+            f"/tasks/{pipeline_id}/diff",
+            headers=_auth_header(token_b),
+        )
+        assert resp.status_code == 404

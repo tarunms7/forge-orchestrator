@@ -28,6 +28,9 @@ async def get_pipeline_diff(
     if pipeline is None:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    if pipeline["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
     # Placeholder diff until real pipeline integration
     diff_text = pipeline.get("diff", "")
     return {"pipeline_id": pipeline_id, "diff": diff_text}

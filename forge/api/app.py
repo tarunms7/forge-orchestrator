@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -13,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 def create_app(
     *,
     db_url: str | None = None,
-    jwt_secret: str = "dev-secret-change-me",
+    jwt_secret: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -22,7 +24,18 @@ def create_app(
             If provided, an async engine and sessionmaker are attached to
             ``app.state`` and tables are created on startup.
         jwt_secret: Secret key used for JWT token signing.
+            If not provided, reads from ``FORGE_JWT_SECRET`` env var.
+            Falls back to a random secret (tokens won't survive restarts).
     """
+    if jwt_secret is None:
+        jwt_secret = os.environ.get("FORGE_JWT_SECRET", "")
+        if not jwt_secret:
+            import secrets
+
+            jwt_secret = secrets.token_urlsafe(32)
+            logging.getLogger(__name__).warning(
+                "No FORGE_JWT_SECRET set — using random secret (tokens won't survive restarts)"
+            )
     engine = None
     session_factory = None
 

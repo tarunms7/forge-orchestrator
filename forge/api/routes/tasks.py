@@ -92,6 +92,9 @@ async def get_task_status(
     if pipeline is None:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    if pipeline["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
     return TaskStatusResponse(
         pipeline_id=pipeline["pipeline_id"],
         phase=pipeline["phase"],

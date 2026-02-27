@@ -8,7 +8,7 @@ async def test_health_endpoint_returns_ok():
     """GET /health should return status ok and version."""
     from forge.api.app import create_app
 
-    app = create_app()
+    app = create_app(jwt_secret="test-secret")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/health")
@@ -23,7 +23,7 @@ async def test_cors_allows_localhost_3000():
     """CORS should allow requests from localhost:3000."""
     from forge.api.app import create_app
 
-    app = create_app()
+    app = create_app(jwt_secret="test-secret")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.options(
@@ -42,7 +42,7 @@ async def test_app_factory_with_db_url():
     """create_app with db_url should set up db engine on app.state."""
     from forge.api.app import create_app
 
-    app = create_app(db_url="sqlite+aiosqlite:///:memory:")
+    app = create_app(db_url="sqlite+aiosqlite:///:memory:", jwt_secret="test-secret")
     assert hasattr(app.state, "async_engine")
     assert hasattr(app.state, "async_session")
 
@@ -51,6 +51,6 @@ async def test_app_metadata():
     """App should have correct title and version."""
     from forge.api.app import create_app
 
-    app = create_app()
+    app = create_app(jwt_secret="test-secret")
     assert app.title == "Forge"
     assert app.version == "0.1.0"

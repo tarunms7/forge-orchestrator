@@ -26,14 +26,18 @@ async def client():
     await app.state.async_engine.dispose()
 
 
-async def _register_and_get_token(client: AsyncClient) -> str:
+async def _register_and_get_token(
+    client: AsyncClient,
+    email: str = "tasks-user@example.com",
+    display_name: str = "Tasks User",
+) -> str:
     """Helper: register a user and return the access token."""
     resp = await client.post(
         "/auth/register",
         json={
-            "email": "tasks-user@example.com",
+            "email": email,
             "password": "securepass",
-            "display_name": "Tasks User",
+            "display_name": display_name,
         },
     )
     assert resp.status_code == 201
@@ -189,3 +193,29 @@ class TestListTasks:
         assert len(data) == 2
         descriptions = {t["description"] for t in data}
         assert descriptions == {"Task A", "Task B"}
+
+
+# ── IDOR tests ──────────────────────────────────────────────────────
+
+
+class TestTaskIDOR:
+    """IDOR protection: users cannot access other users' pipelines."""
+
+    async def test_get_task_as_different_user_returns_404(self, client):
+        """GET /tasks/{id} for a pipeline owned by another user should return 404."""
+        # Register user A and create a task
+        token_a = await _register_and_get_token(client, email="usera@example.com")
+        create_resp = await client.post(
+            "/tasks",
+            json={"description": "User A task", "project_path": "/proj"},
+            headers=_auth_header(token_a),
+        )
+        pipeline_id = create_resp.json()["pipeline_id"]
+
+        # Register user B and try to access user A's task
+        token_b = await _register_and_get_token(client, email="userb@example.com")
+        resp = await client.get(
+            f"/tasks/{pipeline_id}",
+            headers=_auth_header(token_b),
+        )
+        assert resp.status_code == 404

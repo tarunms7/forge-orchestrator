@@ -63,11 +63,17 @@ def run(task: str, project_dir: str) -> None:
 @click.option("--port", default=8000, help="API server port")
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
 @click.option("--db-url", default="sqlite+aiosqlite:///forge.db", help="Database URL")
-def serve(port: int, host: str, db_url: str):
+@click.option(
+    "--jwt-secret",
+    default=None,
+    envvar="FORGE_JWT_SECRET",
+    help="JWT signing secret (default: $FORGE_JWT_SECRET or random)",
+)
+def serve(port: int, host: str, db_url: str, jwt_secret: str | None):
     """Start the Forge web server."""
     import uvicorn
     from forge.api.app import create_app
-    app = create_app(db_url=db_url)
+    app = create_app(db_url=db_url, jwt_secret=jwt_secret)
     uvicorn.run(app, host=host, port=port)
 
 
