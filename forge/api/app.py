@@ -62,6 +62,11 @@ def create_app(
         allow_headers=["*"],
     )
 
+    # ── Routers ─────────────────────────────────────────────────────
+    from forge.api.routes.auth import router as auth_router
+
+    app.include_router(auth_router)
+
     # ── Health check ────────────────────────────────────────────────
     @app.get("/health")
     async def health() -> dict:
