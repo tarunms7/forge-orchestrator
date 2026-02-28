@@ -201,3 +201,21 @@ async def test_refresh_with_invalid_cookie_returns_401(client):
     client.cookies.set("refresh_token", "invalid.token.here", domain="test")
     resp = await client.post("/api/auth/refresh")
     assert resp.status_code == 401
+
+
+async def test_refresh_cookie_path_is_root(client):
+    """Refresh token cookie path must be '/' so it's sent to /api/auth/refresh."""
+    resp = await client.post(
+        "/api/auth/register",
+        json={
+            "email": "cookie-path@example.com",
+            "password": "securepass123",
+            "display_name": "Cookie Test",
+        },
+    )
+    assert resp.status_code == 201
+    # Check the Set-Cookie header for path
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "path=/" in set_cookie.lower().replace(" ", "")
+    # Ensure it's not path=/auth
+    assert "path=/auth" not in set_cookie.lower().replace(" ", "")

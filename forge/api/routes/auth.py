@@ -47,7 +47,7 @@ def _set_refresh_cookie(response: JSONResponse, refresh_token: str) -> None:
         secure=True,
         samesite="strict",
         max_age=7 * 24 * 60 * 60,  # 7 days
-        path="/auth",
+        path="/",  # Must be "/" so cookie is sent to /api/auth/refresh
     )
 
 
