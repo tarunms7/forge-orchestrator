@@ -81,6 +81,7 @@ class TaskRow(Base):
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    cost_usd: Mapped[float] = mapped_column(default=0.0)
 
 
 class AgentRow(Base):
@@ -265,6 +266,13 @@ class Database:
             stmt = select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
             result = await session.execute(stmt)
             return list(result.scalars().all())
+
+    async def add_task_cost(self, task_id: str, cost: float) -> None:
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.cost_usd = (task.cost_usd or 0) + cost
+                await session.commit()
 
     # ── Agents ────────────────────────────────────────────────────────
 

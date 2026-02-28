@@ -23,6 +23,7 @@ export interface TaskState {
     linesAdded?: number;
     linesRemoved?: number;
   };
+  costUsd?: number;
 }
 
 export interface PipelineState {
@@ -205,6 +206,21 @@ export const useTaskStore = create<PipelineState>((set) => ({
               [taskId]: {
                 ...existing,
                 mergeResult: data as TaskState["mergeResult"],
+              },
+            },
+          };
+        }
+
+        case "task:cost_update": {
+          const taskId = data.task_id as string;
+          const existing = state.tasks[taskId];
+          if (!existing) return state;
+          return {
+            tasks: {
+              ...state.tasks,
+              [taskId]: {
+                ...existing,
+                costUsd: (existing.costUsd || 0) + (data.cost_usd as number),
               },
             },
           };

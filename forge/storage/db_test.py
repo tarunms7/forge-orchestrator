@@ -263,6 +263,16 @@ async def test_list_events_by_task(db: Database):
     assert events[0].payload["line"] == "a"
 
 
+async def test_add_task_cost(db: Database):
+    await db.create_task(
+        id="t1", title="T", description="D", files=[], depends_on=[], complexity="low",
+    )
+    await db.add_task_cost("t1", 0.05)
+    await db.add_task_cost("t1", 0.03)
+    task = await db.get_task("t1")
+    assert abs(task.cost_usd - 0.08) < 0.001
+
+
 async def test_list_events_by_type(db: Database):
     await db.create_pipeline(
         id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",

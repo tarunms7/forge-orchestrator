@@ -12,7 +12,7 @@ def mock_adapter():
         success=True,
         files_changed=["a.py"],
         summary="Done",
-        token_usage=1000,
+        cost_usd=0.01,
     )
     return adapter
 

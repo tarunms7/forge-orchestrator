@@ -392,6 +392,13 @@ class ForgeDaemon:
             }, db=db, pipeline_id=pid)
         _batch.clear()
 
+        # Track cost
+        if hasattr(result, 'cost_usd') and result.cost_usd > 0:
+            await db.add_task_cost(task_id, result.cost_usd)
+            await self._emit("task:cost_update", {
+                "task_id": task_id, "cost_usd": result.cost_usd,
+            }, db=db, pipeline_id=pid)
+
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)

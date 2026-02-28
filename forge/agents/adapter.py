@@ -30,7 +30,7 @@ class AgentResult:
     success: bool
     files_changed: list[str]
     summary: str
-    token_usage: int = 0
+    cost_usd: float = 0.0
     error: str | None = None
 
 
@@ -114,7 +114,7 @@ class ClaudeAdapter(AgentAdapter):
             success=True,
             files_changed=files_changed,
             summary=result_text[:500] if result_text else "Task completed",
-            token_usage=int(cost_usd * 1_000_000),
+            cost_usd=cost_usd,
         )
 
 

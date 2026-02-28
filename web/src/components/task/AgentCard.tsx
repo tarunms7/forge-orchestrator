@@ -302,6 +302,11 @@ export default function AgentCard({ task }: { task: TaskState }) {
           )}
         </div>
       )}
+
+      {/* Cost */}
+      {task.costUsd != null && task.costUsd > 0 && (
+        <p className="text-xs text-zinc-500">Cost: ${task.costUsd.toFixed(4)}</p>
+      )}
     </div>
   );
 }

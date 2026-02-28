@@ -8,11 +8,11 @@ def test_agent_result_fields():
         success=True,
         files_changed=["a.py", "b.py"],
         summary="Added user model",
-        token_usage=5000,
+        cost_usd=0.05,
     )
     assert result.success is True
     assert len(result.files_changed) == 2
-    assert result.token_usage == 5000
+    assert result.cost_usd == 0.05
 
 
 def test_agent_result_failure():
