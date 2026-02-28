@@ -18,7 +18,7 @@ export interface TaskState {
 
 export interface PipelineState {
   pipelineId: string | null;
-  phase: "idle" | "planning" | "executing" | "reviewing" | "complete";
+  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
   setPipelineId: (id: string) => void;
@@ -61,7 +61,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
               reviewGates: [],
             };
           }
-          return { tasks: newTasks, phase: "executing" };
+          return { tasks: newTasks, phase: "planned" };
         }
 
         case "task:state_changed": {

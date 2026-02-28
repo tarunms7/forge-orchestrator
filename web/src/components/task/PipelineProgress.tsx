@@ -4,6 +4,7 @@ import type { PipelineState } from "@/stores/taskStore";
 
 const STEPS: { key: PipelineState["phase"]; label: string }[] = [
   { key: "planning", label: "Planning" },
+  { key: "planned", label: "Review" },
   { key: "executing", label: "Executing" },
   { key: "reviewing", label: "Reviewing" },
   { key: "complete", label: "Complete" },
@@ -12,9 +13,10 @@ const STEPS: { key: PipelineState["phase"]; label: string }[] = [
 const PHASE_ORDER: Record<PipelineState["phase"], number> = {
   idle: -1,
   planning: 0,
-  executing: 1,
-  reviewing: 2,
-  complete: 3,
+  planned: 1,
+  executing: 2,
+  reviewing: 3,
+  complete: 4,
 };
 
 function CheckIcon() {
