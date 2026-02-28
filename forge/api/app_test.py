@@ -38,12 +38,14 @@ async def test_cors_allows_localhost_3000():
 
 
 async def test_app_factory_with_db_url():
-    """create_app with db_url should set up db engine on app.state."""
+    """create_app with db_url should set up unified Database on app.state."""
     from forge.api.app import create_app
 
     app = create_app(db_url="sqlite+aiosqlite:///:memory:", jwt_secret="test-secret")
-    assert hasattr(app.state, "async_engine")
-    assert hasattr(app.state, "async_session")
+    assert hasattr(app.state, "db")
+    assert app.state.db is not None
+    # Backward compat alias
+    assert app.state.forge_db is app.state.db
 
 
 async def test_app_metadata():

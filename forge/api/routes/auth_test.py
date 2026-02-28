@@ -8,22 +8,20 @@ from httpx import ASGITransport, AsyncClient
 async def client():
     """Create an httpx AsyncClient backed by the app with in-memory DB."""
     from forge.api.app import create_app
-    from forge.api.models.user import Base
 
     app = create_app(
         db_url="sqlite+aiosqlite:///:memory:",
         jwt_secret="test-secret-for-routes",
     )
 
-    # Manually create tables since ASGITransport doesn't trigger lifespan
-    async with app.state.async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Manually init since ASGITransport doesn't trigger lifespan
+    await app.state.db.initialize()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
-    await app.state.async_engine.dispose()
+    await app.state.db.close()
 
 
 async def test_register_success(client):
@@ -176,14 +174,12 @@ async def test_refresh_without_cookie_returns_401(client):
     """POST /auth/refresh without refresh cookie should return 401."""
     # Use a fresh client with no cookies
     from forge.api.app import create_app
-    from forge.api.models.user import Base
 
     app = create_app(
         db_url="sqlite+aiosqlite:///:memory:",
         jwt_secret="test-secret-for-routes",
     )
-    async with app.state.async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await app.state.db.initialize()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as fresh_client:
@@ -192,7 +188,7 @@ async def test_refresh_without_cookie_returns_401(client):
     assert resp.status_code == 401
     assert "no refresh token" in resp.json()["detail"].lower()
 
-    await app.state.async_engine.dispose()
+    await app.state.db.close()
 
 
 async def test_refresh_with_invalid_cookie_returns_401(client):

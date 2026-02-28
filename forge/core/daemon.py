@@ -63,8 +63,14 @@ class ForgeDaemon:
         self._events = event_emitter or EventEmitter()
         self._strategy = self._settings.model_strategy
 
-    async def plan(self, user_input: str, db: Database) -> TaskGraph:
-        """Run planning only. Returns the TaskGraph for user approval."""
+    async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True) -> TaskGraph:
+        """Run planning only. Returns the TaskGraph for user approval.
+
+        Args:
+            emit_plan_ready: If False, skip emitting the plan_ready event.
+                The web flow sets this to False because it remaps task IDs
+                before emitting the event with the correct prefixed IDs.
+        """
         await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
 
         strategy = self._settings.model_strategy
@@ -80,21 +86,37 @@ class ForgeDaemon:
         for task_def in graph.tasks:
             console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
 
-        await self._events.emit("pipeline:plan_ready", {
-            "tasks": [
-                {
-                    "id": t.id, "title": t.title, "description": t.description,
-                    "files": t.files, "depends_on": t.depends_on,
-                    "complexity": t.complexity.value,
-                }
-                for t in graph.tasks
-            ]
-        })
+        if emit_plan_ready:
+            await self._events.emit("pipeline:plan_ready", {
+                "tasks": [
+                    {
+                        "id": t.id, "title": t.title, "description": t.description,
+                        "files": t.files, "depends_on": t.depends_on,
+                        "complexity": t.complexity.value,
+                    }
+                    for t in graph.tasks
+                ]
+            })
         return graph
 
-    async def execute(self, graph: TaskGraph, db: Database) -> None:
+    async def execute(self, graph: TaskGraph, db: Database, pipeline_id: str | None = None) -> None:
         """Execute a previously approved TaskGraph."""
         await self._events.emit("pipeline:phase_changed", {"phase": "executing"})
+
+        # Use provided pipeline_id, fall back to self._pipeline_id (CLI flow), or generate one
+        pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
+        prefix = pid[:8]
+
+        # Task IDs may already be prefixed (web flow remaps in _run_plan).
+        # Only remap if they haven't been prefixed yet (CLI flow).
+        first_id = graph.tasks[0].id if graph.tasks else ""
+        needs_remap = not first_id.startswith(prefix)
+
+        if needs_remap:
+            id_map = {t.id: f"{prefix}-{t.id}" for t in graph.tasks}
+            for t in graph.tasks:
+                t.depends_on = [id_map.get(d, d) for d in t.depends_on]
+                t.id = id_map[t.id]
 
         for task_def in graph.tasks:
             await db.create_task(
@@ -104,11 +126,11 @@ class ForgeDaemon:
                 files=task_def.files,
                 depends_on=task_def.depends_on,
                 complexity=task_def.complexity.value,
-                pipeline_id=getattr(self, '_pipeline_id', None),
+                pipeline_id=pid,
             )
 
         for i in range(self._settings.max_agents):
-            await db.create_agent(f"agent-{i}")
+            await db.create_agent(f"{prefix}-agent-{i}")
 
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,
@@ -125,7 +147,7 @@ class ForgeDaemon:
         console.print(f"[dim]Merge target: {current_branch}[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
 
-        await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor)
+        await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
         await self._events.emit("pipeline:phase_changed", {"phase": "complete"})
 
     async def run(self, user_input: str) -> None:
@@ -160,10 +182,16 @@ class ForgeDaemon:
         worktree_mgr: WorktreeManager,
         merge_worker: MergeWorker,
         monitor: ResourceMonitor,
+        pipeline_id: str | None = None,
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
+        prefix = pipeline_id[:8] if pipeline_id else None
         while True:
-            tasks = await db.list_tasks()
+            # Scope to current pipeline only — avoids stale tasks/agents from prior runs
+            if pipeline_id:
+                tasks = await db.list_tasks_by_pipeline(pipeline_id)
+            else:
+                tasks = await db.list_tasks()
             _print_status_table(tasks)
 
             all_done = all(t.state in (TaskState.DONE.value, TaskState.ERROR.value) for t in tasks)
@@ -181,7 +209,7 @@ class ForgeDaemon:
                 continue
 
             task_records = [_row_to_record(t) for t in tasks]
-            agents = await db.list_agents()
+            agents = await db.list_agents(prefix=prefix)
             from forge.core.engine import _row_to_agent
             agent_records = [_row_to_agent(a) for a in agents]
 
@@ -219,6 +247,7 @@ class ForgeDaemon:
         """Execute a single task: create worktree -> run agent -> review -> merge."""
         task = await db.get_task(task_id)
         if not task:
+            await db.release_agent(agent_id)
             return
 
         console.print(f"\n[cyan]{'='*50}[/cyan]")
@@ -238,17 +267,27 @@ class ForgeDaemon:
                 console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
                 await db.update_task_state(task_id, TaskState.ERROR.value)
                 await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
+                await db.release_agent(agent_id)
                 return
         except Exception as e:
             console.print(f"[red]Worktree creation failed for {task_id}: {e}[/red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
             await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
+            await db.release_agent(agent_id)
             return
 
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
 
-        prompt = _build_agent_prompt(task.title, task.description, task.files)
+        # Build prompt — include review feedback if this is a retry
+        if task.retry_count > 0 and getattr(task, "review_feedback", None):
+            prompt = _build_retry_prompt(
+                task.title, task.description, task.files,
+                task.review_feedback, task.retry_count,
+            )
+            console.print(f"[yellow]{task_id}: retry {task.retry_count} — including review feedback in prompt[/yellow]")
+        else:
+            prompt = _build_agent_prompt(task.title, task.description, task.files)
 
         # Create streaming callback for live logs
         import time
@@ -288,6 +327,7 @@ class ForgeDaemon:
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr)
+            await db.release_agent(agent_id)
             return
 
         # Check what actually changed vs main branch
@@ -295,6 +335,7 @@ class ForgeDaemon:
         if not diff.strip():
             console.print(f"[red]{task_id} agent produced no changes[/red]")
             await self._handle_retry(db, task_id, worktree_mgr)
+            await db.release_agent(agent_id)
             return
 
         console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
@@ -307,7 +348,7 @@ class ForgeDaemon:
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         await self._events.emit("task:state_changed", {"task_id": task_id, "state": "in_review"})
 
-        review_passed = await self._run_review(task, worktree_path, diff)
+        review_passed, review_feedback = await self._run_review(task, worktree_path, diff)
 
         if review_passed:
             await db.update_task_state(task_id, TaskState.MERGING.value)
@@ -317,8 +358,10 @@ class ForgeDaemon:
             if merge_result.success:
                 console.print(f"[bold green]{task_id} merged successfully![/bold green]")
                 await db.update_task_state(task_id, TaskState.DONE.value)
+                stats = _get_diff_stats(self._project_dir)
                 await self._events.emit("task:merge_result", {
                     "task_id": task_id, "success": True, "error": None,
+                    **stats,
                 })
                 await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
             else:
@@ -333,8 +376,10 @@ class ForgeDaemon:
                 if retry_result.success:
                     console.print(f"[bold green]{task_id} merged on retry![/bold green]")
                     await db.update_task_state(task_id, TaskState.DONE.value)
+                    stats = _get_diff_stats(self._project_dir)
                     await self._events.emit("task:merge_result", {
                         "task_id": task_id, "success": True, "error": None,
+                        **stats,
                     })
                     await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
                 else:
@@ -350,8 +395,10 @@ class ForgeDaemon:
                             if final_result.success:
                                 console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
                                 await db.update_task_state(task_id, TaskState.DONE.value)
+                                stats = _get_diff_stats(self._project_dir)
                                 await self._events.emit("task:merge_result", {
                                     "task_id": task_id, "success": True, "error": None,
+                                    **stats,
                                 })
                                 await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
                             else:
@@ -362,46 +409,58 @@ class ForgeDaemon:
                         # Tier 3: full retry (existing behavior)
                         await self._handle_retry(db, task_id, worktree_mgr)
         else:
-            await self._handle_retry(db, task_id, worktree_mgr)
+            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=review_feedback)
 
         try:
             worktree_mgr.remove(task_id)
         except Exception:
             pass
 
-    async def _run_review(self, task, worktree_path: str, diff: str) -> bool:
-        """Run the 3-gate review pipeline."""
-        # Gate 1: lint only the changed files (not full test suite)
-        console.print(f"[blue]  Gate 1: Auto-checks for {task.id}...[/blue]")
+        # Release the agent so the scheduler can reuse it for the next task
+        await db.release_agent(agent_id)
+
+    async def _run_review(self, task, worktree_path: str, diff: str) -> tuple[bool, str | None]:
+        """Run the 3-gate review pipeline.
+
+        Returns:
+            (passed, feedback) — feedback is a string with failure details
+            if any gate failed, None if all passed.
+        """
+        feedback_parts: list[str] = []
+
+        # L1: lint only the changed files (not full test suite)
+        console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
         gate1_result = await self._gate1(worktree_path)
         await self._events.emit("task:review_update", {
-            "task_id": task.id, "gate": "gate1", "passed": gate1_result.passed,
+            "task_id": task.id, "gate": "L1", "passed": gate1_result.passed,
             "details": gate1_result.details,
         })
         if not gate1_result.passed:
-            console.print(f"[red]  Gate 1 failed: {gate1_result.details}[/red]")
-            return False
-        console.print("[green]  Gate 1 passed[/green]")
+            console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
+            feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
+            return False, "\n\n".join(feedback_parts)
+        console.print("[green]  L1 passed[/green]")
 
-        # Gate 2: LLM review
-        console.print(f"[blue]  Gate 2: LLM review for {task.id}...[/blue]")
+        # L2: LLM review
+        console.print(f"[blue]  L2 (LLM): Code review for {task.id}...[/blue]")
         reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
         gate2_result = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
         )
         await self._events.emit("task:review_update", {
-            "task_id": task.id, "gate": "gate2", "passed": gate2_result.passed,
+            "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
             "details": gate2_result.details,
         })
         if not gate2_result.passed:
-            console.print(f"[red]  Gate 2 failed: {gate2_result.details}[/red]")
-            return False
-        console.print("[green]  Gate 2 passed[/green]")
+            console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
+            feedback_parts.append(f"L2 (LLM code review) FAILED:\n{gate2_result.details}")
+            return False, "\n\n".join(feedback_parts)
+        console.print("[green]  L2 passed[/green]")
 
         # Gate 3: skip for now — merge check is handled by merge_worker
         console.print("[green]  Gate 3 (merge readiness): auto-pass[/green]")
-        return True
+        return True, None
 
     async def _gate1(self, worktree_path: str) -> GateResult:
         """Gate 1: Lint check on the worktree. Simple and fast."""
@@ -500,17 +559,29 @@ class ForgeDaemon:
 
         return result.success
 
-    async def _handle_retry(self, db: Database, task_id: str, worktree_mgr: WorktreeManager) -> None:
-        """Handle task failure: retry up to max_retries, then mark as error."""
+    async def _handle_retry(
+        self, db: Database, task_id: str, worktree_mgr: WorktreeManager,
+        review_feedback: str | None = None,
+    ) -> None:
+        """Handle task failure: retry up to max_retries, then mark as error.
+
+        Args:
+            review_feedback: If provided, stored on the task so the next
+                agent run can see what the reviewer flagged and fix it.
+        """
         task = await db.get_task(task_id)
         if not task:
             return
 
         if task.retry_count < self._settings.max_retries:
             console.print(
-                f"[yellow]{task_id}: retry {task.retry_count + 1}/{self._settings.max_retries}[/yellow]"
+                f"[yellow]{task_id}: retry {task.retry_count + 1}/{self._settings.max_retries}"
+                f" — {'with review feedback' if review_feedback else 'clean retry'}[/yellow]"
             )
-            await db.retry_task(task_id)
+            await db.retry_task(task_id, review_feedback=review_feedback)
+            await self._events.emit("task:state_changed", {
+                "task_id": task_id, "state": "retrying",
+            })
         else:
             console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
@@ -559,6 +630,37 @@ def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
     )
 
 
+def _build_retry_prompt(
+    title: str, description: str, files: list[str],
+    review_feedback: str, retry_number: int,
+) -> str:
+    """Build a prompt for a retry that includes the review failure feedback.
+
+    The agent gets the original task spec PLUS the reviewer's notes so it
+    can fix the specific issues instead of starting from scratch.
+    """
+    return (
+        f"Task: {title}\n\n"
+        f"Description: {description}\n\n"
+        f"Files to create/modify: {', '.join(files)}\n\n"
+        f"=== IMPORTANT: This is RETRY #{retry_number} ===\n\n"
+        f"Your previous implementation was reviewed and REJECTED. "
+        f"The worktree already contains your previous changes. "
+        f"DO NOT start from scratch — fix the specific issues below.\n\n"
+        f"Review feedback from the reviewer:\n"
+        f"---\n"
+        f"{review_feedback}\n"
+        f"---\n\n"
+        "Instructions:\n"
+        "1. Read the review feedback above carefully\n"
+        "2. Look at your existing code (it's already in the worktree)\n"
+        "3. Fix ONLY the issues the reviewer flagged\n"
+        "4. Make sure your code actually works — run it if possible\n"
+        "5. Stage and commit your fixes: git add -A && git commit -m 'fix: address review feedback'\n"
+        "6. Make sure you actually commit — the system checks for committed changes"
+    )
+
+
 def _get_diff_vs_main(worktree_path: str) -> str:
     """Get diff of the worktree branch vs its merge-base with the parent branch.
 
@@ -600,6 +702,26 @@ def _get_diff_vs_main(worktree_path: str) -> str:
             text=True,
         )
     return result.stdout
+
+
+def _get_diff_stats(repo_path: str) -> dict[str, int]:
+    """Get lines added/removed for the last merge commit."""
+    result = subprocess.run(
+        ["git", "diff", "--shortstat", "HEAD~1", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    added, removed = 0, 0
+    if result.returncode == 0 and result.stdout.strip():
+        import re
+        m_add = re.search(r"(\d+) insertion", result.stdout)
+        m_del = re.search(r"(\d+) deletion", result.stdout)
+        if m_add:
+            added = int(m_add.group(1))
+        if m_del:
+            removed = int(m_del.group(1))
+    return {"linesAdded": added, "linesRemoved": removed}
 
 
 def _get_changed_files_vs_main(worktree_path: str) -> list[str]:

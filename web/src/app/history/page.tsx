@@ -113,7 +113,7 @@ export default function HistoryPage() {
               {history.map((item) => (
                 <tr
                   key={item.pipeline_id}
-                  onClick={() => router.push(`/tasks/${item.pipeline_id}`)}
+                  onClick={() => router.push(`/tasks/view?id=${item.pipeline_id}`)}
                   className="cursor-pointer border-b border-zinc-800 bg-zinc-900 transition-colors hover:bg-zinc-800"
                 >
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-400">

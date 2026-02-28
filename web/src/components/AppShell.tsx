@@ -17,18 +17,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   const isPublic = isPublicPath(pathname);
-  const showSidebar = token && !isPublic;
+  const showNav = token && !isPublic;
 
   return (
     <AuthGuard>
-      {showSidebar ? (
-        <div className="flex h-screen bg-zinc-950">
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto">{children}</main>
-        </div>
-      ) : (
-        <>{children}</>
-      )}
+      {showNav && <Sidebar />}
+      <main className="min-h-screen bg-zinc-950">
+        {children}
+      </main>
     </AuthGuard>
   );
 }

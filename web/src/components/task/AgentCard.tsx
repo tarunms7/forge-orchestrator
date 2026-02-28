@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TaskState } from "@/stores/taskStore";
 
 const STATE_BADGE: Record<
@@ -83,15 +83,94 @@ function stripAnsi(str: string): string {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "");
 }
 
+/** Renders a single output line with basic markdown-like formatting. */
+function FormattedLine({ text }: { text: string }) {
+  const clean = stripAnsi(text);
+
+  // Heading detection (# or ## or ###)
+  if (/^#{1,3}\s/.test(clean)) {
+    const level = clean.match(/^(#+)/)?.[1].length ?? 1;
+    const content = clean.replace(/^#+\s*/, "");
+    const sizes = ["text-sm font-bold text-zinc-100", "text-sm font-semibold text-zinc-200", "text-xs font-semibold text-zinc-300"];
+    return (
+      <div className={`mt-2 mb-1 ${sizes[Math.min(level - 1, 2)]}`}>
+        {content}
+      </div>
+    );
+  }
+
+  // Separator lines (---, ===, ***)
+  if (/^[-=*]{3,}\s*$/.test(clean)) {
+    return <div className="my-1 border-t border-zinc-800" />;
+  }
+
+  // Bullet points
+  if (/^\s*[-*]\s/.test(clean)) {
+    const content = clean.replace(/^\s*[-*]\s/, "");
+    return (
+      <div className="flex gap-2 text-zinc-400">
+        <span className="text-zinc-600 select-none">&#x2022;</span>
+        <span>{content}</span>
+      </div>
+    );
+  }
+
+  // Numbered items
+  if (/^\s*\d+[.)]\s/.test(clean)) {
+    const match = clean.match(/^\s*(\d+)[.)]\s(.*)/);
+    if (match) {
+      return (
+        <div className="flex gap-2 text-zinc-400">
+          <span className="text-zinc-500 select-none min-w-[1.2rem] text-right">{match[1]}.</span>
+          <span>{match[2]}</span>
+        </div>
+      );
+    }
+  }
+
+  // Code block markers (```)
+  if (/^```/.test(clean)) {
+    const lang = clean.replace(/^```\s*/, "");
+    if (lang) {
+      return (
+        <div className="mt-1 text-xs text-zinc-600">{lang}</div>
+      );
+    }
+    return <div className="my-0.5" />;
+  }
+
+  // Empty line → small spacer
+  if (!clean.trim()) {
+    return <div className="h-1" />;
+  }
+
+  // Default: normal text
+  return (
+    <div className="whitespace-pre-wrap break-words text-zinc-400">
+      {clean}
+    </div>
+  );
+}
+
+const COLLAPSED_LINE_LIMIT = 8;
+
 export default function AgentCard({ task }: { task: TaskState }) {
   const outputRef = useRef<HTMLDivElement>(null);
   const badge = STATE_BADGE[task.state];
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    if (outputRef.current) {
+    if (outputRef.current && (expanded || task.output.length <= COLLAPSED_LINE_LIMIT)) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [task.output]);
+  }, [task.output, expanded]);
+
+  const showExpand = task.output.length > COLLAPSED_LINE_LIMIT;
+
+  // Calculate stable indices: when collapsed, we show the last N lines
+  // Use the absolute index from the full array as key for React stability
+  const startIndex = expanded ? 0 : Math.max(0, task.output.length - COLLAPSED_LINE_LIMIT);
+  const visibleLines = expanded ? task.output : task.output.slice(-COLLAPSED_LINE_LIMIT);
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3">
@@ -131,17 +210,37 @@ export default function AgentCard({ task }: { task: TaskState }) {
         </div>
       )}
 
-      {/* Terminal output */}
+      {/* Agent output */}
       {task.output.length > 0 && (
-        <div
-          ref={outputRef}
-          className="max-h-64 overflow-y-auto rounded-lg bg-zinc-950 p-3 font-mono text-sm text-green-400"
-        >
-          {task.output.map((line, i) => (
-            <div key={i} className="whitespace-pre-wrap break-all">
-              {stripAnsi(line)}
-            </div>
-          ))}
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <p className="text-xs font-medium text-zinc-500">
+              Agent Output ({task.output.length} messages)
+            </p>
+            {showExpand && (
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                {expanded ? "Collapse" : `Show all ${task.output.length}`}
+              </button>
+            )}
+          </div>
+          <div
+            ref={outputRef}
+            className={`overflow-y-auto rounded-lg bg-zinc-950 p-3 font-mono text-xs leading-relaxed ${
+              expanded ? "max-h-96" : "max-h-48"
+            }`}
+          >
+            {!expanded && showExpand && (
+              <div className="mb-2 text-center text-zinc-600 text-xs">
+                &#x2022;&#x2022;&#x2022; {task.output.length - COLLAPSED_LINE_LIMIT} earlier messages hidden &#x2022;&#x2022;&#x2022;
+              </div>
+            )}
+            {visibleLines.map((line, i) => (
+              <FormattedLine key={`line-${startIndex + i}`} text={line} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -152,18 +251,24 @@ export default function AgentCard({ task }: { task: TaskState }) {
             Review Gates
           </p>
           <div className="flex items-center gap-2">
-            {task.reviewGates.map((gate) => (
-              <div
-                key={gate.gate}
-                className="flex items-center gap-1"
-                title={gate.details}
-              >
-                <ReviewGateIcon result={gate.result} />
-                <span className="text-xs text-zinc-400">
-                  Gate {gate.gate}
-                </span>
-              </div>
-            ))}
+            {task.reviewGates.map((gate) => {
+              const label =
+                gate.gate === "L1" ? "L1 (general)" :
+                gate.gate === "L2" ? "L2 (LLM)" :
+                String(gate.gate);
+              return (
+                <div
+                  key={gate.gate}
+                  className="flex items-center gap-1"
+                  title={gate.details}
+                >
+                  <ReviewGateIcon result={gate.result} />
+                  <span className="text-xs text-zinc-400">
+                    {label}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -171,19 +276,29 @@ export default function AgentCard({ task }: { task: TaskState }) {
       {/* Merge result */}
       {task.mergeResult && (
         <div
-          className={`rounded-lg px-3 py-2 text-xs ${
+          className={`rounded-lg px-3 py-2 text-xs font-medium ${
             task.mergeResult.success
-              ? "bg-green-950 text-green-300"
-              : "bg-red-950 text-red-300"
+              ? "bg-green-950/50 text-green-300 border border-green-900"
+              : "bg-red-950/50 text-red-300 border border-red-900"
           }`}
         >
           {task.mergeResult.success ? (
-            <span>
-              Merged (+{task.mergeResult.linesAdded ?? 0} / -
-              {task.mergeResult.linesRemoved ?? 0})
+            <span className="flex items-center gap-2">
+              <svg className="h-3.5 w-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Merged
+              <span className="text-green-400">+{task.mergeResult.linesAdded ?? 0}</span>
+              <span className="text-zinc-500">/</span>
+              <span className="text-red-400">-{task.mergeResult.linesRemoved ?? 0}</span>
             </span>
           ) : (
-            <span>Merge failed: {task.mergeResult.error}</span>
+            <span className="flex items-center gap-2">
+              <svg className="h-3.5 w-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Merge failed: {task.mergeResult.error}
+            </span>
           )}
         </div>
       )}

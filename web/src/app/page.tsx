@@ -183,7 +183,7 @@ export default function DashboardPage() {
               {recent.map((item) => (
                 <Link
                   key={item.pipeline_id}
-                  href={`/tasks/${item.pipeline_id}`}
+                  href={`/tasks/view?id=${item.pipeline_id}`}
                   className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-3 transition-colors hover:border-zinc-600 hover:bg-zinc-800/70"
                 >
                   <div className="min-w-0 flex-1">

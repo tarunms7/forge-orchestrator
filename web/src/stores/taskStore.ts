@@ -5,9 +5,18 @@ export interface TaskState {
   title: string;
   state: "pending" | "working" | "in_review" | "done" | "error" | "retrying";
   branch: string;
+  /** Description from the plan (what this task does). */
+  description?: string;
+  /** Target files from the plan (files the agent should create/modify). */
+  targetFiles?: string[];
+  /** Dependency IDs from the plan. */
+  dependsOn?: string[];
+  /** Complexity tier from the plan. */
+  complexity?: string;
+  /** Files actually changed during execution. */
   files: string[];
   output: string[];
-  reviewGates: { gate: number; result: string; details?: string }[];
+  reviewGates: { gate: string; result: string; details?: string }[];
   mergeResult?: {
     success: boolean;
     error?: string;
@@ -21,7 +30,21 @@ export interface PipelineState {
   phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
+  prUrl: string | null;
+  prLoading: boolean;
+  prError: string | null;
   setPipelineId: (id: string) => void;
+  hydrateFromRest: (data: {
+    phase: string;
+    tasks: Array<{
+      id: string;
+      title: string;
+      description?: string;
+      files?: string[];
+      depends_on?: string[];
+      complexity?: string;
+    }>;
+  }) => void;
   handleEvent: (event: {
     event: string;
     data: Record<string, unknown>;
@@ -53,9 +76,32 @@ export const useTaskStore = create<PipelineState>((set) => ({
   phase: "idle",
   tasks: {},
   plannerOutput: [],
+  prUrl: null,
+  prLoading: false,
+  prError: null,
   setPipelineId: (id) => set({ pipelineId: id }),
+  hydrateFromRest: (data) => {
+    const newTasks: Record<string, TaskState> = {};
+    for (const t of data.tasks) {
+      newTasks[t.id] = {
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        targetFiles: t.files,
+        dependsOn: t.depends_on,
+        complexity: t.complexity,
+        state: "pending",
+        branch: `forge/${t.id}`,
+        files: [],
+        output: [],
+        reviewGates: [],
+      };
+    }
+    const phase = (data.phase || "idle") as PipelineState["phase"];
+    set({ tasks: newTasks, phase });
+  },
   reset: () =>
-    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [] }),
+    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [], prUrl: null, prLoading: false, prError: null }),
   handleEvent: (event) =>
     set((state) => {
       const { event: eventName, data } = event;
@@ -68,11 +114,18 @@ export const useTaskStore = create<PipelineState>((set) => ({
           for (const t of data.tasks as Array<{
             id: string;
             title: string;
-            complexity: string;
+            description?: string;
+            files?: string[];
+            depends_on?: string[];
+            complexity?: string;
           }>) {
             newTasks[t.id] = {
               id: t.id,
               title: t.title,
+              description: t.description,
+              targetFiles: t.files,
+              dependsOn: t.depends_on,
+              complexity: t.complexity,
               state: "pending",
               branch: `forge/${t.id}`,
               files: [],
@@ -137,7 +190,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
                 reviewGates: [
                   ...existing.reviewGates,
                   {
-                    gate: data.gate as number,
+                    gate: data.gate as string,
                     result: data.passed ? "pass" : "fail",
                     details: data.details as string,
                   },
@@ -161,6 +214,15 @@ export const useTaskStore = create<PipelineState>((set) => ({
             },
           };
         }
+
+        case "pipeline:pr_creating":
+          return { prLoading: true, prError: null };
+
+        case "pipeline:pr_created":
+          return { prUrl: data.pr_url as string, prLoading: false, prError: null };
+
+        case "pipeline:pr_failed":
+          return { prLoading: false, prError: data.error as string };
 
         case "planner:output":
           return {

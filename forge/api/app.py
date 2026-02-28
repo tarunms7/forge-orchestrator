@@ -9,27 +9,22 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 def create_app(
     *,
     db_url: str | None = None,
     jwt_secret: str | None = None,
+    # Kept for backward compat — ignored, uses db_url for everything
     forge_db_url: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
         db_url: Async database URL (e.g. ``sqlite+aiosqlite:///forge.db``).
-            If provided, an async engine and sessionmaker are attached to
-            ``app.state`` and tables are created on startup.
+            Single DB for auth + pipelines + tasks.
         jwt_secret: Secret key used for JWT token signing.
-            If not provided, reads from ``FORGE_JWT_SECRET`` env var.
-            Falls back to a random secret (tokens won't survive restarts).
-        forge_db_url: Async database URL for Forge pipeline data.
-            If provided, the pipeline DB is initialized on startup.
-            Separate from the user auth DB to avoid coupling.
+        forge_db_url: **Deprecated** — ignored. All data uses ``db_url``.
     """
     if jwt_secret is None:
         jwt_secret = os.environ.get("FORGE_JWT_SECRET", "")
@@ -40,54 +35,33 @@ def create_app(
             logging.getLogger(__name__).warning(
                 "No FORGE_JWT_SECRET set — using random secret (tokens won't survive restarts)"
             )
-    engine = None
-    session_factory = None
 
-    if db_url is not None:
-        engine = create_async_engine(db_url, echo=False)
-        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    # ── Single unified database ─────────────────────────────────────
+    from forge.storage.db import Database
 
-    # ── Forge pipeline DB (separate from user auth DB) ─────────────
-    from forge.storage.db import Database as ForgeDB
-
-    forge_db = ForgeDB(forge_db_url) if forge_db_url is not None else None
+    db = Database(db_url) if db_url is not None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Startup: create tables if we have a DB
-        if engine is not None:
-            from forge.api.models.user import Base
-
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-        # Initialize forge pipeline DB
-        if forge_db is not None:
-            await forge_db.initialize()
+        if db is not None:
+            await db.initialize()
         yield
-        # Shutdown: dispose engines
-        if forge_db is not None:
-            await forge_db.close()
-        if engine is not None:
-            await engine.dispose()
+        if db is not None:
+            await db.close()
 
     app = FastAPI(title="Forge", version="0.1.0", lifespan=lifespan)
 
-    # Store jwt_secret on app state for use by auth service
+    # Store on app.state
     app.state.jwt_secret = jwt_secret
+    app.state.db = db
+    # Backward compat aliases — routes that use _get_forge_db still work
+    app.state.forge_db = db
+    app.state.pending_graphs = {}
 
     # ── WebSocket connection manager ─────────────────────────────────
     from forge.api.ws.manager import ConnectionManager
 
     app.state.ws_manager = ConnectionManager()
-
-    # Attach DB objects to app.state (if provided)
-    if engine is not None:
-        app.state.async_engine = engine
-        app.state.async_session = session_factory
-
-    # Attach forge pipeline DB and daemon factory
-    app.state.forge_db = forge_db
-    app.state.pending_graphs = {}
 
     def daemon_factory(project_path: str, model_strategy: str):
         """Create a ForgeDaemon + EventEmitter pair for a pipeline."""

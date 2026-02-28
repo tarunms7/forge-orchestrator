@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 async def test_create_user_in_memory_db():
     """UserRow can be created and queried in an in-memory SQLite database."""
-    from forge.api.models.user import Base, UserRow
+    from forge.storage.db import Base, UserRow
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -41,7 +41,7 @@ async def test_user_email_uniqueness():
     """Duplicate emails should raise IntegrityError."""
     from sqlalchemy.exc import IntegrityError
 
-    from forge.api.models.user import Base, UserRow
+    from forge.storage.db import Base, UserRow
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -63,7 +63,7 @@ async def test_user_email_uniqueness():
 
 async def test_create_audit_log():
     """AuditLogRow can be created and linked to a user."""
-    from forge.api.models.user import AuditLogRow, Base, UserRow
+    from forge.storage.db import AuditLogRow, Base, UserRow
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -99,7 +99,7 @@ async def test_create_audit_log():
 
 async def test_user_id_is_uuid():
     """UserRow.id should default to a valid UUID string."""
-    from forge.api.models.user import Base, UserRow
+    from forge.storage.db import Base, UserRow
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:

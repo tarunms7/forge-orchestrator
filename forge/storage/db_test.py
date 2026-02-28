@@ -154,6 +154,62 @@ async def test_list_tasks_by_pipeline(db: Database):
     assert tasks[0].id == "t1"
 
 
+async def test_migrate_adds_missing_columns():
+    """Verify initialize() adds columns missing from a stale DB schema."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    # Step 1: create a DB with old schema (no pipeline_id on tasks, no pr_url on pipelines)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE tasks ("
+            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE pipelines ("
+            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+            "  task_graph_json VARCHAR, user_id VARCHAR,"
+            "  created_at VARCHAR, completed_at VARCHAR"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE agents ("
+            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+            ")"
+        ))
+
+    # Step 2: wrap in Database and call initialize() — should add missing columns
+    from forge.storage.db import Database as DB
+    db = DB.__new__(DB)
+    db._engine = engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+    db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await db.initialize()
+
+    # Step 3: operations that touch new columns should work
+    await db.create_task(
+        id="t1", title="T", description="D", files=[], depends_on=[],
+        complexity="low", pipeline_id="pipe-1",
+    )
+    task = await db.get_task("t1")
+    assert task.pipeline_id == "pipe-1"
+
+    await db.create_pipeline(
+        id="pipe-1", description="P", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.set_pipeline_pr_url("pipe-1", "https://github.com/pull/1")
+    pipeline = await db.get_pipeline("pipe-1")
+    assert pipeline.pr_url == "https://github.com/pull/1"
+
+    await engine.dispose()
+
+
 async def test_set_pipeline_pr_url(db: Database):
     await db.create_pipeline(
         id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",

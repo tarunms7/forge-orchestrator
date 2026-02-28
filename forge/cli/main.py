@@ -85,18 +85,13 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
     default=True,
     help="Build Next.js before serving",
 )
-@click.option(
-    "--forge-db-url",
-    default="sqlite+aiosqlite:///forge_pipelines.db",
-    help="Database URL for pipeline data",
-)
-def serve(port: int, host: str, db_url: str, jwt_secret: str | None, build_frontend: bool, forge_db_url: str):
+def serve(port: int, host: str, db_url: str, jwt_secret: str | None, build_frontend: bool):
     """Start the Forge web server."""
     if build_frontend:
         _build_frontend()
     import uvicorn
     from forge.api.app import create_app
-    app = create_app(db_url=db_url, jwt_secret=jwt_secret, forge_db_url=forge_db_url)
+    app = create_app(db_url=db_url, jwt_secret=jwt_secret)
     click.echo(f"Forge UI: http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

@@ -6,8 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 
-from forge.api.security.jwt import create_access_token, decode_token
-from forge.api.services.auth_service import AuthService
+from forge.api.security.jwt import create_access_token, create_refresh_token, decode_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -47,18 +46,24 @@ def _set_refresh_cookie(response: JSONResponse, refresh_token: str) -> None:
         secure=True,
         samesite="strict",
         max_age=7 * 24 * 60 * 60,  # 7 days
-        path="/",  # Must be "/" so cookie is sent to /api/auth/refresh
+        path="/",
     )
 
 
-def _build_auth_response(result: dict, *, status_code: int = 200) -> JSONResponse:
+def _build_auth_response(user, jwt_secret: str, *, status_code: int = 200) -> JSONResponse:
     """Build a JSONResponse with access_token in body, refresh_token in cookie."""
+    access = create_access_token(subject=user.id, secret=jwt_secret)
+    refresh = create_refresh_token(subject=user.id, secret=jwt_secret)
     body = {
-        "access_token": result["access_token"],
-        "user": result["user"],
+        "access_token": access,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name,
+        },
     }
     response = JSONResponse(content=body, status_code=status_code)
-    _set_refresh_cookie(response, result["refresh_token"])
+    _set_refresh_cookie(response, refresh)
     return response
 
 
@@ -67,40 +72,40 @@ def _build_auth_response(result: dict, *, status_code: int = 200) -> JSONRespons
 @router.post("/register", status_code=201)
 async def register(body: RegisterRequest, request: Request) -> JSONResponse:
     """Register a new user account."""
-    session_factory = request.app.state.async_session
+    db = request.app.state.db
     jwt_secret = request.app.state.jwt_secret
 
-    async with session_factory() as session:
-        svc = AuthService(session, jwt_secret=jwt_secret)
-        try:
-            result = await svc.register(
-                email=body.email,
-                password=body.password,
-                display_name=body.display_name,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
 
-    return _build_auth_response(result, status_code=201)
+    try:
+        user = await db.create_user(
+            email=body.email,
+            password=body.password,
+            display_name=body.display_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return _build_auth_response(user, jwt_secret, status_code=201)
 
 
 @router.post("/login")
 async def login(body: LoginRequest, request: Request) -> JSONResponse:
     """Authenticate and receive access token (refresh token set as cookie)."""
-    session_factory = request.app.state.async_session
+    db = request.app.state.db
     jwt_secret = request.app.state.jwt_secret
 
-    async with session_factory() as session:
-        svc = AuthService(session, jwt_secret=jwt_secret)
-        try:
-            result = await svc.login(
-                email=body.email,
-                password=body.password,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=401, detail=str(exc))
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
 
-    return _build_auth_response(result)
+    from forge.storage.db import Database
+
+    user = await db.get_user_by_email(body.email)
+    if user is None or not Database.verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return _build_auth_response(user, jwt_secret)
 
 
 @router.post("/refresh")
