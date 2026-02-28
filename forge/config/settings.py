@@ -8,12 +8,12 @@ class ForgeSettings(BaseSettings):
 
     model_config = {"env_prefix": "FORGE_"}
 
-    # Model
-    model: str = "sonnet"  # Claude model: "sonnet", "opus", "haiku"
+    # Model routing strategy
+    model_strategy: str = "auto"  # "auto", "fast", "quality"
 
     # Agent limits
     max_agents: int = 4
-    agent_timeout_seconds: int = 1800
+    agent_timeout_seconds: int = 600  # lowered from 1800
     context_rotation_tokens: int = 80_000
     max_retries: int = 3
 

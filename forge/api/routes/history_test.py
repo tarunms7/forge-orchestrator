@@ -28,7 +28,7 @@ async def client():
 async def _register_and_get_token(client: AsyncClient) -> str:
     """Helper: register a user and return the access token."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "history-user@example.com",
             "password": "securepass",
@@ -48,13 +48,13 @@ class TestListHistory:
 
     async def test_history_requires_auth(self, client):
         """GET /history without auth should return 401."""
-        resp = await client.get("/history")
+        resp = await client.get("/api/history")
         assert resp.status_code == 401
 
     async def test_history_returns_empty_list(self, client):
         """GET /history should return empty list when no pipelines exist."""
         token = await _register_and_get_token(client)
-        resp = await client.get("/history", headers=_auth_header(token))
+        resp = await client.get("/api/history", headers=_auth_header(token))
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -65,17 +65,17 @@ class TestListHistory:
 
         # Create two tasks
         await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "History Task A", "project_path": "/p1"},
             headers=headers,
         )
         await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "History Task B", "project_path": "/p2"},
             headers=headers,
         )
 
-        resp = await client.get("/history", headers=headers)
+        resp = await client.get("/api/history", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
@@ -93,14 +93,14 @@ class TestHistoryDetail:
 
     async def test_history_detail_requires_auth(self, client):
         """GET /history/{id} without auth should return 401."""
-        resp = await client.get("/history/some-id")
+        resp = await client.get("/api/history/some-id")
         assert resp.status_code == 401
 
     async def test_history_detail_returns_404_for_unknown(self, client):
         """GET /history/{id} for unknown pipeline should return 404."""
         token = await _register_and_get_token(client)
         resp = await client.get(
-            "/history/nonexistent-id",
+            "/api/history/nonexistent-id",
             headers=_auth_header(token),
         )
         assert resp.status_code == 404
@@ -111,14 +111,14 @@ class TestHistoryDetail:
         headers = _auth_header(token)
 
         create_resp = await client.post(
-            "/tasks",
+            "/api/tasks",
             json={"description": "Detail task", "project_path": "/tmp/proj"},
             headers=headers,
         )
         pipeline_id = create_resp.json()["pipeline_id"]
 
         resp = await client.get(
-            f"/history/{pipeline_id}",
+            f"/api/history/{pipeline_id}",
             headers=headers,
         )
         assert resp.status_code == 200

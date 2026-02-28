@@ -36,12 +36,12 @@ def init(project_dir: str) -> None:
 @click.argument("task")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--model",
+    "--strategy",
     default=None,
-    envvar="FORGE_MODEL",
-    help="Claude model to use: sonnet, opus, haiku (default: sonnet, or $FORGE_MODEL)",
+    envvar="FORGE_MODEL_STRATEGY",
+    help="Model routing: auto, fast, quality (default: auto, or $FORGE_MODEL_STRATEGY)",
 )
-def run(task: str, project_dir: str, model: str | None) -> None:
+def run(task: str, project_dir: str, strategy: str | None) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -57,8 +57,8 @@ def run(task: str, project_dir: str, model: str | None) -> None:
     from forge.core.daemon import ForgeDaemon
 
     settings = ForgeSettings()
-    if model:
-        settings.model = model
+    if strategy:
+        settings.model_strategy = strategy
 
     daemon = ForgeDaemon(project_dir, settings=settings)
     try:
@@ -80,12 +80,39 @@ def run(task: str, project_dir: str, model: str | None) -> None:
     envvar="FORGE_JWT_SECRET",
     help="JWT signing secret (default: $FORGE_JWT_SECRET or random)",
 )
-def serve(port: int, host: str, db_url: str, jwt_secret: str | None):
+@click.option(
+    "--build-frontend/--no-build-frontend",
+    default=True,
+    help="Build Next.js before serving",
+)
+@click.option(
+    "--forge-db-url",
+    default="sqlite+aiosqlite:///forge_pipelines.db",
+    help="Database URL for pipeline data",
+)
+def serve(port: int, host: str, db_url: str, jwt_secret: str | None, build_frontend: bool, forge_db_url: str):
     """Start the Forge web server."""
+    if build_frontend:
+        _build_frontend()
     import uvicorn
     from forge.api.app import create_app
-    app = create_app(db_url=db_url, jwt_secret=jwt_secret)
+    app = create_app(db_url=db_url, jwt_secret=jwt_secret, forge_db_url=forge_db_url)
+    click.echo(f"Forge UI: http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+
+def _build_frontend():
+    """Build the Next.js frontend if web/ directory exists."""
+    import subprocess
+    web_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web")
+    web_dir = os.path.normpath(web_dir)
+    if not os.path.isdir(web_dir):
+        return
+    out_dir = os.path.join(web_dir, "out")
+    if os.path.isdir(out_dir):
+        return  # already built
+    click.echo("Building frontend...")
+    subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
 
 
 def _write_if_missing(path: str, content: str) -> None:

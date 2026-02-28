@@ -28,7 +28,7 @@ async def client():
 async def _register_and_get_token(client: AsyncClient) -> str:
     """Helper: register a user and return the access token."""
     resp = await client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={
             "email": "settings-user@example.com",
             "password": "securepass",
@@ -48,13 +48,13 @@ class TestGetSettings:
 
     async def test_settings_requires_auth(self, client):
         """GET /settings without auth should return 401."""
-        resp = await client.get("/settings")
+        resp = await client.get("/api/settings")
         assert resp.status_code == 401
 
     async def test_get_default_settings(self, client):
         """GET /settings should return default settings for new user."""
         token = await _register_and_get_token(client)
-        resp = await client.get("/settings", headers=_auth_header(token))
+        resp = await client.get("/api/settings", headers=_auth_header(token))
         assert resp.status_code == 200
         data = resp.json()
         assert data["max_agents"] == 4
@@ -69,7 +69,7 @@ class TestUpdateSettings:
 
     async def test_update_requires_auth(self, client):
         """PUT /settings without auth should return 401."""
-        resp = await client.put("/settings", json={"max_agents": 8})
+        resp = await client.put("/api/settings", json={"max_agents": 8})
         assert resp.status_code == 401
 
     async def test_update_partial_settings(self, client):
@@ -78,7 +78,7 @@ class TestUpdateSettings:
         headers = _auth_header(token)
 
         resp = await client.put(
-            "/settings",
+            "/api/settings",
             json={"max_agents": 8, "browser_notifications": True},
             headers=headers,
         )
@@ -96,7 +96,7 @@ class TestUpdateSettings:
         headers = _auth_header(token)
 
         resp = await client.put(
-            "/settings",
+            "/api/settings",
             json={"webhook_url": "https://hooks.slack.com/services/test"},
             headers=headers,
         )
@@ -110,13 +110,13 @@ class TestUpdateSettings:
 
         # Update
         await client.put(
-            "/settings",
+            "/api/settings",
             json={"max_agents": 12},
             headers=headers,
         )
 
         # Verify
-        resp = await client.get("/settings", headers=headers)
+        resp = await client.get("/api/settings", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["max_agents"] == 12
 
@@ -126,7 +126,7 @@ class TestUpdateSettings:
         headers = _auth_header(token)
 
         resp = await client.put(
-            "/settings",
+            "/api/settings",
             json={"max_agents": 0},
             headers=headers,
         )

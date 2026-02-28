@@ -16,6 +16,7 @@ def create_app(
     *,
     db_url: str | None = None,
     jwt_secret: str | None = None,
+    forge_db_url: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -26,6 +27,9 @@ def create_app(
         jwt_secret: Secret key used for JWT token signing.
             If not provided, reads from ``FORGE_JWT_SECRET`` env var.
             Falls back to a random secret (tokens won't survive restarts).
+        forge_db_url: Async database URL for Forge pipeline data.
+            If provided, the pipeline DB is initialized on startup.
+            Separate from the user auth DB to avoid coupling.
     """
     if jwt_secret is None:
         jwt_secret = os.environ.get("FORGE_JWT_SECRET", "")
@@ -43,6 +47,11 @@ def create_app(
         engine = create_async_engine(db_url, echo=False)
         session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
+    # ── Forge pipeline DB (separate from user auth DB) ─────────────
+    from forge.storage.db import Database as ForgeDB
+
+    forge_db = ForgeDB(forge_db_url) if forge_db_url is not None else None
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Startup: create tables if we have a DB
@@ -51,8 +60,13 @@ def create_app(
 
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+        # Initialize forge pipeline DB
+        if forge_db is not None:
+            await forge_db.initialize()
         yield
-        # Shutdown: dispose engine
+        # Shutdown: dispose engines
+        if forge_db is not None:
+            await forge_db.close()
         if engine is not None:
             await engine.dispose()
 
@@ -71,6 +85,24 @@ def create_app(
         app.state.async_engine = engine
         app.state.async_session = session_factory
 
+    # Attach forge pipeline DB and daemon factory
+    app.state.forge_db = forge_db
+    app.state.pending_graphs = {}
+
+    def daemon_factory(project_path: str, model_strategy: str):
+        """Create a ForgeDaemon + EventEmitter pair for a pipeline."""
+        from forge.config.settings import ForgeSettings
+        from forge.core.daemon import ForgeDaemon
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        settings = ForgeSettings()
+        settings.model_strategy = model_strategy
+        daemon = ForgeDaemon(project_path, settings=settings, event_emitter=emitter)
+        return daemon, emitter
+
+    app.state.daemon_factory = daemon_factory
+
     # CORS -- allow the React dev server
     app.add_middleware(
         CORSMiddleware,
@@ -80,7 +112,7 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # ── Routers ─────────────────────────────────────────────────────
+    # ── Routers (all under /api prefix) ──────────────────────────────
     from forge.api.routes.auth import router as auth_router
     from forge.api.routes.diff import router as diff_router
     from forge.api.routes.github import router as github_router
@@ -89,18 +121,18 @@ def create_app(
     from forge.api.routes.tasks import router as tasks_router
     from forge.api.routes.templates import router as templates_router
 
-    app.include_router(auth_router)
-    app.include_router(tasks_router)
-    app.include_router(diff_router)
-    app.include_router(history_router)
-    app.include_router(github_router)
-    app.include_router(settings_router)
-    app.include_router(templates_router)
+    app.include_router(auth_router, prefix="/api")
+    app.include_router(tasks_router, prefix="/api/tasks")
+    app.include_router(diff_router, prefix="/api")
+    app.include_router(history_router, prefix="/api")
+    app.include_router(github_router, prefix="/api")
+    app.include_router(settings_router, prefix="/api")
+    app.include_router(templates_router, prefix="/api")
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint
 
-    @app.websocket("/ws/{pipeline_id}")
+    @app.websocket("/api/ws/{pipeline_id}")
     async def ws_route(websocket: WebSocket, pipeline_id: str) -> None:
         await websocket_endpoint(
             websocket,
@@ -113,5 +145,11 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "version": app.version}
+
+    # ── Serve built frontend (must be LAST — catch-all) ─────────────
+    frontend_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web", "out")
+    if os.path.isdir(frontend_dir):
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
     return app

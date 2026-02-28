@@ -162,6 +162,7 @@ export default function NewTaskPage() {
         description: task.description,
         project_path: resolveProjectPath(),
         extra_dirs: [],
+        model_strategy: "auto",
       };
 
       if (task.additionalContext.trim()) {
@@ -169,7 +170,7 @@ export default function NewTaskPage() {
       }
 
       const data = await apiPost("/tasks", body, token);
-      router.push(`/tasks/${data.pipeline_id}`);
+      router.push(`/tasks/view?id=${data.pipeline_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
     } finally {

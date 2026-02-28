@@ -18,7 +18,7 @@ export interface TaskState {
 
 export interface PipelineState {
   pipelineId: string | null;
-  phase: "idle" | "planning" | "executing" | "reviewing" | "complete";
+  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
   setPipelineId: (id: string) => void;
@@ -49,23 +49,23 @@ export const useTaskStore = create<PipelineState>((set) => ({
           for (const t of data.tasks as Array<{
             id: string;
             title: string;
-            branch: string;
+            complexity: string;
           }>) {
             newTasks[t.id] = {
               id: t.id,
               title: t.title,
               state: "pending",
-              branch: t.branch,
+              branch: `forge/${t.id}`,
               files: [],
               output: [],
               reviewGates: [],
             };
           }
-          return { tasks: newTasks, phase: "executing" };
+          return { tasks: newTasks, phase: "planned" };
         }
 
         case "task:state_changed": {
-          const taskId = data.taskId as string;
+          const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
           if (!existing) return state;
           return {
@@ -73,14 +73,14 @@ export const useTaskStore = create<PipelineState>((set) => ({
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                state: data.newState as TaskState["state"],
+                state: data.state as TaskState["state"],
               },
             },
           };
         }
 
         case "task:agent_output": {
-          const taskId = data.taskId as string;
+          const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
           if (!existing) return state;
           return {
@@ -95,7 +95,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
         }
 
         case "task:files_changed": {
-          const taskId = data.taskId as string;
+          const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
           if (!existing) return state;
           return {
@@ -107,7 +107,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
         }
 
         case "task:review_update": {
-          const taskId = data.taskId as string;
+          const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
           if (!existing) return state;
           return {
@@ -119,7 +119,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
                   ...existing.reviewGates,
                   {
                     gate: data.gate as number,
-                    result: data.result as string,
+                    result: data.passed ? "pass" : "fail",
                     details: data.details as string,
                   },
                 ],
@@ -129,7 +129,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
         }
 
         case "task:merge_result": {
-          const taskId = data.taskId as string;
+          const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
           if (!existing) return state;
           return {

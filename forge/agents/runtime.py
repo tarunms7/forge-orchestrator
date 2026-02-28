@@ -17,6 +17,7 @@ class AgentRuntime:
         worktree_path: str,
         allowed_files: list[str],
         allowed_dirs: list[str] | None = None,
+        model: str = "sonnet",
     ) -> AgentResult:
         try:
             return await self._adapter.run(
@@ -25,6 +26,7 @@ class AgentRuntime:
                 allowed_files=allowed_files,
                 timeout_seconds=self._timeout,
                 allowed_dirs=allowed_dirs,
+                model=model,
             )
         except TimeoutError:
             return AgentResult(
