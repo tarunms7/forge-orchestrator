@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -136,23 +139,34 @@ async def execute_pipeline(
     user_id: str = Depends(get_current_user),
 ) -> dict:
     """Start execution of a previously planned pipeline."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    # IDOR check: verify the pipeline belongs to the requesting user
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
     pending_graphs = getattr(request.app.state, "pending_graphs", {})
     entry = pending_graphs.get(pipeline_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="No pending plan found for this pipeline")
 
     graph, daemon = entry
-    forge_db = _get_forge_db(request)
-    if forge_db is None:
-        raise HTTPException(status_code=500, detail="Database not available")
+    ws_manager = request.app.state.ws_manager
 
     async def _run_execute():
         try:
             await forge_db.update_pipeline_status(pipeline_id, "executing")
             await daemon.execute(graph, forge_db)
             await forge_db.update_pipeline_status(pipeline_id, "complete")
-        except Exception:
+        except Exception as exc:
+            logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
+            await ws_manager.broadcast(pipeline_id, {
+                "type": "pipeline:error", "error": str(exc),
+            })
 
     asyncio.create_task(_run_execute())
     del pending_graphs[pipeline_id]

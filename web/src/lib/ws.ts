@@ -1,4 +1,5 @@
 export function createWebSocket(pipelineId: string): WebSocket {
-  const wsBase = process.env.NEXT_PUBLIC_WS_URL || `ws://${window.location.host}/api`;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsBase = process.env.NEXT_PUBLIC_WS_URL || `${protocol}//${window.location.host}/api`;
   return new WebSocket(`${wsBase}/ws/${pipelineId}`);
 }
