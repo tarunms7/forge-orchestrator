@@ -106,8 +106,19 @@ class PipelineRow(Base):
     pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
+class PipelineEventRow(Base):
+    __tablename__ = "pipeline_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    task_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+
+
 # ── All model classes (used by _add_missing_columns) ──────────────────
-_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow)
+_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, PipelineEventRow)
 
 
 class Database:
@@ -373,4 +384,33 @@ class Database:
             if user_id:
                 query = query.where(PipelineRow.user_id == user_id)
             result = await session.execute(query.order_by(PipelineRow.created_at.desc()))
+            return list(result.scalars().all())
+
+    # ── Pipeline events ──────────────────────────────────────────────
+
+    async def log_event(
+        self, *, pipeline_id: str, task_id: str | None, event_type: str, payload: dict,
+    ) -> None:
+        async with self._session_factory() as session:
+            event = PipelineEventRow(
+                pipeline_id=pipeline_id,
+                task_id=task_id,
+                event_type=event_type,
+                payload=payload,
+            )
+            session.add(event)
+            await session.commit()
+
+    async def list_events(
+        self, pipeline_id: str, *, task_id: str | None = None, event_type: str | None = None,
+    ) -> list[PipelineEventRow]:
+        async with self._session_factory() as session:
+            stmt = select(PipelineEventRow).where(
+                PipelineEventRow.pipeline_id == pipeline_id
+            ).order_by(PipelineEventRow.created_at.asc())
+            if task_id is not None:
+                stmt = stmt.where(PipelineEventRow.task_id == task_id)
+            if event_type is not None:
+                stmt = stmt.where(PipelineEventRow.event_type == event_type)
+            result = await session.execute(stmt)
             return list(result.scalars().all())

@@ -217,3 +217,57 @@ async def test_set_pipeline_pr_url(db: Database):
     await db.set_pipeline_pr_url("pipe-1", "https://github.com/user/repo/pull/42")
     pipeline = await db.get_pipeline("pipe-1")
     assert pipeline.pr_url == "https://github.com/user/repo/pull/42"
+
+
+async def test_log_event(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.log_event(
+        pipeline_id="pipe-1",
+        task_id="task-1",
+        event_type="agent_output",
+        payload={"line": "Hello world"},
+    )
+    events = await db.list_events("pipe-1")
+    assert len(events) == 1
+    assert events[0].event_type == "agent_output"
+    assert events[0].task_id == "task-1"
+
+
+async def test_list_events_ordered_by_created_at(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+    )
+    for i in range(5):
+        await db.log_event(
+            pipeline_id="pipe-1",
+            task_id=None,
+            event_type="phase_change",
+            payload={"phase": f"phase_{i}"},
+        )
+    events = await db.list_events("pipe-1")
+    assert len(events) == 5
+    # Oldest first
+    assert events[0].payload["phase"] == "phase_0"
+
+
+async def test_list_events_by_task(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.log_event(pipeline_id="pipe-1", task_id="t1", event_type="agent_output", payload={"line": "a"})
+    await db.log_event(pipeline_id="pipe-1", task_id="t2", event_type="agent_output", payload={"line": "b"})
+    events = await db.list_events("pipe-1", task_id="t1")
+    assert len(events) == 1
+    assert events[0].payload["line"] == "a"
+
+
+async def test_list_events_by_type(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.log_event(pipeline_id="pipe-1", task_id=None, event_type="phase_change", payload={})
+    await db.log_event(pipeline_id="pipe-1", task_id="t1", event_type="review_update", payload={})
+    events = await db.list_events("pipe-1", event_type="review_update")
+    assert len(events) == 1
