@@ -88,6 +88,19 @@ class ForgeDaemon:
         if result.returncode != 0:
             errors.append("Not a git repository")
 
+        # Ensure repo has at least one commit — worktrees and merges
+        # require a valid HEAD. Create an initial empty commit if needed.
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir, capture_output=True,
+        ).returncode == 0
+        if not has_commits:
+            console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
+            subprocess.run(
+                ["git", "commit", "--allow-empty", "-m", "chore: initial commit (forge)"],
+                cwd=project_dir, capture_output=True, text=True,
+            )
+
         # Check: git remote exists (warning only — not needed for local execution)
         result = subprocess.run(
             ["git", "remote"], cwd=project_dir, capture_output=True, text=True,
@@ -701,7 +714,12 @@ class ForgeDaemon:
 
 
 def _get_current_branch(repo_path: str) -> str:
-    """Get the current branch name of the repo."""
+    """Get the current branch name of the repo.
+
+    Falls back to 'main' if the branch can't be determined (e.g. detached
+    HEAD or empty repo). Never returns the literal string 'HEAD' since
+    that's not a valid branch name for merge targets.
+    """
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=repo_path,
@@ -709,7 +727,19 @@ def _get_current_branch(repo_path: str) -> str:
         text=True,
     )
     branch = result.stdout.strip()
-    return branch if branch else "main"
+    # "HEAD" is returned for detached HEAD — not a valid branch name.
+    # Empty string means the command failed (no commits yet).
+    if branch and branch != "HEAD":
+        return branch
+    # Try symbolic-ref as fallback (works even before first commit)
+    sym = subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    sym_branch = sym.stdout.strip()
+    return sym_branch if sym_branch else "main"
 
 
 def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
