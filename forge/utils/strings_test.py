@@ -39,6 +39,11 @@ def test_snake_to_camel_leading_underscore():
     assert snake_to_camel("_hello") == "hello"
 
 
+def test_snake_to_camel_trailing_underscore():
+    # Trailing underscores are ignored/stripped
+    assert snake_to_camel("hello_world_") == "helloWorld"
+
+
 def test_snake_to_camel_all_uppercase_segments():
     assert snake_to_camel("get_http_response") == "getHttpResponse"
 
