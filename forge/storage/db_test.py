@@ -117,3 +117,47 @@ async def test_get_task_counts_by_state_multiple_tasks_same_state(db: Database):
     assert counts["failed"] == 3
     assert counts["todo"] == 1
     assert len(counts) == 2
+
+
+async def test_create_task_with_pipeline_id(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="Test pipeline",
+        project_dir="/tmp", model_strategy="auto",
+    )
+    await db.create_task(
+        id="task-1", title="Test task", description="A test",
+        files=["a.py"], depends_on=[], complexity="low",
+        pipeline_id="pipe-1",
+    )
+    task = await db.get_task("task-1")
+    assert task is not None
+    assert task.pipeline_id == "pipe-1"
+
+
+async def test_list_tasks_by_pipeline(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="P1", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.create_pipeline(
+        id="pipe-2", description="P2", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.create_task(
+        id="t1", title="T1", description="D", files=["a.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-1",
+    )
+    await db.create_task(
+        id="t2", title="T2", description="D", files=["b.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-2",
+    )
+    tasks = await db.list_tasks_by_pipeline("pipe-1")
+    assert len(tasks) == 1
+    assert tasks[0].id == "t1"
+
+
+async def test_set_pipeline_pr_url(db: Database):
+    await db.create_pipeline(
+        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+    )
+    await db.set_pipeline_pr_url("pipe-1", "https://github.com/user/repo/pull/42")
+    pipeline = await db.get_pipeline("pipe-1")
+    assert pipeline.pr_url == "https://github.com/user/repo/pull/42"

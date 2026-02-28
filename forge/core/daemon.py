@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import subprocess
+import uuid
 
 from rich.console import Console
 from rich.table import Table
@@ -86,6 +87,7 @@ class ForgeDaemon:
                 files=task_def.files,
                 depends_on=task_def.depends_on,
                 complexity=task_def.complexity.value,
+                pipeline_id=getattr(self, '_pipeline_id', None),
             )
 
         for i in range(self._settings.max_agents):
@@ -112,16 +114,23 @@ class ForgeDaemon:
     async def run(self, user_input: str) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
         db_path = os.path.join(self._project_dir, ".forge", "forge.db")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         db_url = f"sqlite+aiosqlite:///{db_path}"
 
-        # Fresh DB per run to avoid stale state from previous runs
-        if os.path.exists(db_path):
-            os.remove(db_path)
+        # DB is persistent — each run creates a new pipeline with a unique ID.
 
         db = Database(db_url)
         await db.initialize()
 
         try:
+            self._pipeline_id = str(uuid.uuid4())
+            await db.create_pipeline(
+                id=self._pipeline_id,
+                description=user_input[:200],
+                project_dir=self._project_dir,
+                model_strategy=self._strategy,
+            )
+
             graph = await self.plan(user_input, db)
             await self.execute(graph, db)
         finally:

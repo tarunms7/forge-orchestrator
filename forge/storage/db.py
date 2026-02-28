@@ -23,6 +23,7 @@ class TaskRow(Base):
     retry_count: Mapped[int] = mapped_column(default=0)
     branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -45,6 +46,7 @@ class PipelineRow(Base):
     user_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     created_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class Database:
@@ -69,11 +71,13 @@ class Database:
         files: list[str],
         depends_on: list[str],
         complexity: str,
+        pipeline_id: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = TaskRow(
                 id=id, title=title, description=description,
                 files=files, depends_on=depends_on, complexity=complexity,
+                pipeline_id=pipeline_id,
             )
             session.add(row)
             await session.commit()
@@ -94,6 +98,12 @@ class Database:
             stmt = select(TaskRow)
             if state:
                 stmt = stmt.where(TaskRow.state == state)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def list_tasks_by_pipeline(self, pipeline_id: str) -> list[TaskRow]:
+        async with self._session_factory() as session:
+            stmt = select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
@@ -193,6 +203,16 @@ class Database:
             if row:
                 row.task_graph_json = task_graph_json
                 row.status = "planned"
+                await session.commit()
+
+    async def set_pipeline_pr_url(self, pipeline_id: str, pr_url: str) -> None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.pr_url = pr_url
                 await session.commit()
 
     async def list_pipelines(self, user_id: str | None = None) -> list[PipelineRow]:
