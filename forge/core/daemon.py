@@ -155,8 +155,13 @@ class ForgeDaemon:
                 await self._events.emit("pipeline:plan_ready", plan_data)
         return graph
 
-    async def execute(self, graph: TaskGraph, db: Database, pipeline_id: str | None = None) -> None:
-        """Execute a previously approved TaskGraph."""
+    async def execute(self, graph: TaskGraph, db: Database, pipeline_id: str | None = None, *, resume: bool = False) -> None:
+        """Execute a previously approved TaskGraph.
+
+        Args:
+            resume: If True, skip task/agent creation (they already exist
+                from the original run). Used by the resume endpoint.
+        """
 
         # Use provided pipeline_id, fall back to self._pipeline_id (CLI flow), or generate one
         pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
@@ -167,30 +172,31 @@ class ForgeDaemon:
         if not await self._preflight_checks(self._project_dir, db, pid):
             return
 
-        # Task IDs may already be prefixed (web flow remaps in _run_plan).
-        # Only remap if they haven't been prefixed yet (CLI flow).
-        first_id = graph.tasks[0].id if graph.tasks else ""
-        needs_remap = not first_id.startswith(prefix)
+        if not resume:
+            # Task IDs may already be prefixed (web flow remaps in _run_plan).
+            # Only remap if they haven't been prefixed yet (CLI flow).
+            first_id = graph.tasks[0].id if graph.tasks else ""
+            needs_remap = not first_id.startswith(prefix)
 
-        if needs_remap:
-            id_map = {t.id: f"{prefix}-{t.id}" for t in graph.tasks}
-            for t in graph.tasks:
-                t.depends_on = [id_map.get(d, d) for d in t.depends_on]
-                t.id = id_map[t.id]
+            if needs_remap:
+                id_map = {t.id: f"{prefix}-{t.id}" for t in graph.tasks}
+                for t in graph.tasks:
+                    t.depends_on = [id_map.get(d, d) for d in t.depends_on]
+                    t.id = id_map[t.id]
 
-        for task_def in graph.tasks:
-            await db.create_task(
-                id=task_def.id,
-                title=task_def.title,
-                description=task_def.description,
-                files=task_def.files,
-                depends_on=task_def.depends_on,
-                complexity=task_def.complexity.value,
-                pipeline_id=pid,
-            )
+            for task_def in graph.tasks:
+                await db.create_task(
+                    id=task_def.id,
+                    title=task_def.title,
+                    description=task_def.description,
+                    files=task_def.files,
+                    depends_on=task_def.depends_on,
+                    complexity=task_def.complexity.value,
+                    pipeline_id=pid,
+                )
 
-        for i in range(self._settings.max_agents):
-            await db.create_agent(f"{prefix}-agent-{i}")
+            for i in range(self._settings.max_agents):
+                await db.create_agent(f"{prefix}-agent-{i}")
 
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,

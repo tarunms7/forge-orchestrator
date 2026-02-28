@@ -329,6 +329,26 @@ export default function TaskExecutionPage() {
           )
         )}
 
+        {/* Resume Button — shown when pipeline is not complete */}
+        {phase !== "complete" && phase !== "idle" && phase !== "planning" && phase !== "planned" && (
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={async () => {
+                if (!token || !pipelineId) return;
+                try {
+                  await apiPost(`/tasks/${pipelineId}/resume`, {}, token);
+                  window.location.reload();
+                } catch (e) {
+                  // Error will surface via events
+                }
+              }}
+              className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+            >
+              Resume Pipeline
+            </button>
+          </div>
+        )}
+
         {/* Completion Summary */}
         {phase === "complete" && (
           <div className="mt-8">

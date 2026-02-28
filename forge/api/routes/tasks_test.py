@@ -242,3 +242,24 @@ class TestTaskIDOR:
             headers=_auth_header(token_b),
         )
         assert resp.status_code == 404
+
+
+# ── Resume endpoint tests ────────────────────────────────────────
+
+
+class TestResumeEndpoint:
+    """Tests for POST /tasks/{pipeline_id}/resume."""
+
+    async def test_resume_requires_auth(self, client):
+        """POST /tasks/{id}/resume without auth should return 401."""
+        resp = await client.post("/api/tasks/some-id/resume")
+        assert resp.status_code == 401
+
+    async def test_resume_nonexistent_returns_404(self, client):
+        """POST /tasks/{id}/resume for unknown pipeline should return 404."""
+        token = await _register_and_get_token(client, email="resume@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/resume",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404

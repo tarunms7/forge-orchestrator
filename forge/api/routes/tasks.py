@@ -383,6 +383,85 @@ async def create_pr(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/{pipeline_id}/resume")
+async def resume_pipeline(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Resume an interrupted pipeline. Resets stuck tasks and re-enters execution loop."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(500, "Database not configured")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(404, "Pipeline not found")
+
+    if pipeline.status == "complete":
+        raise HTTPException(400, "Pipeline already complete")
+
+    # Reset interrupted tasks
+    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+    reset_count = 0
+    for task in tasks:
+        if task.state in ("in_progress", "in_review", "merging"):
+            await forge_db.update_task_state(task.id, "todo")
+            reset_count += 1
+
+    if reset_count == 0:
+        pending = [t for t in tasks if t.state == "todo"]
+        if not pending:
+            raise HTTPException(400, "No tasks to resume")
+
+    # Reconstruct TaskGraph from stored JSON
+    graph_json = json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else None
+    if not graph_json:
+        raise HTTPException(400, "No task graph stored — cannot resume")
+
+    from forge.core.models import TaskGraph, TaskDefinition, Complexity
+    task_defs = []
+    for t in graph_json.get("tasks", []):
+        task_defs.append(TaskDefinition(
+            id=t["id"], title=t["title"], description=t["description"],
+            files=t["files"], depends_on=t.get("depends_on", []),
+            complexity=Complexity(t.get("complexity", "medium")),
+        ))
+    graph = TaskGraph(tasks=task_defs)
+
+    # Set pipeline back to executing
+    await forge_db.update_pipeline_status(pipeline_id, "executing")
+
+    # Launch execution in background
+    from forge.config.settings import ForgeSettings
+    from forge.core.daemon import ForgeDaemon
+    from forge.core.events import EventEmitter
+
+    settings = ForgeSettings()
+    emitter = getattr(request.app.state, "event_emitter", None)
+    if emitter is None:
+        emitter = EventEmitter()
+
+    # Bridge events to WebSocket if ws_manager available
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager:
+        _bridge_events(emitter, ws_manager, pipeline_id)
+
+    daemon = ForgeDaemon(pipeline.project_dir, settings=settings, event_emitter=emitter)
+
+    async def _run():
+        try:
+            await daemon.execute(graph, forge_db, pipeline_id=pipeline_id, resume=True)
+            await forge_db.update_pipeline_status(pipeline_id, "complete")
+        except Exception as e:
+            logger.error("Resume execution failed: %s", e)
+            await forge_db.update_pipeline_status(pipeline_id, "error")
+
+    asyncio.create_task(_run())
+
+    return {"status": "resumed", "pipeline_id": pipeline_id, "tasks_reset": reset_count}
+
+
 @router.get("/{pipeline_id}", response_model=TaskStatusResponse)
 async def get_task_status(
     pipeline_id: str,
