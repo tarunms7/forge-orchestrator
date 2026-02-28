@@ -18,19 +18,31 @@ class WorktreeManager:
         return f"forge/{task_id}"
 
     def create(self, task_id: str) -> str:
-        """Create a worktree for a task. Returns the worktree path."""
+        """Create a worktree for a task. Returns the worktree path.
+
+        Handles repos with no commits by using ``--orphan`` flag so that
+        each worktree branch starts as an independent root.
+        """
         path = self._task_path(task_id)
         if os.path.exists(path):
             raise ValueError(f"Worktree for '{task_id}' already exists: {path}")
 
         branch = self._branch_name(task_id)
         os.makedirs(self._worktrees_dir, exist_ok=True)
-        subprocess.run(
-            ["git", "worktree", "add", "-b", branch, path],
+
+        # Check if the repo has any commits — orphan worktrees needed if not
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
             cwd=self._repo,
-            check=True,
             capture_output=True,
-        )
+        ).returncode == 0
+
+        if has_commits:
+            cmd = ["git", "worktree", "add", "-b", branch, path]
+        else:
+            cmd = ["git", "worktree", "add", "--orphan", "-b", branch, path]
+
+        subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True)
         return path
 
     def remove(self, task_id: str) -> None:

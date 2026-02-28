@@ -88,12 +88,12 @@ class ForgeDaemon:
         if result.returncode != 0:
             errors.append("Not a git repository")
 
-        # Check: git remote exists
+        # Check: git remote exists (warning only — not needed for local execution)
         result = subprocess.run(
             ["git", "remote"], cwd=project_dir, capture_output=True, text=True,
         )
         if not result.stdout.strip():
-            errors.append("No git remote configured. Run: git remote add origin <url>")
+            console.print("[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]")
 
         # Check: gh CLI available and authed (optional — warn, don't fail)
         if shutil.which("gh"):
@@ -170,7 +170,7 @@ class ForgeDaemon:
 
         # Pre-flight checks
         if not await self._preflight_checks(self._project_dir, db, pid):
-            return
+            raise RuntimeError("Pre-flight checks failed — see pipeline events for details")
 
         if not resume:
             # Task IDs may already be prefixed (web flow remaps in _run_plan).
@@ -759,11 +759,9 @@ def _build_retry_prompt(
 def _get_diff_vs_main(worktree_path: str) -> str:
     """Get diff of the worktree branch vs its merge-base with the parent branch.
 
-    Uses ``git merge-base HEAD~N HEAD`` to find where the worktree branch
-    diverged, then diffs against that point.  Falls back to diffing the
-    last commit only (``HEAD~1..HEAD``) when the merge-base can't be
-    determined — this keeps the diff scoped to the agent's actual changes
-    rather than the entire feature branch.
+    Uses ``git rev-list`` to count how many commits the agent added,
+    then diffs against ``HEAD~N``.  Handles root commits (orphan branches
+    from repos with no prior history) by diffing against the empty tree.
     """
     # Try to find how many commits the agent added on top of the base
     count_result = subprocess.run(
@@ -772,7 +770,6 @@ def _get_diff_vs_main(worktree_path: str) -> str:
         capture_output=True,
         text=True,
     )
-    # If that fails, just diff the last commit
     try:
         commit_count = int(count_result.stdout.strip())
         if commit_count <= 0:
@@ -780,22 +777,38 @@ def _get_diff_vs_main(worktree_path: str) -> str:
     except (ValueError, AttributeError):
         commit_count = 1
 
-    # Diff only the agent's commits, not the entire feature branch
+    # Check if HEAD~{commit_count} exists (won't if this is a root commit)
     base_ref = f"HEAD~{commit_count}"
-    result = subprocess.run(
-        ["git", "diff", base_ref, "HEAD"],
+    verify = subprocess.run(
+        ["git", "rev-parse", "--verify", base_ref],
         cwd=worktree_path,
         capture_output=True,
         text=True,
     )
-    # Fallback: if that fails, just diff last commit
-    if result.returncode != 0:
+
+    if verify.returncode == 0:
+        # Normal case: diff the agent's commits against their base
         result = subprocess.run(
-            ["git", "diff", "HEAD~1", "HEAD"],
+            ["git", "diff", base_ref, "HEAD"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
         )
+    else:
+        # Root commit (orphan branch / new repo): diff against empty tree
+        empty_tree = subprocess.run(
+            ["git", "hash-object", "-t", "tree", "/dev/null"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        result = subprocess.run(
+            ["git", "diff", empty_tree, "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+
     return result.stdout
 
 
@@ -821,7 +834,6 @@ def _get_diff_stats(repo_path: str) -> dict[str, int]:
 
 def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
     """Get list of files changed by the agent (not the entire feature branch)."""
-    # Reuse the same scoping logic: count agent-only commits
     count_result = subprocess.run(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
@@ -835,19 +847,36 @@ def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
     except (ValueError, AttributeError):
         commit_count = 1
 
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"HEAD~{commit_count}", "HEAD"],
+    base_ref = f"HEAD~{commit_count}"
+    verify = subprocess.run(
+        ["git", "rev-parse", "--verify", base_ref],
         cwd=worktree_path,
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
+
+    if verify.returncode == 0:
         result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            ["git", "diff", "--name-only", base_ref, "HEAD"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
         )
+    else:
+        # Root commit: diff against empty tree
+        empty_tree = subprocess.run(
+            ["git", "hash-object", "-t", "tree", "/dev/null"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        result = subprocess.run(
+            ["git", "diff", "--name-only", empty_tree, "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+
     return [f for f in result.stdout.strip().split("\n") if f.strip()]
 
 

@@ -401,19 +401,6 @@ async def resume_pipeline(
     if pipeline.status == "complete":
         raise HTTPException(400, "Pipeline already complete")
 
-    # Reset interrupted tasks
-    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
-    reset_count = 0
-    for task in tasks:
-        if task.state in ("in_progress", "in_review", "merging"):
-            await forge_db.update_task_state(task.id, "todo")
-            reset_count += 1
-
-    if reset_count == 0:
-        pending = [t for t in tasks if t.state == "todo"]
-        if not pending:
-            raise HTTPException(400, "No tasks to resume")
-
     # Reconstruct TaskGraph from stored JSON
     graph_json = json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else None
     if not graph_json:
@@ -428,6 +415,25 @@ async def resume_pipeline(
             complexity=Complexity(t.get("complexity", "medium")),
         ))
     graph = TaskGraph(tasks=task_defs)
+
+    # Check if task rows exist in DB (they may not if preflight failed before creation)
+    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+    needs_fresh_start = len(tasks) == 0
+
+    if not needs_fresh_start:
+        # Reset interrupted or cancelled tasks back to todo
+        reset_count = 0
+        for task in tasks:
+            if task.state in ("in_progress", "in_review", "merging", "cancelled"):
+                await forge_db.update_task_state(task.id, "todo")
+                reset_count += 1
+
+        if reset_count == 0:
+            pending = [t for t in tasks if t.state == "todo"]
+            if not pending:
+                raise HTTPException(400, "No tasks to resume (all done or errored)")
+    else:
+        reset_count = 0
 
     # Set pipeline back to executing
     await forge_db.update_pipeline_status(pipeline_id, "executing")
@@ -449,9 +455,13 @@ async def resume_pipeline(
 
     daemon = ForgeDaemon(pipeline.project_dir, settings=settings, event_emitter=emitter)
 
+    # If tasks were never created (preflight failed before creation),
+    # run a fresh execution (resume=False) so they get created in DB.
+    use_resume = not needs_fresh_start
+
     async def _run():
         try:
-            await daemon.execute(graph, forge_db, pipeline_id=pipeline_id, resume=True)
+            await daemon.execute(graph, forge_db, pipeline_id=pipeline_id, resume=use_resume)
             await forge_db.update_pipeline_status(pipeline_id, "complete")
         except Exception as e:
             logger.error("Resume execution failed: %s", e)
@@ -459,7 +469,7 @@ async def resume_pipeline(
 
     asyncio.create_task(_run())
 
-    return {"status": "resumed", "pipeline_id": pipeline_id, "tasks_reset": reset_count}
+    return {"status": "resumed", "pipeline_id": pipeline_id, "tasks_reset": reset_count, "fresh_start": needs_fresh_start}
 
 
 @router.post("/{pipeline_id}/cancel")
@@ -749,10 +759,13 @@ def _bridge_events(emitter, ws_manager, pipeline_id: str) -> None:
     event_types = [
         "pipeline:phase_changed",
         "pipeline:plan_ready",
+        "pipeline:preflight_failed",
         "task:state_changed",
         "task:agent_output",
+        "task:files_changed",
         "task:review_update",
         "task:merge_result",
+        "task:cost_update",
         "planner:output",
     ]
     for event_type in event_types:
