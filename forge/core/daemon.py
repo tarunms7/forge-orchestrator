@@ -74,6 +74,44 @@ class ForgeDaemon:
             payload=data,
         )
 
+    async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
+        """Run pre-execution validation. Returns True if all checks pass."""
+        import shutil
+
+        errors = []
+
+        # Check: valid git repo
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=project_dir, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            errors.append("Not a git repository")
+
+        # Check: git remote exists
+        result = subprocess.run(
+            ["git", "remote"], cwd=project_dir, capture_output=True, text=True,
+        )
+        if not result.stdout.strip():
+            errors.append("No git remote configured. Run: git remote add origin <url>")
+
+        # Check: gh CLI available and authed (optional — warn, don't fail)
+        if shutil.which("gh"):
+            result = subprocess.run(
+                ["gh", "auth", "status"], capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                console.print("[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]")
+
+        if errors:
+            detail = "; ".join(errors)
+            console.print(f"[bold red]Pre-flight failed: {detail}[/bold red]")
+            await self._emit("pipeline:preflight_failed", {"errors": errors}, db=db, pipeline_id=pipeline_id)
+            await db.update_pipeline_status(pipeline_id, "error")
+            return False
+
+        return True
+
     async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None) -> TaskGraph:
         """Run planning only. Returns the TaskGraph for user approval.
 
@@ -124,6 +162,10 @@ class ForgeDaemon:
         pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
         prefix = pid[:8]
+
+        # Pre-flight checks
+        if not await self._preflight_checks(self._project_dir, db, pid):
+            return
 
         # Task IDs may already be prefixed (web flow remaps in _run_plan).
         # Only remap if they haven't been prefixed yet (CLI flow).

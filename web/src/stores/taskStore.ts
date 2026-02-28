@@ -224,6 +224,9 @@ export const useTaskStore = create<PipelineState>((set) => ({
             plannerOutput: [...state.plannerOutput, data.line as string],
           };
 
+        case "pipeline:preflight_failed":
+          return { phase: "idle" as PipelineState["phase"] };
+
         default:
           return state;
       }
