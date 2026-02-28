@@ -20,6 +20,19 @@ class MergeWorker:
         self._repo = repo_path
         self._main = main_branch
 
+    def retry_merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
+        """Retry a merge: abort any in-progress rebase, re-attempt rebase + ff merge.
+
+        This is Tier 1 retry — no agent re-run, just git operations.
+        Used when a merge failed due to a conflict that may resolve after
+        another task has merged (making main advance).
+        """
+        # Abort any lingering rebase state
+        self._abort_rebase(worktree_path)
+
+        # Re-attempt the full merge sequence
+        return self.merge(branch, worktree_path=worktree_path)
+
     def merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
         """Attempt to rebase branch onto main and fast-forward merge.
 

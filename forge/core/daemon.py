@@ -323,10 +323,44 @@ class ForgeDaemon:
                 await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
             else:
                 console.print(f"[red]{task_id} merge failed: {merge_result.error}[/red]")
+                console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
                 await self._events.emit("task:merge_result", {
                     "task_id": task_id, "success": False, "error": merge_result.error,
                 })
-                await self._handle_retry(db, task_id, worktree_mgr)
+
+                # Tier 1: retry merge only (no agent re-run)
+                retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
+                if retry_result.success:
+                    console.print(f"[bold green]{task_id} merged on retry![/bold green]")
+                    await db.update_task_state(task_id, TaskState.DONE.value)
+                    await self._events.emit("task:merge_result", {
+                        "task_id": task_id, "success": True, "error": None,
+                    })
+                    await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
+                else:
+                    console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
+                    # Tier 2: try agent conflict resolution if we have conflicting files
+                    if retry_result.conflicting_files:
+                        resolved = await self._resolve_conflicts(
+                            task_id, worktree_path,
+                            retry_result.conflicting_files, agent_model,
+                        )
+                        if resolved:
+                            final_result = merge_worker.merge(branch, worktree_path=worktree_path)
+                            if final_result.success:
+                                console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
+                                await db.update_task_state(task_id, TaskState.DONE.value)
+                                await self._events.emit("task:merge_result", {
+                                    "task_id": task_id, "success": True, "error": None,
+                                })
+                                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
+                            else:
+                                await self._handle_retry(db, task_id, worktree_mgr)
+                        else:
+                            await self._handle_retry(db, task_id, worktree_mgr)
+                    else:
+                        # Tier 3: full retry (existing behavior)
+                        await self._handle_retry(db, task_id, worktree_mgr)
         else:
             await self._handle_retry(db, task_id, worktree_mgr)
 
@@ -433,6 +467,38 @@ class ForgeDaemon:
             gate="gate1_auto_check",
             details=f"Lint errors:\n{output}",
         )
+
+    async def _resolve_conflicts(
+        self, task_id: str, worktree_path: str,
+        conflicting_files: list[str], agent_model: str,
+    ) -> bool:
+        """Tier 2: Use a targeted Claude call to resolve merge conflicts."""
+        if not conflicting_files:
+            return False
+
+        console.print(f"[yellow]{task_id}: Tier 2 — asking Claude to resolve {len(conflicting_files)} conflicts[/yellow]")
+
+        conflict_prompt = (
+            f"The following files have merge conflicts that need to be resolved:\n"
+            f"{', '.join(conflicting_files)}\n\n"
+            f"Instructions:\n"
+            f"1. Open each conflicting file\n"
+            f"2. Resolve the merge conflict markers (<<<<<<, =======, >>>>>>)\n"
+            f"3. Keep the intent of BOTH changes where possible\n"
+            f"4. Stage and commit the resolved files: git add -A && git commit -m 'fix: resolve merge conflicts'\n"
+        )
+
+        adapter = ClaudeAdapter()
+        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
+        result = await runtime.run_task(
+            agent_id=f"resolver-{task_id}",
+            task_prompt=conflict_prompt,
+            worktree_path=worktree_path,
+            allowed_files=conflicting_files,
+            model=agent_model,
+        )
+
+        return result.success
 
     async def _handle_retry(self, db: Database, task_id: str, worktree_mgr: WorktreeManager) -> None:
         """Handle task failure: retry up to max_retries, then mark as error."""

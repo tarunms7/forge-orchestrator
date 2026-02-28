@@ -44,6 +44,39 @@ def test_merge_conflict_detected(git_repo):
     assert len(result.conflicting_files) > 0
 
 
+def test_retry_merge_after_rebase_conflict(git_repo):
+    """MergeWorker.retry_merge() should re-fetch main and retry rebase."""
+    worker = MergeWorker(str(git_repo), main_branch="master")
+
+    # Create a branch with changes
+    subprocess.run(
+        ["git", "checkout", "-b", "forge/task-1"],
+        cwd=git_repo, check=True, capture_output=True,
+    )
+    (git_repo / "feature.py").write_text("# feature\n")
+    subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "feat: add feature"],
+        cwd=git_repo, check=True, capture_output=True,
+    )
+
+    # Go back to master and add a non-conflicting change
+    subprocess.run(
+        ["git", "checkout", "master"],
+        cwd=git_repo, check=True, capture_output=True,
+    )
+    (git_repo / "other.py").write_text("# other\n")
+    subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "feat: add other"],
+        cwd=git_repo, check=True, capture_output=True,
+    )
+
+    # retry_merge should succeed since there's no conflict
+    result = worker.retry_merge("forge/task-1")
+    assert result.success is True
+
+
 def test_merge_result_fields():
     r = MergeResult(success=True, conflicting_files=[])
     assert r.success is True
