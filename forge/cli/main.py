@@ -80,12 +80,34 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
     envvar="FORGE_JWT_SECRET",
     help="JWT signing secret (default: $FORGE_JWT_SECRET or random)",
 )
-def serve(port: int, host: str, db_url: str, jwt_secret: str | None):
+@click.option(
+    "--build-frontend/--no-build-frontend",
+    default=True,
+    help="Build Next.js before serving",
+)
+def serve(port: int, host: str, db_url: str, jwt_secret: str | None, build_frontend: bool):
     """Start the Forge web server."""
+    if build_frontend:
+        _build_frontend()
     import uvicorn
     from forge.api.app import create_app
     app = create_app(db_url=db_url, jwt_secret=jwt_secret)
+    click.echo(f"Forge UI: http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+
+def _build_frontend():
+    """Build the Next.js frontend if web/ directory exists."""
+    import subprocess
+    web_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web")
+    web_dir = os.path.normpath(web_dir)
+    if not os.path.isdir(web_dir):
+        return
+    out_dir = os.path.join(web_dir, "out")
+    if os.path.isdir(out_dir):
+        return  # already built
+    click.echo("Building frontend...")
+    subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
 
 
 def _write_if_missing(path: str, content: str) -> None:
