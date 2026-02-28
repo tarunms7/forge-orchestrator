@@ -1,11 +1,14 @@
 """Claude-backed planner. Uses claude-code-sdk to decompose tasks into TaskGraph JSON."""
 
+import logging
 import re
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.planner import PlannerLLM
 from forge.core.sdk_helpers import sdk_query
+
+logger = logging.getLogger("forge.planner")
 
 PLANNER_SYSTEM_PROMPT = """You are a task decomposition engine for a multi-agent coding system called Forge.
 
@@ -51,11 +54,21 @@ class ClaudePlannerLLM(PlannerLLM):
             system_prompt=PLANNER_SYSTEM_PROMPT,
             max_turns=1,
             model=self._model,
+            # No tools — the planner must produce JSON directly from the
+            # prompt context, not spend turns reading files.
+            allowed_tools=[],
         )
         if self._cwd:
             options.cwd = self._cwd
 
-        result = await sdk_query(prompt=prompt, options=options)
+        try:
+            result = await sdk_query(prompt=prompt, options=options)
+        except Exception as e:
+            # SDK failures (rate limits, timeouts, etc.) should be retried
+            # by the Planner's retry loop, not crash the pipeline.
+            logger.warning("SDK call failed during planning: %s", e)
+            return ""  # Empty string → triggers Planner's validation retry
+
         result_text = result.result if result and result.result else ""
         return _extract_json(result_text)
 

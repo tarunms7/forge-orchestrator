@@ -89,7 +89,10 @@ async def create_task(
 
             async def _run_plan():
                 try:
-                    graph = await daemon.plan(body.description, forge_db, emit_plan_ready=False)
+                    graph = await daemon.plan(
+                        body.description, forge_db,
+                        emit_plan_ready=False, pipeline_id=pipeline_id,
+                    )
 
                     # Remap task IDs to be globally unique, then emit
                     # plan_ready with prefixed IDs as the single source
@@ -133,6 +136,7 @@ async def create_task(
                         request.app.state.pending_graphs = {}
                     request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
                 except Exception as exc:
+                    logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "pipeline:error", "error": str(exc),
