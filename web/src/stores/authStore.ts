@@ -15,7 +15,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   logout: () => {
     set({ token: null, userId: null });
     // Clear refresh token cookie by calling logout endpoint
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/auth/logout`, {
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || "/api"}/auth/logout`, {
       method: "POST",
       credentials: "include",
     }).catch(() => {});
@@ -23,7 +23,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   refreshToken: async () => {
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/auth/refresh`,
+        `${process.env.NEXT_PUBLIC_API_URL || "/api"}/auth/refresh`,
         { method: "POST", credentials: "include" }
       );
       if (!res.ok) return false;
