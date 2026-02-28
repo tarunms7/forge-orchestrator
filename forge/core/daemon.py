@@ -31,6 +31,23 @@ logger = logging.getLogger("forge")
 console = Console()
 
 
+def _extract_text(message) -> str | None:
+    """Extract human-readable text from a claude-code-sdk message."""
+    try:
+        from claude_code_sdk import AssistantMessage, ResultMessage
+    except ImportError:
+        return None
+    if isinstance(message, AssistantMessage):
+        parts = []
+        for block in (message.content or []):
+            if hasattr(block, "text"):
+                parts.append(block.text)
+        return "\n".join(parts) if parts else None
+    if isinstance(message, ResultMessage):
+        return message.result if message.result else None
+    return None
+
+
 class ForgeDaemon:
     """Main orchestration loop. Ties all components together."""
 
@@ -232,11 +249,41 @@ class ForgeDaemon:
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
 
         prompt = _build_agent_prompt(task.title, task.description, task.files)
+
+        # Create streaming callback for live logs
+        import time
+
+        _last_flush = [time.monotonic()]
+        _batch: list[str] = []
+
+        async def _on_agent_message(msg):
+            text = _extract_text(msg)
+            if not text:
+                return
+            _batch.append(text)
+            now = time.monotonic()
+            # Batch: flush every 100ms to prevent WebSocket flooding
+            if now - _last_flush[0] >= 0.1:
+                for line in _batch:
+                    await self._events.emit("task:agent_output", {
+                        "task_id": task_id, "line": line,
+                    })
+                _batch.clear()
+                _last_flush[0] = now
+
         result = await runtime.run_task(
             agent_id, prompt, worktree_path, task.files,
             allowed_dirs=self._settings.allowed_dirs,
             model=agent_model,
+            on_message=_on_agent_message,
         )
+
+        # Flush any remaining batched messages
+        for line in _batch:
+            await self._events.emit("task:agent_output", {
+                "task_id": task_id, "line": line,
+            })
+        _batch.clear()
 
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
@@ -251,6 +298,12 @@ class ForgeDaemon:
             return
 
         console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
+
+        if result.files_changed:
+            await self._events.emit("task:files_changed", {
+                "task_id": task_id, "files": result.files_changed,
+            })
+
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         await self._events.emit("task:state_changed", {"task_id": task_id, "state": "in_review"})
 

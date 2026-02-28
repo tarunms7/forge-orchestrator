@@ -33,6 +33,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         timeout_seconds=60,
         allowed_dirs=None,
         model="sonnet",
+        on_message=None,
     )
 
 
@@ -60,3 +61,26 @@ async def test_run_task_catches_unexpected_error(mock_adapter):
     )
     assert result.success is False
     assert "kaboom" in result.error
+
+
+async def test_runtime_passes_on_message_to_adapter():
+    """AgentRuntime.run_task() should forward on_message to adapter.run()."""
+    mock_adapter = AsyncMock()
+    mock_adapter.run.return_value = AgentResult(
+        success=True, files_changed=["a.py"], summary="Done",
+    )
+    callback = AsyncMock()
+
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    result = await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="test",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        on_message=callback,
+    )
+
+    mock_adapter.run.assert_called_once()
+    call_kwargs = mock_adapter.run.call_args[1]
+    assert call_kwargs["on_message"] is callback
+    assert result.success is True

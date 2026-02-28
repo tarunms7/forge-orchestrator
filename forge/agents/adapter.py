@@ -2,6 +2,7 @@
 
 import subprocess
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from claude_code_sdk import ClaudeCodeOptions
@@ -45,6 +46,7 @@ class AgentAdapter(ABC):
         timeout_seconds: int,
         allowed_dirs: list[str] | None = None,
         model: str = "sonnet",
+        on_message: Callable | None = None,
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -82,10 +84,11 @@ class ClaudeAdapter(AgentAdapter):
         timeout_seconds: int,
         allowed_dirs: list[str] | None = None,
         model: str = "sonnet",
+        on_message: Callable | None = None,
     ) -> AgentResult:
         options = self._build_options(worktree_path, allowed_dirs or [], model=model)
 
-        result = await sdk_query(prompt=task_prompt, options=options)
+        result = await sdk_query(prompt=task_prompt, options=options, on_message=on_message)
         files_changed = _get_changed_files(worktree_path)
 
         if result is None:

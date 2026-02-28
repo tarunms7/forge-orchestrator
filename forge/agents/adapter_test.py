@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 from forge.agents.adapter import AgentAdapter, AgentResult, ClaudeAdapter
 
 
@@ -51,3 +53,31 @@ def test_adapter_system_prompt_includes_extra_dirs():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/test-worktree", ["/tmp/shared-lib"])
     assert "/tmp/shared-lib" in options.system_prompt
+
+
+async def test_claude_adapter_passes_on_message_to_sdk_query():
+    """ClaudeAdapter.run() should forward on_message callback to sdk_query."""
+    callback = AsyncMock()
+
+    mock_result = AsyncMock()
+    mock_result.result = "Done"
+    mock_result.total_cost_usd = 0.01
+    mock_result.is_error = False
+
+    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_result
+        with patch("forge.agents.adapter._get_changed_files", return_value=["a.py"]):
+            adapter = ClaudeAdapter()
+            result = await adapter.run(
+                task_prompt="test",
+                worktree_path="/tmp/test",
+                allowed_files=["a.py"],
+                timeout_seconds=60,
+                on_message=callback,
+            )
+
+    # Verify on_message was passed through to sdk_query
+    mock_query.assert_called_once()
+    call_kwargs = mock_query.call_args[1]
+    assert call_kwargs["on_message"] is callback
+    assert result.success is True
