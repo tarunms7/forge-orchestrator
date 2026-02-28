@@ -1,12 +1,24 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { apiGet } from "@/lib/api";
+import { useAuthStore } from "@/stores/authStore";
 
-const STATS = [
-  { label: "Total Runs", value: "0" },
-  { label: "Active", value: "0" },
-  { label: "Completed", value: "0" },
-];
+interface DashboardStats {
+  total_runs: number;
+  active: number;
+  completed: number;
+  failed: number;
+}
+
+interface RecentPipeline {
+  pipeline_id: string;
+  description: string;
+  phase: string;
+  created_at: string;
+  task_count: number;
+}
 
 const QUICK_ACTIONS = [
   {
@@ -72,7 +84,40 @@ const QUICK_ACTIONS = [
   },
 ];
 
+const PHASE_COLORS: Record<string, string> = {
+  planning: "text-yellow-400",
+  planned: "text-yellow-400",
+  executing: "text-blue-400",
+  complete: "text-green-400",
+  error: "text-red-400",
+};
+
 export default function DashboardPage() {
+  const token = useAuthStore((s) => s.token);
+  const [stats, setStats] = useState<DashboardStats>({
+    total_runs: 0,
+    active: 0,
+    completed: 0,
+    failed: 0,
+  });
+  const [recent, setRecent] = useState<RecentPipeline[]>([]);
+
+  useEffect(() => {
+    if (!token) return;
+    apiGet("/tasks/stats", token)
+      .then(setStats)
+      .catch(() => {});
+    apiGet("/history", token)
+      .then((data) => setRecent(data.slice(0, 5)))
+      .catch(() => {});
+  }, [token]);
+
+  const STATS = [
+    { label: "Total Runs", value: String(stats.total_runs) },
+    { label: "Active", value: String(stats.active) },
+    { label: "Completed", value: String(stats.completed) },
+  ];
+
   return (
     <div className="min-h-screen bg-black text-zinc-100">
       <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -129,9 +174,40 @@ export default function DashboardPage() {
           <h2 className="mb-4 text-lg font-semibold text-zinc-200">
             Recent Activity
           </h2>
-          <div className="flex h-48 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900">
-            <p className="text-sm text-zinc-500">No recent tasks</p>
-          </div>
+          {recent.length === 0 ? (
+            <div className="flex h-48 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900">
+              <p className="text-sm text-zinc-500">No recent tasks</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {recent.map((item) => (
+                <Link
+                  key={item.pipeline_id}
+                  href={`/tasks/${item.pipeline_id}`}
+                  className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-5 py-3 transition-colors hover:border-zinc-600 hover:bg-zinc-800/70"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-zinc-200">
+                      {item.description}
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500">
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleDateString()
+                        : ""}
+                      {item.task_count > 0 && ` \u00b7 ${item.task_count} tasks`}
+                    </p>
+                  </div>
+                  <span
+                    className={`ml-3 text-xs font-medium ${
+                      PHASE_COLORS[item.phase] || "text-zinc-400"
+                    }`}
+                  >
+                    {item.phase}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

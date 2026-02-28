@@ -132,6 +132,30 @@ async def create_task(
     return PipelineResponse(pipeline_id=pipeline_id)
 
 
+@router.get("/stats")
+async def get_stats(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Return dashboard statistics for the authenticated user."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        return {"total_runs": 0, "active": 0, "completed": 0, "failed": 0}
+
+    pipelines = await forge_db.list_pipelines(user_id=user_id)
+    total = len(pipelines)
+    active = sum(1 for p in pipelines if p.status in ("planning", "planned", "executing"))
+    completed = sum(1 for p in pipelines if p.status == "complete")
+    failed = sum(1 for p in pipelines if p.status == "error")
+
+    return {
+        "total_runs": total,
+        "active": active,
+        "completed": completed,
+        "failed": failed,
+    }
+
+
 @router.post("/{pipeline_id}/execute", status_code=202)
 async def execute_pipeline(
     pipeline_id: str,

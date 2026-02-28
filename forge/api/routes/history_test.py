@@ -13,15 +13,23 @@ async def client():
     app = create_app(
         db_url="sqlite+aiosqlite:///:memory:",
         jwt_secret="test-secret-for-history",
+        forge_db_url="sqlite+aiosqlite:///:memory:",
     )
 
+    # Init auth DB tables
     async with app.state.async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Init forge DB tables (ASGITransport doesn't trigger lifespan)
+    if app.state.forge_db is not None:
+        await app.state.forge_db.initialize()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
+    if app.state.forge_db is not None:
+        await app.state.forge_db.close()
     await app.state.async_engine.dispose()
 
 
