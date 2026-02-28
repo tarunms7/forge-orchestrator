@@ -7,11 +7,16 @@ import { Sidebar } from "@/components/Sidebar";
 
 const PUBLIC_PATHS = ["/login", "/register"];
 
+function isPublicPath(pathname: string): boolean {
+  const normalized = pathname.replace(/\/+$/, "") || "/";
+  return PUBLIC_PATHS.includes(normalized);
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
   const pathname = usePathname();
 
-  const isPublic = PUBLIC_PATHS.includes(pathname);
+  const isPublic = isPublicPath(pathname);
   const showSidebar = token && !isPublic;
 
   return (

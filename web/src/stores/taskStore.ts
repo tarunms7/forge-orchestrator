@@ -29,6 +29,25 @@ export interface PipelineState {
   reset: () => void;
 }
 
+// Backend daemon uses different state names than the frontend UI.
+// Map them so AgentCard's STATE_BADGE never gets undefined.
+const BACKEND_STATE_MAP: Record<string, TaskState["state"]> = {
+  todo: "pending",
+  in_progress: "working",
+  in_review: "in_review",
+  merging: "working",
+  done: "done",
+  error: "error",
+  // Frontend-native states pass through
+  pending: "pending",
+  working: "working",
+  retrying: "retrying",
+};
+
+function mapState(raw: string): TaskState["state"] {
+  return BACKEND_STATE_MAP[raw] ?? "pending";
+}
+
 export const useTaskStore = create<PipelineState>((set) => ({
   pipelineId: null,
   phase: "idle",
@@ -73,7 +92,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                state: data.state as TaskState["state"],
+                state: mapState(data.state as string),
               },
             },
           };

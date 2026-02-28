@@ -5,15 +5,20 @@ import { useEffect, useState } from "react";
 
 const PUBLIC_PATHS = ["/login", "/register"];
 
+function isPublicPath(pathname: string): boolean {
+  const normalized = pathname.replace(/\/+$/, "") || "/";
+  return PUBLIC_PATHS.includes(normalized);
+}
+
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
   const refreshToken = useAuthStore((s) => s.refreshToken);
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(!PUBLIC_PATHS.includes(pathname));
+  const [checking, setChecking] = useState(!isPublicPath(pathname));
 
   useEffect(() => {
-    if (PUBLIC_PATHS.includes(pathname)) {
+    if (isPublicPath(pathname)) {
       setChecking(false);
       return;
     }
@@ -36,7 +41,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!token && !PUBLIC_PATHS.includes(pathname)) return null;
+  if (!token && !isPublicPath(pathname)) return null;
 
   return <>{children}</>;
 }
