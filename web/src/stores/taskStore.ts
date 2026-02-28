@@ -1,5 +1,11 @@
 import { create } from "zustand";
 
+function sendNotification(title: string, body: string) {
+  if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+    new Notification(title, { body });
+  }
+}
+
 export interface TaskState {
   id: string;
   title: string;
@@ -26,11 +32,19 @@ export interface TaskState {
   costUsd?: number;
 }
 
+export interface TimelineEntry {
+  type: string;
+  taskId?: string;
+  payload: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface PipelineState {
   pipelineId: string | null;
   phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
+  timeline: TimelineEntry[];
   prUrl: string | null;
   prLoading: boolean;
   prError: string | null;
@@ -71,6 +85,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
   phase: "idle",
   tasks: {},
   plannerOutput: [],
+  timeline: [],
   prUrl: null,
   prLoading: false,
   prError: null,
@@ -94,16 +109,36 @@ export const useTaskStore = create<PipelineState>((set) => ({
       };
     }
     const phase = (data.phase || "idle") as PipelineState["phase"];
-    set({ tasks: newTasks, phase });
+    const timeline = ((data.timeline as Array<Record<string, unknown>>) || []).map((entry) => ({
+      type: (entry.type as string) || "",
+      taskId: (entry.taskId as string) || (entry.task_id as string) || undefined,
+      payload: entry.payload as Record<string, unknown> || entry,
+      timestamp: (entry.timestamp as string) || new Date().toISOString(),
+    }));
+    set({ tasks: newTasks, phase, timeline });
   },
   reset: () =>
-    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [], prUrl: null, prLoading: false, prError: null }),
+    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [], timeline: [], prUrl: null, prLoading: false, prError: null }),
   handleEvent: (event) =>
     set((state) => {
       const { event: eventName, data } = event;
+
+      // Append to timeline for all events except agent_output (too noisy)
+      let newTimeline = state.timeline;
+      if (eventName !== "task:agent_output") {
+        newTimeline = [...state.timeline, {
+          type: eventName,
+          taskId: (data.task_id as string) || undefined,
+          payload: data,
+          timestamp: new Date().toISOString(),
+        }];
+      }
+
       switch (eventName) {
-        case "pipeline:phase_changed":
-          return { phase: data.phase as PipelineState["phase"] };
+        case "pipeline:phase_changed": {
+          if (data.phase === "complete") sendNotification("Pipeline complete", "All tasks finished");
+          return { phase: data.phase as PipelineState["phase"], timeline: newTimeline };
+        }
 
         case "pipeline:plan_ready": {
           const newTasks: Record<string, TaskState> = {};
@@ -129,21 +164,25 @@ export const useTaskStore = create<PipelineState>((set) => ({
               reviewGates: [],
             };
           }
-          return { tasks: newTasks, phase: "planned" };
+          return { tasks: newTasks, phase: "planned", timeline: newTimeline };
         }
 
         case "task:state_changed": {
           const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
-          if (!existing) return state;
+          if (!existing) return { timeline: newTimeline };
+          const newState = mapState(data.state as string);
+          if (newState === "done") sendNotification("Task completed", existing.title);
+          if (newState === "error") sendNotification("Task failed", existing.title);
           return {
             tasks: {
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                state: mapState(data.state as string),
+                state: newState,
               },
             },
+            timeline: newTimeline,
           };
         }
 
@@ -165,19 +204,20 @@ export const useTaskStore = create<PipelineState>((set) => ({
         case "task:files_changed": {
           const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
-          if (!existing) return state;
+          if (!existing) return { timeline: newTimeline };
           return {
             tasks: {
               ...state.tasks,
               [taskId]: { ...existing, files: data.files as string[] },
             },
+            timeline: newTimeline,
           };
         }
 
         case "task:review_update": {
           const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
-          if (!existing) return state;
+          if (!existing) return { timeline: newTimeline };
           return {
             tasks: {
               ...state.tasks,
@@ -193,13 +233,14 @@ export const useTaskStore = create<PipelineState>((set) => ({
                 ],
               },
             },
+            timeline: newTimeline,
           };
         }
 
         case "task:merge_result": {
           const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
-          if (!existing) return state;
+          if (!existing) return { timeline: newTimeline };
           return {
             tasks: {
               ...state.tasks,
@@ -208,13 +249,14 @@ export const useTaskStore = create<PipelineState>((set) => ({
                 mergeResult: data as TaskState["mergeResult"],
               },
             },
+            timeline: newTimeline,
           };
         }
 
         case "task:cost_update": {
           const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
-          if (!existing) return state;
+          if (!existing) return { timeline: newTimeline };
           return {
             tasks: {
               ...state.tasks,
@@ -223,28 +265,31 @@ export const useTaskStore = create<PipelineState>((set) => ({
                 costUsd: (existing.costUsd || 0) + (data.cost_usd as number),
               },
             },
+            timeline: newTimeline,
           };
         }
 
         case "pipeline:pr_creating":
-          return { prLoading: true, prError: null };
+          return { prLoading: true, prError: null, timeline: newTimeline };
 
         case "pipeline:pr_created":
-          return { prUrl: data.pr_url as string, prLoading: false, prError: null };
+          sendNotification("PR created", (data.pr_url as string) || "");
+          return { prUrl: data.pr_url as string, prLoading: false, prError: null, timeline: newTimeline };
 
         case "pipeline:pr_failed":
-          return { prLoading: false, prError: data.error as string };
+          return { prLoading: false, prError: data.error as string, timeline: newTimeline };
 
         case "planner:output":
           return {
             plannerOutput: [...state.plannerOutput, data.line as string],
+            timeline: newTimeline,
           };
 
         case "pipeline:preflight_failed":
-          return { phase: "idle" as PipelineState["phase"] };
+          return { phase: "idle" as PipelineState["phase"], timeline: newTimeline };
 
         default:
-          return state;
+          return { timeline: newTimeline };
       }
     }),
 }));

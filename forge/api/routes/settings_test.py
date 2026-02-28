@@ -1,4 +1,4 @@
-"""Tests for the settings endpoints."""
+"""Tests for the settings endpoints (DB-persisted)."""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -57,10 +57,14 @@ class TestGetSettings:
         assert resp.status_code == 200
         data = resp.json()
         assert data["max_agents"] == 4
-        assert data["timeout"] == 300
-        assert data["browser_notifications"] is False
-        assert data["webhook_url"] == ""
-        assert data["default_execution_target"] == "local"
+        assert data["timeout"] == 600
+        assert data["max_retries"] == 3
+        assert data["model_strategy"] == "auto"
+        assert data["planner_model"] == "opus"
+        assert data["agent_model_low"] == "sonnet"
+        assert data["agent_model_medium"] == "opus"
+        assert data["agent_model_high"] == "opus"
+        assert data["reviewer_model"] == "sonnet"
 
 
 class TestUpdateSettings:
@@ -78,46 +82,58 @@ class TestUpdateSettings:
 
         resp = await client.put(
             "/api/settings",
-            json={"max_agents": 8, "browser_notifications": True},
+            json={"max_agents": 8, "model_strategy": "fast"},
             headers=headers,
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["max_agents"] == 8
-        assert data["browser_notifications"] is True
+        assert data["model_strategy"] == "fast"
         # Unchanged fields remain at defaults
-        assert data["timeout"] == 300
-        assert data["webhook_url"] == ""
+        assert data["timeout"] == 600
+        assert data["planner_model"] == "opus"
 
-    async def test_update_webhook_url(self, client):
-        """PUT /settings should update the webhook URL."""
+    async def test_update_model_routing(self, client):
+        """PUT /settings should update model routing fields."""
         token = await _register_and_get_token(client)
         headers = _auth_header(token)
 
         resp = await client.put(
             "/api/settings",
-            json={"webhook_url": "https://hooks.slack.com/services/test"},
+            json={
+                "planner_model": "sonnet",
+                "agent_model_low": "haiku",
+                "reviewer_model": "opus",
+            },
             headers=headers,
         )
         assert resp.status_code == 200
-        assert resp.json()["webhook_url"] == "https://hooks.slack.com/services/test"
+        data = resp.json()
+        assert data["planner_model"] == "sonnet"
+        assert data["agent_model_low"] == "haiku"
+        assert data["reviewer_model"] == "opus"
+        # Unchanged model fields keep defaults
+        assert data["agent_model_medium"] == "opus"
+        assert data["agent_model_high"] == "opus"
 
     async def test_settings_persist_across_requests(self, client):
-        """Settings should persist across multiple requests."""
+        """Settings should persist across multiple requests (DB-backed)."""
         token = await _register_and_get_token(client)
         headers = _auth_header(token)
 
         # Update
         await client.put(
             "/api/settings",
-            json={"max_agents": 12},
+            json={"max_agents": 12, "planner_model": "haiku"},
             headers=headers,
         )
 
         # Verify
         resp = await client.get("/api/settings", headers=headers)
         assert resp.status_code == 200
-        assert resp.json()["max_agents"] == 12
+        data = resp.json()
+        assert data["max_agents"] == 12
+        assert data["planner_model"] == "haiku"
 
     async def test_validation_rejects_invalid_max_agents(self, client):
         """PUT /settings should reject max_agents out of range."""
@@ -130,3 +146,40 @@ class TestUpdateSettings:
             headers=headers,
         )
         assert resp.status_code == 422
+
+    async def test_validation_rejects_invalid_timeout(self, client):
+        """PUT /settings should reject timeout out of range."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        resp = await client.put(
+            "/api/settings",
+            json={"timeout": 10},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_multiple_updates_merge(self, client):
+        """Multiple PUTs should merge, not overwrite previous settings."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        # First update
+        await client.put(
+            "/api/settings",
+            json={"max_agents": 8},
+            headers=headers,
+        )
+
+        # Second update (different field)
+        await client.put(
+            "/api/settings",
+            json={"model_strategy": "quality"},
+            headers=headers,
+        )
+
+        # Verify both persisted
+        resp = await client.get("/api/settings", headers=headers)
+        data = resp.json()
+        assert data["max_agents"] == 8
+        assert data["model_strategy"] == "quality"

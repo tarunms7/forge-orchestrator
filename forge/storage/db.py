@@ -39,6 +39,7 @@ class UserRow(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    settings_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AuditLogRow(Base):
@@ -193,6 +194,24 @@ class Database:
     @staticmethod
     def verify_password(password: str, hashed: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+    # ── User settings ────────────────────────────────────────────────
+
+    async def get_user_settings(self, user_id: str) -> dict | None:
+        """Load persisted settings JSON for a user, or None if not set."""
+        async with self._session_factory() as session:
+            user = await session.get(UserRow, user_id)
+            if user and user.settings_json:
+                return json.loads(user.settings_json)
+            return None
+
+    async def save_user_settings(self, user_id: str, settings: dict) -> None:
+        """Persist settings JSON for a user."""
+        async with self._session_factory() as session:
+            user = await session.get(UserRow, user_id)
+            if user:
+                user.settings_json = json.dumps(settings)
+                await session.commit()
 
     # ── Auth: Audit logs ──────────────────────────────────────────────
 

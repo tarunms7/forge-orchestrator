@@ -462,6 +462,64 @@ async def resume_pipeline(
     return {"status": "resumed", "pipeline_id": pipeline_id, "tasks_reset": reset_count}
 
 
+@router.post("/{pipeline_id}/cancel")
+async def cancel_pipeline(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Cancel a running pipeline. Sets all non-terminal tasks to cancelled."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(500, "Database not configured")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(404, "Pipeline not found")
+
+    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+    cancelled_count = 0
+    for task in tasks:
+        if task.state not in ("done", "error", "cancelled"):
+            await forge_db.update_task_state(task.id, "cancelled")
+            cancelled_count += 1
+
+    await forge_db.update_pipeline_status(pipeline_id, "cancelled")
+    return {"status": "cancelled", "tasks_cancelled": cancelled_count}
+
+
+@router.post("/{pipeline_id}/{task_id}/retry")
+async def retry_task(
+    pipeline_id: str,
+    task_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Retry a single failed task."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(500, "Database not configured")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(404, "Pipeline not found")
+
+    task = await forge_db.get_task(task_id)
+    if task is None or task.pipeline_id != pipeline_id:
+        raise HTTPException(404, "Task not found")
+
+    if task.state != "error":
+        raise HTTPException(400, f"Task is in state '{task.state}', can only retry errored tasks")
+
+    await forge_db.retry_task(task_id)  # Resets to todo, increments retry_count
+
+    # If pipeline was complete/cancelled, reactivate it
+    if pipeline.status in ("complete", "cancelled", "error"):
+        await forge_db.update_pipeline_status(pipeline_id, "executing")
+
+    return {"status": "retrying", "task_id": task_id}
+
+
 @router.get("/{pipeline_id}", response_model=TaskStatusResponse)
 async def get_task_status(
     pipeline_id: str,

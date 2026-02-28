@@ -8,18 +8,58 @@ import { useNotifications } from "@/hooks/useNotifications";
 interface Settings {
   max_agents: number;
   timeout: number;
-  browser_notifications: boolean;
-  webhook_url: string;
-  default_execution_target: string;
+  max_retries: number;
+  model_strategy: string;
+  planner_model: string;
+  agent_model_low: string;
+  agent_model_medium: string;
+  agent_model_high: string;
+  reviewer_model: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
   max_agents: 4,
-  timeout: 300,
-  browser_notifications: false,
-  webhook_url: "",
-  default_execution_target: "local",
+  timeout: 600,
+  max_retries: 3,
+  model_strategy: "auto",
+  planner_model: "opus",
+  agent_model_low: "sonnet",
+  agent_model_medium: "opus",
+  agent_model_high: "opus",
+  reviewer_model: "sonnet",
 };
+
+const MODEL_OPTIONS = ["opus", "sonnet", "haiku"] as const;
+const STRATEGY_OPTIONS = ["auto", "fast", "quality"] as const;
+
+function ModelSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+      >
+        {MODEL_OPTIONS.map((m) => (
+          <option key={m} value={m}>
+            {m.charAt(0).toUpperCase() + m.slice(1)}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const token = useAuthStore((s) => s.token);
@@ -47,25 +87,21 @@ export default function SettingsPage() {
     setError(null);
 
     try {
-      const updated = await apiPut("/settings", settings as unknown as Record<string, unknown>, token);
+      const updated = await apiPut(
+        "/settings",
+        settings as unknown as Record<string, unknown>,
+        token,
+      );
       setSettings(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save settings");
+      setError(
+        err instanceof Error ? err.message : "Failed to save settings",
+      );
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleNotificationToggle = async (enabled: boolean) => {
-    if (enabled) {
-      const permission = await requestPermission();
-      if (permission !== "granted") {
-        return;
-      }
-    }
-    setSettings((s) => ({ ...s, browser_notifications: enabled }));
   };
 
   const checkCliStatus = () => {
@@ -136,7 +172,27 @@ export default function SettingsPage() {
               onChange={(e) =>
                 setSettings((s) => ({
                   ...s,
-                  timeout: parseInt(e.target.value, 10) || 300,
+                  timeout: parseInt(e.target.value, 10) || 600,
+                }))
+              }
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          {/* Max Retries Input */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+              Max Retries
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              value={settings.max_retries}
+              onChange={(e) =>
+                setSettings((s) => ({
+                  ...s,
+                  max_retries: parseInt(e.target.value, 10) || 0,
                 }))
               }
               className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
@@ -145,57 +201,98 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* Notifications Section */}
+      {/* Model Routing Section */}
       <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">Notifications</h2>
+        <h2 className="mb-4 text-lg font-semibold text-white">
+          Model Routing
+        </h2>
 
         <div className="space-y-5">
-          {/* Browser Notifications Toggle */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-zinc-300">
-                Browser Notifications
-              </p>
-              <p className="text-xs text-zinc-500">
-                Get notified when pipelines complete
-              </p>
-            </div>
-            <button
-              onClick={() =>
-                handleNotificationToggle(!settings.browser_notifications)
-              }
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                settings.browser_notifications ? "bg-blue-600" : "bg-zinc-700"
-              }`}
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  settings.browser_notifications
-                    ? "translate-x-6"
-                    : "translate-x-1"
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Webhook URL */}
+          {/* Strategy Preset */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Webhook URL
+            <label className="mb-2 block text-sm font-medium text-zinc-300">
+              Strategy
             </label>
-            <input
-              type="url"
-              placeholder="https://hooks.slack.com/services/..."
-              value={settings.webhook_url}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, webhook_url: e.target.value }))
-              }
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
-            />
-            <p className="mt-1 text-xs text-zinc-500">
-              Slack or Discord webhook URL for pipeline notifications
+            <div className="flex gap-3">
+              {STRATEGY_OPTIONS.map((s) => (
+                <label
+                  key={s}
+                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm transition ${
+                    settings.model_strategy === s
+                      ? "border-blue-500 bg-blue-950/40 text-blue-300"
+                      : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="model_strategy"
+                    value={s}
+                    checked={settings.model_strategy === s}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        model_strategy: e.target.value,
+                      }))
+                    }
+                    className="sr-only"
+                  />
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-zinc-500">
+              Auto balances cost and quality. Fast minimizes latency. Quality
+              uses the strongest models.
             </p>
           </div>
+
+          {/* Planner Model */}
+          <ModelSelect
+            label="Planner Model"
+            value={settings.planner_model}
+            onChange={(v) =>
+              setSettings((s) => ({ ...s, planner_model: v }))
+            }
+          />
+
+          {/* Agent Models by Complexity */}
+          <div>
+            <p className="mb-3 text-sm font-medium text-zinc-300">
+              Agent Model by Complexity
+            </p>
+            <div className="grid grid-cols-3 gap-4">
+              <ModelSelect
+                label="Low"
+                value={settings.agent_model_low}
+                onChange={(v) =>
+                  setSettings((s) => ({ ...s, agent_model_low: v }))
+                }
+              />
+              <ModelSelect
+                label="Medium"
+                value={settings.agent_model_medium}
+                onChange={(v) =>
+                  setSettings((s) => ({ ...s, agent_model_medium: v }))
+                }
+              />
+              <ModelSelect
+                label="High"
+                value={settings.agent_model_high}
+                onChange={(v) =>
+                  setSettings((s) => ({ ...s, agent_model_high: v }))
+                }
+              />
+            </div>
+          </div>
+
+          {/* Reviewer Model */}
+          <ModelSelect
+            label="Reviewer Model"
+            value={settings.reviewer_model}
+            onChange={(v) =>
+              setSettings((s) => ({ ...s, reviewer_model: v }))
+            }
+          />
         </div>
       </section>
 

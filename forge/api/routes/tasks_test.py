@@ -263,3 +263,45 @@ class TestResumeEndpoint:
             headers=_auth_header(token),
         )
         assert resp.status_code == 404
+
+
+# ── Cancel endpoint tests ────────────────────────────────────────
+
+
+class TestCancelEndpoint:
+    """Tests for POST /tasks/{pipeline_id}/cancel."""
+
+    async def test_cancel_requires_auth(self, client):
+        """POST /tasks/{id}/cancel without auth should return 401."""
+        resp = await client.post("/api/tasks/some-id/cancel")
+        assert resp.status_code == 401
+
+    async def test_cancel_nonexistent_returns_404(self, client):
+        """POST /tasks/{id}/cancel for unknown pipeline should return 404."""
+        token = await _register_and_get_token(client, email="cancel@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/cancel",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+
+# ── Retry task endpoint tests ────────────────────────────────────
+
+
+class TestRetryTaskEndpoint:
+    """Tests for POST /tasks/{pipeline_id}/{task_id}/retry."""
+
+    async def test_retry_requires_auth(self, client):
+        """POST /tasks/{pipe}/{task}/retry without auth should return 401."""
+        resp = await client.post("/api/tasks/some-pipe/some-task/retry")
+        assert resp.status_code == 401
+
+    async def test_retry_nonexistent_pipeline_returns_404(self, client):
+        """POST /tasks/{pipe}/{task}/retry for unknown pipeline should return 404."""
+        token = await _register_and_get_token(client, email="retry@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/bad-task/retry",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404

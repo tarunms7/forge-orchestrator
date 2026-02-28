@@ -12,6 +12,8 @@ import { apiGet, apiPost } from "@/lib/api";
 import AgentCard from "@/components/task/AgentCard";
 import PipelineProgress from "@/components/task/PipelineProgress";
 import CompletionSummary from "@/components/task/CompletionSummary";
+import TimelinePanel from "@/components/task/TimelinePanel";
+import TaskDetailPanel from "@/components/task/TaskDetailPanel";
 
 /* ── Plan Panel ───────────────────────────────────────────────────── */
 
@@ -203,9 +205,18 @@ export default function TaskExecutionPage() {
   const handleEvent = useTaskStore((s) => s.handleEvent);
   const hydrateFromRest = useTaskStore((s) => s.hydrateFromRest);
   const reset = useTaskStore((s) => s.reset);
+  const timeline = useTaskStore((s) => s.timeline);
 
   const [executing, setExecuting] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const hydrated = useRef(false);
+
+  // Request browser notification permission on mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Reset store when navigating to a different pipeline
   useEffect(() => {
@@ -230,6 +241,15 @@ export default function TaskExecutionPage() {
       })
       .catch(() => {});
   }, [token, pipelineId, hydrateFromRest]);
+
+  // Close detail panel on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedTaskId(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const onMessage = useCallback(
     (raw: unknown) => {
@@ -308,7 +328,7 @@ export default function TaskExecutionPage() {
         {showAgentCards ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {taskList.map((task) => (
-              <AgentCard key={task.id} task={task} />
+              <AgentCard key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
             ))}
           </div>
         ) : (
@@ -329,9 +349,16 @@ export default function TaskExecutionPage() {
           )
         )}
 
-        {/* Resume Button — shown when pipeline is not complete */}
+        {/* Timeline */}
+        {timeline.length > 0 && (
+          <div className="mt-6">
+            <TimelinePanel events={timeline} />
+          </div>
+        )}
+
+        {/* Resume / Cancel Buttons — shown when pipeline is not complete */}
         {phase !== "complete" && phase !== "idle" && phase !== "planning" && phase !== "planned" && (
-          <div className="mt-4 flex justify-center">
+          <div className="mt-4 flex justify-center gap-3">
             <button
               onClick={async () => {
                 if (!token || !pipelineId) return;
@@ -346,6 +373,23 @@ export default function TaskExecutionPage() {
             >
               Resume Pipeline
             </button>
+            {phase === "executing" && (
+              <button
+                onClick={async () => {
+                  if (!token || !pipelineId) return;
+                  if (!confirm("Cancel all running tasks?")) return;
+                  try {
+                    await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
+                    window.location.reload();
+                  } catch (e) {
+                    // Error surfaces via events
+                  }
+                }}
+                className="rounded-lg bg-red-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+              >
+                Cancel Pipeline
+              </button>
+            )}
           </div>
         )}
 
@@ -356,6 +400,14 @@ export default function TaskExecutionPage() {
           </div>
         )}
       </div>
+
+      {/* Task Detail Slide-out Panel */}
+      {selectedTaskId && tasks[selectedTaskId] && (
+        <TaskDetailPanel
+          task={tasks[selectedTaskId]}
+          onClose={() => setSelectedTaskId(null)}
+        />
+      )}
     </div>
   );
 }

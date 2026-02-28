@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { TaskState } from "@/stores/taskStore";
+import { useTaskStore } from "@/stores/taskStore";
+import { useAuthStore } from "@/stores/authStore";
+import { apiPost } from "@/lib/api";
 
 const STATE_BADGE: Record<
   TaskState["state"],
@@ -154,10 +157,12 @@ function FormattedLine({ text }: { text: string }) {
 
 const COLLAPSED_LINE_LIMIT = 8;
 
-export default function AgentCard({ task }: { task: TaskState }) {
+export default function AgentCard({ task, onClick }: { task: TaskState; onClick?: () => void }) {
   const outputRef = useRef<HTMLDivElement>(null);
   const badge = STATE_BADGE[task.state];
   const [expanded, setExpanded] = useState(false);
+  const pipelineId = useTaskStore((s) => s.pipelineId);
+  const token = useAuthStore((s) => s.token);
 
   useEffect(() => {
     if (outputRef.current && (expanded || task.output.length <= COLLAPSED_LINE_LIMIT)) {
@@ -173,7 +178,10 @@ export default function AgentCard({ task }: { task: TaskState }) {
   const visibleLines = expanded ? task.output : task.output.slice(-COLLAPSED_LINE_LIMIT);
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3">
+    <div
+      onClick={onClick}
+      className="cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-4 flex flex-col gap-3 transition hover:border-zinc-600"
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
@@ -306,6 +314,22 @@ export default function AgentCard({ task }: { task: TaskState }) {
       {/* Cost */}
       {task.costUsd != null && task.costUsd > 0 && (
         <p className="text-xs text-zinc-500">Cost: ${task.costUsd.toFixed(4)}</p>
+      )}
+
+      {/* Retry button for errored tasks */}
+      {task.state === "error" && (
+        <button
+          onClick={async () => {
+            if (!pipelineId || !token) return;
+            try {
+              await apiPost(`/tasks/${pipelineId}/${task.id}/retry`, {}, token);
+              window.location.reload();
+            } catch {}
+          }}
+          className="mt-2 w-full rounded bg-yellow-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-yellow-700"
+        >
+          Retry Task
+        </button>
       )}
     </div>
   );
