@@ -141,7 +141,7 @@ export default function TaskExecutionPage() {
         {/* Completion Summary */}
         {phase === "complete" && (
           <div className="mt-8">
-            <CompletionSummary tasks={tasks} />
+            <CompletionSummary tasks={tasks} pipelineId={pipelineId} />
           </div>
         )}
       </div>

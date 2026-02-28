@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,75 @@ async def execute_pipeline(
     del pending_graphs[pipeline_id]
 
     return {"status": "executing", "pipeline_id": pipeline_id}
+
+
+@router.post("/{pipeline_id}/pr")
+async def create_pr(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Create a GitHub PR for a completed pipeline."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    # Check if PR already exists
+    if getattr(pipeline, "pr_url", None):
+        return {"pr_url": pipeline.pr_url, "already_existed": True}
+
+    project_dir = pipeline.project_dir
+    branch_name = f"forge/pipeline-{pipeline_id[:8]}"
+
+    try:
+        # Create branch from current state
+        subprocess.run(
+            ["git", "checkout", "-b", branch_name],
+            cwd=project_dir, check=True, capture_output=True, text=True,
+        )
+
+        # Push to remote
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch_name],
+            cwd=project_dir, check=True, capture_output=True, text=True,
+        )
+
+        # Create PR using gh CLI
+        pr_result = subprocess.run(
+            ["gh", "pr", "create",
+             "--base", "main",
+             "--head", branch_name,
+             "--title", f"Forge: {pipeline.description[:60]}",
+             "--body", f"Automated PR created by Forge pipeline `{pipeline_id}`.\n\nDescription: {pipeline.description}"],
+            cwd=project_dir, capture_output=True, text=True,
+        )
+
+        if pr_result.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create PR: {pr_result.stderr or pr_result.stdout}",
+            )
+
+        pr_url = pr_result.stdout.strip()
+
+        # Store PR URL on pipeline
+        await forge_db.set_pipeline_pr_url(pipeline_id, pr_url)
+
+        return {"pr_url": pr_url}
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Git operation failed: {e.stderr or str(e)}",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{pipeline_id}", response_model=TaskStatusResponse)
