@@ -193,6 +193,31 @@ class TestListTasks:
         assert descriptions == {"Task A", "Task B"}
 
 
+# ── Event enrichment tests ────────────────────────────────────────
+
+
+class TestGetTaskStatusWithEvents:
+    """Tests for GET /tasks/{pipeline_id} event enrichment."""
+
+    async def test_get_task_status_includes_timeline(self, client):
+        """GET /tasks/{id} should include timeline field."""
+        token = await _register_and_get_token(client, email="timeline@example.com")
+        headers = _auth_header(token)
+
+        create_resp = await client.post(
+            "/api/tasks",
+            json={"description": "Events test", "project_path": "/tmp/proj"},
+            headers=headers,
+        )
+        pipeline_id = create_resp.json()["pipeline_id"]
+
+        resp = await client.get(f"/api/tasks/{pipeline_id}", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "timeline" in data
+        assert isinstance(data["timeline"], list)
+
+
 # ── IDOR tests ──────────────────────────────────────────────────────
 
 

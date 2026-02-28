@@ -32,6 +32,7 @@ class TaskStatusResponse(BaseModel):
     pipeline_id: str
     phase: str
     tasks: list[dict] = Field(default_factory=list)
+    timeline: list[dict] = Field(default_factory=list)
 
 
 class TaskListItem(BaseModel):

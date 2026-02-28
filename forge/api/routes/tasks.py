@@ -397,10 +397,60 @@ async def get_task_status(
         if pipeline is None or pipeline.user_id != user_id:
             raise HTTPException(status_code=404, detail="Pipeline not found")
         tasks = json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else {"tasks": []}
+        tasks_list = tasks.get("tasks", [])
+
+        # Query persisted events for this pipeline
+        events = await forge_db.list_events(pipeline_id)
+
+        # Build per-task event data
+        task_events: dict[str, dict] = {}
+        timeline = []
+        for ev in events:
+            timeline.append({
+                "type": ev.event_type,
+                "task_id": ev.task_id,
+                "payload": ev.payload,
+                "timestamp": ev.created_at,
+            })
+            if ev.task_id:
+                te = task_events.setdefault(ev.task_id, {
+                    "output": [], "reviewGates": [], "mergeResult": None, "cost_usd": 0,
+                })
+                if ev.event_type == "task:agent_output":
+                    te["output"].append(ev.payload.get("line", ""))
+                elif ev.event_type == "task:review_update":
+                    te["reviewGates"].append({
+                        "gate": ev.payload.get("gate"),
+                        "result": "pass" if ev.payload.get("passed") else "fail",
+                        "details": ev.payload.get("details"),
+                    })
+                elif ev.event_type == "task:merge_result":
+                    te["mergeResult"] = ev.payload
+                elif ev.event_type == "task:cost_update":
+                    te["cost_usd"] = ev.payload.get("cumulative_cost_usd", 0)
+                elif ev.event_type == "task:state_changed":
+                    te["state"] = ev.payload.get("state")
+
+        # Also get live task states from DB
+        db_tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+        task_state_map = {t.id: t.state for t in db_tasks}
+
+        # Merge event data into task list
+        enriched_tasks = []
+        for t in tasks_list:
+            tid = t.get("id", "")
+            te = task_events.get(tid, {})
+            enriched = {**t, **te}
+            # Use live DB state if available (more accurate than last event)
+            if tid in task_state_map:
+                enriched["state"] = task_state_map[tid]
+            enriched_tasks.append(enriched)
+
         return TaskStatusResponse(
             pipeline_id=pipeline.id,
             phase=pipeline.status,
-            tasks=tasks.get("tasks", []),
+            tasks=enriched_tasks,
+            timeline=timeline,
         )
 
     # Fallback: in-memory

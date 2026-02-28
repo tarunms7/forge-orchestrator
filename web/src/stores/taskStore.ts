@@ -36,14 +36,8 @@ export interface PipelineState {
   setPipelineId: (id: string) => void;
   hydrateFromRest: (data: {
     phase: string;
-    tasks: Array<{
-      id: string;
-      title: string;
-      description?: string;
-      files?: string[];
-      depends_on?: string[];
-      complexity?: string;
-    }>;
+    tasks: Array<Record<string, unknown>>;
+    timeline?: Array<Record<string, unknown>>;
   }) => void;
   handleEvent: (event: {
     event: string;
@@ -83,18 +77,19 @@ export const useTaskStore = create<PipelineState>((set) => ({
   hydrateFromRest: (data) => {
     const newTasks: Record<string, TaskState> = {};
     for (const t of data.tasks) {
-      newTasks[t.id] = {
-        id: t.id,
-        title: t.title,
-        description: t.description,
-        targetFiles: t.files,
-        dependsOn: t.depends_on,
-        complexity: t.complexity,
-        state: "pending",
+      newTasks[t.id as string] = {
+        id: t.id as string,
+        title: t.title as string,
+        description: t.description as string | undefined,
+        targetFiles: t.files as string[] | undefined,
+        dependsOn: t.depends_on as string[] | undefined,
+        complexity: t.complexity as string | undefined,
+        state: mapState((t.state as string) || "pending"),
         branch: `forge/${t.id}`,
-        files: [],
-        output: [],
-        reviewGates: [],
+        files: (t.files_changed as string[]) || [],
+        output: (t.output as string[]) || [],
+        reviewGates: (t.reviewGates as TaskState["reviewGates"]) || [],
+        mergeResult: (t.mergeResult as TaskState["mergeResult"]) || undefined,
       };
     }
     const phase = (data.phase || "idle") as PipelineState["phase"];
