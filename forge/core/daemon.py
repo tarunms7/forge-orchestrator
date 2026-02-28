@@ -63,7 +63,18 @@ class ForgeDaemon:
         self._events = event_emitter or EventEmitter()
         self._strategy = self._settings.model_strategy
 
-    async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True) -> TaskGraph:
+    async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
+        """Emit event to WebSocket AND persist to DB."""
+        await self._events.emit(event_type, data)
+        task_id = data.get("task_id")
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id=task_id,
+            event_type=event_type,
+            payload=data,
+        )
+
+    async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None) -> TaskGraph:
         """Run planning only. Returns the TaskGraph for user approval.
 
         Args:
@@ -71,7 +82,10 @@ class ForgeDaemon:
                 The web flow sets this to False because it remaps task IDs
                 before emitting the event with the correct prefixed IDs.
         """
-        await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
+        if pipeline_id:
+            await self._emit("pipeline:phase_changed", {"phase": "planning"}, db=db, pipeline_id=pipeline_id)
+        else:
+            await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
 
         strategy = self._settings.model_strategy
         planner_model = select_model(strategy, "planner", "high")
@@ -87,7 +101,7 @@ class ForgeDaemon:
             console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
 
         if emit_plan_ready:
-            await self._events.emit("pipeline:plan_ready", {
+            plan_data = {
                 "tasks": [
                     {
                         "id": t.id, "title": t.title, "description": t.description,
@@ -96,15 +110,19 @@ class ForgeDaemon:
                     }
                     for t in graph.tasks
                 ]
-            })
+            }
+            if pipeline_id:
+                await self._emit("pipeline:plan_ready", plan_data, db=db, pipeline_id=pipeline_id)
+            else:
+                await self._events.emit("pipeline:plan_ready", plan_data)
         return graph
 
     async def execute(self, graph: TaskGraph, db: Database, pipeline_id: str | None = None) -> None:
         """Execute a previously approved TaskGraph."""
-        await self._events.emit("pipeline:phase_changed", {"phase": "executing"})
 
         # Use provided pipeline_id, fall back to self._pipeline_id (CLI flow), or generate one
         pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
+        await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
         prefix = pid[:8]
 
         # Task IDs may already be prefixed (web flow remaps in _run_plan).
@@ -148,7 +166,7 @@ class ForgeDaemon:
         merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
 
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
-        await self._events.emit("pipeline:phase_changed", {"phase": "complete"})
+        await self._emit("pipeline:phase_changed", {"phase": "complete"}, db=db, pipeline_id=pid)
 
     async def run(self, user_input: str) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
@@ -170,8 +188,8 @@ class ForgeDaemon:
                 model_strategy=self._strategy,
             )
 
-            graph = await self.plan(user_input, db)
-            await self.execute(graph, db)
+            graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
+            await self.execute(graph, db, pipeline_id=self._pipeline_id)
         finally:
             await db.close()
 
@@ -230,7 +248,7 @@ class ForgeDaemon:
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
 
             coros = [
-                self._execute_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id)
+                self._execute_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id, pipeline_id=pipeline_id)
                 for task_id, agent_id in dispatch_plan
             ]
             await asyncio.gather(*coros)
@@ -243,6 +261,7 @@ class ForgeDaemon:
         merge_worker: MergeWorker,
         task_id: str,
         agent_id: str,
+        pipeline_id: str | None = None,
     ) -> None:
         """Execute a single task: create worktree -> run agent -> review -> merge."""
         task = await db.get_task(task_id)
@@ -254,7 +273,8 @@ class ForgeDaemon:
         console.print(f"[cyan]Starting {task_id}: {task.title}[/cyan]")
         console.print(f"[cyan]{'='*50}[/cyan]")
 
-        await self._events.emit("task:state_changed", {"task_id": task_id, "state": "in_progress"})
+        pid = pipeline_id or ""
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_progress"}, db=db, pipeline_id=pid)
 
         try:
             worktree_path = worktree_mgr.create(task_id)
@@ -266,13 +286,13 @@ class ForgeDaemon:
             if not os.path.isdir(worktree_path):
                 console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
                 await db.update_task_state(task_id, TaskState.ERROR.value)
-                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
                 await db.release_agent(agent_id)
                 return
         except Exception as e:
             console.print(f"[red]Worktree creation failed for {task_id}: {e}[/red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
-            await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
+            await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
             await db.release_agent(agent_id)
             return
 
@@ -304,9 +324,9 @@ class ForgeDaemon:
             # Batch: flush every 100ms to prevent WebSocket flooding
             if now - _last_flush[0] >= 0.1:
                 for line in _batch:
-                    await self._events.emit("task:agent_output", {
+                    await self._emit("task:agent_output", {
                         "task_id": task_id, "line": line,
-                    })
+                    }, db=db, pipeline_id=pid)
                 _batch.clear()
                 _last_flush[0] = now
 
@@ -319,14 +339,14 @@ class ForgeDaemon:
 
         # Flush any remaining batched messages
         for line in _batch:
-            await self._events.emit("task:agent_output", {
+            await self._emit("task:agent_output", {
                 "task_id": task_id, "line": line,
-            })
+            }, db=db, pipeline_id=pid)
         _batch.clear()
 
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
-            await self._handle_retry(db, task_id, worktree_mgr)
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
 
@@ -334,42 +354,42 @@ class ForgeDaemon:
         diff = _get_diff_vs_main(worktree_path)
         if not diff.strip():
             console.print(f"[red]{task_id} agent produced no changes[/red]")
-            await self._handle_retry(db, task_id, worktree_mgr)
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
 
         console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
 
         if result.files_changed:
-            await self._events.emit("task:files_changed", {
+            await self._emit("task:files_changed", {
                 "task_id": task_id, "files": result.files_changed,
-            })
+            }, db=db, pipeline_id=pid)
 
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
-        await self._events.emit("task:state_changed", {"task_id": task_id, "state": "in_review"})
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
 
-        review_passed, review_feedback = await self._run_review(task, worktree_path, diff)
+        review_passed, review_feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid)
 
         if review_passed:
             await db.update_task_state(task_id, TaskState.MERGING.value)
-            await self._events.emit("task:state_changed", {"task_id": task_id, "state": "merging"})
+            await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
             branch = f"forge/{task_id}"
             merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
             if merge_result.success:
                 console.print(f"[bold green]{task_id} merged successfully![/bold green]")
                 await db.update_task_state(task_id, TaskState.DONE.value)
                 stats = _get_diff_stats(self._project_dir)
-                await self._events.emit("task:merge_result", {
+                await self._emit("task:merge_result", {
                     "task_id": task_id, "success": True, "error": None,
                     **stats,
-                })
-                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
+                }, db=db, pipeline_id=pid)
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
             else:
                 console.print(f"[red]{task_id} merge failed: {merge_result.error}[/red]")
                 console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
-                await self._events.emit("task:merge_result", {
+                await self._emit("task:merge_result", {
                     "task_id": task_id, "success": False, "error": merge_result.error,
-                })
+                }, db=db, pipeline_id=pid)
 
                 # Tier 1: retry merge only (no agent re-run)
                 retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
@@ -377,11 +397,11 @@ class ForgeDaemon:
                     console.print(f"[bold green]{task_id} merged on retry![/bold green]")
                     await db.update_task_state(task_id, TaskState.DONE.value)
                     stats = _get_diff_stats(self._project_dir)
-                    await self._events.emit("task:merge_result", {
+                    await self._emit("task:merge_result", {
                         "task_id": task_id, "success": True, "error": None,
                         **stats,
-                    })
-                    await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
+                    }, db=db, pipeline_id=pid)
+                    await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
                 else:
                     console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
                     # Tier 2: try agent conflict resolution if we have conflicting files
@@ -396,30 +416,35 @@ class ForgeDaemon:
                                 console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
                                 await db.update_task_state(task_id, TaskState.DONE.value)
                                 stats = _get_diff_stats(self._project_dir)
-                                await self._events.emit("task:merge_result", {
+                                await self._emit("task:merge_result", {
                                     "task_id": task_id, "success": True, "error": None,
                                     **stats,
-                                })
-                                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "done"})
+                                }, db=db, pipeline_id=pid)
+                                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
                             else:
-                                await self._handle_retry(db, task_id, worktree_mgr)
+                                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                         else:
-                            await self._handle_retry(db, task_id, worktree_mgr)
+                            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                     else:
                         # Tier 3: full retry (existing behavior)
-                        await self._handle_retry(db, task_id, worktree_mgr)
+                        await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
         else:
-            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=review_feedback)
+            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=review_feedback, pipeline_id=pipeline_id)
 
-        try:
-            worktree_mgr.remove(task_id)
-        except Exception:
-            pass
+        # Only clean up worktree for terminal states (done/error).
+        # Retrying tasks keep their worktree so the agent can fix in-place
+        # instead of rebuilding from scratch (saves massive token waste).
+        task_after = await db.get_task(task_id)
+        if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
+            try:
+                worktree_mgr.remove(task_id)
+            except Exception:
+                pass
 
         # Release the agent so the scheduler can reuse it for the next task
         await db.release_agent(agent_id)
 
-    async def _run_review(self, task, worktree_path: str, diff: str) -> tuple[bool, str | None]:
+    async def _run_review(self, task, worktree_path: str, diff: str, *, db: Database, pipeline_id: str) -> tuple[bool, str | None]:
         """Run the 3-gate review pipeline.
 
         Returns:
@@ -431,10 +456,10 @@ class ForgeDaemon:
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
         gate1_result = await self._gate1(worktree_path)
-        await self._events.emit("task:review_update", {
+        await self._emit("task:review_update", {
             "task_id": task.id, "gate": "L1", "passed": gate1_result.passed,
             "details": gate1_result.details,
-        })
+        }, db=db, pipeline_id=pipeline_id)
         if not gate1_result.passed:
             console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
             feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
@@ -442,16 +467,20 @@ class ForgeDaemon:
         console.print("[green]  L1 passed[/green]")
 
         # L2: LLM review
-        console.print(f"[blue]  L2 (LLM): Code review for {task.id}...[/blue]")
+        # Pass prior feedback so the reviewer focuses on verifying fixes
+        # instead of inventing new complaints on every retry.
+        prior_feedback = getattr(task, "review_feedback", None) if task.retry_count > 0 else None
+        console.print(f"[blue]  L2 (LLM): Code review for {task.id}{'  (re-review)' if prior_feedback else ''}...[/blue]")
         reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
         gate2_result = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
+            prior_feedback=prior_feedback,
         )
-        await self._events.emit("task:review_update", {
+        await self._emit("task:review_update", {
             "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
             "details": gate2_result.details,
-        })
+        }, db=db, pipeline_id=pipeline_id)
         if not gate2_result.passed:
             console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
             feedback_parts.append(f"L2 (LLM code review) FAILED:\n{gate2_result.details}")
@@ -562,6 +591,7 @@ class ForgeDaemon:
     async def _handle_retry(
         self, db: Database, task_id: str, worktree_mgr: WorktreeManager,
         review_feedback: str | None = None,
+        pipeline_id: str | None = None,
     ) -> None:
         """Handle task failure: retry up to max_retries, then mark as error.
 
@@ -579,18 +609,28 @@ class ForgeDaemon:
                 f" — {'with review feedback' if review_feedback else 'clean retry'}[/yellow]"
             )
             await db.retry_task(task_id, review_feedback=review_feedback)
-            await self._events.emit("task:state_changed", {
-                "task_id": task_id, "state": "retrying",
-            })
+            if pipeline_id:
+                await self._emit("task:state_changed", {
+                    "task_id": task_id, "state": "retrying",
+                }, db=db, pipeline_id=pipeline_id)
+            else:
+                await self._events.emit("task:state_changed", {
+                    "task_id": task_id, "state": "retrying",
+                })
+            # KEEP the worktree — the retry agent needs the existing code
+            # to fix specific review issues instead of rebuilding from scratch.
         else:
             console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
-            await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
-
-        try:
-            worktree_mgr.remove(task_id)
-        except Exception:
-            pass
+            if pipeline_id:
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pipeline_id)
+            else:
+                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
+            # Only clean up worktree when we're done with the task entirely
+            try:
+                worktree_mgr.remove(task_id)
+            except Exception:
+                pass
 
     def _gather_context(self) -> str:
         """Gather project context for the planner."""
