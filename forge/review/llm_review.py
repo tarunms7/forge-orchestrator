@@ -32,12 +32,20 @@ async def gate2_llm_review(
     diff: str,
     worktree_path: str | None = None,
     model: str = "sonnet",
+    prior_feedback: str | None = None,
 ) -> GateResult:
-    """Run LLM code review on the given diff against the task spec."""
+    """Run LLM code review on the given diff against the task spec.
+
+    Args:
+        prior_feedback: If this is a re-review after a retry, the previous
+            reviewer's feedback. The new reviewer is told to focus on
+            verifying those specific issues were fixed, not inventing
+            new complaints.
+    """
     if not diff.strip():
         return GateResult(passed=False, gate="gate2_llm_review", details="No changes to review")
 
-    prompt = _build_review_prompt(task_title, task_description, diff)
+    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback)
 
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
@@ -52,13 +60,27 @@ async def gate2_llm_review(
     return _parse_review_result(result_text)
 
 
-def _build_review_prompt(title: str, description: str, diff: str) -> str:
-    return (
-        f"Task: {title}\n"
-        f"Description: {description}\n\n"
-        f"Git diff of changes:\n```diff\n{diff}\n```\n\n"
-        "Review this code. Respond with PASS or FAIL."
-    )
+def _build_review_prompt(
+    title: str, description: str, diff: str,
+    prior_feedback: str | None = None,
+) -> str:
+    parts = [
+        f"Task: {title}\n",
+        f"Description: {description}\n\n",
+        f"Git diff of changes:\n```diff\n{diff}\n```\n\n",
+    ]
+    if prior_feedback:
+        parts.append(
+            "=== PRIOR REVIEW CONTEXT ===\n"
+            "A previous reviewer rejected this code with the following feedback:\n"
+            f"---\n{prior_feedback}\n---\n\n"
+            "The developer has attempted to fix these issues. Your PRIMARY job is to:\n"
+            "1. Verify that the specific issues above were actually fixed\n"
+            "2. Only flag NEW issues if they are genuine bugs or security concerns\n"
+            "3. Do NOT invent new stylistic complaints — focus on the prior feedback\n\n"
+        )
+    parts.append("Review this code. Respond with PASS or FAIL.")
+    return "".join(parts)
 
 
 def _parse_review_result(text: str) -> GateResult:

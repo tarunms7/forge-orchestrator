@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 forge.db
 .venv
+*ruff*
+*cache*
