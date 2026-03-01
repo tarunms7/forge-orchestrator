@@ -7,6 +7,7 @@ import json
 import logging
 import subprocess
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -173,7 +174,7 @@ async def get_stats(
     """Return dashboard statistics for the authenticated user."""
     forge_db = _get_forge_db(request)
     if forge_db is None:
-        return {"total_runs": 0, "active": 0, "completed": 0, "failed": 0}
+        return {"total_runs": 0, "active": 0, "completed": 0, "failed": 0, "avg_duration_secs": None}
 
     pipelines = await forge_db.list_pipelines(user_id=user_id)
     total = len(pipelines)
@@ -181,11 +182,26 @@ async def get_stats(
     completed = sum(1 for p in pipelines if p.status == "complete")
     failed = sum(1 for p in pipelines if p.status == "error")
 
+    # Compute average duration for completed pipelines
+    durations = []
+    for p in pipelines:
+        if p.status != "complete":
+            continue
+        try:
+            start = datetime.fromisoformat(p.created_at)
+            end = datetime.fromisoformat(p.completed_at)
+            durations.append((end - start).total_seconds())
+        except Exception:
+            pass
+
+    avg_duration_secs = round(sum(durations) / len(durations), 1) if durations else None
+
     return {
         "total_runs": total,
         "active": active,
         "completed": completed,
         "failed": failed,
+        "avg_duration_secs": avg_duration_secs,
     }
 
 
