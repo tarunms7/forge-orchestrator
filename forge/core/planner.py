@@ -3,6 +3,7 @@
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -17,7 +18,7 @@ class PlannerLLM(ABC):
     """Interface for the LLM that generates plans."""
 
     @abstractmethod
-    async def generate_plan(self, user_input: str, context: str, feedback: str | None = None) -> str:
+    async def generate_plan(self, user_input: str, context: str, feedback: str | None = None, on_message: Callable | None = None) -> str:
         """Generate a TaskGraph JSON string from user input."""
 
 
@@ -28,12 +29,12 @@ class Planner:
         self._llm = llm
         self._max_retries = max_retries
 
-    async def plan(self, user_input: str, context: str = "") -> TaskGraph:
+    async def plan(self, user_input: str, context: str = "", on_message: Callable | None = None) -> TaskGraph:
         feedback: str | None = None
 
         for attempt in range(self._max_retries):
             logger.info("Planning attempt %d/%d", attempt + 1, self._max_retries)
-            raw = await self._llm.generate_plan(user_input, context, feedback)
+            raw = await self._llm.generate_plan(user_input, context, feedback, on_message=on_message)
             logger.info(
                 "Attempt %d raw response (%d chars): %s",
                 attempt + 1, len(raw), raw[:500] if raw else "<empty>",

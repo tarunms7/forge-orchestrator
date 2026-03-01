@@ -147,8 +147,16 @@ class ForgeDaemon:
         planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir)
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
+        async def _on_planner_msg(msg):
+            text = _extract_text(msg)
+            if text:
+                if pipeline_id:
+                    await self._emit("planner:output", {"line": text}, db=db, pipeline_id=pipeline_id)
+                else:
+                    await self._events.emit("planner:output", {"line": text})
+
         self._snapshot = gather_project_snapshot(self._project_dir)
-        graph = await planner.plan(user_input, context=self._snapshot.format_for_planner())
+        graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
 
         for task_def in graph.tasks:
