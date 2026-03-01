@@ -31,8 +31,6 @@ from forge.core.daemon_review import ReviewMixin
 from forge.core.daemon_merge import MergeMixin
 
 # Re-export all helpers at module level for backward compatibility.
-# _extract_text, _get_current_branch, _print_status_table are also
-# used directly in this module's methods (plan, execute, _execution_loop).
 from forge.core.daemon_helpers import (  # noqa: F401
     _extract_text,
     _get_current_branch,
@@ -67,10 +65,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""
         await self._events.emit(event_type, data)
-        task_id = data.get("task_id")
         await db.log_event(
             pipeline_id=pipeline_id,
-            task_id=task_id,
+            task_id=data.get("task_id"),
             event_type=event_type,
             payload=data,
         )
@@ -78,10 +75,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
         import shutil
-
         errors = []
 
-        # Check: valid git repo
+        # Valid git repo?
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
             cwd=project_dir, capture_output=True, text=True,
@@ -89,11 +85,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if result.returncode != 0:
             errors.append("Not a git repository")
 
-        # Ensure repo has at least one commit — worktrees and merges
-        # require a valid HEAD. Create an initial empty commit if needed.
+        # Ensure at least one commit exists (worktrees need valid HEAD)
         has_commits = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_dir, capture_output=True,
+            ["git", "rev-parse", "HEAD"], cwd=project_dir, capture_output=True,
         ).returncode == 0
         if not has_commits:
             console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
@@ -102,28 +96,24 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 cwd=project_dir, capture_output=True, text=True,
             )
 
-        # Check: git remote exists (warning only — not needed for local execution)
+        # Git remote (warning only)
         result = subprocess.run(
             ["git", "remote"], cwd=project_dir, capture_output=True, text=True,
         )
         if not result.stdout.strip():
             console.print("[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]")
 
-        # Check: gh CLI available and authed (optional — warn, don't fail)
+        # gh CLI auth (optional)
         if shutil.which("gh"):
-            result = subprocess.run(
-                ["gh", "auth", "status"], capture_output=True, text=True,
-            )
+            result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
             if result.returncode != 0:
                 console.print("[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]")
 
         if errors:
-            detail = "; ".join(errors)
-            console.print(f"[bold red]Pre-flight failed: {detail}[/bold red]")
+            console.print(f"[bold red]Pre-flight failed: {'; '.join(errors)}[/bold red]")
             await self._emit("pipeline:preflight_failed", {"errors": errors}, db=db, pipeline_id=pipeline_id)
             await db.update_pipeline_status(pipeline_id, "error")
             return False
-
         return True
 
     async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None) -> TaskGraph:
@@ -157,21 +147,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._snapshot = gather_project_snapshot(self._project_dir)
         graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
-
         for task_def in graph.tasks:
             console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
 
         if emit_plan_ready:
-            plan_data = {
-                "tasks": [
-                    {
-                        "id": t.id, "title": t.title, "description": t.description,
-                        "files": t.files, "depends_on": t.depends_on,
-                        "complexity": t.complexity.value,
-                    }
-                    for t in graph.tasks
-                ]
-            }
+            plan_data = {"tasks": [
+                {"id": t.id, "title": t.title, "description": t.description,
+                 "files": t.files, "depends_on": t.depends_on, "complexity": t.complexity.value}
+                for t in graph.tasks
+            ]}
             if pipeline_id:
                 await self._emit("pipeline:plan_ready", plan_data, db=db, pipeline_id=pipeline_id)
             else:
@@ -185,23 +169,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             resume: If True, skip task/agent creation (they already exist
                 from the original run). Used by the resume endpoint.
         """
-
-        # Use provided pipeline_id, fall back to self._pipeline_id (CLI flow), or generate one
         pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
         prefix = pid[:8]
 
-        # Pre-flight checks
         if not await self._preflight_checks(self._project_dir, db, pid):
             raise RuntimeError("Pre-flight checks failed — see pipeline events for details")
 
         if not resume:
-            # Task IDs may already be prefixed (web flow remaps in _run_plan).
-            # Only remap if they haven't been prefixed yet (CLI flow).
+            # Only remap IDs if they haven't been prefixed yet (CLI flow)
             first_id = graph.tasks[0].id if graph.tasks else ""
-            needs_remap = not first_id.startswith(prefix)
-
-            if needs_remap:
+            if not first_id.startswith(prefix):
                 id_map = {t.id: f"{prefix}-{t.id}" for t in graph.tasks}
                 for t in graph.tasks:
                     t.depends_on = [id_map.get(d, d) for d in t.depends_on]
@@ -209,15 +187,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             for task_def in graph.tasks:
                 await db.create_task(
-                    id=task_def.id,
-                    title=task_def.title,
-                    description=task_def.description,
-                    files=task_def.files,
-                    depends_on=task_def.depends_on,
-                    complexity=task_def.complexity.value,
-                    pipeline_id=pid,
+                    id=task_def.id, title=task_def.title, description=task_def.description,
+                    files=task_def.files, depends_on=task_def.depends_on,
+                    complexity=task_def.complexity.value, pipeline_id=pid,
                 )
-
             for i in range(self._settings.max_agents):
                 await db.create_agent(f"{prefix}-agent-{i}")
 
@@ -226,24 +199,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             memory_threshold_pct=self._settings.memory_threshold_pct,
             disk_threshold_gb=self._settings.disk_threshold_gb,
         )
-        worktree_mgr = WorktreeManager(
-            self._project_dir,
-            f"{self._project_dir}/.forge/worktrees",
-        )
+        worktree_mgr = WorktreeManager(self._project_dir, f"{self._project_dir}/.forge/worktrees")
         adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
         base_branch = _get_current_branch(self._project_dir)
         pipeline_branch = f"forge/pipeline-{pid[:8]}"
-        # Create an isolated pipeline branch — all task merges go here,
-        # never to main.  Code reaches main only through a PR.
+        # Isolated pipeline branch — code reaches main only through a PR
         subprocess.run(
             ["git", "branch", "-f", pipeline_branch, base_branch],
             cwd=self._project_dir, check=True, capture_output=True,
         )
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
-
-        # Store base_branch so auto-PR knows the target
         await db.set_pipeline_base_branch(pid, base_branch)
 
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
@@ -253,44 +220,27 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
         db_path = os.path.join(self._project_dir, ".forge", "forge.db")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        db_url = f"sqlite+aiosqlite:///{db_path}"
-
-        # DB is persistent — each run creates a new pipeline with a unique ID.
-
-        db = Database(db_url)
+        db = Database(f"sqlite+aiosqlite:///{db_path}")
         await db.initialize()
-
         try:
             self._pipeline_id = str(uuid.uuid4())
             await db.create_pipeline(
-                id=self._pipeline_id,
-                description=user_input[:200],
-                project_dir=self._project_dir,
-                model_strategy=self._strategy,
+                id=self._pipeline_id, description=user_input[:200],
+                project_dir=self._project_dir, model_strategy=self._strategy,
             )
-
             graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
         finally:
             await db.close()
 
     async def _execution_loop(
-        self,
-        db: Database,
-        runtime: AgentRuntime,
-        worktree_mgr: WorktreeManager,
-        merge_worker: MergeWorker,
-        monitor: ResourceMonitor,
-        pipeline_id: str | None = None,
+        self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
+        merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
         prefix = pipeline_id[:8] if pipeline_id else None
         while True:
-            # Scope to current pipeline only — avoids stale tasks/agents from prior runs
-            if pipeline_id:
-                tasks = await db.list_tasks_by_pipeline(pipeline_id)
-            else:
-                tasks = await db.list_tasks()
+            tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
             _print_status_table(tasks)
 
             all_done = all(t.state in (TaskState.DONE.value, TaskState.ERROR.value) for t in tasks)
@@ -302,8 +252,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             snapshot = monitor.take_snapshot()
             if not monitor.can_dispatch(snapshot):
-                reasons = monitor.blocked_reasons(snapshot)
-                console.print(f"[yellow]Backpressure: {', '.join(reasons)}[/yellow]")
+                console.print(f"[yellow]Backpressure: {', '.join(monitor.blocked_reasons(snapshot))}[/yellow]")
                 await asyncio.sleep(self._settings.scheduler_poll_interval)
                 continue
 
@@ -311,14 +260,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             agents = await db.list_agents(prefix=prefix)
             from forge.core.engine import _row_to_agent
             agent_records = [_row_to_agent(a) for a in agents]
-
-            dispatch_plan = Scheduler.dispatch_plan(
-                task_records, agent_records, self._settings.max_agents,
-            )
+            dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._settings.max_agents)
 
             if not dispatch_plan:
-                in_progress = any(t.state == TaskState.IN_PROGRESS.value for t in tasks)
-                if not in_progress:
+                if not any(t.state == TaskState.IN_PROGRESS.value for t in tasks):
                     console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
                     break
                 await asyncio.sleep(self._settings.scheduler_poll_interval)
@@ -328,8 +273,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await db.assign_task(task_id, agent_id)
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
 
-            coros = [
+            await asyncio.gather(*[
                 self._execute_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id, pipeline_id=pipeline_id)
                 for task_id, agent_id in dispatch_plan
-            ]
-            await asyncio.gather(*coros)
+            ])
