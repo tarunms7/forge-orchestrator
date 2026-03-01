@@ -19,6 +19,7 @@ class AgentRuntime:
         allowed_dirs: list[str] | None = None,
         model: str = "sonnet",
         on_message=None,
+        project_context: str = "",
     ) -> AgentResult:
         try:
             return await self._adapter.run(
@@ -29,6 +30,7 @@ class AgentRuntime:
                 allowed_dirs=allowed_dirs,
                 model=model,
                 on_message=on_message,
+                project_context=project_context,
             )
         except TimeoutError:
             return AgentResult(
