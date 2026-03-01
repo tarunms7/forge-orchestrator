@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "design-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "/Users/mtarun/Desktop/SideHustles/claude-does/design", "-l", "8888", "--no-clipboard"],
+      "port": 8888
+    }
+  ]
+}

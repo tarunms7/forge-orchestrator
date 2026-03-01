@@ -40,8 +40,8 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-white">Select Project</h2>
-        <p className="mt-1 text-sm text-zinc-400">
+        <h2 className="text-lg font-semibold text-text-primary">Select Project</h2>
+        <p className="mt-1 text-sm text-text-tertiary">
           Choose how you want to set up the project for this task.
         </p>
       </div>
@@ -52,8 +52,8 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
             key={option.value}
             className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition ${
               value.source === option.value
-                ? "border-blue-600 bg-zinc-800/50"
-                : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
+                ? "border-accent bg-surface-3/50"
+                : "border-border-color bg-surface-1 hover:border-border-color/80"
             }`}
           >
             <input
@@ -65,8 +65,8 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
               className="mt-0.5 h-4 w-4 accent-blue-600"
             />
             <div>
-              <div className="text-sm font-medium text-white">{option.label}</div>
-              <div className="text-sm text-zinc-400">{option.description}</div>
+              <div className="text-sm font-medium text-text-primary">{option.label}</div>
+              <div className="text-sm text-text-tertiary">{option.description}</div>
             </div>
           </label>
         ))}
@@ -75,7 +75,7 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
       {/* Conditional fields */}
       {value.source === "existing" && (
         <div>
-          <label htmlFor="project-path" className="block text-sm font-medium text-zinc-300">
+          <label htmlFor="project-path" className="block text-sm font-medium text-text-secondary">
             Repository path
           </label>
           <input
@@ -84,14 +84,14 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
             value={value.path || ""}
             onChange={(e) => onChange({ ...value, path: e.target.value })}
             placeholder="/home/user/my-project"
-            className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+            className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
       )}
 
       {value.source === "clone" && (
         <div>
-          <label htmlFor="github-url" className="block text-sm font-medium text-zinc-300">
+          <label htmlFor="github-url" className="block text-sm font-medium text-text-secondary">
             GitHub URL
           </label>
           <input
@@ -100,14 +100,14 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
             value={value.githubUrl || ""}
             onChange={(e) => onChange({ ...value, githubUrl: e.target.value })}
             placeholder="https://github.com/owner/repo"
-            className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+            className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
       )}
 
       {value.source === "create" && (
         <div>
-          <label htmlFor="project-name" className="block text-sm font-medium text-zinc-300">
+          <label htmlFor="project-name" className="block text-sm font-medium text-text-secondary">
             Project name
           </label>
           <input
@@ -116,7 +116,7 @@ export default function ProjectSelector({ value, onChange }: ProjectSelectorProp
             value={value.projectName || ""}
             onChange={(e) => onChange({ ...value, projectName: e.target.value })}
             placeholder="my-new-project"
-            className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600"
+            className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
       )}

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge — Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-layout sidebar-collapsed">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <a href="dashboard.html" class="logo">
+        <svg class="logo-mark" width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <rect x="3" y="2" width="3.5" height="16" rx="1" fill="#3b82f6"/>
+          <rect x="3" y="2" width="14" height="3.5" rx="1" fill="#3b82f6"/>
+          <rect x="3" y="8.5" width="10" height="3" rx="1" fill="#3b82f6" opacity="0.6"/>
+        </svg>
+        <span class="logo-text">Forge</span>
+      </a>
+      <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+        <svg class="toggle-collapse" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg class="toggle-expand" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3.5h12M2 8h12M2 12.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="dashboard.html" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z" opacity="0.7"/></svg>
+        <span class="nav-text">Dashboard</span>
+      </a>
+      <a href="pipeline-view.html" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5l1.7 3.4 3.8.6-2.75 2.7.65 3.8L8 12.4l-3.4 1.6.65-3.8L2.5 7.5l3.8-.6L8 3.5z"/></svg>
+        <span class="nav-text">Pipelines</span>
+      </a>
+      <a href="history.html" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm1 12H7V7h2v5zm0-7H7V3h2v2z" opacity="0.7"/></svg>
+        <span class="nav-text">History</span>
+      </a>
+      <a href="settings.html" class="nav-item active">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1H2a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V2a1 1 0 00-1-1zM5 13H3v-2h2v2zm0-4H3V7h2v2zm0-4H3V3h2v2zm8 8H7v-2h6v2zm0-4H7V7h6v2zm0-4H7V3h6v2z" opacity="0.7"/></svg>
+        <span class="nav-text">Settings</span>
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-pill">
+        <div class="user-avatar">T</div>
+        <span class="user-name">Tarun M.</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <div class="page-content">
+      <!-- Header -->
+      <div class="page-header">
+        <h1 class="page-title">Settings</h1>
+        <p class="page-subtitle">Configure your Forge pipeline preferences</p>
+      </div>
+
+      <div class="settings-container">
+        <!-- Profile -->
+        <div class="settings-group">
+          <div class="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M2 14c0-3 2.5-5 6-5s6 2 6 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span class="settings-group-title">Profile</span>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Display Name</div>
+              <div class="setting-hint">Shown in the sidebar and pipeline logs</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" class="text-input" value="Tarun M.">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Email</div>
+              <div class="setting-hint">Used for Git commit authorship</div>
+            </div>
+            <div class="setting-control">
+              <input type="email" class="text-input wide" value="tarun@example.com">
+            </div>
+          </div>
+        </div>
+
+        <!-- Pipeline Defaults -->
+        <div class="settings-group">
+          <div class="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5l1.7 3.4 3.8.6-2.75 2.7.65 3.8L8 12.4l-3.4 1.6.65-3.8L2.5 7.5l3.8-.6L8 3.5z" fill="currentColor" opacity="0.6"/></svg>
+            <span class="settings-group-title">Pipeline Defaults</span>
+            <span class="settings-group-desc">Applied to all new pipelines</span>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Default Model</div>
+              <div class="setting-hint">Controls cost/quality tradeoff for agents</div>
+            </div>
+            <div class="setting-control">
+              <select class="settings-select">
+                <option>fast</option>
+                <option selected>balanced</option>
+                <option>thorough</option>
+              </select>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Max Parallel Workers</div>
+              <div class="setting-hint">Number of agents that can run concurrently</div>
+            </div>
+            <div class="setting-control">
+              <select class="settings-select">
+                <option>1</option>
+                <option>2</option>
+                <option selected>3</option>
+                <option>4</option>
+                <option>5</option>
+              </select>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Review Gates</div>
+              <div class="setting-hint">Which review gates to enforce before merging</div>
+            </div>
+            <div class="setting-control">
+              <div class="checkbox-group">
+                <label class="checkbox-item">
+                  <input type="checkbox" checked>
+                  L1 Syntax
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" checked>
+                  L2 LLM Review
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" checked>
+                  Merge Check
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Auto-merge on success</div>
+              <div class="setting-hint">Automatically merge task branches when all gates pass</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox" checked>
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Auto-create Pull Request</div>
+              <div class="setting-hint">Create a PR automatically when pipeline completes</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox">
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Git Configuration -->
+        <div class="settings-group">
+          <div class="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3a3 3 0 100 6 3 3 0 000-6zm0 8c-3 0-5 1.5-5 3h10c0-1.5-2-3-5-3z" fill="currentColor" opacity="0.4"/><path d="M11.5 1v4M9.5 3h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span class="settings-group-title">Git Configuration</span>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Default Branch</div>
+              <div class="setting-hint">Base branch for pipeline worktrees</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" class="text-input mono" value="main">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Worktree Directory</div>
+              <div class="setting-hint">Where temporary git worktrees are created</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" class="text-input mono wide" value="/tmp/forge-worktrees">
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Auto-cleanup worktrees</div>
+              <div class="setting-hint">Remove worktree directories after pipeline completes</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox" checked>
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Claude SDK -->
+        <div class="settings-group">
+          <div class="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13 3L4 14h7l-2 7 9-11h-7l2-7z" fill="currentColor" opacity="0.5" transform="scale(0.65) translate(1,1)"/></svg>
+            <span class="settings-group-title">Claude SDK</span>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Authentication Status</div>
+              <div class="setting-hint">Last authenticated 2 days ago</div>
+            </div>
+            <div class="setting-control">
+              <div class="auth-status">
+                <div class="status-dot-lg green"></div>
+                <span class="auth-status-text connected">Connected</span>
+                <button class="btn-sm-outline">Reconnect</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Preferred Model</div>
+              <div class="setting-hint">Model used for agent SDK calls</div>
+            </div>
+            <div class="setting-control">
+              <select class="settings-select">
+                <option>claude-haiku-4-5</option>
+                <option>claude-sonnet-4-6</option>
+                <option selected>claude-opus-4-6</option>
+              </select>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Max Cost per Pipeline</div>
+              <div class="setting-hint">Abort pipeline if total cost exceeds this limit</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" class="text-input mono" value="$5.00" style="min-width: 100px;">
+            </div>
+          </div>
+        </div>
+
+        <!-- Notifications -->
+        <div class="settings-group">
+          <div class="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6v3l-1 2h11l-1-2V6c0-2.5-2-4.5-4.5-4.5zM6.5 12.5a1.5 1.5 0 003 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="settings-group-title">Notifications</span>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Pipeline completion</div>
+              <div class="setting-hint">Notify when a pipeline finishes (success or failure)</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox" checked>
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Review gate failures</div>
+              <div class="setting-hint">Notify immediately when a review gate fails</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox" checked>
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Cost alerts</div>
+              <div class="setting-hint">Notify when a single pipeline exceeds 80% of cost limit</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle-switch">
+                <input type="checkbox">
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="settings-group danger">
+          <div class="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L1 14h14L8 1z" stroke="#ef4444" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v4M8 11.5v.5" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span class="settings-group-title" style="color: var(--red);">Danger Zone</span>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Clear Pipeline History</div>
+              <div class="setting-hint">Permanently delete all pipeline run data. This cannot be undone.</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn-danger">Clear History</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label-group">
+              <div class="setting-label">Reset All Settings</div>
+              <div class="setting-hint">Restore all settings to their default values.</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn-danger">Reset Settings</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+(function() {
+  var layout = document.querySelector('.app-layout');
+  var toggle = document.getElementById('sidebarToggle');
+  if (localStorage.getItem('forge-sidebar') === 'expanded') {
+    layout.classList.remove('sidebar-collapsed');
+  }
+  if (toggle) {
+    toggle.addEventListener('click', function() {
+      layout.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('forge-sidebar',
+        layout.classList.contains('sidebar-collapsed') ? 'collapsed' : 'expanded');
+    });
+  }
+})();
+</script>
+</body>
+</html>

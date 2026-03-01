@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge — Pipeline View Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!-- Phase Switcher (design-only control) -->
+<div class="phase-switcher">
+  <span class="phase-switcher-label">View Phase:</span>
+  <button class="phase-btn active" data-phase="planning">Planning</button>
+  <button class="phase-btn" data-phase="planned">Plan Review</button>
+  <button class="phase-btn" data-phase="executing">Executing</button>
+  <button class="phase-btn" data-phase="complete">Complete</button>
+  <button class="phase-btn" data-phase="error">Error State</button>
+</div>
+
+<div class="app-layout sidebar-collapsed">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <a href="dashboard.html" class="logo">
+        <svg class="logo-mark" width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <rect x="3" y="2" width="3.5" height="16" rx="1" fill="#3b82f6"/>
+          <rect x="3" y="2" width="14" height="3.5" rx="1" fill="#3b82f6"/>
+          <rect x="3" y="8.5" width="10" height="3" rx="1" fill="#3b82f6" opacity="0.6"/>
+        </svg>
+        <span class="logo-text">Forge</span>
+      </a>
+      <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+        <svg class="toggle-collapse" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg class="toggle-expand" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3.5h12M2 8h12M2 12.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="dashboard.html" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z" opacity="0.7"/></svg>
+        <span class="nav-text">Dashboard</span>
+      </a>
+      <a href="pipeline-view.html" class="nav-item active">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5l1.7 3.4 3.8.6-2.75 2.7.65 3.8L8 12.4l-3.4 1.6.65-3.8L2.5 7.5l3.8-.6L8 3.5z"/></svg>
+        <span class="nav-text">Pipelines</span>
+      </a>
+      <a href="history.html" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm1 12H7V7h2v5zm0-7H7V3h2v2z" opacity="0.7"/></svg>
+        <span class="nav-text">History</span>
+      </a>
+      <a href="settings.html" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 1H2a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V2a1 1 0 00-1-1zM5 13H3v-2h2v2zm0-4H3V7h2v2zm0-4H3V3h2v2zm8 8H7v-2h6v2zm0-4H7V7h6v2zm0-4H7V3h6v2z" opacity="0.7"/></svg>
+        <span class="nav-text">Settings</span>
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-pill">
+        <div class="user-avatar">T</div>
+        <span class="user-name">Tarun M.</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <!-- Pipeline Header -->
+    <header class="pipeline-header">
+      <div class="pipeline-header-top">
+        <button class="back-btn">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10 12l-4-4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+          Back
+        </button>
+        <div class="pipeline-meta">
+          <h1 class="pipeline-title">Refactor daemon.py into smaller modules</h1>
+          <div class="pipeline-id">
+            <span class="id-badge">61eb1a00</span>
+            <span class="pipeline-dot">&middot;</span>
+            <span class="branch-badge">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="3" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="3" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="9" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M3 4v4M9 4c0 2.5-2 3.5-6 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+              feat/forge-ui
+            </span>
+            <span class="pipeline-dot">&middot;</span>
+            <span class="pipeline-timestamp">Started 12 min ago</span>
+            <span class="pipeline-dot">&middot;</span>
+            <span class="pipeline-model">balanced</span>
+          </div>
+        </div>
+        <div class="pipeline-actions">
+          <button class="btn btn-ghost" id="cancelBtn">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-track">
+        <div class="progress-steps">
+          <div class="step completed" data-step="planning">
+            <div class="step-indicator">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7l2.5 2.5L11 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <span class="step-label">Plan</span>
+          </div>
+          <div class="step-connector done"></div>
+          <div class="step completed" data-step="review">
+            <div class="step-indicator">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7l2.5 2.5L11 4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <span class="step-label">Review</span>
+          </div>
+          <div class="step-connector active"></div>
+          <div class="step current" data-step="execute">
+            <div class="step-indicator">
+              <span class="step-number">3</span>
+            </div>
+            <span class="step-label">Execute</span>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step" data-step="qa">
+            <div class="step-indicator">
+              <span class="step-number">4</span>
+            </div>
+            <span class="step-label">QA</span>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step" data-step="done">
+            <div class="step-indicator">
+              <span class="step-number">5</span>
+            </div>
+            <span class="step-label">Done</span>
+          </div>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" style="width: 50%"></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ============================================ -->
+    <!-- PHASE: PLANNING -->
+    <!-- ============================================ -->
+    <section class="phase-content" id="phase-planning">
+      <div class="planning-container">
+        <div class="planning-header">
+          <div class="planning-indicator">
+            <div class="pulse-ring"></div>
+            <div class="pulse-dot"></div>
+          </div>
+          <div>
+            <h2 class="section-title">Analyzing codebase</h2>
+            <p class="section-subtitle">The planner is examining your project structure and generating a task decomposition...</p>
+          </div>
+        </div>
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <div class="terminal-dots">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+            </div>
+            <span class="terminal-title">Planner Output</span>
+          </div>
+          <div class="terminal-body" id="plannerOutput">
+            <div class="terminal-line"><span class="term-dim">→</span> Reading project structure...</div>
+            <div class="terminal-line"><span class="term-dim">→</span> Found forge/core/daemon.py <span class="term-highlight">(1137 lines)</span></div>
+            <div class="terminal-line"><span class="term-dim">→</span> Identifying cohesive function groups...</div>
+            <div class="terminal-line"><span class="term-dim">→</span> Detected 8 module-level helpers (lines 35-1137)</div>
+            <div class="terminal-line"><span class="term-dim">→</span> Detected review pipeline methods (2 async methods)</div>
+            <div class="terminal-line"><span class="term-dim">→</span> Detected merge/conflict/retry logic (3 methods, 141 lines)</div>
+            <div class="terminal-line"><span class="term-dim">→</span> Detected executor with _execute_task (complex, 180+ lines)</div>
+            <div class="terminal-line"><span class="term-dim">→</span> Planning dependency graph...</div>
+            <div class="terminal-line active"><span class="term-cursor">▌</span> Generating task decomposition with dependency ordering...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- PHASE: PLAN REVIEW -->
+    <!-- ============================================ -->
+    <section class="phase-content" id="phase-planned" style="display:none">
+      <div class="plan-review-container">
+        <div class="plan-header">
+          <div>
+            <h2 class="section-title">Execution Plan</h2>
+            <p class="section-subtitle">5 tasks will be executed across isolated worktrees. Review and approve to begin.</p>
+          </div>
+          <button class="btn btn-primary btn-glow" id="executeBtn">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg>
+            Execute Plan
+          </button>
+        </div>
+
+        <!-- Dependency Graph (Visual) -->
+        <div class="dep-graph">
+          <div class="dep-row">
+            <div class="dep-node tier-label">Tier 1<span class="dep-tier-sub">No dependencies</span></div>
+            <div class="dep-node-group">
+              <div class="dep-node task-node" data-task="1">
+                <span class="dep-id">task-1</span>
+                <span class="complexity-dot low"></span>
+              </div>
+              <div class="dep-node task-node" data-task="2">
+                <span class="dep-id">task-2</span>
+                <span class="complexity-dot medium"></span>
+              </div>
+              <div class="dep-node task-node" data-task="3">
+                <span class="dep-id">task-3</span>
+                <span class="complexity-dot medium"></span>
+              </div>
+            </div>
+          </div>
+          <div class="dep-arrows">
+            <svg width="100%" height="32" class="arrow-svg">
+              <defs><marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3b82f6" opacity="0.6"/></marker></defs>
+              <line x1="25%" y1="0" x2="33%" y2="32" stroke="#3b82f6" stroke-width="1.5" opacity="0.4" marker-end="url(#arrowhead)"/>
+              <line x1="50%" y1="0" x2="45%" y2="32" stroke="#3b82f6" stroke-width="1.5" opacity="0.4" marker-end="url(#arrowhead)"/>
+              <line x1="75%" y1="0" x2="58%" y2="32" stroke="#3b82f6" stroke-width="1.5" opacity="0.4" marker-end="url(#arrowhead)"/>
+            </svg>
+          </div>
+          <div class="dep-row">
+            <div class="dep-node tier-label">Tier 2<span class="dep-tier-sub">Depends on Tier 1</span></div>
+            <div class="dep-node-group">
+              <div class="dep-node task-node" data-task="4">
+                <span class="dep-id">task-4</span>
+                <span class="complexity-dot high"></span>
+              </div>
+            </div>
+          </div>
+          <div class="dep-arrows">
+            <svg width="100%" height="32" class="arrow-svg">
+              <line x1="45%" y1="0" x2="45%" y2="32" stroke="#3b82f6" stroke-width="1.5" opacity="0.4" marker-end="url(#arrowhead)"/>
+            </svg>
+          </div>
+          <div class="dep-row">
+            <div class="dep-node tier-label">Tier 3<span class="dep-tier-sub">Final integration</span></div>
+            <div class="dep-node-group">
+              <div class="dep-node task-node" data-task="5">
+                <span class="dep-id">task-5</span>
+                <span class="complexity-dot high"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Task List -->
+        <div class="plan-tasks">
+          <div class="plan-task-card" data-task="1">
+            <div class="plan-task-header">
+              <div class="plan-task-left">
+                <span class="task-number">#1</span>
+                <h3 class="plan-task-title">Extract daemon_helpers.py module-level helpers</h3>
+              </div>
+              <span class="complexity-badge low">low</span>
+            </div>
+            <p class="plan-task-desc">Create forge/core/daemon_helpers.py by extracting module-level functions: _extract_text, _get_current_branch, _build_agent_prompt, _build_retry_prompt, _get_diff_vs_main, _get_diff_stats, _get_changed_files_vs_main, _print_status_table.</p>
+            <div class="plan-task-meta">
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <span>forge/core/daemon_helpers.py</span>
+              </div>
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                <span>No dependencies</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plan-task-card" data-task="2">
+            <div class="plan-task-header">
+              <div class="plan-task-left">
+                <span class="task-number">#2</span>
+                <h3 class="plan-task-title">Extract daemon_review.py review pipeline</h3>
+              </div>
+              <span class="complexity-badge medium">medium</span>
+            </div>
+            <p class="plan-task-desc">Create forge/core/daemon_review.py extracting the ReviewMixin class with _run_review async method implementing the 3-gate review pipeline.</p>
+            <div class="plan-task-meta">
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <span>forge/core/daemon_review.py</span>
+              </div>
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                <span>No dependencies</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plan-task-card" data-task="3">
+            <div class="plan-task-header">
+              <div class="plan-task-left">
+                <span class="task-number">#3</span>
+                <h3 class="plan-task-title">Extract daemon_merge.py merge/conflict/retry logic</h3>
+              </div>
+              <span class="complexity-badge medium">medium</span>
+            </div>
+            <p class="plan-task-desc">Create forge/core/daemon_merge.py with MergeMixin class containing _resolve_conflicts, _handle_retry, _handle_merge_retry async methods.</p>
+            <div class="plan-task-meta">
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <span>forge/core/daemon_merge.py</span>
+              </div>
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/></svg>
+                <span>No dependencies</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plan-task-card" data-task="4">
+            <div class="plan-task-header">
+              <div class="plan-task-left">
+                <span class="task-number">#4</span>
+                <h3 class="plan-task-title">Extract daemon_executor.py and decompose _execute_task</h3>
+              </div>
+              <span class="complexity-badge high">high</span>
+            </div>
+            <p class="plan-task-desc">Create forge/core/daemon_executor.py with ExecutorMixin. Decompose the monolithic _execute_task into smaller async helpers.</p>
+            <div class="plan-task-meta">
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <span>forge/core/daemon_executor.py</span>
+              </div>
+              <div class="meta-item depends">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Depends on #1, #2, #3</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="plan-task-card" data-task="5">
+            <div class="plan-task-header">
+              <div class="plan-task-left">
+                <span class="task-number">#5</span>
+                <h3 class="plan-task-title">Refactor daemon.py to use mixins and re-export</h3>
+              </div>
+              <span class="complexity-badge high">high</span>
+            </div>
+            <p class="plan-task-desc">Slim down daemon.py to use the extracted mixins. ForgeDaemon inherits from ReviewMixin, MergeMixin, ExecutorMixin. Re-export public API.</p>
+            <div class="plan-task-meta">
+              <div class="meta-item">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                <span>forge/core/daemon.py</span>
+              </div>
+              <div class="meta-item depends">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Depends on #4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- PHASE: EXECUTING -->
+    <!-- ============================================ -->
+    <section class="phase-content" id="phase-executing" style="display:none">
+      <div class="executing-container">
+        <div class="exec-header">
+          <div>
+            <h2 class="section-title">Executing Tasks</h2>
+            <p class="section-subtitle"><span class="live-dot"></span> 3 agents running · 2 pending</p>
+          </div>
+          <div class="exec-stats-bar">
+            <div class="exec-stat">
+              <span class="exec-stat-value">$0.52</span>
+              <span class="exec-stat-label">Cost</span>
+            </div>
+            <div class="exec-stat">
+              <span class="exec-stat-value">3:42</span>
+              <span class="exec-stat-label">Elapsed</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="task-grid">
+          <!-- Task 1: Done -->
+          <div class="task-card done" data-taskid="1">
+            <div class="task-card-header">
+              <div class="task-card-status">
+                <div class="status-icon done">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6l2.5 2.5L9.5 4" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <span class="task-card-id">#1</span>
+              </div>
+              <span class="state-badge done">Merged</span>
+            </div>
+            <h3 class="task-card-title">Extract daemon_helpers.py module-level helpers</h3>
+            <div class="task-card-output">
+              <div class="output-line dim">Created forge/core/daemon_helpers.py (174 lines)</div>
+              <div class="output-line dim">All 8 functions extracted with imports</div>
+              <div class="output-line">daemon.py was <strong>not modified</strong></div>
+            </div>
+            <div class="task-card-footer">
+              <div class="review-gates-mini">
+                <span class="gate-dot pass" title="L1 Syntax: Pass"></span>
+                <span class="gate-dot pass" title="L2 LLM Review: Pass"></span>
+              </div>
+              <div class="merge-stats">
+                <span class="stat-add">+174</span>
+                <span class="stat-del">-0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Task 2: Working -->
+          <div class="task-card working" data-taskid="2">
+            <div class="task-card-header">
+              <div class="task-card-status">
+                <div class="status-icon working">
+                  <div class="spinner-small"></div>
+                </div>
+                <span class="task-card-id">#2</span>
+              </div>
+              <span class="state-badge working">Coding</span>
+            </div>
+            <h3 class="task-card-title">Extract daemon_review.py review pipeline</h3>
+            <div class="task-card-output">
+              <div class="output-line dim">Reading review pipeline methods...</div>
+              <div class="output-line dim">Extracting _run_review method...</div>
+              <div class="output-line">Creating ReviewMixin class with gate logic...</div>
+              <div class="output-line active"><span class="term-cursor">▌</span></div>
+            </div>
+            <div class="task-card-progress">
+              <div class="task-progress-bar">
+                <div class="task-progress-fill" style="width: 60%"></div>
+              </div>
+            </div>
+            <div class="task-card-footer">
+              <span class="cost-label">$0.12</span>
+              <span class="elapsed-label">1:23</span>
+            </div>
+          </div>
+
+          <!-- Task 3: In Review -->
+          <div class="task-card in-review" data-taskid="3">
+            <div class="task-card-header">
+              <div class="task-card-status">
+                <div class="status-icon review">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/><circle cx="6" cy="6" r="4.5" stroke="#f59e0b" stroke-width="1.5"/></svg>
+                </div>
+                <span class="task-card-id">#3</span>
+              </div>
+              <span class="state-badge review">Reviewing</span>
+            </div>
+            <h3 class="task-card-title">Extract daemon_merge.py merge/conflict/retry logic</h3>
+            <div class="task-card-output">
+              <div class="output-line">Created forge/core/daemon_merge.py (233 lines)</div>
+              <div class="output-line">MergeMixin with 3 async methods extracted</div>
+            </div>
+            <div class="review-gates-detail">
+              <div class="gate-item pass">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7l2.5 2.5L11 4" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>L1 Syntax</span>
+              </div>
+              <div class="gate-item active">
+                <div class="spinner-tiny"></div>
+                <span>L2 LLM Review</span>
+              </div>
+              <div class="gate-item pending">
+                <div class="gate-pending-dot"></div>
+                <span>Merge Check</span>
+              </div>
+            </div>
+            <div class="task-card-footer">
+              <span class="cost-label">$0.18</span>
+              <span class="elapsed-label">2:15</span>
+            </div>
+          </div>
+
+          <!-- Task 4: Pending (blocked) -->
+          <div class="task-card pending blocked" data-taskid="4">
+            <div class="task-card-header">
+              <div class="task-card-status">
+                <div class="status-icon pending">
+                  <span class="pending-number">4</span>
+                </div>
+                <span class="task-card-id">#4</span>
+              </div>
+              <span class="state-badge pending">Blocked</span>
+            </div>
+            <h3 class="task-card-title">Extract daemon_executor.py and decompose _execute_task</h3>
+            <div class="blocked-info">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Waiting for #1, #2, #3</span>
+            </div>
+            <div class="dep-progress">
+              <div class="dep-chip done">#1</div>
+              <div class="dep-chip working">#2</div>
+              <div class="dep-chip review">#3</div>
+            </div>
+          </div>
+
+          <!-- Task 5: Pending (blocked) -->
+          <div class="task-card pending blocked" data-taskid="5">
+            <div class="task-card-header">
+              <div class="task-card-status">
+                <div class="status-icon pending">
+                  <span class="pending-number">5</span>
+                </div>
+                <span class="task-card-id">#5</span>
+              </div>
+              <span class="state-badge pending">Blocked</span>
+            </div>
+            <h3 class="task-card-title">Refactor daemon.py to use mixins and re-export</h3>
+            <div class="blocked-info">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Waiting for #4</span>
+            </div>
+            <div class="dep-progress">
+              <div class="dep-chip pending">#4</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- PHASE: COMPLETE -->
+    <!-- ============================================ -->
+    <section class="phase-content" id="phase-complete" style="display:none">
+      <div class="complete-container">
+        <!-- Success Banner -->
+        <div class="success-banner">
+          <div class="success-icon">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" fill="#22c55e" opacity="0.15"/><path d="M10 16l4 4 8-8" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="success-text">
+            <h2>Pipeline completed successfully</h2>
+            <p>All 5 tasks passed review and merged to <code>forge/pipeline-61eb1a00</code></p>
+          </div>
+          <div class="success-actions">
+            <button class="btn btn-primary" id="createPrBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10 1v4h4M10 1H4a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V5l-4-4z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+              Create Pull Request
+            </button>
+          </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value">5</div>
+            <div class="stat-label">Tasks</div>
+          </div>
+          <div class="stat-card success">
+            <div class="stat-value">5</div>
+            <div class="stat-label">Passed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">0</div>
+            <div class="stat-label">Failed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">5</div>
+            <div class="stat-label">Files</div>
+          </div>
+          <div class="stat-card highlight">
+            <div class="stat-value"><span class="text-green">+870</span> <span class="text-dim">/</span> <span class="text-red">-345</span></div>
+            <div class="stat-label">Lines Changed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">$1.24</div>
+            <div class="stat-label">Total Cost</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">8:34</div>
+            <div class="stat-label">Duration</div>
+          </div>
+        </div>
+
+        <!-- Task Results -->
+        <div class="results-section">
+          <h3 class="results-title">Task Results</h3>
+          <div class="results-list">
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#1</span>
+                <span class="result-name">Extract daemon_helpers.py module-level helpers</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.26</span>
+                <span class="result-time">1:12</span>
+                <div class="result-diff">
+                  <span class="text-green">+174</span>
+                  <span class="text-red">-0</span>
+                </div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#2</span>
+                <span class="result-name">Extract daemon_review.py review pipeline</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.31</span>
+                <span class="result-time">2:04</span>
+                <div class="result-diff">
+                  <span class="text-green">+145</span>
+                  <span class="text-red">-0</span>
+                </div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#3</span>
+                <span class="result-name">Extract daemon_merge.py merge/conflict/retry logic</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.18</span>
+                <span class="result-time">1:45</span>
+                <div class="result-diff">
+                  <span class="text-green">+233</span>
+                  <span class="text-red">-0</span>
+                </div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#4</span>
+                <span class="result-name">Extract daemon_executor.py and decompose _execute_task</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.28</span>
+                <span class="result-time">2:18</span>
+                <div class="result-diff">
+                  <span class="text-green">+198</span>
+                  <span class="text-red">-0</span>
+                </div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#5</span>
+                <span class="result-name">Refactor daemon.py to use mixins and re-export</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.21</span>
+                <span class="result-time">1:15</span>
+                <div class="result-diff">
+                  <span class="text-green">+120</span>
+                  <span class="text-red">-345</span>
+                </div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================ -->
+    <!-- PHASE: ERROR STATE -->
+    <!-- ============================================ -->
+    <section class="phase-content" id="phase-error" style="display:none">
+      <div class="complete-container">
+        <div class="success-banner error-banner">
+          <div class="success-icon">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="14" fill="#ef4444" opacity="0.15"/><path d="M11 11l10 10M21 11l-10 10" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></svg>
+          </div>
+          <div class="success-text">
+            <h2>Pipeline completed with errors</h2>
+            <p>3 of 5 tasks succeeded. 1 failed, 1 was blocked. Review errors and retry.</p>
+          </div>
+          <div class="success-actions">
+            <button class="btn btn-ghost">Resume Pipeline</button>
+            <button class="btn btn-primary">Retry Failed</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value">5</div>
+            <div class="stat-label">Tasks</div>
+          </div>
+          <div class="stat-card success">
+            <div class="stat-value">3</div>
+            <div class="stat-label">Passed</div>
+          </div>
+          <div class="stat-card danger">
+            <div class="stat-value">1</div>
+            <div class="stat-label">Failed</div>
+          </div>
+          <div class="stat-card warning">
+            <div class="stat-value">1</div>
+            <div class="stat-label">Blocked</div>
+          </div>
+          <div class="stat-card highlight">
+            <div class="stat-value"><span class="text-green">+552</span> <span class="text-dim">/</span> <span class="text-red">-0</span></div>
+            <div class="stat-label">Lines Changed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">$0.96</div>
+            <div class="stat-label">Total Cost</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">6:12</div>
+            <div class="stat-label">Duration</div>
+          </div>
+        </div>
+
+        <div class="results-section">
+          <h3 class="results-title">Task Results</h3>
+          <div class="results-list">
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#1</span>
+                <span class="result-name">Extract daemon_helpers.py module-level helpers</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.26</span>
+                <span class="result-time">1:12</span>
+                <div class="result-diff"><span class="text-green">+174</span><span class="text-red">-0</span></div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#2</span>
+                <span class="result-name">Extract daemon_review.py review pipeline</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.31</span>
+                <span class="result-time">2:04</span>
+                <div class="result-diff"><span class="text-green">+145</span><span class="text-red">-0</span></div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row">
+              <div class="result-left">
+                <div class="result-status pass"></div>
+                <span class="result-number">#3</span>
+                <span class="result-name">Extract daemon_merge.py merge/conflict/retry logic</span>
+              </div>
+              <div class="result-right">
+                <span class="result-cost">$0.18</span>
+                <span class="result-time">1:45</span>
+                <div class="result-diff"><span class="text-green">+233</span><span class="text-red">-0</span></div>
+                <span class="result-files">1 file</span>
+              </div>
+            </div>
+            <div class="result-row error">
+              <div class="result-left">
+                <div class="result-status fail"></div>
+                <span class="result-number">#4</span>
+                <span class="result-name">Extract daemon_executor.py and decompose _execute_task</span>
+                <span class="error-tag">L2 Review Failed</span>
+              </div>
+              <div class="result-right">
+                <button class="btn btn-sm btn-ghost">Retry</button>
+              </div>
+            </div>
+            <div class="result-row blocked">
+              <div class="result-left">
+                <div class="result-status blocked-status"></div>
+                <span class="result-number">#5</span>
+                <span class="result-name">Refactor daemon.py to use mixins and re-export</span>
+                <span class="blocked-tag">Blocked by #4</span>
+              </div>
+              <div class="result-right"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================================ -->
+  <!-- TASK DETAIL PANEL (slides from right) -->
+  <!-- ============================================ -->
+  <div class="detail-overlay" id="detailOverlay"></div>
+  <aside class="detail-panel" id="detailPanel">
+    <div class="detail-header">
+      <div class="detail-header-top">
+        <div class="detail-status-row">
+          <span class="state-badge done">Merged</span>
+          <span class="detail-cost">$0.26</span>
+        </div>
+        <button class="detail-close" id="detailClose">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <h2 class="detail-title">#1 — Extract daemon_helpers.py module-level helpers</h2>
+      <p class="detail-branch">forge/61eb1a00-task-1</p>
+    </div>
+
+    <div class="detail-tabs">
+      <button class="detail-tab active" data-tab="output">Output</button>
+      <button class="detail-tab" data-tab="review">Review</button>
+      <button class="detail-tab" data-tab="files">Files</button>
+      <button class="detail-tab" data-tab="activity">Activity</button>
+    </div>
+
+    <div class="detail-body">
+      <!-- Output Tab -->
+      <div class="tab-content active" id="tab-output">
+        <div class="detail-terminal">
+          <div class="terminal-line"><span class="term-dim">→</span> Reading daemon.py to identify module-level helpers...</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Found 8 standalone functions (lines 35-1137)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _extract_text (lines 35-49)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _get_current_branch (lines 912-938)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _build_agent_prompt (lines 941-951)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _build_retry_prompt (lines 954-982)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _get_diff_vs_main (lines 985-1038)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _get_diff_stats (lines 1041-1058)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _get_changed_files_vs_main (lines 1061-1106)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Extracting _print_status_table (lines 1109-1137)</div>
+          <div class="terminal-line"><span class="term-dim">→</span> Writing forge/core/daemon_helpers.py...</div>
+          <div class="terminal-line highlight-line"><span class="term-dim">✓</span> Created forge/core/daemon_helpers.py <span class="term-highlight">(174 lines)</span></div>
+          <div class="terminal-line"><span class="term-dim">✓</span> daemon.py was <strong>not modified</strong></div>
+        </div>
+      </div>
+
+      <!-- Review Tab -->
+      <div class="tab-content" id="tab-review">
+        <div class="review-timeline">
+          <div class="review-gate-card pass">
+            <div class="review-gate-header">
+              <div class="review-gate-icon pass">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 8l2.5 2.5L12 5" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div>
+                <h4>Gate 1: Syntax Check</h4>
+                <span class="review-time">Completed in 4s</span>
+              </div>
+            </div>
+            <p class="review-details">Python syntax valid. No import errors detected. All referenced modules found.</p>
+          </div>
+          <div class="review-gate-card pass">
+            <div class="review-gate-header">
+              <div class="review-gate-icon pass">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 8l2.5 2.5L12 5" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div>
+                <h4>Gate 2: LLM Code Review</h4>
+                <span class="review-time">Completed in 18s</span>
+              </div>
+            </div>
+            <p class="review-details">PASS — All 8 functions extracted correctly with proper imports. Module docstring present. No modifications to daemon.py as specified.</p>
+          </div>
+          <div class="review-gate-card pass">
+            <div class="review-gate-header">
+              <div class="review-gate-icon pass">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 8l2.5 2.5L12 5" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div>
+                <h4>Gate 3: Merge Check</h4>
+                <span class="review-time">Completed in 2s</span>
+              </div>
+            </div>
+            <p class="review-details">No merge conflicts. Clean fast-forward merge to pipeline branch.</p>
+          </div>
+        </div>
+        <div class="merge-result-card success">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 8l2.5 2.5L12 5" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Merged to forge/pipeline-61eb1a00</span>
+          <div class="merge-diff"><span class="text-green">+174</span> <span class="text-red">-0</span></div>
+        </div>
+      </div>
+
+      <!-- Files Tab -->
+      <div class="tab-content" id="tab-files">
+        <div class="files-section">
+          <h4 class="files-heading">Created Files</h4>
+          <div class="file-row added">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 3v8M3 7h8" stroke="#22c55e" stroke-width="1.5" stroke-linecap="round"/></svg>
+            <span class="file-path">forge/core/daemon_helpers.py</span>
+            <span class="file-stat"><span class="text-green">+174</span></span>
+          </div>
+        </div>
+        <div class="files-section">
+          <h4 class="files-heading">Target Files (Not Modified)</h4>
+          <div class="file-row unchanged">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2" fill="#555568"/></svg>
+            <span class="file-path">forge/core/daemon.py</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Tab -->
+      <div class="tab-content" id="tab-activity">
+        <div class="activity-timeline">
+          <div class="activity-item">
+            <div class="activity-dot blue"></div>
+            <div class="activity-content">
+              <span class="activity-text">State changed to <strong>in_progress</strong></span>
+              <span class="activity-time">7:30:05 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot gray"></div>
+            <div class="activity-content">
+              <span class="activity-text">Agent output — 5 messages</span>
+              <span class="activity-time">7:30:12 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot amber"></div>
+            <div class="activity-content">
+              <span class="activity-text">State changed to <strong>in_review</strong></span>
+              <span class="activity-time">7:31:02 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot green"></div>
+            <div class="activity-content">
+              <span class="activity-text">Gate 1 (Syntax) — <strong class="text-green">PASS</strong></span>
+              <span class="activity-time">7:31:06 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot green"></div>
+            <div class="activity-content">
+              <span class="activity-text">Gate 2 (LLM Review) — <strong class="text-green">PASS</strong></span>
+              <span class="activity-time">7:31:24 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot green"></div>
+            <div class="activity-content">
+              <span class="activity-text">Gate 3 (Merge Check) — <strong class="text-green">PASS</strong></span>
+              <span class="activity-time">7:31:26 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot green"></div>
+            <div class="activity-content">
+              <span class="activity-text">Merged to pipeline branch — <span class="text-green">+174</span> <span class="text-red">-0</span></span>
+              <span class="activity-time">7:31:28 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot green"></div>
+            <div class="activity-content">
+              <span class="activity-text">State changed to <strong>done</strong></span>
+              <span class="activity-time">7:31:28 PM</span>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-dot gray"></div>
+            <div class="activity-content">
+              <span class="activity-text">Cost: $0.2649</span>
+              <span class="activity-time">7:31:28 PM</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function() {
+  var layout = document.querySelector('.app-layout');
+  var toggle = document.getElementById('sidebarToggle');
+  if (localStorage.getItem('forge-sidebar') === 'expanded') {
+    layout.classList.remove('sidebar-collapsed');
+  }
+  if (toggle) {
+    toggle.addEventListener('click', function() {
+      layout.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('forge-sidebar',
+        layout.classList.contains('sidebar-collapsed') ? 'collapsed' : 'expanded'
+      );
+    });
+  }
+})();
+</script>
+<script src="script.js"></script>
+</body>
+</html>

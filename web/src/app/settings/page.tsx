@@ -42,21 +42,23 @@ function ModelSelect({
   onChange: (v: string) => void;
 }) {
   return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-        {label}
-      </label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-      >
-        {MODEL_OPTIONS.map((m) => (
-          <option key={m} value={m}>
-            {m.charAt(0).toUpperCase() + m.slice(1)}
-          </option>
-        ))}
-      </select>
+    <div className="setting-row">
+      <div className="setting-label-group">
+        <div className="setting-label">{label}</div>
+      </div>
+      <div className="setting-control">
+        <select
+          className="settings-select"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {MODEL_OPTIONS.map((m) => (
+            <option key={m} value={m}>
+              {m.charAt(0).toUpperCase() + m.slice(1)}
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -69,7 +71,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [cliStatus, setCliStatus] = useState<string | null>(null);
+  const [cliStatus, setCliStatus] = useState<string>("checking");
 
   useEffect(() => {
     if (!token) return;
@@ -78,6 +80,11 @@ export default function SettingsPage() {
       .then((data) => setSettings(data))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+
+    // Auto-check CLI status on load (health endpoint is at /health, not under /api)
+    fetch("/health")
+      .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
+      .catch(() => setCliStatus("error"));
   }, [token]);
 
   const handleSave = async () => {
@@ -105,148 +112,211 @@ export default function SettingsPage() {
   };
 
   const checkCliStatus = () => {
-    setCliStatus("Checking...");
-    // This would call a backend endpoint in a real implementation
-    setTimeout(() => setCliStatus("Claude CLI: Connected"), 1500);
+    setCliStatus("checking");
+    fetch("/health")
+      .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
+      .catch(() => setCliStatus("error"));
   };
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-blue-600" />
+      <div
+        className="page-content"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "400px",
+        }}
+      >
+        <div
+          style={{
+            width: "192px",
+            height: "6px",
+            borderRadius: "999px",
+            background: "var(--bg-surface-3)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: "33%",
+              height: "100%",
+              borderRadius: "999px",
+              background: "var(--accent)",
+              animation: "pulse 2s ease-in-out infinite",
+            }}
+          />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
-      <h1 className="mb-8 text-2xl font-bold text-white">Settings</h1>
+    <div className="page-content">
+      <div className="page-header">
+        <h1 className="page-title">Settings</h1>
+        <p className="page-subtitle">
+          Configure your Forge pipeline preferences
+        </p>
+      </div>
 
       {error && (
-        <div className="mb-6 rounded-lg border border-red-800 bg-red-950/30 p-4 text-sm text-red-300">
+        <div
+          style={{
+            marginBottom: 24,
+            borderRadius: "var(--radius-md)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            background: "var(--red-dim)",
+            padding: "14px 16px",
+            fontSize: "13px",
+            color: "#fca5a5",
+          }}
+        >
           {error}
         </div>
       )}
 
-      {/* General Section */}
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">General</h2>
+      <div className="settings-container">
+        {/* Pipeline Defaults */}
+        <div className="settings-group">
+          <div className="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5l1.7 3.4 3.8.6-2.75 2.7.65 3.8L8 12.4l-3.4 1.6.65-3.8L2.5 7.5l3.8-.6L8 3.5z"
+                fill="currentColor"
+                opacity="0.6"
+              />
+            </svg>
+            <span className="settings-group-title">Pipeline Defaults</span>
+            <span className="settings-group-desc">
+              Applied to all new pipelines
+            </span>
+          </div>
 
-        <div className="space-y-5">
-          {/* Max Agents Slider */}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Max Agents: {settings.max_agents}
-            </label>
-            <input
-              type="range"
-              min={1}
-              max={16}
-              value={settings.max_agents}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  max_agents: parseInt(e.target.value, 10),
-                }))
-              }
-              className="w-full accent-blue-600"
-            />
-            <div className="mt-1 flex justify-between text-xs text-zinc-500">
-              <span>1</span>
-              <span>16</span>
+          {/* Strategy row */}
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Model Strategy</div>
+              <div className="setting-hint">
+                Controls cost/quality tradeoff
+              </div>
+            </div>
+            <div className="setting-control">
+              <select
+                className="settings-select"
+                value={settings.model_strategy}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    model_strategy: e.target.value,
+                  }))
+                }
+              >
+                {STRATEGY_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* Timeout Input */}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Timeout (seconds)
-            </label>
-            <input
-              type="number"
-              min={30}
-              max={3600}
-              value={settings.timeout}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  timeout: parseInt(e.target.value, 10) || 600,
-                }))
-              }
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
-            />
+          {/* Max Agents row */}
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Max Parallel Workers</div>
+              <div className="setting-hint">
+                Number of agents that can run concurrently
+              </div>
+            </div>
+            <div className="setting-control">
+              <select
+                className="settings-select"
+                value={String(settings.max_agents)}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    max_agents: parseInt(e.target.value, 10),
+                  }))
+                }
+              >
+                {[1, 2, 3, 4, 5, 6, 8, 10, 12, 16].map((n) => (
+                  <option key={n} value={String(n)}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {/* Max Retries Input */}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Max Retries
-            </label>
-            <input
-              type="number"
-              min={0}
-              max={10}
-              value={settings.max_retries}
-              onChange={(e) =>
-                setSettings((s) => ({
-                  ...s,
-                  max_retries: parseInt(e.target.value, 10) || 0,
-                }))
-              }
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
-            />
+          {/* Timeout row */}
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Timeout (seconds)</div>
+              <div className="setting-hint">
+                Max time per agent before it is stopped
+              </div>
+            </div>
+            <div className="setting-control">
+              <input
+                type="number"
+                className="text-input mono"
+                min={30}
+                max={3600}
+                value={settings.timeout}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    timeout: parseInt(e.target.value, 10) || 600,
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          {/* Max Retries row */}
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Max Retries</div>
+              <div className="setting-hint">
+                How many times to retry a failed agent task
+              </div>
+            </div>
+            <div className="setting-control">
+              <input
+                type="number"
+                className="text-input mono"
+                min={0}
+                max={10}
+                value={settings.max_retries}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    max_retries: parseInt(e.target.value, 10) || 0,
+                  }))
+                }
+              />
+            </div>
           </div>
         </div>
-      </section>
 
-      {/* Model Routing Section */}
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          Model Routing
-        </h2>
-
-        <div className="space-y-5">
-          {/* Strategy Preset */}
-          <div>
-            <label className="mb-2 block text-sm font-medium text-zinc-300">
-              Strategy
-            </label>
-            <div className="flex gap-3">
-              {STRATEGY_OPTIONS.map((s) => (
-                <label
-                  key={s}
-                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm transition ${
-                    settings.model_strategy === s
-                      ? "border-blue-500 bg-blue-950/40 text-blue-300"
-                      : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="model_strategy"
-                    value={s}
-                    checked={settings.model_strategy === s}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        model_strategy: e.target.value,
-                      }))
-                    }
-                    className="sr-only"
-                  />
-                  {s.charAt(0).toUpperCase() + s.slice(1)}
-                </label>
-              ))}
-            </div>
-            <p className="mt-1.5 text-xs text-zinc-500">
-              Auto balances cost and quality. Fast minimizes latency. Quality
-              uses the strongest models.
-            </p>
+        {/* Model Routing */}
+        <div className="settings-group">
+          <div className="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M13 3L4 14h7l-2 7 9-11h-7l2-7z"
+                fill="currentColor"
+                opacity="0.5"
+                transform="scale(0.65) translate(1,1)"
+              />
+            </svg>
+            <span className="settings-group-title">Model Routing</span>
+            <span className="settings-group-desc">
+              Per-role model assignments
+            </span>
           </div>
-
-          {/* Planner Model */}
           <ModelSelect
             label="Planner Model"
             value={settings.planner_model}
@@ -254,38 +324,27 @@ export default function SettingsPage() {
               setSettings((s) => ({ ...s, planner_model: v }))
             }
           />
-
-          {/* Agent Models by Complexity */}
-          <div>
-            <p className="mb-3 text-sm font-medium text-zinc-300">
-              Agent Model by Complexity
-            </p>
-            <div className="grid grid-cols-3 gap-4">
-              <ModelSelect
-                label="Low"
-                value={settings.agent_model_low}
-                onChange={(v) =>
-                  setSettings((s) => ({ ...s, agent_model_low: v }))
-                }
-              />
-              <ModelSelect
-                label="Medium"
-                value={settings.agent_model_medium}
-                onChange={(v) =>
-                  setSettings((s) => ({ ...s, agent_model_medium: v }))
-                }
-              />
-              <ModelSelect
-                label="High"
-                value={settings.agent_model_high}
-                onChange={(v) =>
-                  setSettings((s) => ({ ...s, agent_model_high: v }))
-                }
-              />
-            </div>
-          </div>
-
-          {/* Reviewer Model */}
+          <ModelSelect
+            label="Agent — Low Complexity"
+            value={settings.agent_model_low}
+            onChange={(v) =>
+              setSettings((s) => ({ ...s, agent_model_low: v }))
+            }
+          />
+          <ModelSelect
+            label="Agent — Medium Complexity"
+            value={settings.agent_model_medium}
+            onChange={(v) =>
+              setSettings((s) => ({ ...s, agent_model_medium: v }))
+            }
+          />
+          <ModelSelect
+            label="Agent — High Complexity"
+            value={settings.agent_model_high}
+            onChange={(v) =>
+              setSettings((s) => ({ ...s, agent_model_high: v }))
+            }
+          />
           <ModelSelect
             label="Reviewer Model"
             value={settings.reviewer_model}
@@ -294,48 +353,156 @@ export default function SettingsPage() {
             }
           />
         </div>
-      </section>
 
-      {/* Security Section */}
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">Security</h2>
-
-        <button
-          disabled
-          className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm text-zinc-400 opacity-60"
-        >
-          Change Password (coming soon)
-        </button>
-      </section>
-
-      {/* Claude Section */}
-      <section className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-white">Claude</h2>
-
-        <div className="flex items-center gap-4">
-          <button
-            onClick={checkCliStatus}
-            className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-700"
-          >
-            Check CLI Status
-          </button>
-          {cliStatus && (
-            <span className="text-sm text-zinc-400">{cliStatus}</span>
-          )}
+        {/* Claude SDK */}
+        <div className="settings-group">
+          <div className="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M13 3L4 14h7l-2 7 9-11h-7l2-7z"
+                fill="currentColor"
+                opacity="0.5"
+                transform="scale(0.65) translate(1,1)"
+              />
+            </svg>
+            <span className="settings-group-title">Claude SDK</span>
+          </div>
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Authentication Status</div>
+              <div className="setting-hint">
+                {cliStatus === "connected"
+                  ? "Claude CLI is reachable"
+                  : cliStatus === "error"
+                    ? "Could not reach Claude CLI"
+                    : "Checking connection..."}
+              </div>
+            </div>
+            <div className="setting-control">
+              <div className="auth-status">
+                <div
+                  className={`status-dot-lg ${cliStatus === "connected" ? "green" : cliStatus === "error" ? "red" : ""}`}
+                ></div>
+                <span
+                  className={`auth-status-text ${cliStatus === "connected" ? "connected" : ""}`}
+                >
+                  {cliStatus === "connected"
+                    ? "Connected"
+                    : cliStatus === "error"
+                      ? "Unreachable"
+                      : "Checking..."}
+                </span>
+                <button
+                  className="btn-sm-outline"
+                  onClick={checkCliStatus}
+                  disabled={cliStatus === "checking"}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-      </section>
 
-      {/* Save Button */}
-      <div className="flex items-center gap-4">
+        {/* Security */}
+        <div className="settings-group">
+          <div className="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 1L3 4v4c0 3.5 2.1 6.3 5 7 2.9-.7 5-3.5 5-7V4L8 1z"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                fill="none"
+              />
+            </svg>
+            <span className="settings-group-title">Security</span>
+          </div>
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Change Password</div>
+              <div className="setting-hint">Update your account password</div>
+            </div>
+            <div className="setting-control">
+              <button
+                className="btn-sm-outline"
+                disabled
+                style={{ opacity: 0.5 }}
+              >
+                Coming soon
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Danger Zone */}
+        <div className="settings-group danger">
+          <div className="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 1L1 14h14L8 1z"
+                stroke="#ef4444"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M8 6v4M8 11.5v.5"
+                stroke="#ef4444"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+            <span
+              className="settings-group-title"
+              style={{ color: "var(--red)" }}
+            >
+              Danger Zone
+            </span>
+          </div>
+          <div className="setting-row">
+            <div className="setting-label-group">
+              <div className="setting-label">Reset All Settings</div>
+              <div className="setting-hint">
+                Restore all settings to their default values
+              </div>
+            </div>
+            <div className="setting-control">
+              <button
+                className="btn-danger"
+                onClick={() => setSettings(DEFAULT_SETTINGS)}
+              >
+                Reset Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Sticky Save Bar */}
+      <div
+        style={{
+          position: "sticky",
+          bottom: 0,
+          padding: "16px 0",
+          background: "var(--bg-base)",
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          gap: "16px",
+          marginTop: "24px",
+        }}
+      >
         <button
+          className="btn btn-primary"
           onClick={handleSave}
           disabled={saving}
-          className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+          style={{ padding: "10px 28px" }}
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>
         {saved && (
-          <span className="text-sm text-green-400">Settings saved</span>
+          <span style={{ fontSize: "13px", color: "var(--green)" }}>
+            Settings saved
+          </span>
         )}
       </div>
     </div>

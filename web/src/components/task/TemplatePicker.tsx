@@ -63,8 +63,8 @@ export default function TemplatePicker({ onSelect }: TemplatePickerProps) {
   return (
     <div className="space-y-3">
       <div>
-        <h3 className="text-sm font-medium text-zinc-300">Quick Start Templates</h3>
-        <p className="mt-0.5 text-xs text-zinc-500">
+        <h3 className="text-sm font-medium text-text-secondary">Quick Start Templates</h3>
+        <p className="mt-0.5 text-xs text-text-dim">
           Click a template to pre-fill the task description.
         </p>
       </div>
@@ -73,7 +73,7 @@ export default function TemplatePicker({ onSelect }: TemplatePickerProps) {
         {BUILT_IN_TEMPLATES.map((template) => {
           const isSelected = selected === template.name;
           const categoryClass =
-            CATEGORY_COLORS[template.category] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+            CATEGORY_COLORS[template.category] || "bg-surface-3 text-text-tertiary border-border-color";
 
           return (
             <button
@@ -82,19 +82,19 @@ export default function TemplatePicker({ onSelect }: TemplatePickerProps) {
               onClick={() => handleSelect(template)}
               className={`group flex flex-col items-start gap-2 rounded-lg border p-4 text-left transition ${
                 isSelected
-                  ? "border-blue-600 bg-zinc-800/70"
-                  : "border-zinc-700 bg-zinc-900 hover:border-zinc-600 hover:bg-zinc-800/50"
+                  ? "border-accent bg-surface-3/70"
+                  : "border-border-color bg-surface-1 hover:border-border-color/80 hover:bg-surface-3/50"
               }`}
             >
               <div className="flex w-full items-center justify-between">
-                <span className="text-sm font-medium text-white">{template.name}</span>
+                <span className="text-sm font-medium text-text-primary">{template.name}</span>
                 <span
                   className={`rounded-full border px-2 py-0.5 text-xs font-medium ${categoryClass}`}
                 >
                   {template.category}
                 </span>
               </div>
-              <p className="line-clamp-2 text-xs text-zinc-400">{template.description}</p>
+              <p className="line-clamp-2 text-xs text-text-tertiary">{template.description}</p>
             </button>
           );
         })}

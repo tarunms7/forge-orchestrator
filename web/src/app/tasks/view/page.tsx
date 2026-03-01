@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -17,15 +18,8 @@ import TaskDetailPanel from "@/components/task/TaskDetailPanel";
 
 /* ── Plan Panel ───────────────────────────────────────────────────── */
 
-const COMPLEXITY_COLORS: Record<string, string> = {
-  low: "bg-green-900/50 text-green-300 border-green-800",
-  medium: "bg-yellow-900/50 text-yellow-300 border-yellow-800",
-  high: "bg-red-900/50 text-red-300 border-red-800",
-};
-
 function PlanTaskCard({ task, allTasks }: { task: TaskState; allTasks: TaskState[] }) {
   const [open, setOpen] = useState(false);
-  const complexityStyle = COMPLEXITY_COLORS[task.complexity ?? "medium"] ?? COMPLEXITY_COLORS.medium;
 
   // Resolve dependency names
   const depNames = (task.dependsOn ?? []).map((depId) => {
@@ -34,73 +28,53 @@ function PlanTaskCard({ task, allTasks }: { task: TaskState; allTasks: TaskState
   });
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-zinc-800/50 transition-colors"
-      >
-        <svg
-          className={`h-3.5 w-3.5 text-zinc-500 transition-transform ${open ? "rotate-90" : ""}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-        <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-400 shrink-0">
-          {task.id}
-        </span>
-        <span className="text-sm font-medium text-white flex-1 truncate">
-          {task.title}
-        </span>
-        <span className={`rounded-full border px-2 py-0.5 text-xs font-medium shrink-0 ${complexityStyle}`}>
+    <div className="plan-task-card" onClick={() => setOpen(!open)} style={{ cursor: "pointer" }}>
+      <div className="plan-task-header">
+        <div className="plan-task-left">
+          <svg
+            className={`transition-transform ${open ? "rotate-90" : ""}`}
+            style={{ width: 14, height: 14, color: "var(--text-tertiary)", flexShrink: 0 }}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="task-number">{task.id}</span>
+          <span className="plan-task-title">{task.title}</span>
+        </div>
+        <span className={`complexity-badge ${task.complexity ?? "medium"}`}>
           {task.complexity ?? "medium"}
         </span>
-      </button>
+      </div>
 
       {open && (
-        <div className="border-t border-zinc-800 px-4 py-3 space-y-3">
+        <div style={{ paddingTop: 8 }}>
           {/* Description */}
           {task.description && (
-            <div>
-              <p className="text-xs font-medium text-zinc-500 mb-1">Description</p>
-              <p className="text-sm text-zinc-300 whitespace-pre-wrap">{task.description}</p>
-            </div>
+            <div className="plan-task-desc">{task.description}</div>
           )}
 
-          {/* Target files */}
-          {task.targetFiles && task.targetFiles.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-zinc-500 mb-1">
-                Target Files ({task.targetFiles.length})
-              </p>
-              <ul className="space-y-0.5">
-                {task.targetFiles.map((f) => (
-                  <li key={f} className="truncate font-mono text-xs text-zinc-400">
-                    {f}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Dependencies */}
-          {depNames.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-zinc-500 mb-1">
-                Depends On
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {depNames.map((name) => (
-                  <span key={name} className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-                    {name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Target files & Dependencies */}
+          <div className="plan-task-meta">
+            {task.targetFiles && task.targetFiles.length > 0 && (
+              <span className="meta-item">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {task.targetFiles.length} file{task.targetFiles.length !== 1 ? "s" : ""}
+              </span>
+            )}
+            {depNames.length > 0 && (
+              <span className="meta-item depends">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Depends: {depNames.join(", ")}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -124,15 +98,17 @@ function PlanPanel({
   if (taskList.length === 0) return null;
 
   return (
-    <div className="mb-8">
-      <div className="mb-3 flex items-center justify-between">
+    <div className="plan-review-container mb-8">
+      <div className="plan-header">
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
           className="flex items-center gap-2 text-left"
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
         >
           <svg
-            className={`h-4 w-4 text-zinc-400 transition-transform ${collapsed ? "" : "rotate-90"}`}
+            className={`transition-transform ${collapsed ? "" : "rotate-90"}`}
+            style={{ width: 16, height: 16, color: "var(--text-tertiary)" }}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -140,7 +116,7 @@ function PlanPanel({
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
-          <h2 className="text-lg font-semibold text-white">
+          <h2 className="section-title">
             Plan — {taskList.length} task{taskList.length !== 1 ? "s" : ""}
           </h2>
         </button>
@@ -149,14 +125,15 @@ function PlanPanel({
             type="button"
             onClick={onExecute}
             disabled={executing}
-            className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="btn btn-primary btn-glow"
+            style={executing ? { opacity: 0.4, cursor: "not-allowed" } : {}}
           >
             {executing ? "Starting..." : "Execute Plan"}
           </button>
         )}
       </div>
       {!collapsed && (
-        <div className="space-y-2">
+        <div className="plan-tasks">
           {taskList.map((task) => (
             <PlanTaskCard key={task.id} task={task} allTasks={taskList} />
           ))}
@@ -171,16 +148,45 @@ function PlanPanel({
 function ConnectionBanner({ status, onRetry }: { status: WsStatus; onRetry?: () => void }) {
   if (status === "connected") return null;
 
-  const messages: Record<string, { text: string; color: string }> = {
-    connecting: { text: "Connecting to server...", color: "bg-blue-900/50 border-blue-800 text-blue-300" },
-    reconnecting: { text: "Reconnecting...", color: "bg-yellow-900/50 border-yellow-800 text-yellow-300" },
-    disconnected: { text: "Connection lost.", color: "bg-red-900/50 border-red-800 text-red-300" },
+  const messages: Record<string, { text: string; bg: string; border: string; color: string }> = {
+    connecting: {
+      text: "Connecting to server...",
+      bg: "var(--accent-glow)",
+      border: "rgba(59,130,246,0.3)",
+      color: "var(--accent)",
+    },
+    reconnecting: {
+      text: "Reconnecting...",
+      bg: "var(--amber-dim)",
+      border: "rgba(245,158,11,0.3)",
+      color: "var(--amber)",
+    },
+    disconnected: {
+      text: "Connection lost.",
+      bg: "var(--red-dim)",
+      border: "rgba(239,68,68,0.3)",
+      color: "var(--red)",
+    },
   };
 
   const msg = messages[status];
   return (
-    <div className={`mb-4 flex items-center justify-between rounded-lg border px-4 py-2.5 text-sm font-medium ${msg.color}`}>
-      <div className="flex items-center gap-2">
+    <div
+      style={{
+        marginBottom: 16,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        borderRadius: "var(--radius-md)",
+        border: `1px solid ${msg.border}`,
+        background: msg.bg,
+        padding: "10px 16px",
+        fontSize: 13,
+        fontWeight: 500,
+        color: msg.color,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {status !== "disconnected" && (
           <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -192,7 +198,16 @@ function ConnectionBanner({ status, onRetry }: { status: WsStatus; onRetry?: () 
       {status === "disconnected" && onRetry && (
         <button
           onClick={onRetry}
-          className="rounded-lg border border-red-700 bg-red-900/50 px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-800/50 transition-colors"
+          className="btn btn-sm"
+          style={{
+            background: "var(--red-dim)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            color: "var(--red)",
+            fontSize: 12,
+            padding: "4px 12px",
+            borderRadius: "var(--radius-sm)",
+            cursor: "pointer",
+          }}
         >
           Retry Connection
         </button>
@@ -201,9 +216,71 @@ function ConnectionBanner({ status, onRetry }: { status: WsStatus; onRetry?: () 
   );
 }
 
+/* ── Description Modal ────────────────────────────────────────────── */
+
+function DescriptionModal({
+  description,
+  onClose,
+}: {
+  description: string;
+  onClose: () => void;
+}) {
+  // Lock body scroll while modal is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="log-modal-overlay" onClick={onClose}>
+      <div className="log-modal" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="log-modal-header">
+          <div>
+            <span className="log-modal-title">Pipeline Description</span>
+          </div>
+          <button className="log-modal-close" onClick={onClose}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="log-modal-body desc-modal-body">
+          {description}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /* ── Main Page ────────────────────────────────────────────────────── */
 
 export default function TaskExecutionPage() {
+  return (
+    <Suspense fallback={
+      <div className="phase-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", color: "var(--text-tertiary)" }}>
+        Loading...
+      </div>
+    }>
+      <TaskExecutionPageInner />
+    </Suspense>
+  );
+}
+
+function TaskExecutionPageInner() {
   const searchParams = useSearchParams();
   const pipelineId = searchParams.get("id") ?? "";
 
@@ -220,6 +297,8 @@ export default function TaskExecutionPage() {
 
   const [executing, setExecuting] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [pipelineDesc, setPipelineDesc] = useState<string | null>(null);
+  const [showDescModal, setShowDescModal] = useState(false);
   const hydrated = useRef(false);
 
   // Request browser notification permission on mount
@@ -255,6 +334,13 @@ export default function TaskExecutionPage() {
       .catch((err) => {
         setHydrationError(err.message || "Failed to load pipeline");
       });
+
+    // Fetch pipeline description from history endpoint
+    apiGet(`/history/${pipelineId}`, token)
+      .then((data) => {
+        if (data.description) setPipelineDesc(data.description);
+      })
+      .catch(() => {}); // non-critical
   }, [token, pipelineId, hydrateFromRest, setHydrationError]);
 
   // Close detail panel on Escape
@@ -293,7 +379,7 @@ export default function TaskExecutionPage() {
 
   if (!pipelineId) {
     return (
-      <div className="flex h-screen items-center justify-center bg-black text-zinc-400">
+      <div className="phase-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", color: "var(--text-tertiary)" }}>
         No pipeline ID provided.
       </div>
     );
@@ -305,155 +391,219 @@ export default function TaskExecutionPage() {
   const showAgentCards = phase !== "idle" && phase !== "planning" && phase !== "planned" && hasTasks;
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100">
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        {/* Breadcrumb / Back */}
-        <div className="mb-6 flex items-center gap-3">
+    <div className="phase-content">
+      {/* Pipeline Header */}
+      <div className="pipeline-header" style={{ margin: "-28px -32px 0", paddingBottom: 0 }}>
+        <div className="pipeline-header-top">
+          <Link href="/" className="back-btn">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M10 12l-4-4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" />
+            </svg>
+            Back
+          </Link>
+          <div className="pipeline-meta-wrap">
+            <div className="pipeline-meta">
+              <h1 className="pipeline-title">Pipeline</h1>
+              <span className="id-badge">{pipelineId.slice(0, 8)}</span>
+            </div>
+            {pipelineDesc && (
+              <div className="pipeline-desc-row">
+                <p className="pipeline-desc">{pipelineDesc}</p>
+                <button
+                  className="pipeline-desc-more"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setShowDescModal(true);
+                  }}
+                >
+                  view more
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        {/* Progress track inside header */}
+        <PipelineProgress phase={phase} />
+      </div>
+
+      {/* Connection Status */}
+      <ConnectionBanner status={wsStatus} onRetry={wsRetry} />
+
+      {/* Hydration Error — pipeline not found or failed to load */}
+      {hydrationError && (
+        <div style={{
+          marginBottom: 24,
+          borderRadius: "var(--radius-lg)",
+          border: "1px solid rgba(239,68,68,0.3)",
+          background: "var(--red-dim)",
+          padding: 24,
+          textAlign: "center",
+        }}>
+          <svg style={{ margin: "0 auto 12px", width: 32, height: 32, color: "var(--red)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+          </svg>
+          <p style={{ fontSize: 13, fontWeight: 500, color: "var(--red)" }}>{hydrationError}</p>
           <Link
             href="/"
-            className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+            className="btn btn-sm"
+            style={{
+              marginTop: 12,
+              display: "inline-block",
+              background: "var(--red-dim)",
+              border: "1px solid rgba(239,68,68,0.3)",
+              color: "var(--red)",
+              fontSize: 12,
+              padding: "6px 16px",
+              borderRadius: "var(--radius-sm)",
+            }}
           >
-            &larr; Back
+            Back to Dashboard
           </Link>
-          <span className="text-sm text-zinc-500">
-            Pipeline{" "}
-            <span className="font-mono text-zinc-400">{pipelineId}</span>
-          </span>
         </div>
+      )}
 
-        {/* Connection Status */}
-        <ConnectionBanner status={wsStatus} onRetry={wsRetry} />
+      {/* Planner Card — shown during planning phase */}
+      <PlannerCard />
 
-        {/* Hydration Error — pipeline not found or failed to load */}
-        {hydrationError && (
-          <div className="mb-6 rounded-xl border border-red-800 bg-red-950/30 p-6 text-center">
-            <svg className="mx-auto mb-3 h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-            </svg>
-            <p className="text-sm font-medium text-red-300">{hydrationError}</p>
-            <Link
-              href="/"
-              className="mt-3 inline-block rounded-lg border border-red-700 bg-red-900/50 px-4 py-1.5 text-xs font-medium text-red-200 transition-colors hover:bg-red-800/50"
-            >
-              Back to Dashboard
-            </Link>
+      {/* Plan Panel — shown whenever tasks exist (planned, executing, complete) */}
+      {hasTasks && (
+        <PlanPanel
+          taskList={taskList}
+          phase={phase}
+          executing={executing}
+          onExecute={handleExecute}
+        />
+      )}
+
+      {/* Pipeline Status Banner */}
+      {showAgentCards && (
+        <div className="exec-header">
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <span className="live-dot"></span>
+            <span className="section-title" style={{ fontSize: 16 }}>
+              {phase === "executing" ? "Executing" : phase === "reviewing" ? "Reviewing" : "Complete"}
+            </span>
+            <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>
+              {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks
+            </span>
           </div>
-        )}
-
-        {/* Pipeline Progress */}
-        <div className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-          <PipelineProgress phase={phase} />
         </div>
+      )}
 
-        {/* Planner Card — shown during planning phase */}
-        <PlannerCard />
-
-        {/* Plan Panel — shown whenever tasks exist (planned, executing, complete) */}
-        {hasTasks && (
-          <PlanPanel
-            taskList={taskList}
-            phase={phase}
-            executing={executing}
-            onExecute={handleExecute}
-          />
-        )}
-
-        {/* Pipeline Status Banner */}
-        {showAgentCards && (
-          <div className="mb-4 flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2.5">
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <span>
-                {phase === "executing" ? "Executing" : phase === "reviewing" ? "Reviewing" : "Complete"}
-              </span>
-              <span className="text-zinc-600">|</span>
-              <span>
-                {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks complete
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Agent Cards Grid — shown during execution */}
-        {showAgentCards ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {taskList.map((task) => (
-              <AgentCard key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
-            ))}
-          </div>
-        ) : (
-          !hasTasks &&
-          phase === "idle" && (
-            <div className="flex h-64 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900">
-              <div className="text-center">
-                <div className="mb-2 text-lg text-zinc-400">
-                  Waiting for pipeline to start...
-                </div>
-                <div className="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
-                  <div className="h-full w-1/3 animate-pulse rounded-full bg-blue-600" />
-                </div>
+      {/* Agent Cards Grid — shown during execution */}
+      {showAgentCards ? (
+        <div className="task-grid">
+          {taskList.map((task) => (
+            <AgentCard key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+          ))}
+        </div>
+      ) : (
+        !hasTasks &&
+        phase === "idle" && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: 256,
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--border)",
+            background: "var(--bg-surface-1)",
+          }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ marginBottom: 8, fontSize: 18, color: "var(--text-tertiary)" }}>
+                Waiting for pipeline to start...
+              </div>
+              <div style={{
+                height: 6,
+                width: 192,
+                overflow: "hidden",
+                borderRadius: 9999,
+                background: "var(--bg-surface-3)",
+              }}>
+                <div className="animate-pulse" style={{
+                  height: "100%",
+                  width: "33%",
+                  borderRadius: 9999,
+                  background: "var(--accent)",
+                }} />
               </div>
             </div>
-          )
-        )}
-
-        {/* Cancel Button — shown only during active execution */}
-        {phase === "executing" && (
-          <div className="mt-4 flex justify-center gap-3">
-            <button
-              onClick={async () => {
-                if (!token || !pipelineId) return;
-                if (!confirm("Cancel all running tasks?")) return;
-                try {
-                  await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
-                  // Re-fetch state — WebSocket will also deliver updates
-                  const data = await apiGet(`/tasks/${pipelineId}`, token);
-                  hydrateFromRest(data);
-                } catch (e) {
-                  console.warn("Cancel failed:", e);
-                }
-              }}
-              className="rounded-lg bg-red-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
-            >
-              Cancel Pipeline
-            </button>
           </div>
-        )}
+        )
+      )}
 
-        {/* Resume Button — shown only when pipeline is complete with errored tasks */}
-        {phase === "complete" && taskList.some(t => t.state === "error") && (
-          <div className="mt-4 flex justify-center gap-3">
-            <button
-              onClick={async () => {
-                if (!token || !pipelineId) return;
-                try {
-                  await apiPost(`/tasks/${pipelineId}/resume`, {}, token);
-                  // Re-fetch state — WebSocket will also deliver updates
-                  const data = await apiGet(`/tasks/${pipelineId}`, token);
-                  hydrateFromRest(data);
-                } catch (e) {
-                  console.warn("Resume failed:", e);
-                }
-              }}
-              className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
-            >
-              Resume Pipeline
-            </button>
-          </div>
-        )}
+      {/* Cancel Button — shown only during active execution */}
+      {phase === "executing" && (
+        <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 12 }}>
+          <button
+            onClick={async () => {
+              if (!token || !pipelineId) return;
+              if (!confirm("Cancel all running tasks?")) return;
+              try {
+                await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
+                // Re-fetch state — WebSocket will also deliver updates
+                const data = await apiGet(`/tasks/${pipelineId}`, token);
+                hydrateFromRest(data);
+              } catch (e) {
+                console.warn("Cancel failed:", e);
+              }
+            }}
+            className="btn"
+            style={{
+              background: "var(--red)",
+              color: "white",
+              padding: "10px 24px",
+              fontWeight: 600,
+            }}
+          >
+            Cancel Pipeline
+          </button>
+        </div>
+      )}
 
-        {/* Completion Summary */}
-        {phase === "complete" && (
-          <div className="mt-8">
-            <CompletionSummary tasks={tasks} pipelineId={pipelineId} />
-          </div>
-        )}
-      </div>
+      {/* Resume Button — shown only when pipeline is complete with errored tasks */}
+      {phase === "complete" && taskList.some(t => t.state === "error") && (
+        <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 12 }}>
+          <button
+            onClick={async () => {
+              if (!token || !pipelineId) return;
+              try {
+                await apiPost(`/tasks/${pipelineId}/resume`, {}, token);
+                // Re-fetch state — WebSocket will also deliver updates
+                const data = await apiGet(`/tasks/${pipelineId}`, token);
+                hydrateFromRest(data);
+              } catch (e) {
+                console.warn("Resume failed:", e);
+              }
+            }}
+            className="btn btn-primary btn-glow"
+            style={{ padding: "10px 24px", fontWeight: 600 }}
+          >
+            Resume Pipeline
+          </button>
+        </div>
+      )}
+
+      {/* Completion Summary */}
+      {phase === "complete" && (
+        <div style={{ marginTop: 32 }}>
+          <CompletionSummary tasks={tasks} pipelineId={pipelineId} />
+        </div>
+      )}
 
       {/* Task Detail Slide-out Panel */}
       {selectedTaskId && tasks[selectedTaskId] && (
         <TaskDetailPanel
           task={tasks[selectedTaskId]}
           onClose={() => setSelectedTaskId(null)}
+        />
+      )}
+
+      {/* Description Modal */}
+      {showDescModal && pipelineDesc && (
+        <DescriptionModal
+          description={pipelineDesc}
+          onClose={() => setShowDescModal(false)}
         />
       )}
     </div>

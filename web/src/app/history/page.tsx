@@ -14,20 +14,21 @@ interface HistoryItem {
   task_count: number;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-yellow-900/50 text-yellow-300 border-yellow-700",
-  running: "bg-blue-900/50 text-blue-300 border-blue-700",
-  complete: "bg-green-900/50 text-green-300 border-green-700",
-  failed: "bg-red-900/50 text-red-300 border-red-700",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const color = STATUS_COLORS[status] || "bg-zinc-800 text-zinc-300 border-zinc-700";
+function StatusPill({ status }: { status: string }) {
+  const phaseToStatus: Record<string, string> = {
+    complete: "success",
+    executing: "running",
+    planning: "running",
+    planned: "running",
+    error: "failed",
+    failed: "failed",
+  };
+  const cls = phaseToStatus[status] || "cancelled";
+  const label = cls === "success" ? "Success" : cls === "running" ? "Running" : cls === "failed" ? "Failed" : status;
   return (
-    <span
-      className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${color}`}
-    >
-      {status}
+    <span className={`status-pill ${cls}`}>
+      <span className="status-pill-dot"></span>
+      {label}
     </span>
   );
 }
@@ -46,6 +47,11 @@ export default function HistoryPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("recent");
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
 
   // Fetch history data
   const fetchHistory = useCallback(() => {
@@ -75,11 +81,32 @@ export default function HistoryPage() {
     return () => document.removeEventListener("visibilitychange", handler);
   }, [fetchHistory]);
 
+  const filteredHistory = history
+    .filter(item => {
+      if (activeFilter === "all") return true;
+      const phaseMap: Record<string, string> = { running: "executing", success: "complete", failed: "error" };
+      const targetPhase = phaseMap[activeFilter];
+      return item.phase === targetPhase || item.phase === activeFilter;
+    })
+    .filter(item => {
+      if (!searchQuery) return true;
+      const q = searchQuery.toLowerCase();
+      return item.description.toLowerCase().includes(q) || item.pipeline_id.toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      if (sortBy === "oldest") return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      if (sortBy === "longest") return (b.duration || 0) - (a.duration || 0);
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+  const totalPages = Math.max(1, Math.ceil(filteredHistory.length / ITEMS_PER_PAGE));
+  const paginatedHistory = filteredHistory.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
-          <div className="h-full w-1/3 animate-pulse rounded-full bg-blue-600" />
+      <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "400px" }}>
+        <div style={{ width: "192px", height: "6px", borderRadius: "999px", background: "var(--bg-surface-3)", overflow: "hidden" }}>
+          <div style={{ width: "33%", height: "100%", borderRadius: "999px", background: "var(--accent)", animation: "pulse 2s ease-in-out infinite" }} />
         </div>
       </div>
     );
@@ -87,75 +114,93 @@ export default function HistoryPage() {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-800 bg-red-950/30 p-4 text-sm text-red-300">
-        Failed to load history: {error}
+      <div className="page-content">
+        <div style={{ borderRadius: "var(--radius-md)", border: "1px solid rgba(239,68,68,0.3)", background: "var(--red-dim)", padding: "16px", fontSize: "13px", color: "#fca5a5" }}>
+          Failed to load history: {error}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="mb-6 text-2xl font-bold text-white">Task History</h1>
+    <div className="page-content">
+      {/* Header */}
+      <div className="page-header">
+        <h1 className="page-title">Pipeline History</h1>
+        <p className="page-subtitle">Browse and filter all pipeline runs</p>
+      </div>
 
-      {history.length === 0 ? (
-        <div className="flex h-64 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900">
-          <div className="text-center">
-            <p className="text-lg text-zinc-400">No pipeline runs yet</p>
-            <p className="mt-1 text-sm text-zinc-500">
-              Create a task to get started
-            </p>
-          </div>
+      {/* Toolbar */}
+      <div className="history-toolbar">
+        <div className="search-input-wrap">
+          <svg className="search-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M9.5 9.5L13 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          <input type="text" className="search-input" placeholder="Search pipelines..." value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} />
         </div>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-zinc-800">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-900/80">
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-400">
-                  Date
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-400">
-                  Description
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-400">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-400">
-                  Duration
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-400">
-                  Tasks
-                </th>
+        <div className="filter-chips">
+          {["all", "running", "success", "failed"].map(f => (
+            <button key={f} className={`filter-chip${activeFilter === f ? " active" : ""}`} onClick={() => { setActiveFilter(f); setCurrentPage(1); }}>
+              {f === "all" ? "All" : f === "running" ? "Running" : f === "success" ? "Completed" : "Failed"}
+            </button>
+          ))}
+        </div>
+        <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          <option value="recent">Most Recent</option>
+          <option value="oldest">Oldest First</option>
+          <option value="longest">Longest Duration</option>
+        </select>
+      </div>
+
+      {/* Table */}
+      <table className="history-table">
+        <thead>
+          <tr>
+            <th style={{ width: "110px" }}>Status</th>
+            <th>Pipeline</th>
+            <th style={{ width: "80px" }}>Tasks</th>
+            <th className="right" style={{ width: "80px" }}>Duration</th>
+            <th className="right" style={{ width: "120px" }}>Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paginatedHistory.length === 0 ? (
+            <tr><td colSpan={5} style={{ textAlign: "center", padding: "48px 0", color: "var(--text-dim)" }}>
+              {history.length === 0 ? "No pipeline runs yet" : "No matching results"}
+            </td></tr>
+          ) : (
+            paginatedHistory.map((item) => (
+              <tr key={item.pipeline_id} onClick={() => router.push(`/tasks/view?id=${item.pipeline_id}`)}>
+                <td><StatusPill status={item.phase} /></td>
+                <td>
+                  <div className="history-pipeline-cell">
+                    <span className="history-pipeline-title">{item.description}</span>
+                    <span className="history-id">{item.pipeline_id.slice(0, 8)}</span>
+                  </div>
+                </td>
+                <td><span className="history-tasks">{item.task_count}</span></td>
+                <td className="history-duration">{formatDuration(item.duration)}</td>
+                <td className="history-date">{item.created_at ? new Date(item.created_at).toLocaleDateString() : "--"}</td>
               </tr>
-            </thead>
-            <tbody>
-              {history.map((item) => (
-                <tr
-                  key={item.pipeline_id}
-                  onClick={() => router.push(`/tasks/view?id=${item.pipeline_id}`)}
-                  className="cursor-pointer border-b border-zinc-800 bg-zinc-900 transition-colors hover:bg-zinc-800"
-                >
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-400">
-                    {item.created_at
-                      ? new Date(item.created_at).toLocaleDateString()
-                      : "--"}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-zinc-200">
-                    {item.description}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={item.phase} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-400">
-                    {formatDuration(item.duration)}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-400">
-                    {item.task_count}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            ))
+          )}
+        </tbody>
+      </table>
+
+      {/* Pagination */}
+      {filteredHistory.length > 0 && (
+        <div className="pagination-bar">
+          <span className="pagination-info">
+            Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredHistory.length)} of {filteredHistory.length} pipelines
+          </span>
+          <div className="pagination-controls">
+            <button className="page-btn" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>&#8249;</button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+              <button key={p} className={`page-btn${p === currentPage ? " active" : ""}`} onClick={() => setCurrentPage(p)}>{p}</button>
+            ))}
+            <button className="page-btn" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>&#8250;</button>
+          </div>
         </div>
       )}
     </div>
