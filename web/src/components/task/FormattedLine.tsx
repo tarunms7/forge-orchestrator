@@ -4,9 +4,46 @@ export function stripAnsi(str: string): string {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, "");
 }
 
+/** Try to parse and pretty-print a JSON string. Returns null if not valid JSON. */
+function tryFormatJson(text: string): string | null {
+  const trimmed = text.trim();
+  // Only attempt parse if it looks like JSON (starts with { or [)
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return null;
+  }
+}
+
 /** Renders a single output line with basic markdown-like formatting. */
 export function FormattedLine({ text }: { text: string }) {
   const clean = stripAnsi(text);
+
+  // Detect JSON and render as pretty-printed code block
+  const json = tryFormatJson(clean);
+  if (json) {
+    return (
+      <pre
+        style={{
+          margin: "4px 0",
+          padding: "12px",
+          background: "var(--bg-base)",
+          borderRadius: "var(--radius-sm)",
+          border: "1px solid var(--border)",
+          fontSize: "11px",
+          lineHeight: 1.5,
+          overflowX: "auto",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          color: "var(--text-secondary)",
+        }}
+      >
+        {json}
+      </pre>
+    );
+  }
 
   if (/^#{1,3}\s/.test(clean)) {
     const level = clean.match(/^(#+)/)?.[1].length ?? 1;
