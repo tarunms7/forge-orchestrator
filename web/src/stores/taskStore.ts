@@ -1,5 +1,10 @@
 import { create } from "zustand";
 
+/** Maximum timeline entries to keep in memory (prevents unbounded growth). */
+const MAX_TIMELINE_ENTRIES = 500;
+/** Maximum agent output lines per task (prevents browser memory issues on verbose tasks). */
+const MAX_OUTPUT_LINES = 1000;
+
 function sendNotification(title: string, body: string) {
   if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
     new Notification(title, { body });
@@ -126,12 +131,17 @@ export const useTaskStore = create<PipelineState>((set) => ({
       // Append to timeline for all events except agent_output (too noisy)
       let newTimeline = state.timeline;
       if (eventName !== "task:agent_output") {
-        newTimeline = [...state.timeline, {
+        const entry = {
           type: eventName,
           taskId: (data.task_id as string) || undefined,
           payload: data,
           timestamp: new Date().toISOString(),
-        }];
+        };
+        newTimeline = [...state.timeline, entry];
+        // Cap timeline to prevent unbounded memory growth
+        if (newTimeline.length > MAX_TIMELINE_ENTRIES) {
+          newTimeline = newTimeline.slice(-MAX_TIMELINE_ENTRIES);
+        }
       }
 
       switch (eventName) {
@@ -190,12 +200,17 @@ export const useTaskStore = create<PipelineState>((set) => ({
           const taskId = data.task_id as string;
           const existing = state.tasks[taskId];
           if (!existing) return state;
+          let newOutput = [...existing.output, data.line as string];
+          // Cap output to prevent unbounded memory growth on verbose tasks
+          if (newOutput.length > MAX_OUTPUT_LINES) {
+            newOutput = newOutput.slice(-MAX_OUTPUT_LINES);
+          }
           return {
             tasks: {
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                output: [...existing.output, data.line as string],
+                output: newOutput,
               },
             },
           };

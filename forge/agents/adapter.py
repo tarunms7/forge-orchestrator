@@ -1,5 +1,7 @@
 """Agent adapter interface. Claude primary, others pluggable."""
 
+import asyncio
+import logging
 import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -8,6 +10,8 @@ from dataclasses import dataclass
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.sdk_helpers import sdk_query
+
+logger = logging.getLogger("forge.agents")
 
 AGENT_SYSTEM_PROMPT_TEMPLATE = """You are a coding agent working on a specific task within the Forge orchestration system.
 
@@ -94,7 +98,20 @@ class ClaudeAdapter(AgentAdapter):
     ) -> AgentResult:
         options = self._build_options(worktree_path, allowed_dirs or [], model=model, project_context=project_context)
 
-        result = await sdk_query(prompt=task_prompt, options=options, on_message=on_message)
+        try:
+            result = await asyncio.wait_for(
+                sdk_query(prompt=task_prompt, options=options, on_message=on_message),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Agent timed out after %ds for worktree %s", timeout_seconds, worktree_path)
+            files_changed = _get_changed_files(worktree_path)
+            return AgentResult(
+                success=False,
+                files_changed=files_changed,
+                summary=f"Agent timed out after {timeout_seconds}s",
+                error=f"Timeout after {timeout_seconds}s",
+            )
         files_changed = _get_changed_files(worktree_path)
 
         if result is None:

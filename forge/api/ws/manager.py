@@ -51,7 +51,9 @@ class ConnectionManager:
         payload = json.dumps(message)
         dead: list[Any] = []
 
-        for ws in conns:
+        # Iterate over a snapshot to avoid mutation during iteration
+        # (disconnect() or concurrent broadcast() may modify the list)
+        for ws in list(conns):
             try:
                 await ws.send_text(payload)
             except Exception:
@@ -59,4 +61,7 @@ class ConnectionManager:
                 logger.debug("Pruning dead WS connection for pipeline=%s", pipeline_id)
 
         for ws in dead:
-            conns.remove(ws)
+            try:
+                conns.remove(ws)
+            except ValueError:
+                pass  # Already removed by concurrent disconnect()

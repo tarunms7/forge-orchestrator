@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -33,7 +34,9 @@ def create_app(
 
             jwt_secret = secrets.token_urlsafe(32)
             logging.getLogger(__name__).warning(
-                "No FORGE_JWT_SECRET set — using random secret (tokens won't survive restarts)"
+                "No FORGE_JWT_SECRET set — using random secret (tokens won't survive restarts). "
+                "Set FORGE_JWT_SECRET env var for production: "
+                "python -c 'import secrets; print(secrets.token_urlsafe(32))'"
             )
 
     # ── Single unified database ─────────────────────────────────────
@@ -57,6 +60,7 @@ def create_app(
     # Backward compat aliases — routes that use _get_forge_db still work
     app.state.forge_db = db
     app.state.pending_graphs = {}
+    app.state.pending_graphs_lock = asyncio.Lock()
 
     # ── WebSocket connection manager ─────────────────────────────────
     from forge.api.ws.manager import ConnectionManager
@@ -77,13 +81,15 @@ def create_app(
 
     app.state.daemon_factory = daemon_factory
 
-    # CORS -- allow the React dev server
+    # CORS -- configurable via FORGE_CORS_ORIGINS env var
+    cors_origins_str = os.environ.get("FORGE_CORS_ORIGINS", "http://localhost:3000")
+    cors_origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000"],
+        allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     # ── Routers (all under /api prefix) ──────────────────────────────
