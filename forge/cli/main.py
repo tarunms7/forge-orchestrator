@@ -110,6 +110,12 @@ def _build_frontend():
     subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
 
 
+# ── Register sub-commands from other modules ─────────────────────────
+from forge.cli.logs import logs  # noqa: E402
+
+cli.add_command(logs)
+
+
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
         with open(path, "w") as f:

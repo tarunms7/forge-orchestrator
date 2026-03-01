@@ -8,8 +8,6 @@ import logging
 import subprocess
 import uuid
 
-logger = logging.getLogger(__name__)
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -21,6 +19,8 @@ from forge.api.models.schemas import (
     TaskStatusResponse,
 )
 from forge.api.security.jwt import decode_token
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tasks"])
 
