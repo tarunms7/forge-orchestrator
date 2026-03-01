@@ -182,19 +182,17 @@ async def get_stats(
     completed = sum(1 for p in pipelines if p.status == "complete")
     failed = sum(1 for p in pipelines if p.status == "error")
 
-    # Compute average duration for completed pipelines
-    durations = []
+    # Compute average duration (seconds) across completed pipelines with timestamps.
+    durations: list[float] = []
     for p in pipelines:
-        if p.status != "complete":
-            continue
-        try:
-            start = datetime.fromisoformat(p.created_at)
-            end = datetime.fromisoformat(p.completed_at)
-            durations.append((end - start).total_seconds())
-        except Exception:
-            pass
-
-    avg_duration_secs = round(sum(durations) / len(durations), 1) if durations else None
+        if p.status == "complete" and p.created_at and p.completed_at:
+            try:
+                start = datetime.fromisoformat(p.created_at)
+                end = datetime.fromisoformat(p.completed_at)
+                durations.append((end - start).total_seconds())
+            except (ValueError, TypeError):
+                pass
+    avg_duration_secs: float | None = round(sum(durations) / len(durations), 1) if durations else None
 
     return {
         "total_runs": total,
