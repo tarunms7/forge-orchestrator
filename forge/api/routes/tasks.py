@@ -130,6 +130,8 @@ async def create_task(
                             ]
                         }),
                     )
+                    # Update DB status so REST hydration returns correct phase
+                    await forge_db.update_pipeline_status(pipeline_id, "planned")
                     # Store graph for later execution (lock protects concurrent access)
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
                     if lock:
@@ -622,6 +624,11 @@ async def get_task_status(
                     te["cost_usd"] = ev.payload.get("cumulative_cost_usd", 0)
                 elif ev.event_type == "task:state_changed":
                     te["state"] = ev.payload.get("state")
+                    # Clear review gates when a retry starts so REST hydration
+                    # shows only the current attempt's gates, not all retries.
+                    if ev.payload.get("state") == "in_progress":
+                        te["reviewGates"] = []
+                        te["mergeResult"] = None
 
         # Also get live task states from DB
         db_tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)

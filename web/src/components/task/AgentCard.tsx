@@ -318,15 +318,15 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
           <p className="mb-1 text-xs font-medium text-zinc-500">
             Review Gates
           </p>
-          <div className="flex items-center gap-2">
-            {task.reviewGates.map((gate) => {
+          <div className="flex flex-wrap items-center gap-2">
+            {task.reviewGates.map((gate, i) => {
               const label =
                 gate.gate === "L1" ? "L1 (general)" :
                 gate.gate === "L2" ? "L2 (LLM)" :
                 String(gate.gate);
               return (
                 <div
-                  key={gate.gate}
+                  key={`${gate.gate}-${i}`}
                   className="flex items-center gap-1"
                   title={gate.details}
                 >

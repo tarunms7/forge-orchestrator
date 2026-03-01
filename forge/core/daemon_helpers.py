@@ -161,14 +161,57 @@ def _get_diff_vs_main(worktree_path: str) -> str:
     return result.stdout
 
 
-def _get_diff_stats(repo_path: str) -> dict[str, int]:
-    """Get lines added/removed for the last merge commit."""
-    result = subprocess.run(
-        ["git", "diff", "--shortstat", "HEAD~1", "HEAD"],
-        cwd=repo_path,
+def _get_diff_stats(worktree_path: str) -> dict[str, int]:
+    """Get lines added/removed for this task's commits in its worktree.
+
+    Computes the diff between the agent's commits and the base they branched
+    from, so each task shows only *its own* contribution — not the cumulative
+    pipeline branch total.
+    """
+    # Find how many commits the agent added on top of the base
+    count_result = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
+        cwd=worktree_path,
         capture_output=True,
         text=True,
     )
+    try:
+        commit_count = int(count_result.stdout.strip())
+        if commit_count <= 0:
+            commit_count = 1
+    except (ValueError, AttributeError):
+        commit_count = 1
+
+    base_ref = f"HEAD~{commit_count}"
+    verify = subprocess.run(
+        ["git", "rev-parse", "--verify", base_ref],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+    )
+
+    if verify.returncode == 0:
+        result = subprocess.run(
+            ["git", "diff", "--shortstat", base_ref, "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        # Root commit (orphan branch / new repo): diff against empty tree
+        empty_tree = subprocess.run(
+            ["git", "hash-object", "-t", "tree", "/dev/null"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        result = subprocess.run(
+            ["git", "diff", "--shortstat", empty_tree, "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+
     added, removed = 0, 0
     if result.returncode == 0 and result.stdout.strip():
         m_add = re.search(r"(\d+) insertion", result.stdout)
