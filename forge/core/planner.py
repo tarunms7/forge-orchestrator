@@ -1,6 +1,7 @@
 """LLM planner. Decomposes user input into a validated TaskGraph."""
 
 import json
+import logging
 from abc import ABC, abstractmethod
 
 from pydantic import ValidationError as PydanticValidationError
@@ -8,6 +9,8 @@ from pydantic import ValidationError as PydanticValidationError
 from forge.core.errors import ValidationError
 from forge.core.models import TaskGraph
 from forge.core.validator import validate_task_graph
+
+logger = logging.getLogger("forge.planner")
 
 
 class PlannerLLM(ABC):
@@ -29,10 +32,17 @@ class Planner:
         feedback: str | None = None
 
         for attempt in range(self._max_retries):
+            logger.info("Planning attempt %d/%d", attempt + 1, self._max_retries)
             raw = await self._llm.generate_plan(user_input, context, feedback)
+            logger.info(
+                "Attempt %d raw response (%d chars): %s",
+                attempt + 1, len(raw), raw[:500] if raw else "<empty>",
+            )
             graph, error = self._parse_and_validate(raw)
             if graph is not None:
+                logger.info("Planning succeeded on attempt %d", attempt + 1)
                 return graph
+            logger.warning("Attempt %d validation failed: %s", attempt + 1, error)
             feedback = f"Previous attempt failed: {error}. Please fix and try again."
 
         raise ValidationError(

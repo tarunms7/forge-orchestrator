@@ -84,12 +84,42 @@ def _build_review_prompt(
 
 
 def _parse_review_result(text: str) -> GateResult:
+    """Parse the LLM reviewer's response to extract a PASS/FAIL verdict.
+
+    The parser checks for the verdict in three ways (in order):
+    1. Text starts with PASS/FAIL (ideal format)
+    2. A line starts with PASS/FAIL (verdict buried in analysis)
+    3. PASS or FAIL appears anywhere in the text (fallback)
+
+    This flexibility is needed because models (especially opus) often
+    write detailed analysis before stating their verdict.
+    """
     text = text.strip()
+    if not text:
+        return GateResult(passed=False, gate="gate2_llm_review", details="Empty review response")
+
     upper = text.upper()
+
+    # 1. Ideal: response starts with verdict
     if upper.startswith("PASS"):
         return GateResult(passed=True, gate="gate2_llm_review", details=text)
     if upper.startswith("FAIL"):
         return GateResult(passed=False, gate="gate2_llm_review", details=text)
+
+    # 2. A line starts with the verdict (opus often writes analysis first)
+    for line in text.splitlines():
+        line_upper = line.strip().upper()
+        if line_upper.startswith("PASS"):
+            return GateResult(passed=True, gate="gate2_llm_review", details=text)
+        if line_upper.startswith("FAIL"):
+            return GateResult(passed=False, gate="gate2_llm_review", details=text)
+
+    # 3. Fallback: verdict appears anywhere (e.g. "Verdict: PASS")
+    if "PASS" in upper and "FAIL" not in upper:
+        return GateResult(passed=True, gate="gate2_llm_review", details=text)
+    if "FAIL" in upper and "PASS" not in upper:
+        return GateResult(passed=False, gate="gate2_llm_review", details=text)
+
     return GateResult(
         passed=False,
         gate="gate2_llm_review",

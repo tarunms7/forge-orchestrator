@@ -52,11 +52,11 @@ class ClaudePlannerLLM(PlannerLLM):
 
         options = ClaudeCodeOptions(
             system_prompt=PLANNER_SYSTEM_PROMPT,
-            max_turns=1,
+            # Give the planner enough turns to read project files before
+            # producing JSON.  Opus typically needs 3-5 turns to explore
+            # the codebase, then 1 turn to output the TaskGraph.
+            max_turns=10,
             model=self._model,
-            # No tools — the planner must produce JSON directly from the
-            # prompt context, not spend turns reading files.
-            allowed_tools=[],
         )
         if self._cwd:
             options.cwd = self._cwd
@@ -69,8 +69,13 @@ class ClaudePlannerLLM(PlannerLLM):
             logger.warning("SDK call failed during planning: %s", e)
             return ""  # Empty string → triggers Planner's validation retry
 
+        logger.info("SDK result type: %s", type(result).__name__ if result else "None")
+        logger.info("SDK result.result: %s", (result.result[:300] if result.result else "<None>") if result else "<no result obj>")
+
         result_text = result.result if result and result.result else ""
-        return _extract_json(result_text)
+        extracted = _extract_json(result_text)
+        logger.info("Extracted JSON (%d chars): %s", len(extracted), extracted[:300] if extracted else "<empty>")
+        return extracted
 
     def _build_prompt(
         self, user_input: str, context: str, feedback: str | None,

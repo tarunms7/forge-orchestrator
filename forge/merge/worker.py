@@ -46,7 +46,12 @@ class MergeWorker:
             self._rebase(branch, worktree_path)
         except _RebaseConflict as e:
             self._abort_rebase(worktree_path)
-            return MergeResult(success=False, conflicting_files=e.files)
+            conflict_desc = ", ".join(e.files) if e.files else "unknown files"
+            return MergeResult(
+                success=False,
+                conflicting_files=e.files,
+                error=f"Rebase conflict in: {conflict_desc}",
+            )
         except Exception as e:
             return MergeResult(success=False, error=str(e))
 
