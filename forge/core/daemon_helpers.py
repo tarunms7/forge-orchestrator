@@ -5,6 +5,7 @@ and console output used by the Forge daemon orchestration loop.
 """
 
 import logging
+import re
 import subprocess
 
 from rich.console import Console
@@ -170,7 +171,6 @@ def _get_diff_stats(repo_path: str) -> dict[str, int]:
     )
     added, removed = 0, 0
     if result.returncode == 0 and result.stdout.strip():
-        import re
         m_add = re.search(r"(\d+) insertion", result.stdout)
         m_del = re.search(r"(\d+) deletion", result.stdout)
         if m_add:
