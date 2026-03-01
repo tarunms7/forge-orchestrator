@@ -106,6 +106,7 @@ class PipelineRow(Base):
     created_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    base_branch: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class PipelineEventRow(Base):
@@ -355,11 +356,13 @@ class Database:
     async def create_pipeline(
         self, id: str, description: str, project_dir: str,
         model_strategy: str = "auto", user_id: str | None = None,
+        base_branch: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
                 id=id, description=description, project_dir=project_dir,
                 model_strategy=model_strategy, user_id=user_id,
+                base_branch=base_branch,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)
@@ -403,6 +406,16 @@ class Database:
             row = result.scalar_one_or_none()
             if row:
                 row.pr_url = pr_url
+                await session.commit()
+
+    async def set_pipeline_base_branch(self, pipeline_id: str, base_branch: str) -> None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.base_branch = base_branch
                 await session.commit()
 
     async def list_pipelines(self, user_id: str | None = None) -> list[PipelineRow]:
