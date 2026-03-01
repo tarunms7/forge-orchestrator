@@ -52,7 +52,7 @@ class ExecutorMixin:
         if worktree_path is None:
             await db.release_agent(agent_id)
             return
-        ok = await self._run_agent(db, runtime, task, task_id, agent_id, worktree_path, pid)
+        ok = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid)
         if not ok:
             await db.release_agent(agent_id)
             return
@@ -109,7 +109,7 @@ class ExecutorMixin:
     # -- agent execution + streaming + cost -----------------------------
 
     async def _run_agent(
-        self, db, runtime, task, task_id: str, agent_id: str,
+        self, db, runtime, worktree_mgr, task, task_id: str, agent_id: str,
         worktree_path: str, pid: str,
     ) -> bool:
         """Run the agent, stream output, track cost. Returns ``True`` on success."""
@@ -122,12 +122,12 @@ class ExecutorMixin:
             await self._emit("task:cost_update", {"task_id": task_id, "cost_usd": result.cost_usd}, db=db, pipeline_id=pid)
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
-            await self._handle_retry(db, task_id, None, pipeline_id=pid)
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return False
         diff = _get_diff_vs_main(worktree_path)
         if not diff.strip():
             console.print(f"[red]{task_id} agent produced no changes[/red]")
-            await self._handle_retry(db, task_id, None, pipeline_id=pid)
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return False
         console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
         if result.files_changed:
