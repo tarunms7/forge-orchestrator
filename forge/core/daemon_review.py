@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import logging
 
 from rich.console import Console
@@ -81,7 +82,6 @@ class ReviewMixin:
 
     async def _gate1(self, worktree_path: str) -> GateResult:
         """Gate 1: Lint check on the worktree. Simple and fast."""
-        import sys
 
         # Only run ruff on changed files vs main
         changed = _get_changed_files_vs_main(worktree_path)
@@ -102,11 +102,6 @@ class ReviewMixin:
         # Commit any auto-fixes so they're included in the diff
         subprocess.run(
             ["git", "add", "-A"],
-            cwd=worktree_path,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
             cwd=worktree_path,
             capture_output=True,
         )
