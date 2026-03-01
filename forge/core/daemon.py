@@ -358,6 +358,95 @@ class ForgeDaemon:
         pid = pipeline_id or ""
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_progress"}, db=db, pipeline_id=pid)
 
+        # ── Merge-only fast path ──────────────────────────────────────
+        # If this task previously passed review but the merge failed,
+        # skip the agent + review and go directly to merge.
+        if getattr(task, "retry_reason", None) == "merge_failed":
+            console.print(f"[yellow]{task_id}: merge-only retry — skipping agent + review[/yellow]")
+            worktree_path = os.path.join(
+                self._project_dir, ".forge", "worktrees", task_id,
+            )
+            if not os.path.isdir(worktree_path):
+                console.print(f"[red]{task_id}: worktree missing for merge retry — falling back to full retry[/red]")
+                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                await db.release_agent(agent_id)
+                return
+
+            agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+            await db.update_task_state(task_id, TaskState.MERGING.value)
+            await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
+            branch = f"forge/{task_id}"
+
+            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
+            if merge_result.success:
+                console.print(f"[bold green]{task_id} merged on merge-only retry![/bold green]")
+                await db.update_task_state(task_id, TaskState.DONE.value)
+                stats = _get_diff_stats(self._project_dir)
+                await self._emit("task:merge_result", {
+                    "task_id": task_id, "success": True, "error": None,
+                    **stats,
+                }, db=db, pipeline_id=pid)
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+            else:
+                console.print(f"[red]{task_id} merge-only retry failed: {merge_result.error}[/red]")
+                await self._emit("task:merge_result", {
+                    "task_id": task_id, "success": False, "error": merge_result.error,
+                }, db=db, pipeline_id=pid)
+
+                # Try Tier 2 conflict resolution if we have conflicting files
+                if merge_result.conflicting_files:
+                    prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
+                    if prep.success:
+                        # Race resolved — rebase completed cleanly this time
+                        ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
+                        if ff_result.success:
+                            console.print(f"[bold green]{task_id} merged (merge retry Tier 2 race resolved)![/bold green]")
+                            await db.update_task_state(task_id, TaskState.DONE.value)
+                            stats = _get_diff_stats(self._project_dir)
+                            await self._emit("task:merge_result", {
+                                "task_id": task_id, "success": True, "error": None,
+                                **stats,
+                            }, db=db, pipeline_id=pid)
+                            await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                        else:
+                            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                    else:
+                        resolved = await self._resolve_conflicts(
+                            task_id, worktree_path,
+                            prep.conflicting_files, agent_model,
+                            db=db,
+                        )
+                        if resolved:
+                            final = merge_worker.merge(branch, worktree_path=worktree_path)
+                            if final.success:
+                                console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
+                                await db.update_task_state(task_id, TaskState.DONE.value)
+                                stats = _get_diff_stats(self._project_dir)
+                                await self._emit("task:merge_result", {
+                                    "task_id": task_id, "success": True, "error": None,
+                                    **stats,
+                                }, db=db, pipeline_id=pid)
+                                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                            else:
+                                merge_worker._abort_rebase(worktree_path)
+                                await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                        else:
+                            merge_worker._abort_rebase(worktree_path)
+                            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                else:
+                    await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+
+            # Clean up worktree for terminal states, release agent
+            task_after = await db.get_task(task_id)
+            if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
+                try:
+                    worktree_mgr.remove(task_id)
+                except Exception:
+                    pass
+            await db.release_agent(agent_id)
+            return
+        # ── End merge-only fast path ──────────────────────────────────
+
         try:
             worktree_path = worktree_mgr.create(task_id)
         except ValueError:
@@ -514,7 +603,7 @@ class ForgeDaemon:
                                 }, db=db, pipeline_id=pid)
                                 await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
                             else:
-                                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                                await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                         else:
                             # Rebase paused with conflicts — resolver can now see markers
                             resolved = await self._resolve_conflicts(
@@ -539,14 +628,14 @@ class ForgeDaemon:
                                 else:
                                     # Resolver claimed success but merge still failed — abort and retry
                                     merge_worker._abort_rebase(worktree_path)
-                                    await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                                    await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                             else:
-                                # Resolver failed — abort the paused rebase before Tier 3
+                                # Resolver failed — abort the paused rebase before merge-only retry
                                 merge_worker._abort_rebase(worktree_path)
-                                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                                await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                     else:
-                        # Tier 3: full retry (existing behavior)
-                        await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                        # No conflicting files detected — merge-only retry
+                        await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
         else:
             await self._handle_retry(db, task_id, worktree_mgr, review_feedback=review_feedback, pipeline_id=pipeline_id)
 
@@ -777,6 +866,47 @@ class ForgeDaemon:
             except Exception:
                 pass
 
+    async def _handle_merge_retry(
+        self, db: Database, task_id: str, worktree_mgr: WorktreeManager,
+        pipeline_id: str | None = None,
+    ) -> None:
+        """Handle merge failure: retry merge only (skip agent + review).
+
+        Unlike ``_handle_retry()``, this sets ``retry_reason='merge_failed'``
+        so the next ``_execute_task()`` call skips the agent and review
+        pipeline and goes directly to the merge step.
+        """
+        task = await db.get_task(task_id)
+        if not task:
+            return
+
+        if task.retry_count < self._settings.max_retries:
+            console.print(
+                f"[yellow]{task_id}: merge-only retry "
+                f"{task.retry_count + 1}/{self._settings.max_retries}"
+                f" — skipping agent + review[/yellow]"
+            )
+            await db.retry_task_for_merge(task_id)
+            if pipeline_id:
+                await self._emit("task:state_changed", {
+                    "task_id": task_id, "state": "retrying",
+                }, db=db, pipeline_id=pipeline_id)
+            else:
+                await self._events.emit("task:state_changed", {
+                    "task_id": task_id, "state": "retrying",
+                })
+            # KEEP the worktree — merge needs the existing code
+        else:
+            console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
+            await db.update_task_state(task_id, TaskState.ERROR.value)
+            if pipeline_id:
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pipeline_id)
+            else:
+                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
+            try:
+                worktree_mgr.remove(task_id)
+            except Exception:
+                pass
 
 
 def _get_current_branch(repo_path: str) -> str:
