@@ -266,7 +266,7 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
             </p>
             {showExpand && (
               <button
-                onClick={() => setExpanded(!expanded)}
+                onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
                 className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 {expanded ? "Collapse" : `Show all ${task.output.length}`}
@@ -379,7 +379,8 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
       {/* Retry button for errored tasks */}
       {task.state === "error" && (
         <button
-          onClick={async () => {
+          onClick={async (e) => {
+            e.stopPropagation();
             if (!pipelineId || !token) return;
             try {
               await apiPost(`/tasks/${pipelineId}/${task.id}/retry`, {}, token);

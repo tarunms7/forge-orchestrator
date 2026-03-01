@@ -713,17 +713,6 @@ class ForgeDaemon:
             except Exception:
                 pass
 
-    def _gather_context(self) -> str:
-        """Gather project context for the planner."""
-        result = subprocess.run(
-            ["find", ".", "-name", "*.py", "-not", "-path", "./.forge/*",
-             "-not", "-path", "./.venv/*", "-not", "-path", "*__pycache__*"],
-            cwd=self._project_dir,
-            capture_output=True,
-            text=True,
-        )
-        files = result.stdout.strip()
-        return f"Project files:\n{files}" if files else ""
 
 
 def _get_current_branch(repo_path: str) -> str:

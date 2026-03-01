@@ -159,13 +159,16 @@ def _get_tracked_files(project_dir: str) -> list[str]:
 
     Uses ``git ls-files`` so only committed/staged files are included.
     """
-    result = subprocess.run(
-        ["git", "ls-files"],
-        cwd=project_dir,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return []
     files = [f for f in result.stdout.strip().split("\n") if f]
     return sorted(files)
 
@@ -337,7 +340,7 @@ def _get_recent_commits(project_dir: str, count: int = 10) -> str:
     """
     try:
         result = subprocess.run(
-            ["git", "log", f"--oneline", f"-{count}"],
+            ["git", "log", "--oneline", f"-{count}"],
             cwd=project_dir,
             capture_output=True,
             text=True,
