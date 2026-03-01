@@ -184,11 +184,17 @@ export const useTaskStore = create<PipelineState>((set) => ({
           const newState = mapState(data.state as string);
           if (newState === "done") sendNotification("Task completed", existing.title);
           if (newState === "error") sendNotification("Task failed", existing.title);
+          // Clear review gates when a retry starts (maps to "working")
+          // so we only show the current attempt's gates, not all historical ones.
+          const resetOnRetry = newState === "working"
+            ? { reviewGates: [] as typeof existing.reviewGates, mergeResult: undefined }
+            : {};
           return {
             tasks: {
               ...state.tasks,
               [taskId]: {
                 ...existing,
+                ...resetOnRetry,
                 state: newState,
               },
             },
