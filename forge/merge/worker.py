@@ -89,22 +89,23 @@ class MergeWorker:
             cwd=cwd,
             capture_output=True,
         )
-        if not worktree_path:
-            subprocess.run(
-                ["git", "checkout", self._main],
-                cwd=self._repo,
-                capture_output=True,
-            )
 
     def _fast_forward(self, branch: str) -> None:
-        subprocess.run(
-            ["git", "checkout", self._main],
+        """Advance the merge-target branch ref to the task branch tip.
+
+        Uses ``git update-ref`` instead of ``git checkout + merge`` so the
+        user's working directory is never mutated.  This only works for
+        fast-forward merges — which is guaranteed after a successful rebase.
+        """
+        task_sha = subprocess.run(
+            ["git", "rev-parse", branch],
             cwd=self._repo,
-            check=True,
             capture_output=True,
-        )
+            text=True,
+            check=True,
+        ).stdout.strip()
         subprocess.run(
-            ["git", "merge", "--ff-only", branch],
+            ["git", "update-ref", f"refs/heads/{self._main}", task_sha],
             cwd=self._repo,
             check=True,
             capture_output=True,

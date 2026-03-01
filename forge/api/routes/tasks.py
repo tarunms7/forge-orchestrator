@@ -737,26 +737,22 @@ async def _auto_create_pr(forge_db, pipeline_id: str) -> str:
             "GitHub CLI not authenticated. Run: gh auth login"
         )
 
-    # Detect the current/main branch
-    current_branch = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=project_dir, capture_output=True, text=True,
-    ).stdout.strip() or "main"
+    # Use stored base_branch from pipeline record (set by daemon at pipeline start).
+    # Falls back to detecting current branch for backward compatibility.
+    base_branch = getattr(pipeline, "base_branch", None)
+    if not base_branch:
+        base_branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=project_dir, capture_output=True, text=True,
+        ).stdout.strip() or "main"
 
-    # Create or reset branch from current state
-    subprocess.run(
-        ["git", "checkout", "-B", branch_name],
-        cwd=project_dir, check=True, capture_output=True, text=True,
-    )
-
-    # Push to remote
+    # Pipeline branch already exists (created by daemon at start) with all
+    # merged task code.  Just push it — no checkout needed.
     push_result = subprocess.run(
         ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
         cwd=project_dir, capture_output=True, text=True,
     )
     if push_result.returncode != 0:
-        # Switch back before raising
-        subprocess.run(["git", "checkout", current_branch], cwd=project_dir, capture_output=True)
         error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
         raise RuntimeError(
             f"git push failed: {error_msg}. "
@@ -771,7 +767,6 @@ async def _auto_create_pr(forge_db, pipeline_id: str) -> str:
     if existing_pr.returncode == 0 and existing_pr.stdout.strip():
         pr_url = existing_pr.stdout.strip()
         await forge_db.set_pipeline_pr_url(pipeline_id, pr_url)
-        subprocess.run(["git", "checkout", current_branch], cwd=project_dir, capture_output=True)
         return pr_url
 
     # Build PR body
@@ -791,15 +786,12 @@ async def _auto_create_pr(forge_db, pipeline_id: str) -> str:
 
     pr_result = subprocess.run(
         ["gh", "pr", "create",
-         "--base", current_branch,
+         "--base", base_branch,
          "--head", branch_name,
          "--title", f"forge: {pipeline.description[:60]}",
          "--body", pr_body],
         cwd=project_dir, capture_output=True, text=True,
     )
-
-    # Switch back to main branch
-    subprocess.run(["git", "checkout", current_branch], cwd=project_dir, capture_output=True)
 
     if pr_result.returncode != 0:
         raise RuntimeError(f"Failed to create PR: {pr_result.stderr or pr_result.stdout}")
