@@ -1,6 +1,7 @@
 "use client";
 
 import type { TaskState } from "@/stores/taskStore";
+import { useTaskStore } from "@/stores/taskStore";
 
 const STATE_BADGE: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending", color: "bg-zinc-700 text-zinc-300" },
@@ -19,6 +20,8 @@ export default function TaskDetailPanel({
   onClose: () => void;
 }) {
   const badge = STATE_BADGE[task.state] ?? STATE_BADGE.pending;
+  const timeline = useTaskStore((s) => s.timeline);
+  const taskTimeline = timeline.filter(e => e.taskId === task.id);
 
   return (
     <>
@@ -71,6 +74,40 @@ export default function TaskDetailPanel({
               {task.output.map((line, i) => (
                 <div key={i} className="whitespace-pre-wrap">{line}</div>
               ))}
+            </div>
+          </section>
+        )}
+
+        {/* Activity Log */}
+        {taskTimeline.length > 0 && (
+          <section className="mb-6">
+            <h3 className="mb-2 text-sm font-semibold text-zinc-300">
+              Activity ({taskTimeline.length} events)
+            </h3>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+              {taskTimeline.map((ev, i) => {
+                const label = (() => {
+                  const p = ev.payload;
+                  switch (ev.type) {
+                    case "task:state_changed": return `State → ${p.state}`;
+                    case "task:review_update": return `${p.gate} ${p.passed ? "✓ passed" : "✗ failed"}`;
+                    case "task:merge_result": return p.success ? "Merged successfully" : `Merge failed: ${p.error || "unknown"}`;
+                    case "task:cost_update": return `Cost: $${(p.cost_usd as number)?.toFixed(4)}`;
+                    case "task:files_changed": return `${(p.files as string[])?.length || 0} files changed`;
+                    default: return ev.type.split(":")[1] || ev.type;
+                  }
+                })();
+                return (
+                  <div key={i} className="flex items-start gap-2 text-xs">
+                    <span className="shrink-0 font-mono text-zinc-600">
+                      {new Date(ev.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className="text-zinc-400">
+                      {label}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}

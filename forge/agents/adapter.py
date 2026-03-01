@@ -15,6 +15,8 @@ Your working directory is {cwd}. Do NOT read, write, or execute anything outside
 
 You have access to a git worktree isolated to your task. Write clean, tested code.
 
+{project_context}
+
 Rules:
 - Only modify files listed in your task specification
 - Follow existing code style and patterns
@@ -47,6 +49,7 @@ class AgentAdapter(ABC):
         allowed_dirs: list[str] | None = None,
         model: str = "sonnet",
         on_message: Callable | None = None,
+        project_context: str = "",
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -56,6 +59,7 @@ class ClaudeAdapter(AgentAdapter):
 
     def _build_options(
         self, worktree_path: str, allowed_dirs: list[str], model: str = "sonnet",
+        project_context: str = "",
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -65,7 +69,8 @@ class ClaudeAdapter(AgentAdapter):
         else:
             extra_dirs_clause = ""
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
-            cwd=worktree_path, extra_dirs_clause=extra_dirs_clause
+            cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
+            project_context=project_context,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
@@ -85,8 +90,9 @@ class ClaudeAdapter(AgentAdapter):
         allowed_dirs: list[str] | None = None,
         model: str = "sonnet",
         on_message: Callable | None = None,
+        project_context: str = "",
     ) -> AgentResult:
-        options = self._build_options(worktree_path, allowed_dirs or [], model=model)
+        options = self._build_options(worktree_path, allowed_dirs or [], model=model, project_context=project_context)
 
         result = await sdk_query(prompt=task_prompt, options=options, on_message=on_message)
         files_changed = _get_changed_files(worktree_path)

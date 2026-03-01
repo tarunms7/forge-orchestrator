@@ -36,6 +36,7 @@ async def gate2_llm_review(
     worktree_path: str | None = None,
     model: str = "sonnet",
     prior_feedback: str | None = None,
+    project_context: str = "",
 ) -> GateResult:
     """Run LLM code review on the given diff against the task spec.
 
@@ -44,11 +45,12 @@ async def gate2_llm_review(
             reviewer's feedback. The new reviewer is told to focus on
             verifying those specific issues were fixed, not inventing
             new complaints.
+        project_context: Project snapshot context for the reviewer.
     """
     if not diff.strip():
         return GateResult(passed=False, gate="gate2_llm_review", details="No changes to review")
 
-    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback)
+    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, project_context=project_context)
 
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
@@ -78,8 +80,12 @@ async def gate2_llm_review(
 def _build_review_prompt(
     title: str, description: str, diff: str,
     prior_feedback: str | None = None,
+    project_context: str = "",
 ) -> str:
-    parts = [
+    parts = []
+    if project_context:
+        parts.append(f"{project_context}\n\n")
+    parts += [
         f"Task: {title}\n",
         f"Description: {description}\n\n",
         f"Git diff of changes:\n```diff\n{diff}\n```\n\n",

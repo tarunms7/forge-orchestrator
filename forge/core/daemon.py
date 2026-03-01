@@ -12,6 +12,7 @@ from rich.table import Table
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.settings import ForgeSettings
+from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.engine import _row_to_record
 from forge.core.events import EventEmitter
 from forge.core.model_router import select_model
@@ -62,6 +63,7 @@ class ForgeDaemon:
         self._state_machine = TaskStateMachine()
         self._events = event_emitter or EventEmitter()
         self._strategy = self._settings.model_strategy
+        self._snapshot: ProjectSnapshot | None = None
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""
@@ -145,7 +147,16 @@ class ForgeDaemon:
         planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir)
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
-        graph = await planner.plan(user_input, context=self._gather_context())
+        async def _on_planner_msg(msg):
+            text = _extract_text(msg)
+            if text:
+                if pipeline_id:
+                    await self._emit("planner:output", {"line": text}, db=db, pipeline_id=pipeline_id)
+                else:
+                    await self._events.emit("planner:output", {"line": text})
+
+        self._snapshot = gather_project_snapshot(self._project_dir)
+        graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
 
         for task_def in graph.tasks:
@@ -396,6 +407,7 @@ class ForgeDaemon:
             allowed_dirs=self._settings.allowed_dirs,
             model=agent_model,
             on_message=_on_agent_message,
+            project_context=self._snapshot.format_for_agent() if self._snapshot else "",
         )
 
         # Flush any remaining batched messages
@@ -544,6 +556,7 @@ class ForgeDaemon:
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
             prior_feedback=prior_feedback,
+            project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
         )
         await self._emit("task:review_update", {
             "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
@@ -700,17 +713,6 @@ class ForgeDaemon:
             except Exception:
                 pass
 
-    def _gather_context(self) -> str:
-        """Gather project context for the planner."""
-        result = subprocess.run(
-            ["find", ".", "-name", "*.py", "-not", "-path", "./.forge/*",
-             "-not", "-path", "./.venv/*", "-not", "-path", "*__pycache__*"],
-            cwd=self._project_dir,
-            capture_output=True,
-            text=True,
-        )
-        files = result.stdout.strip()
-        return f"Project files:\n{files}" if files else ""
 
 
 def _get_current_branch(repo_path: str) -> str:

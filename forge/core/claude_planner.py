@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections.abc import Callable
 
 from claude_code_sdk import ClaudeCodeOptions
 
@@ -47,6 +48,7 @@ class ClaudePlannerLLM(PlannerLLM):
 
     async def generate_plan(
         self, user_input: str, context: str, feedback: str | None = None,
+        on_message: Callable | None = None,
     ) -> str:
         prompt = self._build_prompt(user_input, context, feedback)
 
@@ -62,7 +64,7 @@ class ClaudePlannerLLM(PlannerLLM):
             options.cwd = self._cwd
 
         try:
-            result = await sdk_query(prompt=prompt, options=options)
+            result = await sdk_query(prompt=prompt, options=options, on_message=on_message)
         except Exception as e:
             # SDK failures (rate limits, timeouts, etc.) should be retried
             # by the Planner's retry loop, not crash the pipeline.

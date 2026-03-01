@@ -11,8 +11,8 @@ import { useAuthStore } from "@/stores/authStore";
 import { apiGet, apiPost } from "@/lib/api";
 import AgentCard from "@/components/task/AgentCard";
 import PipelineProgress from "@/components/task/PipelineProgress";
+import PlannerCard from "@/components/task/PlannerCard";
 import CompletionSummary from "@/components/task/CompletionSummary";
-import TimelinePanel from "@/components/task/TimelinePanel";
 import TaskDetailPanel from "@/components/task/TaskDetailPanel";
 
 /* ── Plan Panel ───────────────────────────────────────────────────── */
@@ -205,7 +205,6 @@ export default function TaskExecutionPage() {
   const handleEvent = useTaskStore((s) => s.handleEvent);
   const hydrateFromRest = useTaskStore((s) => s.hydrateFromRest);
   const reset = useTaskStore((s) => s.reset);
-  const timeline = useTaskStore((s) => s.timeline);
 
   const [executing, setExecuting] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -314,6 +313,9 @@ export default function TaskExecutionPage() {
           <PipelineProgress phase={phase} />
         </div>
 
+        {/* Planner Card — shown during planning phase */}
+        <PlannerCard />
+
         {/* Plan Panel — shown whenever tasks exist (planned, executing, complete) */}
         {hasTasks && (
           <PlanPanel
@@ -322,6 +324,21 @@ export default function TaskExecutionPage() {
             executing={executing}
             onExecute={handleExecute}
           />
+        )}
+
+        {/* Pipeline Status Banner */}
+        {showAgentCards && (
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2.5">
+            <div className="flex items-center gap-2 text-sm text-zinc-400">
+              <span>
+                {phase === "executing" ? "Executing" : phase === "reviewing" ? "Reviewing" : "Complete"}
+              </span>
+              <span className="text-zinc-600">|</span>
+              <span>
+                {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks complete
+              </span>
+            </div>
+          </div>
         )}
 
         {/* Agent Cards Grid — shown during execution */}
@@ -333,13 +350,11 @@ export default function TaskExecutionPage() {
           </div>
         ) : (
           !hasTasks &&
-          phase !== "planned" && (
+          phase === "idle" && (
             <div className="flex h-64 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900">
               <div className="text-center">
                 <div className="mb-2 text-lg text-zinc-400">
-                  {phase === "idle"
-                    ? "Connecting..."
-                    : "Planning tasks..."}
+                  Waiting for pipeline to start...
                 </div>
                 <div className="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
                   <div className="h-full w-1/3 animate-pulse rounded-full bg-blue-600" />
@@ -347,13 +362,6 @@ export default function TaskExecutionPage() {
               </div>
             </div>
           )
-        )}
-
-        {/* Timeline */}
-        {timeline.length > 0 && (
-          <div className="mt-6">
-            <TimelinePanel events={timeline} />
-          </div>
         )}
 
         {/* Resume / Cancel Buttons — shown when pipeline is not complete */}

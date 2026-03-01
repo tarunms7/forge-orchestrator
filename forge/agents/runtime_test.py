@@ -34,6 +34,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         allowed_dirs=None,
         model="sonnet",
         on_message=None,
+        project_context="",
     )
 
 

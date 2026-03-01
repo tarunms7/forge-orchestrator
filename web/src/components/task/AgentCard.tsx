@@ -155,6 +155,43 @@ function FormattedLine({ text }: { text: string }) {
   );
 }
 
+function formatActivityTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function activityColor(type: string): string {
+  const colors: Record<string, string> = {
+    "task:state_changed": "text-zinc-300",
+    "task:review_update": "text-yellow-400",
+    "task:merge_result": "text-green-400",
+    "task:cost_update": "text-zinc-500",
+    "task:files_changed": "text-blue-400",
+  };
+  return colors[type] || "text-zinc-400";
+}
+
+function activityLabel(ev: { type: string; payload: Record<string, unknown> }): string {
+  const p = ev.payload;
+  switch (ev.type) {
+    case "task:state_changed":
+      return `State → ${p.state}`;
+    case "task:review_update":
+      return `${p.gate} ${p.passed ? "✓ passed" : "✗ failed"}`;
+    case "task:merge_result":
+      return p.success ? "Merged successfully" : `Merge failed: ${p.error || "unknown"}`;
+    case "task:cost_update":
+      return `Cost: $${(p.cost_usd as number)?.toFixed(4)}`;
+    case "task:files_changed":
+      return `${(p.files as string[])?.length || 0} files changed`;
+    default:
+      return ev.type.split(":")[1] || ev.type;
+  }
+}
+
 const COLLAPSED_LINE_LIMIT = 8;
 
 export default function AgentCard({ task, onClick }: { task: TaskState; onClick?: () => void }) {
@@ -162,6 +199,8 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
   const badge = STATE_BADGE[task.state];
   const [expanded, setExpanded] = useState(false);
   const pipelineId = useTaskStore((s) => s.pipelineId);
+  const timeline = useTaskStore((s) => s.timeline);
+  const taskTimeline = timeline.filter(e => e.taskId === task.id);
   const token = useAuthStore((s) => s.token);
 
   useEffect(() => {
@@ -227,7 +266,7 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
             </p>
             {showExpand && (
               <button
-                onClick={() => setExpanded(!expanded)}
+                onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
                 className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 {expanded ? "Collapse" : `Show all ${task.output.length}`}
@@ -247,6 +286,27 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
             )}
             {visibleLines.map((line, i) => (
               <FormattedLine key={`line-${startIndex + i}`} text={line} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Per-task activity log */}
+      {taskTimeline.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-zinc-500">
+            Activity ({taskTimeline.length})
+          </p>
+          <div className="space-y-0.5 max-h-32 overflow-y-auto">
+            {taskTimeline.map((ev, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <span className="shrink-0 font-mono text-zinc-600">
+                  {formatActivityTime(ev.timestamp)}
+                </span>
+                <span className={activityColor(ev.type)}>
+                  {activityLabel(ev)}
+                </span>
+              </div>
             ))}
           </div>
         </div>
@@ -319,7 +379,8 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
       {/* Retry button for errored tasks */}
       {task.state === "error" && (
         <button
-          onClick={async () => {
+          onClick={async (e) => {
+            e.stopPropagation();
             if (!pipelineId || !token) return;
             try {
               await apiPost(`/tasks/${pipelineId}/${task.id}/retry`, {}, token);
