@@ -496,15 +496,16 @@ class ForgeDaemon:
                     console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
                     # Tier 2: try agent conflict resolution if we have conflicting files
                     if retry_result.conflicting_files:
-                        resolved = await self._resolve_conflicts(
-                            task_id, worktree_path,
-                            retry_result.conflicting_files, agent_model,
-                            db=db,
-                        )
-                        if resolved:
-                            final_result = merge_worker.merge(branch, worktree_path=worktree_path)
-                            if final_result.success:
-                                console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
+                        # Start a fresh rebase but leave it PAUSED so the
+                        # resolver agent sees conflict markers in the files.
+                        # (merge/retry_merge abort the rebase before returning,
+                        #  which wipes the markers — that's why Tier 2 was failing.)
+                        prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
+                        if prep.success:
+                            # Rebase completed cleanly this time (race resolved)
+                            ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
+                            if ff_result.success:
+                                console.print(f"[bold green]{task_id} merged (Tier 2 prep resolved race)![/bold green]")
                                 await db.update_task_state(task_id, TaskState.DONE.value)
                                 stats = _get_diff_stats(self._project_dir)
                                 await self._emit("task:merge_result", {
@@ -515,7 +516,34 @@ class ForgeDaemon:
                             else:
                                 await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                         else:
-                            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                            # Rebase paused with conflicts — resolver can now see markers
+                            resolved = await self._resolve_conflicts(
+                                task_id, worktree_path,
+                                prep.conflicting_files, agent_model,
+                                db=db,
+                            )
+                            if resolved:
+                                # Resolver did `git rebase --continue` — rebase
+                                # should be complete.  merge() will be a no-op
+                                # rebase + fast-forward.
+                                final_result = merge_worker.merge(branch, worktree_path=worktree_path)
+                                if final_result.success:
+                                    console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
+                                    await db.update_task_state(task_id, TaskState.DONE.value)
+                                    stats = _get_diff_stats(self._project_dir)
+                                    await self._emit("task:merge_result", {
+                                        "task_id": task_id, "success": True, "error": None,
+                                        **stats,
+                                    }, db=db, pipeline_id=pid)
+                                    await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                                else:
+                                    # Resolver claimed success but merge still failed — abort and retry
+                                    merge_worker._abort_rebase(worktree_path)
+                                    await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+                            else:
+                                # Resolver failed — abort the paused rebase before Tier 3
+                                merge_worker._abort_rebase(worktree_path)
+                                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
                     else:
                         # Tier 3: full retry (existing behavior)
                         await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
@@ -673,17 +701,24 @@ class ForgeDaemon:
             f"{task_context}"
             f"## Situation\n"
             f"This task was developed in parallel with other tasks. The other tasks have "
-            f"already been merged to main. When rebasing this task's branch onto the "
-            f"updated main, merge conflicts arose in the following files:\n"
+            f"already been merged to the pipeline branch. When rebasing this task's branch "
+            f"onto the updated pipeline branch, merge conflicts arose.\n\n"
+            f"A `git rebase` is currently IN PROGRESS and paused on the conflicting commit. "
+            f"The following files have conflict markers (<<<<<<, =======, >>>>>>):\n"
             f"{', '.join(conflicting_files)}\n\n"
             f"## Instructions\n"
-            f"1. Open each conflicting file\n"
-            f"2. Resolve the merge conflict markers (<<<<<<, =======, >>>>>>)\n"
-            f"3. Keep the intent of BOTH sides — the changes from main (other tasks) "
-            f"AND the changes from this task. Do not discard either side unless they "
-            f"are truly redundant.\n"
-            f"4. Ensure the resolved code is syntactically correct and logically coherent\n"
-            f"5. Stage and commit the resolved files: git add -A && git commit -m 'fix: resolve merge conflicts'\n"
+            f"1. Open each conflicting file listed above\n"
+            f"2. You WILL see conflict markers (<<<<<<< HEAD, =======, >>>>>>> commit). "
+            f"Resolve them by keeping the intent of BOTH sides.\n"
+            f"3. Do not discard either side unless the changes are truly redundant.\n"
+            f"4. Ensure the resolved code is syntactically correct and logically coherent.\n"
+            f"5. Stage the resolved files and continue the rebase:\n"
+            f"   git add -A && git rebase --continue\n"
+            f"   IMPORTANT: Do NOT use `git commit`. The rebase is in progress — "
+            f"use `git rebase --continue` to advance it.\n"
+            f"6. If the rebase pauses again with more conflicts, resolve those too "
+            f"and run `git add -A && git rebase --continue` again.\n"
+            f"7. Repeat until the rebase completes successfully.\n"
         )
 
         adapter = ClaudeAdapter()

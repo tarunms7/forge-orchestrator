@@ -239,6 +239,163 @@ def test_merge_with_worktree_clean_succeeds(tmp_path):
     assert result.error is None
 
 
+# ---------------------------------------------------------------------------
+# prepare_for_resolution tests
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
+    """prepare_for_resolution() should NOT abort the rebase — conflict markers
+    must remain in the working tree for the Tier 2 resolver to see them."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(["git", "init"], cwd=repo)
+    _run(["git", "config", "user.email", "test@test.com"], cwd=repo)
+    _run(["git", "config", "user.name", "Test"], cwd=repo)
+
+    (repo / "shared.py").write_text("original\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "init"], cwd=repo)
+
+    # Task branch with conflicting change
+    _run(["git", "checkout", "-b", "forge/task-resolve"], cwd=repo)
+    (repo / "shared.py").write_text("task version\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "task change"], cwd=repo)
+
+    # Master with a different change to the same file
+    _run(["git", "checkout", "master"], cwd=repo)
+    (repo / "shared.py").write_text("master version\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "master change"], cwd=repo)
+
+    # Create worktree
+    wt = tmp_path / "worktrees" / "task-resolve"
+    _run(["git", "worktree", "add", str(wt), "forge/task-resolve"], cwd=repo)
+
+    worker = MergeWorker(repo_path=str(repo))
+    result = worker.prepare_for_resolution("forge/task-resolve", worktree_path=str(wt))
+
+    # Should report conflict
+    assert result.success is False
+    assert "shared.py" in result.conflicting_files
+
+    # The rebase should STILL be in progress (not aborted)
+    rebase_dir = wt / ".git"
+    # In a worktree .git is a file pointing to the main repo, so check via git status
+    status = subprocess.run(
+        ["git", "status"], cwd=wt, capture_output=True, text=True
+    )
+    assert "rebase in progress" in status.stdout.lower() or "rebase" in status.stdout.lower(), (
+        f"Rebase should still be in progress but git status says: {status.stdout}"
+    )
+
+    # The conflict markers should be present in the file
+    content = (wt / "shared.py").read_text()
+    assert "<<<<<<<" in content, (
+        f"Conflict markers should be present but file contains: {content}"
+    )
+    assert "=======" in content
+    assert ">>>>>>>" in content
+
+    # Clean up
+    subprocess.run(["git", "rebase", "--abort"], cwd=wt, capture_output=True)
+
+
+def test_prepare_for_resolution_clean_rebase_returns_success(tmp_path):
+    """When there's no conflict, prepare_for_resolution() should return success=True."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(["git", "init"], cwd=repo)
+    _run(["git", "config", "user.email", "test@test.com"], cwd=repo)
+    _run(["git", "config", "user.name", "Test"], cwd=repo)
+
+    (repo / "base.py").write_text("# base\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "init"], cwd=repo)
+
+    # Task branch with non-conflicting change
+    _run(["git", "checkout", "-b", "forge/task-clean2"], cwd=repo)
+    (repo / "feature.py").write_text("# feature\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "add feature"], cwd=repo)
+
+    # Master with a different file
+    _run(["git", "checkout", "master"], cwd=repo)
+    (repo / "other.py").write_text("# other\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "add other"], cwd=repo)
+
+    # Create worktree
+    wt = tmp_path / "worktrees" / "task-clean2"
+    _run(["git", "worktree", "add", str(wt), "forge/task-clean2"], cwd=repo)
+
+    worker = MergeWorker(repo_path=str(repo))
+    result = worker.prepare_for_resolution("forge/task-clean2", worktree_path=str(wt))
+
+    assert result.success is True
+    assert result.conflicting_files == []
+
+
+def test_prepare_resolve_then_merge_full_flow(tmp_path):
+    """End-to-end: prepare_for_resolution → manually resolve → git rebase --continue → merge()."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(["git", "init"], cwd=repo)
+    _run(["git", "config", "user.email", "test@test.com"], cwd=repo)
+    _run(["git", "config", "user.name", "Test"], cwd=repo)
+
+    (repo / "shared.py").write_text("original\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "init"], cwd=repo)
+
+    # Task branch
+    _run(["git", "checkout", "-b", "forge/task-e2e"], cwd=repo)
+    (repo / "shared.py").write_text("task version\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "task change"], cwd=repo)
+
+    # Master
+    _run(["git", "checkout", "master"], cwd=repo)
+    (repo / "shared.py").write_text("master version\n")
+    _run(["git", "add", "."], cwd=repo)
+    _run(["git", "commit", "-m", "master change"], cwd=repo)
+
+    # Worktree
+    wt = tmp_path / "worktrees" / "task-e2e"
+    _run(["git", "worktree", "add", str(wt), "forge/task-e2e"], cwd=repo)
+
+    worker = MergeWorker(repo_path=str(repo))
+
+    # Step 1: Prepare (leaves rebase paused)
+    prep = worker.prepare_for_resolution("forge/task-e2e", worktree_path=str(wt))
+    assert prep.success is False
+    assert "shared.py" in prep.conflicting_files
+
+    # Step 2: Simulate what the resolver agent would do — resolve markers
+    (wt / "shared.py").write_text("merged: both task and master version\n")
+    _run(["git", "add", "."], cwd=wt)
+
+    # GIT_EDITOR=true prevents the editor from opening during rebase --continue
+    env = {**subprocess.os.environ, "GIT_EDITOR": "true"}
+    subprocess.run(
+        ["git", "rebase", "--continue"],
+        cwd=wt, check=True, capture_output=True, env=env,
+    )
+
+    # Step 3: merge() should now succeed (rebase is complete, just need ff)
+    merge_result = worker.merge("forge/task-e2e", worktree_path=str(wt))
+    assert merge_result.success is True
+
+    # Verify the merged content is on master (use git show, not checkout,
+    # because update-ref advances the ref without updating the working tree)
+    show_result = subprocess.run(
+        ["git", "show", "master:shared.py"],
+        cwd=repo, capture_output=True, text=True, check=True,
+    )
+    assert show_result.stdout == "merged: both task and master version\n"
+
+
 def test_find_conflicts_without_worktree_path_uses_repo(git_repo):
     """_find_conflicts with no worktree_path should use self._repo (backward compat)."""
     _create_branch_with_commit(git_repo, "forge/task-compat", "compat.py", "branch ver\n")
