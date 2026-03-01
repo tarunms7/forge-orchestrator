@@ -5,6 +5,7 @@ and console output used by the Forge daemon orchestration loop.
 """
 
 import logging
+import re
 import subprocess
 
 from rich.console import Console
