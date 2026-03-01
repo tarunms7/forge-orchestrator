@@ -1,5 +1,7 @@
 """Merge worker. Rebases task branch onto main, detects conflicts."""
 
+from __future__ import annotations
+
 import subprocess
 from dataclasses import dataclass, field
 
@@ -60,6 +62,39 @@ class MergeWorker:
         except Exception as e:
             return MergeResult(success=False, error=str(e))
 
+        return MergeResult(success=True)
+
+    def prepare_for_resolution(
+        self, branch: str, worktree_path: str | None = None
+    ) -> MergeResult:
+        """Start a rebase, leaving it paused on conflict for Tier 2 resolution.
+
+        Unlike ``merge()``, this does **not** abort the rebase when conflicts
+        occur.  The Tier 2 resolver agent needs the rebase to be in-progress
+        so that conflict markers (``<<<<<<<``, ``=======``, ``>>>>>>>``) are
+        present in the working-tree files.
+
+        After the resolver does ``git add`` + ``git rebase --continue``,
+        call ``merge()`` again — the rebase will be a no-op (already
+        completed) and ``_fast_forward()`` will advance the merge target.
+        """
+        # Clean any stale rebase state first
+        self._abort_rebase(worktree_path)
+
+        try:
+            self._rebase(branch, worktree_path)
+        except _RebaseConflict as e:
+            # DON'T abort — leave rebase paused so the resolver can work
+            conflict_desc = ", ".join(e.files) if e.files else "unknown files"
+            return MergeResult(
+                success=False,
+                conflicting_files=e.files,
+                error=f"Rebase paused for resolution: {conflict_desc}",
+            )
+        except Exception as e:
+            return MergeResult(success=False, error=str(e))
+
+        # Rebase completed cleanly — no resolution needed
         return MergeResult(success=True)
 
     def _rebase(self, branch: str, worktree_path: str | None = None) -> None:
