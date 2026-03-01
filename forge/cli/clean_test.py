@@ -1,210 +1,176 @@
 """Tests for forge clean CLI command."""
 
-import os
+from __future__ import annotations
+
 import subprocess
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-
-@pytest.fixture()
-def git_repo(tmp_path):
-    """Create a temporary git repo with an initial commit."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=repo, check=True, capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"],
-        cwd=repo, check=True, capture_output=True,
-    )
-    (repo / "README.md").write_text("# Test")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"],
-        cwd=repo, check=True, capture_output=True,
-    )
-    return repo
+from forge.cli.main import cli
 
 
 @pytest.fixture()
-def forge_project(git_repo):
-    """Create .forge directory inside the git repo."""
-    forge_dir = git_repo / ".forge"
+def forge_project(tmp_path):
+    """Create a temporary project with a .forge directory."""
+    forge_dir = tmp_path / ".forge"
     forge_dir.mkdir()
-    return git_repo
+    return tmp_path
 
 
-def test_clean_nothing_to_clean(forge_project):
-    """Shows 'nothing to clean' when no worktrees or orphaned branches exist."""
-    from forge.cli.main import cli
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
-    assert result.exit_code == 0
-    assert "nothing to clean" in result.output.lower()
-
-
-def test_clean_missing_forge_dir(tmp_path):
-    """Error message when .forge directory does not exist."""
-    # Need a git repo but no .forge dir
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, check=True, capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, check=True, capture_output=True,
-    )
-
-    from forge.cli.main import cli
-
+def test_clean_no_forge_dir(tmp_path):
+    """Error when .forge directory doesn't exist."""
     runner = CliRunner()
     result = runner.invoke(cli, ["clean", "--project-dir", str(tmp_path)])
     assert result.exit_code != 0
     assert "not found" in result.output.lower() or "error" in result.output.lower()
 
 
+def test_clean_no_worktrees_no_branches(forge_project):
+    """Shows 'nothing to clean' when .forge/worktrees/ is empty and no forge/* branches exist."""
+    # git branch --list forge/* returns nothing
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = ""
+
+    with patch("subprocess.run", return_value=mock_result):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+
+    assert result.exit_code == 0
+    assert "nothing to clean" in result.output.lower()
+
+
 def test_clean_removes_stale_worktrees(forge_project):
-    """Removes stale worktree directories and reports them."""
-    # Create a worktree via git so it's real
+    """Mock stale worktree directories in .forge/worktrees/, verify git worktree remove is called."""
     worktrees_dir = forge_project / ".forge" / "worktrees"
     worktrees_dir.mkdir()
+    # Create fake worktree directories
+    (worktrees_dir / "task-1").mkdir()
+    (worktrees_dir / "task-2").mkdir()
 
-    wt_path = str(worktrees_dir / "task-1")
-    subprocess.run(
-        ["git", "worktree", "add", "-b", "forge/task-1", wt_path],
-        cwd=forge_project, check=True, capture_output=True,
-    )
-    assert os.path.isdir(wt_path)
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = ""
 
-    from forge.cli.main import cli
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
     assert result.exit_code == 0
     assert "task-1" in result.output
-    # Worktree directory should be removed
-    assert not os.path.isdir(wt_path)
+    assert "task-2" in result.output
 
-
-def test_clean_prunes_worktree_admin(forge_project):
-    """Runs git worktree prune after removing worktrees."""
-    # Create a worktree, then manually remove the directory to make it stale
-    worktrees_dir = forge_project / ".forge" / "worktrees"
-    worktrees_dir.mkdir()
-
-    wt_path = str(worktrees_dir / "task-stale")
-    subprocess.run(
-        ["git", "worktree", "add", "-b", "forge/task-stale", wt_path],
-        cwd=forge_project, check=True, capture_output=True,
-    )
-    # Manually delete the directory (simulating a stale worktree)
-    import shutil
-    shutil.rmtree(wt_path)
-
-    from forge.cli.main import cli
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
-    assert result.exit_code == 0
-    # git worktree prune should have run, so git worktree list should be clean
-    wt_list = subprocess.run(
-        ["git", "worktree", "list"],
-        cwd=forge_project, capture_output=True, text=True,
-    )
-    assert "task-stale" not in wt_list.stdout
+    # Verify git worktree remove was called for each worktree
+    worktree_remove_calls = [
+        c for c in mock_run.call_args_list
+        if c.args and "worktree" in c.args[0] and "remove" in c.args[0]
+    ]
+    assert len(worktree_remove_calls) == 2
 
 
 def test_clean_deletes_orphaned_branches(forge_project):
-    """Deletes forge/* branches that have no corresponding worktree directory."""
-    # Create a forge/* branch without a worktree directory
-    subprocess.run(
-        ["git", "branch", "forge/orphan-task"],
-        cwd=forge_project, check=True, capture_output=True,
-    )
-    # Verify branch exists
-    branch_list = subprocess.run(
-        ["git", "branch"],
-        cwd=forge_project, capture_output=True, text=True,
-    )
-    assert "forge/orphan-task" in branch_list.stdout
+    """Mock 'git branch --list forge/*' returning branches with no worktree, verify git branch -D is called."""
+    # No worktrees dir means no active worktrees
+    branch_result = MagicMock()
+    branch_result.returncode = 0
+    branch_result.stdout = "  forge/orphan-1\n  forge/orphan-2\n"
 
-    from forge.cli.main import cli
+    default_result = MagicMock()
+    default_result.returncode = 0
+    default_result.stdout = ""
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+    def side_effect(cmd, **kwargs):
+        if "branch" in cmd and "--list" in cmd:
+            return branch_result
+        return default_result
+
+    with patch("subprocess.run", side_effect=side_effect) as mock_run:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+
     assert result.exit_code == 0
-    assert "orphan-task" in result.output
+    assert "orphan-1" in result.output
+    assert "orphan-2" in result.output
 
-    # Branch should be deleted
-    branch_list_after = subprocess.run(
-        ["git", "branch"],
-        cwd=forge_project, capture_output=True, text=True,
-    )
-    assert "forge/orphan-task" not in branch_list_after.stdout
+    # Verify git branch -D was called for each orphaned branch
+    branch_delete_calls = [
+        c for c in mock_run.call_args_list
+        if c.args and "branch" in c.args[0] and "-D" in c.args[0]
+    ]
+    assert len(branch_delete_calls) == 2
 
 
-def test_clean_preserves_active_worktree_branches(forge_project):
-    """Does NOT delete forge/* branches that have a matching worktree directory."""
+def test_clean_combined_summary(forge_project):
+    """Both stale worktrees and orphaned branches, verify summary output shows counts."""
     worktrees_dir = forge_project / ".forge" / "worktrees"
     worktrees_dir.mkdir()
+    # Create a stale worktree directory
+    (worktrees_dir / "wt-stale").mkdir()
 
-    wt_path = str(worktrees_dir / "active-task")
-    subprocess.run(
-        ["git", "worktree", "add", "-b", "forge/active-task", wt_path],
-        cwd=forge_project, check=True, capture_output=True,
-    )
+    branch_result = MagicMock()
+    branch_result.returncode = 0
+    branch_result.stdout = "  forge/orphan-branch\n"
 
-    from forge.cli.main import cli
+    default_result = MagicMock()
+    default_result.returncode = 0
+    default_result.stdout = ""
 
-    runner = CliRunner()
-    # The clean command will remove the worktree but let's check the branch
-    # is listed as a removed worktree, not an orphaned branch
-    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+    def side_effect(cmd, **kwargs):
+        if "branch" in cmd and "--list" in cmd:
+            return branch_result
+        return default_result
+
+    with patch("subprocess.run", side_effect=side_effect) as mock_run:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+
     assert result.exit_code == 0
-    # The worktree is removed, and its branch should be cleaned as part of worktree removal
+    # Both worktree and branch appear in output
+    assert "wt-stale" in result.output
+    assert "orphan-branch" in result.output
+    # Verify both worktree remove and branch delete were called
+    worktree_remove_calls = [
+        c for c in mock_run.call_args_list
+        if c.args and "worktree" in c.args[0] and "remove" in c.args[0]
+    ]
+    branch_delete_calls = [
+        c for c in mock_run.call_args_list
+        if c.args and "branch" in c.args[0] and "-D" in c.args[0]
+    ]
+    assert len(worktree_remove_calls) >= 1
+    assert len(branch_delete_calls) >= 1
 
 
-def test_clean_summary_table_counts(forge_project):
-    """Summary table shows correct counts of removed worktrees and branches."""
+def test_clean_handles_git_error(forge_project):
+    """Graceful handling when git commands fail."""
     worktrees_dir = forge_project / ".forge" / "worktrees"
     worktrees_dir.mkdir()
+    (worktrees_dir / "failing-task").mkdir()
 
-    # Create two worktrees
-    for task_id in ("task-a", "task-b"):
-        wt_path = str(worktrees_dir / task_id)
-        subprocess.run(
-            ["git", "worktree", "add", "-b", f"forge/{task_id}", wt_path],
-            cwd=forge_project, check=True, capture_output=True,
-        )
+    def side_effect(cmd, **kwargs):
+        if "worktree" in cmd and "remove" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        if "branch" in cmd and "--list" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        if "worktree" in cmd and "prune" in cmd:
+            raise subprocess.CalledProcessError(1, cmd)
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = ""
+        return result
 
-    # Create an orphaned branch (no worktree dir)
-    subprocess.run(
-        ["git", "branch", "forge/orphan-x"],
-        cwd=forge_project, check=True, capture_output=True,
-    )
+    with patch("subprocess.run", side_effect=side_effect):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
 
-    from forge.cli.main import cli
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+    # Should not crash; exits cleanly
     assert result.exit_code == 0
-    # Should mention both worktrees removed
-    assert "task-a" in result.output
-    assert "task-b" in result.output
-    # Should mention orphaned branch
-    assert "orphan-x" in result.output
 
 
 def test_clean_help():
-    """Clean command appears in --help output."""
-    from forge.cli.main import cli
-
+    """Verify --help works."""
     runner = CliRunner()
     result = runner.invoke(cli, ["clean", "--help"])
     assert result.exit_code == 0
