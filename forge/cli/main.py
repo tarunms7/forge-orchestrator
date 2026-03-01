@@ -18,6 +18,12 @@ def cli() -> None:
     """Forge -- Multi-agent orchestration engine."""
 
 
+# Register subcommands from separate modules.
+from forge.cli.status import status  # noqa: E402
+
+cli.add_command(status)
+
+
 @cli.command()
 @click.option("--project-dir", default=".", help="Project root directory")
 def init(project_dir: str) -> None:
