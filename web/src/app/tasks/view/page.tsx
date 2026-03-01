@@ -11,6 +11,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { apiGet, apiPost } from "@/lib/api";
 import AgentCard from "@/components/task/AgentCard";
 import PipelineProgress from "@/components/task/PipelineProgress";
+import PlannerCard from "@/components/task/PlannerCard";
 import CompletionSummary from "@/components/task/CompletionSummary";
 import TimelinePanel from "@/components/task/TimelinePanel";
 import TaskDetailPanel from "@/components/task/TaskDetailPanel";
@@ -314,6 +315,9 @@ export default function TaskExecutionPage() {
           <PipelineProgress phase={phase} />
         </div>
 
+        {/* Planner Card — shown during planning phase */}
+        <PlannerCard />
+
         {/* Plan Panel — shown whenever tasks exist (planned, executing, complete) */}
         {hasTasks && (
           <PlanPanel
@@ -333,13 +337,11 @@ export default function TaskExecutionPage() {
           </div>
         ) : (
           !hasTasks &&
-          phase !== "planned" && (
+          phase === "idle" && (
             <div className="flex h-64 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900">
               <div className="text-center">
                 <div className="mb-2 text-lg text-zinc-400">
-                  {phase === "idle"
-                    ? "Connecting..."
-                    : "Planning tasks..."}
+                  Waiting for pipeline to start...
                 </div>
                 <div className="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
                   <div className="h-full w-1/3 animate-pulse rounded-full bg-blue-600" />
