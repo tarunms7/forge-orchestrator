@@ -66,12 +66,20 @@ function PlannerLogModal({ lines, onClose }: { lines: string[]; onClose: () => v
 /* ── Planner Card ──────────────────────────────────────────────────── */
 
 export default function PlannerCard() {
-  const plannerOutput = useTaskStore((s) => s.plannerOutput);
+  const rawPlannerOutput = useTaskStore((s) => s.plannerOutput);
   const phase = useTaskStore((s) => s.phase);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showModal, setShowModal] = useState(false);
 
   const isActive = phase === "planning";
+
+  // Deduplicate lines — the SDK emits the same content as both
+  // AssistantMessage (streaming) and ResultMessage (final), which
+  // causes identical JSON to appear twice in the output.
+  const plannerOutput = rawPlannerOutput.filter((line, i, arr) => {
+    const trimmed = line.trim();
+    return arr.findIndex((l) => l.trim() === trimmed) === i;
+  });
   const lineCount = plannerOutput.length;
 
   // Auto-scroll during active planning
