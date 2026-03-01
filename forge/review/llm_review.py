@@ -1,11 +1,14 @@
 """Gate 2: LLM code review. A fresh Claude instance reviews changes against the task spec."""
 
+import logging
 import subprocess
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.sdk_helpers import sdk_query
 from forge.review.pipeline import GateResult
+
+logger = logging.getLogger("forge.review")
 
 REVIEW_SYSTEM_PROMPT = """You are a code reviewer for the Forge multi-agent orchestration engine.
 
@@ -49,14 +52,26 @@ async def gate2_llm_review(
 
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
-        max_turns=1,
+        # max_turns=2 gives the model one turn to respond + buffer for
+        # rate_limit_event recovery. The reviewer doesn't need tools.
+        max_turns=2,
         model=model,
     )
     if worktree_path:
         options.cwd = worktree_path
 
-    result = await sdk_query(prompt=prompt, options=options)
+    try:
+        result = await sdk_query(prompt=prompt, options=options)
+    except Exception as e:
+        logger.warning("L2 review SDK call failed: %s", e)
+        return GateResult(
+            passed=False, gate="gate2_llm_review",
+            details=f"SDK error during review: {e}",
+        )
+
     result_text = result.result if result and result.result else ""
+    if not result_text:
+        logger.warning("L2 review returned empty result (SDK returned None or empty)")
     return _parse_review_result(result_text)
 
 

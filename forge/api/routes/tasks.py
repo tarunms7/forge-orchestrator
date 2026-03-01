@@ -214,20 +214,32 @@ async def execute_pipeline(
             await daemon.execute(graph, forge_db, pipeline_id=pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "complete")
 
-            # Auto-create PR after successful completion
-            await ws_manager.broadcast(pipeline_id, {
-                "type": "pipeline:pr_creating",
-            })
-            try:
-                pr_url = await _auto_create_pr(forge_db, pipeline_id)
+            # Only auto-create PR if ALL tasks succeeded (no errors)
+            tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+            errored = [t for t in tasks if t.state == "error"]
+            if errored:
+                logger.info(
+                    "Skipping auto-PR for %s: %d task(s) in error state",
+                    pipeline_id, len(errored),
+                )
                 await ws_manager.broadcast(pipeline_id, {
-                    "type": "pipeline:pr_created", "pr_url": pr_url,
+                    "type": "pipeline:pr_failed",
+                    "error": f"{len(errored)} task(s) failed — fix before creating PR",
                 })
-            except Exception as pr_exc:
-                logger.warning("Auto-PR failed for %s: %s", pipeline_id, pr_exc)
+            else:
                 await ws_manager.broadcast(pipeline_id, {
-                    "type": "pipeline:pr_failed", "error": str(pr_exc),
+                    "type": "pipeline:pr_creating",
                 })
+                try:
+                    pr_url = await _auto_create_pr(forge_db, pipeline_id)
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "pipeline:pr_created", "pr_url": pr_url,
+                    })
+                except Exception as pr_exc:
+                    logger.warning("Auto-PR failed for %s: %s", pipeline_id, pr_exc)
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "pipeline:pr_failed", "error": str(pr_exc),
+                    })
         except Exception as exc:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
@@ -526,9 +538,49 @@ async def retry_task(
 
     await forge_db.retry_task(task_id)  # Resets to todo, increments retry_count
 
-    # If pipeline was complete/cancelled, reactivate it
+    # If pipeline was complete/cancelled/error, we need to reactivate it
+    # AND re-launch the execution loop (otherwise the task stays in 'todo'
+    # with nothing to pick it up).
     if pipeline.status in ("complete", "cancelled", "error"):
         await forge_db.update_pipeline_status(pipeline_id, "executing")
+
+        # Reconstruct graph and daemon to run execution loop
+        graph_json = json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else None
+        if graph_json:
+            from forge.config.settings import ForgeSettings
+            from forge.core.daemon import ForgeDaemon
+            from forge.core.events import EventEmitter
+            from forge.core.models import Complexity, TaskDefinition, TaskGraph
+
+            task_defs = []
+            for t in graph_json.get("tasks", []):
+                task_defs.append(TaskDefinition(
+                    id=t["id"], title=t["title"], description=t["description"],
+                    files=t["files"], depends_on=t.get("depends_on", []),
+                    complexity=Complexity(t.get("complexity", "medium")),
+                ))
+            graph = TaskGraph(tasks=task_defs)
+
+            settings = ForgeSettings()
+            emitter = getattr(request.app.state, "event_emitter", None)
+            if emitter is None:
+                emitter = EventEmitter()
+
+            ws_manager = getattr(request.app.state, "ws_manager", None)
+            if ws_manager:
+                _bridge_events(emitter, ws_manager, pipeline_id)
+
+            daemon = ForgeDaemon(pipeline.project_dir, settings=settings, event_emitter=emitter)
+
+            async def _run_retry():
+                try:
+                    await daemon.execute(graph, forge_db, pipeline_id=pipeline_id, resume=True)
+                    await forge_db.update_pipeline_status(pipeline_id, "complete")
+                except Exception as e:
+                    logger.error("Retry execution failed for %s: %s", task_id, e)
+                    await forge_db.update_pipeline_status(pipeline_id, "error")
+
+            asyncio.create_task(_run_retry())
 
     return {"status": "retrying", "task_id": task_id}
 
