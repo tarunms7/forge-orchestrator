@@ -13,7 +13,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from forge.api.models.schemas import (
     CreateTaskRequest,
-    ExecuteRequest,
     PipelineResponse,
     TaskListItem,
     TaskStatusResponse,
