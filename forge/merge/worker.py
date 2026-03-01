@@ -79,7 +79,7 @@ class MergeWorker:
                 text=True,
             )
         if result.returncode != 0:
-            conflicts = self._find_conflicts()
+            conflicts = self._find_conflicts(worktree_path)
             raise _RebaseConflict(files=conflicts)
 
     def _abort_rebase(self, worktree_path: str | None = None) -> None:
@@ -110,10 +110,10 @@ class MergeWorker:
             capture_output=True,
         )
 
-    def _find_conflicts(self) -> list[str]:
+    def _find_conflicts(self, worktree_path: str | None = None) -> list[str]:
         result = subprocess.run(
             ["git", "diff", "--name-only", "--diff-filter=U"],
-            cwd=self._repo,
+            cwd=worktree_path or self._repo,
             capture_output=True,
             text=True,
         )

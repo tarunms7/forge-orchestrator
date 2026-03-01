@@ -48,3 +48,16 @@ def test_help_lists_logs_subcommand():
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "logs" in result.output
+
+
+def test_clean_subcommand_registered():
+    """clean command must be registered in the CLI group."""
+    assert "clean" in cli.commands
+
+
+def test_help_lists_clean_subcommand():
+    """clean appears in the top-level --help output."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "clean" in result.output

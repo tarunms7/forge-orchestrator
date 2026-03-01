@@ -364,8 +364,29 @@ export default function TaskExecutionPage() {
           )
         )}
 
-        {/* Resume / Cancel Buttons — shown when pipeline is not complete */}
-        {phase !== "complete" && phase !== "idle" && phase !== "planning" && phase !== "planned" && (
+        {/* Cancel Button — shown only during active execution */}
+        {phase === "executing" && (
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              onClick={async () => {
+                if (!token || !pipelineId) return;
+                if (!confirm("Cancel all running tasks?")) return;
+                try {
+                  await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
+                  window.location.reload();
+                } catch (e) {
+                  // Error surfaces via events
+                }
+              }}
+              className="rounded-lg bg-red-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+            >
+              Cancel Pipeline
+            </button>
+          </div>
+        )}
+
+        {/* Resume Button — shown only when pipeline is complete with errored tasks */}
+        {phase === "complete" && taskList.some(t => t.state === "error") && (
           <div className="mt-4 flex justify-center gap-3">
             <button
               onClick={async () => {
@@ -381,23 +402,6 @@ export default function TaskExecutionPage() {
             >
               Resume Pipeline
             </button>
-            {phase === "executing" && (
-              <button
-                onClick={async () => {
-                  if (!token || !pipelineId) return;
-                  if (!confirm("Cancel all running tasks?")) return;
-                  try {
-                    await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
-                    window.location.reload();
-                  } catch (e) {
-                    // Error surfaces via events
-                  }
-                }}
-                className="rounded-lg bg-red-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
-              >
-                Cancel Pipeline
-              </button>
-            )}
           </div>
         )}
 

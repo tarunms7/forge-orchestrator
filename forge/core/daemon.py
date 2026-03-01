@@ -489,6 +489,7 @@ class ForgeDaemon:
                         resolved = await self._resolve_conflicts(
                             task_id, worktree_path,
                             retry_result.conflicting_files, agent_model,
+                            db=db,
                         )
                         if resolved:
                             final_result = merge_worker.merge(branch, worktree_path=worktree_path)
@@ -640,6 +641,7 @@ class ForgeDaemon:
     async def _resolve_conflicts(
         self, task_id: str, worktree_path: str,
         conflicting_files: list[str], agent_model: str,
+        db: Database,
     ) -> bool:
         """Tier 2: Use a targeted Claude call to resolve merge conflicts."""
         if not conflicting_files:
@@ -647,14 +649,31 @@ class ForgeDaemon:
 
         console.print(f"[yellow]{task_id}: Tier 2 — asking Claude to resolve {len(conflicting_files)} conflicts[/yellow]")
 
+        # Look up task context so the resolver understands what this task does
+        task = await db.get_task(task_id)
+        task_context = ""
+        if task:
+            task_context = (
+                f"## Current Task Context\n"
+                f"Task: {task.title}\n"
+                f"Description: {task.description}\n\n"
+            )
+
         conflict_prompt = (
-            f"The following files have merge conflicts that need to be resolved:\n"
+            f"{task_context}"
+            f"## Situation\n"
+            f"This task was developed in parallel with other tasks. The other tasks have "
+            f"already been merged to main. When rebasing this task's branch onto the "
+            f"updated main, merge conflicts arose in the following files:\n"
             f"{', '.join(conflicting_files)}\n\n"
-            f"Instructions:\n"
+            f"## Instructions\n"
             f"1. Open each conflicting file\n"
             f"2. Resolve the merge conflict markers (<<<<<<, =======, >>>>>>)\n"
-            f"3. Keep the intent of BOTH changes where possible\n"
-            f"4. Stage and commit the resolved files: git add -A && git commit -m 'fix: resolve merge conflicts'\n"
+            f"3. Keep the intent of BOTH sides — the changes from main (other tasks) "
+            f"AND the changes from this task. Do not discard either side unless they "
+            f"are truly redundant.\n"
+            f"4. Ensure the resolved code is syntactically correct and logically coherent\n"
+            f"5. Stage and commit the resolved files: git add -A && git commit -m 'fix: resolve merge conflicts'\n"
         )
 
         adapter = ClaudeAdapter()

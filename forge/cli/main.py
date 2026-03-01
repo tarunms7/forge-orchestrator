@@ -121,6 +121,10 @@ from forge.cli.logs import logs  # noqa: E402
 
 cli.add_command(logs)
 
+from forge.cli.clean import clean  # noqa: E402
+
+cli.add_command(clean)
+
 
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
