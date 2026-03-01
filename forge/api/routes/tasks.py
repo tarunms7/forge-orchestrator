@@ -596,8 +596,9 @@ async def get_task_status(
         # Query persisted events for this pipeline
         events = await forge_db.list_events(pipeline_id)
 
-        # Build per-task event data
+        # Build per-task event data + extract planner output
         task_events: dict[str, dict] = {}
+        planner_output_lines: list[str] = []
         timeline = []
         for ev in events:
             timeline.append({
@@ -606,6 +607,12 @@ async def get_task_status(
                 "payload": ev.payload,
                 "timestamp": ev.created_at,
             })
+            # Collect planner output lines (pipeline-level, no task_id)
+            if ev.event_type == "planner:output":
+                line = ev.payload.get("line", "")
+                if line:
+                    planner_output_lines.append(line)
+
             if ev.task_id:
                 te = task_events.setdefault(ev.task_id, {
                     "output": [], "reviewGates": [], "mergeResult": None, "cost_usd": 0,
@@ -621,7 +628,7 @@ async def get_task_status(
                 elif ev.event_type == "task:merge_result":
                     te["mergeResult"] = ev.payload
                 elif ev.event_type == "task:cost_update":
-                    te["cost_usd"] = ev.payload.get("cumulative_cost_usd", 0)
+                    te["cost_usd"] = (te["cost_usd"] or 0) + (ev.payload.get("cost_usd", 0))
                 elif ev.event_type == "task:state_changed":
                     te["state"] = ev.payload.get("state")
                     # Clear review gates when a retry starts so REST hydration
@@ -650,6 +657,8 @@ async def get_task_status(
             phase=pipeline.status,
             tasks=enriched_tasks,
             timeline=timeline,
+            pr_url=pipeline.pr_url,
+            planner_output=planner_output_lines,
         )
 
     # Fallback: in-memory

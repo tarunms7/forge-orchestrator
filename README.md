@@ -1,222 +1,123 @@
 # Forge
 
-**Multi-agent orchestration engine that decomposes coding tasks, dispatches parallel Claude agents, reviews their work, and merges it — all automatically.**
+**One command. Multiple agents. Reviewed code delivered via pull request.**
 
-```
-$ forge run "Build a REST API with JWT auth and user registration"
-
-Planning...
-Plan created: 4 tasks
-  - task-1: Create user model and database schema
-  - task-2: Implement JWT auth middleware
-  - task-3: Build registration and login endpoints
-  - task-4: Write integration tests
-
-Starting task-1: Create user model and database schema
-task-1 agent completed (187 diff lines)
-  Gate 1: Auto-checks... passed
-  Gate 2: LLM review... passed
-  Gate 3 (merge readiness): auto-pass
-task-1 merged successfully!
-
-Starting task-2: Implement JWT auth middleware
-...
-
-Complete: 4 done, 0 errors
-```
-
-One command. Multiple agents. Reviewed code delivered via pull request.
-
----
-
-## How It Works
-
-Forge takes a natural language task, breaks it into sub-tasks, and runs them through a full software engineering pipeline:
-
-```
-                         forge run "Build X"
-                               |
-                    +----------v-----------+
-                    |      1. PLANNING      |
-                    |  Claude decomposes    |
-                    |  task into sub-tasks  |
-                    +----------+-----------+
-                               |
-                    TaskGraph (DAG of tasks)
-                               |
-               +---------------+---------------+
-               |               |               |
-        +------v------+ +-----v-------+ +-----v-------+
-        |   task-1    | |   task-2    | |   task-3    |
-        | (worktree)  | | (worktree)  | | (worktree)  |
-        +------+------+ +------+------+ +------+------+
-               |               |               |
-        2. EXECUTE       2. EXECUTE       (blocked:
-        Claude agent     Claude agent      depends on
-        writes code      writes code       task-1)
-               |               |
-        +------v------+ +-----v-------+
-        | 3. REVIEW   | | 3. REVIEW   |
-        | Gate 1: lint| | Gate 1: lint|
-        | Gate 2: LLM | | Gate 2: LLM |
-        | Gate 3: ok  | | Gate 3: ok  |
-        +------+------+ +------+------+
-               |               |
-        +------v------+ +-----v-------+
-        | 4. MERGE    | | 4. MERGE    |
-        | rebase+ff   | | rebase+ff   |
-        | into main   | | into main   |
-        +-------------+ +-------------+
-```
-
-### The Pipeline in Detail
-
-**1. Planning** — A Claude session (text-only, no tools) decomposes your request into a `TaskGraph`: a DAG of tasks with dependencies, file ownership, and complexity ratings. The planner retries with feedback if it produces invalid JSON or cyclic dependencies.
-
-**2. Scheduling** — The scheduler finds tasks whose dependencies are all `DONE` and pairs them with idle agents. A resource monitor gates dispatch if CPU, memory, or disk is constrained.
-
-**3. Execution** — Each task gets an isolated [git worktree](https://git-scm.com/docs/git-worktree) (its own branch and working directory). A Claude agent session with full tool access (`Read`, `Edit`, `Write`, `Bash`, etc.) implements the task and commits the changes.
-
-**4. Review** — A 3-gate pipeline:
-- **Gate 1 (Auto):** `ruff` lints only the changed Python files. Fast and deterministic.
-- **Gate 2 (LLM):** A *separate* Claude session reviews the diff against the task spec. Returns `PASS` or `FAIL` with reasoning.
-- **Gate 3 (Merge):** Auto-pass (merge readiness is handled by the merge step).
-
-**5. Merge & PR** — The task branch is rebased onto `main` and fast-forward merged locally. Once all tasks pass, Forge creates a pull request for review.
-
-**6. Retry** — If any step fails (agent error, review rejection, merge conflict), the task retries up to 3 times with a fresh attempt.
-
----
-
-## Where Does the Code Go?
-
-Your generated code is delivered as a **pull request** for review:
-
-1. Each task works in an isolated git worktree (its own branch + directory)
-2. After passing review, each task branch is rebased onto `main` and merged locally
-3. When all tasks complete, Forge automatically creates a PR via `gh pr create`
-4. You review and merge the PR through your normal workflow
-
-During execution, each task works in an isolated directory:
-
-```
-your-project/
-  .forge/
-    forge.db              # Pipeline state (SQLite)
-    worktrees/
-      task-1/             # Isolated git worktree (auto-cleaned)
-      task-2/             # Each task gets its own branch + directory
-```
-
-After the PR is merged, worktrees are deleted. Only the merged commits remain.
-
----
-
-## Claude Sessions: What Gets Spawned
-
-Forge spawns **separate Claude CLI processes** for each step. They do not share context — each is a fresh session with a specific role:
-
-| Step | Claude Session | Tools | Purpose |
-|------|---------------|-------|---------|
-| Planning | `claude --print --max-turns 10` | Read, Glob, Grep | Decompose task into JSON TaskGraph |
-| Agent Execution | `claude --print --permission-mode acceptEdits` | Read, Edit, Write, Glob, Grep, Bash | Write code in isolated worktree |
-| Gate 2 Review | `claude --print --max-turns 2` | None | Review diff against task spec |
-
-**Total Claude sessions per task:** 3 (plan once + execute + review). For N tasks, Forge spawns 1 + 2N Claude sessions.
-
-All sessions use `claude-code-sdk` which wraps the `claude` CLI. Auth uses your existing `claude login` — no API key needed.
-
----
-
-## Installation
-
-### Prerequisites
-
-- Python 3.12+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude login`)
-- Git
-
-### Install
+Forge is a multi-agent orchestration engine that takes a natural-language task, decomposes it into parallel sub-tasks, dispatches isolated Claude agents to write the code, reviews every change through a 3-gate pipeline, and merges everything into a clean PR — automatically.
 
 ```bash
-git clone https://github.com/tarunms7/forge-orchestrator.git
-cd forge-orchestrator
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+forge run "Build a REST API with JWT auth, user registration, and integration tests"
 ```
 
-### Verify
+That's it. Forge plans the work, spins up agents in parallel, reviews their output, and opens a pull request when everything passes.
 
-```bash
-forge --version    # Forge, version 0.1.0
-claude --version   # Verify Claude CLI is available
-```
+---
+
+## Why Forge?
+
+Writing code with an AI assistant is powerful — but you're still the bottleneck.
+
+| Pain point | How Forge solves it |
+|---|---|
+| You prompt one thing at a time | Forge decomposes your task into a **dependency graph** and runs independent tasks **in parallel** |
+| AI changes break other code | Each agent works in an **isolated git worktree** — no file conflicts between concurrent agents |
+| You manually review AI output | A **3-gate review pipeline** (lint + LLM review + merge check) catches issues before anything touches `main` |
+| Context gets lost in long sessions | Each agent is a **fresh Claude session** with a focused prompt — no context bleeding |
+| Merging is manual and error-prone | Forge **rebases and fast-forward merges** each task, then auto-creates a **pull request** |
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Go to your project (must be a git repo with at least one commit)
+# Install
+git clone https://github.com/tarunms7/forge-orchestrator.git
+cd forge-orchestrator && python -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# Prerequisites: Python 3.12+, Git, Claude CLI (claude login)
+
+# Run in your project
 cd your-project
-git init && git add -A && git commit -m "init"
-
-# 2. Initialize Forge
 forge init
-
-# 3. Run a task
-forge run "Create a Python function that calculates fibonacci numbers, with tests"
+forge run "Add input validation to all API endpoints with proper error messages"
 ```
-
-Forge will:
-1. Plan the task into sub-tasks
-2. Create agents and worktrees
-3. Execute each task (Claude writes code)
-4. Review changes (lint + LLM review)
-5. Merge to `main`
-6. Print a summary
 
 ---
 
-## Web UI
+## What Happens Under the Hood
 
-Forge includes a real-time web dashboard for managing pipelines:
-
-```bash
-# Set JWT secret for auth
-export FORGE_JWT_SECRET="your-secret-key"
-
-# Start backend (port 8000) + frontend (port 3000)
-forge serve
+```
+forge run "your task"
+        |
+   1. PLAN -----> Claude decomposes into a task graph (DAG)
+        |
+   2. EXECUTE --> Parallel agents write code in isolated worktrees
+        |
+   3. REVIEW ---> 3-gate pipeline: lint + LLM review + merge check
+        |
+   4. MERGE ----> Rebase + fast-forward into main, auto-create PR
 ```
 
-Features:
-- Real-time pipeline progress via WebSocket
-- Agent output streaming (watch code being written in real-time)
+**Planning** — A text-only Claude session decomposes your request into a DAG of tasks with dependencies, file ownership, and complexity ratings.
+
+**Execution** — Each task gets its own git worktree (isolated branch + directory). A Claude agent with full tool access writes the code and commits.
+
+**Review** — Every task passes 3 gates: (1) `ruff` lint on changed files, (2) a separate Claude session reviews the diff against the task spec, (3) merge readiness check.
+
+**Merge** — Task branches are rebased onto `main` and fast-forward merged. When all tasks pass, Forge opens a pull request via `gh pr create`.
+
+If any step fails, Forge retries the task up to 3 times with feedback from the failure.
+
+---
+
+## Web Dashboard
+
+Forge includes a real-time web UI for monitoring and controlling pipelines:
+
+```bash
+export FORGE_JWT_SECRET="your-secret-key"
+forge serve   # Backend :8000 + Frontend :3000
+```
+
+- Live pipeline progress via WebSocket
+- Streaming agent output (watch code being written in real-time)
 - Review gate results and merge status per task
-- Per-task activity logs with timestamps
-- One-click task retry and pipeline resume
+- Per-task cost tracking
+- One-click retry, cancel, and resume
 - Auto-PR creation when all tasks pass
+- Pipeline history with duration and task counts
+
+---
+
+## Model Routing
+
+Control cost vs. quality by routing different pipeline stages to different Claude models:
+
+| Strategy | Planner | Agent | Reviewer | Best for |
+|---|---|---|---|---|
+| `cost-optimized` | Haiku | Sonnet | Haiku | Exploration, prototyping |
+| `balanced` (default) | Sonnet | Sonnet | Haiku | Most tasks |
+| `quality-first` | Opus | Opus | Sonnet | Complex architecture |
+
+```bash
+FORGE_MODEL_STRATEGY=quality-first forge run "Refactor the auth system to use OAuth2"
+```
 
 ---
 
 ## Configuration
 
-All settings are in `forge/config/settings.py` and can be overridden via environment variables with the `FORGE_` prefix:
+All settings use the `FORGE_` env prefix or `forge/config/settings.py`:
 
-| Setting | Default | Env Var | Description |
-|---------|---------|---------|-------------|
-| `max_agents` | 4 | `FORGE_MAX_AGENTS` | Max concurrent agent sessions |
-| `agent_timeout_seconds` | 1800 | `FORGE_AGENT_TIMEOUT_SECONDS` | Per-task timeout (30 min) |
-| `max_retries` | 3 | `FORGE_MAX_RETRIES` | Retries per task on failure |
-| `cpu_threshold` | 80.0 | `FORGE_CPU_THRESHOLD` | Max CPU % before backpressure |
-| `memory_threshold_pct` | 10.0 | `FORGE_MEMORY_THRESHOLD_PCT` | Min memory % available |
-| `disk_threshold_gb` | 5.0 | `FORGE_DISK_THRESHOLD_GB` | Min disk GB free |
-| `scheduler_poll_interval` | 1.0 | `FORGE_SCHEDULER_POLL_INTERVAL` | Seconds between dispatch cycles |
-| `model_strategy` | balanced | `FORGE_MODEL_STRATEGY` | Model routing strategy |
-
-Example:
+| Setting | Default | Description |
+|---|---|---|
+| `FORGE_MAX_AGENTS` | 4 | Max concurrent agent sessions |
+| `FORGE_AGENT_TIMEOUT_SECONDS` | 1800 | Per-task timeout (30 min) |
+| `FORGE_MAX_RETRIES` | 3 | Retries per task on failure |
+| `FORGE_CPU_THRESHOLD` | 80.0 | Max CPU % before backpressure |
+| `FORGE_MEMORY_THRESHOLD_PCT` | 10.0 | Min available memory % |
+| `FORGE_DISK_THRESHOLD_GB` | 5.0 | Min free disk space |
+| `FORGE_MODEL_STRATEGY` | balanced | Model routing strategy |
 
 ```bash
 FORGE_MAX_AGENTS=2 FORGE_MAX_RETRIES=1 forge run "Add dark mode support"
@@ -224,214 +125,90 @@ FORGE_MAX_AGENTS=2 FORGE_MAX_RETRIES=1 forge run "Add dark mode support"
 
 ---
 
-## Model Routing
+## How Code Is Delivered
 
-Control cost vs quality by routing different pipeline stages to different models:
+Your generated code arrives as a **pull request** — not pushed directly to `main`:
 
-| Strategy | Planner | Agent | Reviewer |
-|----------|---------|-------|----------|
-| `cost-optimized` | haiku | sonnet | haiku |
-| `balanced` (default) | sonnet | sonnet | haiku |
-| `quality-first` | opus | opus | sonnet |
+1. Each task works in an isolated git worktree (`/.forge/worktrees/task-N/`)
+2. After passing review, each task branch is rebased and fast-forward merged into `main`
+3. When all tasks complete, Forge runs `gh pr create` automatically
+4. You review and merge through your normal workflow
 
-Set via environment variable:
-
-```bash
-FORGE_MODEL_STRATEGY=quality-first forge run "Build authentication system"
-```
+Worktrees are cleaned up after merge. Only the merged commits remain.
 
 ---
 
 ## Architecture
 
-### Module Map
-
 ```
 forge/
-  cli/main.py              CLI entry point (forge init, forge run)
+  cli/               CLI entry (forge init, run, serve)
   core/
-    daemon.py               Main async orchestration loop
-    planner.py              Abstract planner + retry logic
-    claude_planner.py       Claude-backed task decomposition
-    scheduler.py            DAG-aware task scheduling
-    state.py                Task state machine (TODO -> DONE)
-    models.py               Pydantic data models (TaskGraph, TaskRecord)
-    validator.py            TaskGraph validation (cycles, conflicts)
-    monitor.py              Resource monitoring (CPU, memory, disk)
-    sdk_helpers.py          Claude Code SDK wrapper
-    errors.py               Error hierarchy
-    engine.py               Deterministic engine (internal)
-    continuity.py           Session handoff files
-    context.py              Project snapshot gathering
-    events.py               Async event emitter (pub/sub)
-    model_router.py         Strategy-based model selection
+    daemon.py         Async orchestration loop
+    planner.py        Task decomposition + retry logic
+    scheduler.py      DAG-aware scheduling + resource gating
+    state.py          Task state machine
+    model_router.py   Strategy-based model selection
+    monitor.py        CPU/memory/disk resource monitoring
+    sdk_helpers.py    Claude Code SDK wrapper
   agents/
-    adapter.py              Agent interface + ClaudeAdapter
-    runtime.py              Timeout-wrapped agent execution
-  api/
-    routes/tasks.py         REST API + WebSocket endpoints
-    ws/manager.py           WebSocket connection manager
-  storage/
-    db.py                   Async SQLAlchemy (SQLite or Postgres)
-  merge/
-    worktree.py             Git worktree lifecycle
-    worker.py               Rebase + fast-forward merge
+    adapter.py        ClaudeAdapter (agent interface)
+    runtime.py        Timeout-wrapped execution
   review/
-    pipeline.py             3-gate review orchestration
-    auto_check.py           Gate 1: programmatic checks
-    standards.py            Gate 1: AST-based code standards
-    llm_review.py           Gate 2: LLM code review
-    merge_check.py          Gate 3: merge readiness
-  registry/
-    index.py                Module registry (AST function indexing)
-  config/
-    settings.py             ForgeSettings (pydantic-settings)
-  tui/
-    dashboard.py            Rich status table
+    pipeline.py       3-gate review orchestration
+    auto_check.py     Gate 1: ruff lint
+    llm_review.py     Gate 2: LLM diff review
+    merge_check.py    Gate 3: merge readiness
+  merge/
+    worktree.py       Git worktree lifecycle
+    worker.py         Rebase + fast-forward merge
+  storage/
+    db.py             Async SQLAlchemy (SQLite/Postgres)
+  api/
+    routes/tasks.py   REST + WebSocket endpoints
 web/
-  src/
-    app/tasks/view/         Pipeline execution view
-    components/task/        AgentCard, PlannerCard, PipelineProgress
-    stores/taskStore.ts     Zustand state management
-    hooks/useWebSocket.ts   WebSocket connection hook
+  src/                Next.js 14 + TypeScript + Tailwind + Zustand
 ```
 
 ### Task State Machine
 
 ```
-TODO ──> IN_PROGRESS ──> IN_REVIEW ──> MERGING ──> DONE
+TODO --> IN_PROGRESS --> IN_REVIEW --> MERGING --> DONE
   |          |               |            |
-  +──> ERROR <───────────────+────────────+
+  +----> ERROR <-------------+------------+
   |
-  +──> CANCELLED
+  +----> CANCELLED
 ```
-
-- `TODO`: Waiting for dependencies + idle agent
-- `IN_PROGRESS`: Agent is writing code
-- `IN_REVIEW`: Going through 3-gate review
-- `MERGING`: Rebasing and merging to main
-- `DONE`: Successfully merged
-- `ERROR`: Failed after max retries
-
-### Data Flow
-
-```
-User Input ──> ClaudePlannerLLM ──> TaskGraph (validated)
-                                        |
-                                   Store in DB
-                                        |
-                              Scheduler.dispatch_plan()
-                                   /    |    \
-                              task-1  task-2  task-3  (parallel)
-                                |       |       |
-                          Worktree  Worktree  Worktree  (git isolation)
-                                |       |       |
-                         ClaudeAdapter (code)  ...
-                                |       |
-                           3-Gate Review  ...
-                                |       |
-                          MergeWorker   ...
-                                |       |
-                          main branch updated
-```
-
-### Key Design Decisions
-
-**Why git worktrees?** Each agent gets a full working directory on its own branch. No file conflicts between concurrent agents. Clean rollback on failure.
-
-**Why separate Claude sessions?** Isolation. The planner reasons about task structure (no tools needed). The agent writes code (full tool access). The reviewer checks code quality (fresh perspective, no tool access). No context bleeding.
-
-**Why rebase + fast-forward?** Clean linear history on main. Each task's commits appear in order. No merge commits cluttering the log.
-
-**Why retry with feedback?** LLM outputs are non-deterministic. A failed lint check or review often succeeds on the second try. The planner also retries with validation error feedback.
-
----
-
-## Database
-
-Forge uses SQLite by default (async via aiosqlite). The DB is **fresh per run** — no stale state from previous runs.
-
-### Schema
-
-**Tasks Table:**
-```
-id | title | description | files (JSON) | depends_on (JSON) | complexity
-state | assigned_agent | retry_count | branch_name | worktree_path
-```
-
-**Agents Table:**
-```
-id | state (idle/working/paused) | current_task
-```
-
-### Postgres Support
-
-For production use with persistent state:
-
-```bash
-pip install forge-orchestrator[postgres]
-FORGE_DB_URL="postgresql+asyncpg://user:pass@localhost/forge" forge run "..."
-```
-
----
-
-## Review Pipeline
-
-Every task passes through 3 gates before merging:
-
-### Gate 1: Auto-Checks
-- Runs `ruff check` on changed Python files only (not the whole project)
-- Fast, deterministic, no LLM cost
-- Catches syntax errors, import issues, style violations
-
-### Gate 2: LLM Review
-- A fresh Claude session reviews the git diff against the task specification
-- System prompt: "Review this code. Respond with PASS or FAIL."
-- Checks: spec satisfaction, bugs, logic errors, quality, security
-- If FAIL: task retries with a new agent attempt
-
-### Gate 3: Merge Readiness
-- Currently auto-pass (merge conflicts caught by the merge step)
-- Can be configured to run test suites post-rebase
 
 ---
 
 ## Testing
 
-Forge has 421+ unit tests across 30+ modules:
-
 ```bash
-# Run all tests
+# 440+ unit tests across 30+ modules
 pytest forge/ -q
 
-# Run specific module tests
-pytest forge/core/scheduler_test.py -v
-pytest forge/storage/db_test.py -v
-pytest forge/review/pipeline_test.py -v
+# Frontend type check
+cd web && npx tsc --noEmit
 ```
-
-Test files follow the pattern `{module}_test.py` and live next to their source files.
 
 ---
 
 ## Limitations
 
-- **Cost**: Each task spawns 2-3 Claude sessions. A 4-task project = ~10 Claude API calls. Monitor usage.
-- **Speed**: Sequential within dependencies. A 4-task linear chain takes 4x agent execution time.
-- **Language**: Gate 1 only lints Python files (via ruff). Other languages pass Gate 1 automatically.
-- **Merge conflicts**: If two tasks touch the same file (which the planner is instructed to avoid), the second task's merge will fail and retry.
+- **Cost** — Each task spawns 2-3 Claude sessions. A 4-task pipeline makes ~10 Claude calls. Use `cost-optimized` strategy for exploration.
+- **Speed** — Tasks with dependencies run sequentially. Independent tasks run in parallel.
+- **Linting** — Gate 1 currently lints Python files only (via `ruff`). Other languages pass automatically.
+- **Merge conflicts** — If two tasks modify the same file, the later merge may fail and retry. The planner is instructed to avoid file overlap, but it's not guaranteed.
 
 ---
 
-## Project Status
+## Requirements
 
-- 421+ unit tests passing across 30+ modules
-- E2E pipeline verified: plan → execute → review → merge → PR
-- Web UI with real-time dashboard (`forge serve`)
-- PR-based merge workflow with auto-PR creation
-- Smart model routing (cost-optimized, balanced, quality-first)
-- Tested with fibonacci, REST API, and multi-file tasks
-- Works from Claude Code terminal sessions (CLAUDECODE env var handled)
+- Python 3.12+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude login`)
+- Git 2.20+ (worktree support)
+- `gh` CLI (for auto-PR creation)
 
 ---
 

@@ -53,11 +53,15 @@ export interface PipelineState {
   prUrl: string | null;
   prLoading: boolean;
   prError: string | null;
+  hydrationError: string | null;
   setPipelineId: (id: string) => void;
+  setHydrationError: (err: string | null) => void;
   hydrateFromRest: (data: {
     phase: string;
     tasks: Array<Record<string, unknown>>;
     timeline?: Array<Record<string, unknown>>;
+    pr_url?: string | null;
+    planner_output?: string[];
   }) => void;
   handleEvent: (event: {
     event: string;
@@ -94,7 +98,9 @@ export const useTaskStore = create<PipelineState>((set) => ({
   prUrl: null,
   prLoading: false,
   prError: null,
+  hydrationError: null,
   setPipelineId: (id) => set({ pipelineId: id }),
+  setHydrationError: (err) => set({ hydrationError: err }),
   hydrateFromRest: (data) => {
     const newTasks: Record<string, TaskState> = {};
     for (const t of data.tasks) {
@@ -111,6 +117,7 @@ export const useTaskStore = create<PipelineState>((set) => ({
         output: (t.output as string[]) || [],
         reviewGates: (t.reviewGates as TaskState["reviewGates"]) || [],
         mergeResult: (t.mergeResult as TaskState["mergeResult"]) || undefined,
+        costUsd: (t.cost_usd as number) || undefined,
       };
     }
     const phase = (data.phase || "idle") as PipelineState["phase"];
@@ -120,10 +127,17 @@ export const useTaskStore = create<PipelineState>((set) => ({
       payload: entry.payload as Record<string, unknown> || entry,
       timestamp: (entry.timestamp as string) || new Date().toISOString(),
     }));
-    set({ tasks: newTasks, phase, timeline });
+    set({
+      tasks: newTasks,
+      phase,
+      timeline,
+      prUrl: data.pr_url ?? null,
+      plannerOutput: data.planner_output ?? [],
+      hydrationError: null,
+    });
   },
   reset: () =>
-    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [], timeline: [], prUrl: null, prLoading: false, prError: null }),
+    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [], timeline: [], prUrl: null, prLoading: false, prError: null, hydrationError: null }),
   handleEvent: (event) =>
     set((state) => {
       const { event: eventName, data } = event;

@@ -168,25 +168,35 @@ function PlanPanel({
 
 /* ── Connection Status Banner ─────────────────────────────────────── */
 
-function ConnectionBanner({ status }: { status: WsStatus }) {
+function ConnectionBanner({ status, onRetry }: { status: WsStatus; onRetry?: () => void }) {
   if (status === "connected") return null;
 
   const messages: Record<string, { text: string; color: string }> = {
     connecting: { text: "Connecting to server...", color: "bg-blue-900/50 border-blue-800 text-blue-300" },
     reconnecting: { text: "Reconnecting...", color: "bg-yellow-900/50 border-yellow-800 text-yellow-300" },
-    disconnected: { text: "Disconnected. Please refresh the page.", color: "bg-red-900/50 border-red-800 text-red-300" },
+    disconnected: { text: "Connection lost.", color: "bg-red-900/50 border-red-800 text-red-300" },
   };
 
   const msg = messages[status];
   return (
-    <div className={`mb-4 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium ${msg.color}`}>
-      {status !== "disconnected" && (
-        <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
+    <div className={`mb-4 flex items-center justify-between rounded-lg border px-4 py-2.5 text-sm font-medium ${msg.color}`}>
+      <div className="flex items-center gap-2">
+        {status !== "disconnected" && (
+          <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        )}
+        {msg.text}
+      </div>
+      {status === "disconnected" && onRetry && (
+        <button
+          onClick={onRetry}
+          className="rounded-lg border border-red-700 bg-red-900/50 px-3 py-1 text-xs font-medium text-red-200 hover:bg-red-800/50 transition-colors"
+        >
+          Retry Connection
+        </button>
       )}
-      {msg.text}
     </div>
   );
 }
@@ -205,6 +215,8 @@ export default function TaskExecutionPage() {
   const handleEvent = useTaskStore((s) => s.handleEvent);
   const hydrateFromRest = useTaskStore((s) => s.hydrateFromRest);
   const reset = useTaskStore((s) => s.reset);
+  const hydrationError = useTaskStore((s) => s.hydrationError);
+  const setHydrationError = useTaskStore((s) => s.setHydrationError);
 
   const [executing, setExecuting] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -224,6 +236,7 @@ export default function TaskExecutionPage() {
       // Navigated to a different pipeline — clear stale data
       reset();
       hydrated.current = false;
+      setSelectedTaskId(null);
     }
     setPipelineId(pipelineId);
   }, [pipelineId, storePipelineId, setPipelineId, reset]);
@@ -232,14 +245,17 @@ export default function TaskExecutionPage() {
   useEffect(() => {
     if (!token || !pipelineId || hydrated.current) return;
     hydrated.current = true;
+    setHydrationError(null);
     apiGet(`/tasks/${pipelineId}`, token)
       .then((data) => {
         if (data.tasks?.length > 0 || data.phase !== "planning") {
           hydrateFromRest(data);
         }
       })
-      .catch(() => {});
-  }, [token, pipelineId, hydrateFromRest]);
+      .catch((err) => {
+        setHydrationError(err.message || "Failed to load pipeline");
+      });
+  }, [token, pipelineId, hydrateFromRest, setHydrationError]);
 
   // Close detail panel on Escape
   useEffect(() => {
@@ -259,7 +275,7 @@ export default function TaskExecutionPage() {
     [handleEvent],
   );
 
-  const { status: wsStatus } = useWebSocket(pipelineId, token, onMessage);
+  const { status: wsStatus, retry: wsRetry } = useWebSocket(pipelineId, token, onMessage);
 
   const taskList = Object.values(tasks);
 
@@ -306,7 +322,23 @@ export default function TaskExecutionPage() {
         </div>
 
         {/* Connection Status */}
-        <ConnectionBanner status={wsStatus} />
+        <ConnectionBanner status={wsStatus} onRetry={wsRetry} />
+
+        {/* Hydration Error — pipeline not found or failed to load */}
+        {hydrationError && (
+          <div className="mb-6 rounded-xl border border-red-800 bg-red-950/30 p-6 text-center">
+            <svg className="mx-auto mb-3 h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            <p className="text-sm font-medium text-red-300">{hydrationError}</p>
+            <Link
+              href="/"
+              className="mt-3 inline-block rounded-lg border border-red-700 bg-red-900/50 px-4 py-1.5 text-xs font-medium text-red-200 transition-colors hover:bg-red-800/50"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
+        )}
 
         {/* Pipeline Progress */}
         <div className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900 p-4">

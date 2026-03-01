@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { createWebSocket } from "@/lib/ws";
+import { useAuthStore } from "@/stores/authStore";
 
 export type WsStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
@@ -17,6 +18,9 @@ export function useWebSocket(
   const [status, setStatus] = useState<WsStatus>("connecting");
   const authenticatedRef = useRef(false);
 
+  // Increment this to force a reconnect (used by the retry() callback)
+  const [retryTrigger, setRetryTrigger] = useState(0);
+
   useEffect(() => {
     if (!pipelineId || !token) return;
 
@@ -27,11 +31,18 @@ export function useWebSocket(
     function connect() {
       if (disposed) return;
       setStatus(retriesRef.current > 0 ? "reconnecting" : "connecting");
+
+      // On reconnect, use fresh token from the auth store
+      // (the token from the closure may have expired)
+      const currentToken = retriesRef.current > 0
+        ? useAuthStore.getState().token ?? token
+        : token;
+
       const ws = createWebSocket(pipelineId!);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({ token }));
+        ws.send(JSON.stringify({ token: currentToken }));
       };
 
       ws.onmessage = (e) => {
@@ -54,10 +65,17 @@ export function useWebSocket(
         // Calling close() from onerror was causing a tight reconnect loop
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         wsRef.current = null;
         authenticatedRef.current = false;
         if (disposed) return;
+
+        // Auth failure (close code 4001) — skip further retries with stale token
+        if (event.code === 4001) {
+          setStatus("disconnected");
+          return;
+        }
+
         if (retriesRef.current < maxRetries) {
           setStatus("reconnecting");
           const delay = Math.min(1000 * Math.pow(2, retriesRef.current), 30000);
@@ -77,11 +95,17 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
-  }, [pipelineId, token]);
+  }, [pipelineId, token, retryTrigger]);
 
   const send = useCallback((data: unknown) => {
     wsRef.current?.send(JSON.stringify(data));
   }, []);
 
-  return { send, status };
+  // Manual retry — resets retry count and triggers a fresh connection
+  const retry = useCallback(() => {
+    retriesRef.current = 0;
+    setRetryTrigger((t) => t + 1);
+  }, []);
+
+  return { send, status, retry };
 }

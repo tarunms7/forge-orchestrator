@@ -33,6 +33,8 @@ class TaskStatusResponse(BaseModel):
     phase: str
     tasks: list[dict] = Field(default_factory=list)
     timeline: list[dict] = Field(default_factory=list)
+    pr_url: str | None = None
+    planner_output: list[str] = Field(default_factory=list)
 
 
 class TaskListItem(BaseModel):
