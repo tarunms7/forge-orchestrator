@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { TaskState } from "@/stores/taskStore";
 import { useTaskStore } from "@/stores/taskStore";
+import { FormattedLine } from "./FormattedLine";
 
 const STATE_CLASS: Record<string, { label: string; badgeClass: string }> = {
   pending: { label: "Pending", badgeClass: "state-badge pending" },
@@ -35,6 +36,30 @@ export default function TaskDetailPanel({
   const timeline = useTaskStore((s) => s.timeline);
   const taskTimeline = timeline.filter(e => e.taskId === task.id);
   const [activeTab, setActiveTab] = useState<'output' | 'review' | 'files' | 'activity'>('output');
+
+  // Derive review gates from timeline if task.reviewGates is empty
+  // (handles race condition where REST hydration overwrites WS-accumulated gates)
+  const reviewGates = task.reviewGates.length > 0
+    ? task.reviewGates
+    : taskTimeline
+        .filter(e => e.type === "task:review_update")
+        .map(e => ({
+          gate: (e.payload.gate as string) || "",
+          result: e.payload.passed ? "pass" : "fail",
+          details: (e.payload.details as string) || undefined,
+        }));
+
+  // Derive merge result from timeline if not set on task
+  const mergeResult = task.mergeResult ?? (() => {
+    const mergeEvent = taskTimeline.find(e => e.type === "task:merge_result");
+    if (!mergeEvent) return undefined;
+    return {
+      success: mergeEvent.payload.success as boolean,
+      error: mergeEvent.payload.error as string | undefined,
+      linesAdded: mergeEvent.payload.linesAdded as number | undefined,
+      linesRemoved: mergeEvent.payload.linesRemoved as number | undefined,
+    };
+  })();
 
   return (
     <>
@@ -102,7 +127,9 @@ export default function TaskDetailPanel({
             {task.output.length > 0 ? (
               <div className="detail-terminal">
                 {task.output.map((line, i) => (
-                  <div key={i} className="output-line">{line}</div>
+                  <div key={i} className="output-line">
+                    <FormattedLine text={line} />
+                  </div>
                 ))}
               </div>
             ) : (
@@ -112,9 +139,9 @@ export default function TaskDetailPanel({
 
           {/* Review Tab */}
           <div className={`tab-content ${activeTab === 'review' ? 'active' : ''}`}>
-            {task.reviewGates.length > 0 ? (
+            {reviewGates.length > 0 ? (
               <div className="review-timeline">
-                {task.reviewGates.map((gate, i) => (
+                {reviewGates.map((gate, i) => (
                   <div key={i} className={`review-gate-card ${gate.result === "pass" ? "pass" : "fail"}`}>
                     <div className="review-gate-header">
                       <div className="review-gate-icon">
@@ -131,24 +158,26 @@ export default function TaskDetailPanel({
                       <h4>{gate.gate}</h4>
                     </div>
                     {gate.details && (
-                      <div className="review-details">{gate.details}</div>
+                      <div className="review-details">
+                        <FormattedLine text={gate.details} />
+                      </div>
                     )}
                   </div>
                 ))}
 
                 {/* Merge Result */}
-                {task.mergeResult && (
-                  <div className={`merge-result-card ${task.mergeResult.success ? "success" : ""}`}>
-                    {task.mergeResult.success ? (
+                {mergeResult && (
+                  <div className={`merge-result-card ${mergeResult.success ? "success" : ""}`}>
+                    {mergeResult.success ? (
                       <>
                         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                         <span>Merged successfully</span>
                         <span className="merge-diff">
-                          <span className="stat-add">+{task.mergeResult.linesAdded ?? 0}</span>
+                          <span className="stat-add">+{mergeResult.linesAdded ?? 0}</span>
                           {" "}
-                          <span className="stat-del">-{task.mergeResult.linesRemoved ?? 0}</span>
+                          <span className="stat-del">-{mergeResult.linesRemoved ?? 0}</span>
                         </span>
                       </>
                     ) : (
@@ -156,7 +185,7 @@ export default function TaskDetailPanel({
                         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="var(--red)" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                         </svg>
-                        <span style={{ color: "var(--red)" }}>Merge failed: {task.mergeResult.error}</span>
+                        <span style={{ color: "var(--red)" }}>Merge failed: {mergeResult.error}</span>
                       </>
                     )}
                   </div>
