@@ -259,7 +259,12 @@ async def create_pr(
     request: Request,
     user_id: str = Depends(get_current_user),
 ) -> dict:
-    """Create a GitHub PR for a completed pipeline."""
+    """Create a GitHub PR for a completed pipeline.
+
+    The pipeline branch (forge/pipeline-{id}) already contains all merged
+    task code (advanced by update-ref during execution).  We just push it
+    and open a PR — NO git checkout, NO working-directory mutation.
+    """
     forge_db = _get_forge_db(request)
     if forge_db is None:
         raise HTTPException(status_code=500, detail="Database not available")
@@ -275,7 +280,21 @@ async def create_pr(
     project_dir = pipeline.project_dir
     branch_name = f"forge/pipeline-{pipeline_id[:8]}"
 
+    # Use base_branch from DB (stored by daemon at pipeline start)
+    base_branch = getattr(pipeline, "base_branch", None) or "main"
+
     try:
+        # Verify gh CLI is authenticated
+        gh_check = subprocess.run(
+            ["gh", "auth", "status"],
+            cwd=project_dir, capture_output=True, text=True,
+        )
+        if gh_check.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="GitHub CLI not authenticated. Run: gh auth login",
+            )
+
         # Detect remote name — fail early if no remote configured
         remote_result = subprocess.run(
             ["git", "remote"],
@@ -289,25 +308,13 @@ async def create_pr(
             )
         remote_name = remotes.split("\n")[0]
 
-        # Detect the current/main branch so we can set --base correctly
-        current_branch = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_dir, capture_output=True, text=True,
-        ).stdout.strip() or "main"
-
-        # Create or reset branch from current state (use -B to handle existing branch)
-        subprocess.run(
-            ["git", "checkout", "-B", branch_name],
-            cwd=project_dir, check=True, capture_output=True, text=True,
-        )
-
-        # Push to remote (force push to handle branch reset)
+        # Push the pipeline branch directly — NO checkout needed.
+        # The branch was created by the daemon and advanced via update-ref.
         push_result = subprocess.run(
             ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
             cwd=project_dir, capture_output=True, text=True,
         )
         if push_result.returncode != 0:
-            subprocess.run(["git", "checkout", current_branch], cwd=project_dir, capture_output=True)
             error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
             raise HTTPException(
                 status_code=500,
@@ -322,11 +329,6 @@ async def create_pr(
         if existing_pr.returncode == 0 and existing_pr.stdout.strip():
             pr_url = existing_pr.stdout.strip()
             await forge_db.set_pipeline_pr_url(pipeline_id, pr_url)
-            # Switch back to the main branch
-            subprocess.run(
-                ["git", "checkout", current_branch],
-                cwd=project_dir, capture_output=True,
-            )
             return {"pr_url": pr_url, "already_existed": True}
 
         # Build a PR body with task summary
@@ -344,10 +346,10 @@ async def create_pr(
             f"pipeline `{pipeline_id[:8]}`*"
         )
 
-        # Create PR using gh CLI
+        # Create PR — base_branch from DB, head is the pipeline branch
         pr_result = subprocess.run(
             ["gh", "pr", "create",
-             "--base", current_branch,
+             "--base", base_branch,
              "--head", branch_name,
              "--title", f"forge: {pipeline.description[:60]}",
              "--body", pr_body],
@@ -355,46 +357,18 @@ async def create_pr(
         )
 
         if pr_result.returncode != 0:
-            # Switch back to the main branch before raising
-            subprocess.run(
-                ["git", "checkout", current_branch],
-                cwd=project_dir, capture_output=True,
-            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to create PR: {pr_result.stderr or pr_result.stdout}",
             )
 
         pr_url = pr_result.stdout.strip()
-
-        # Store PR URL on pipeline
         await forge_db.set_pipeline_pr_url(pipeline_id, pr_url)
-
-        # Switch back to the main branch
-        subprocess.run(
-            ["git", "checkout", current_branch],
-            cwd=project_dir, capture_output=True,
-        )
-
         return {"pr_url": pr_url}
 
-    except subprocess.CalledProcessError as e:
-        # Try to switch back to main branch on error
-        subprocess.run(
-            ["git", "checkout", "-"],
-            cwd=project_dir, capture_output=True,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Git operation failed: {e.stderr or str(e)}",
-        )
     except HTTPException:
         raise
     except Exception as e:
-        subprocess.run(
-            ["git", "checkout", "-"],
-            cwd=project_dir, capture_output=True,
-        )
         raise HTTPException(status_code=500, detail=str(e))
 
 

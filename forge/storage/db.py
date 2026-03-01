@@ -82,6 +82,7 @@ class TaskRow(Base):
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    retry_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     cost_usd: Mapped[float] = mapped_column(default=0.0)
 
 
@@ -324,8 +325,24 @@ class Database:
                 task.retry_count += 1
                 task.state = "todo"
                 task.assigned_agent = None
+                task.retry_reason = None  # Clear merge flag — this is a full retry
                 if review_feedback is not None:
                     task.review_feedback = review_feedback
+                await session.commit()
+
+    async def retry_task_for_merge(self, task_id: str) -> None:
+        """Reset a task for merge-only retry (skip agent + review on next run).
+
+        Sets retry_reason='merge_failed' so _execute_task() knows to go
+        directly to the merge step without re-running the agent or review.
+        """
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.retry_count += 1
+                task.state = "todo"
+                task.assigned_agent = None
+                task.retry_reason = "merge_failed"
                 await session.commit()
 
     async def release_agent(self, agent_id: str) -> None:
