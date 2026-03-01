@@ -75,6 +75,16 @@ async def get_history_detail(
         except (json.JSONDecodeError, AttributeError):
             pass
 
+    duration = None
+    if pipeline.created_at and pipeline.completed_at:
+        from datetime import datetime
+        try:
+            start = datetime.fromisoformat(pipeline.created_at)
+            end = datetime.fromisoformat(pipeline.completed_at)
+            duration = int((end - start).total_seconds())
+        except (ValueError, TypeError):
+            pass
+
     return {
         "pipeline_id": pipeline.id,
         "description": pipeline.description,
@@ -82,6 +92,6 @@ async def get_history_detail(
         "phase": pipeline.status,
         "tasks": tasks_data,
         "created_at": pipeline.created_at or "",
-        "duration": None,
+        "duration": duration,
         "pr_url": getattr(pipeline, "pr_url", None),
     }
