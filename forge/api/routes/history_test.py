@@ -70,8 +70,9 @@ async def _create_pipeline_in_db(
     """Insert a PipelineRow directly into the DB with specific timestamps.
 
     Bypasses the POST /api/tasks endpoint (and its background planner) so
-    tests can control created_at / completed_at precisely.  Returns the new
-    pipeline_id.
+    tests can control created_at / completed_at precisely without race
+    conditions from the background planning task setting completed_at upon
+    failure.  Returns the new pipeline_id.
     """
     from forge.storage.db import PipelineRow
 
@@ -138,7 +139,17 @@ class TestListHistory:
             assert "task_count" in item
 
     async def test_history_list_duration_in_items(self, client):
-        """GET /history should include a correctly computed duration in each list item."""
+        """GET /history should include a correctly computed duration in each list item.
+
+        Steps:
+        1. Register a user and insert a pipeline into the DB with
+           created_at='2026-01-01T00:00:00+00:00' and
+           completed_at='2026-01-01T00:01:30+00:00'.
+           (Direct DB insertion is used to avoid a race with the background
+           planner, which sets completed_at on failure.)
+        2. Call GET /api/history.
+        3. Assert duration == 90 for the returned item.
+        """
         token = await _register_and_get_token(client)
         headers = _auth_header(token)
         user_id = await _get_user_id(client, "history-user@example.com")
@@ -205,10 +216,14 @@ class TestHistoryDetail:
     async def test_history_detail_duration_computed(self, client):
         """duration is correctly computed when created_at and completed_at are both set.
 
-        Sets created_at='2026-01-01T00:00:00+00:00' and
-        completed_at='2026-01-01T00:01:30+00:00', so the expected duration is
-        90 seconds.  The pipeline is inserted directly into the DB to avoid
-        background-planner interference with the timestamps.
+        Steps:
+        1. Register a user and insert a pipeline into the DB with
+           created_at='2026-01-01T00:00:00+00:00' and
+           completed_at='2026-01-01T00:01:30+00:00'.
+           (Direct DB insertion is used to avoid a race with the background
+           planner, which sets completed_at on failure via update_pipeline_status.)
+        2. Call GET /api/history/{pipeline_id}.
+        3. Assert duration == 90 seconds.
         """
         token = await _register_and_get_token(client)
         headers = _auth_header(token)
@@ -228,7 +243,15 @@ class TestHistoryDetail:
         assert resp.json()["duration"] == 90
 
     async def test_history_detail_duration_none_when_not_completed(self, client):
-        """duration is None when completed_at is not set (newly created pipeline)."""
+        """duration is None when completed_at is not set (newly created pipeline).
+
+        Steps:
+        1. Register a user and insert a pipeline into the DB with no completed_at.
+           (Direct DB insertion is used to avoid the background planner setting
+           completed_at when planning fails in the test environment.)
+        2. Call GET /api/history/{pipeline_id}.
+        3. Assert duration is None.
+        """
         token = await _register_and_get_token(client)
         headers = _auth_header(token)
         user_id = await _get_user_id(client, "history-user@example.com")
