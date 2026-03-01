@@ -8,9 +8,6 @@ from rich.console import Console
 
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
-from forge.core.daemon_helpers import _get_diff_stats
-from forge.core.events import EventEmitter
-from forge.core.model_router import select_model
 from forge.core.models import TaskState
 from forge.merge.worktree import WorktreeManager
 from forge.storage.db import Database
