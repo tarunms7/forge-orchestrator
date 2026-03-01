@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -47,14 +47,33 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Fetch history data
+  const fetchHistory = useCallback(() => {
     if (!token) return;
-
     apiGet("/history", token)
-      .then((data) => setHistory(data))
+      .then((data) => {
+        setHistory(data);
+        setError(null);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // Re-fetch when tab becomes visible (handles back-navigation)
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "visible") {
+        fetchHistory();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [fetchHistory]);
 
   if (loading) {
     return (
