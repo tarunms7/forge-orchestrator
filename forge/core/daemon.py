@@ -233,9 +233,19 @@ class ForgeDaemon:
         )
         adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
-        current_branch = _get_current_branch(self._project_dir)
-        console.print(f"[dim]Merge target: {current_branch}[/dim]")
-        merge_worker = MergeWorker(self._project_dir, main_branch=current_branch)
+        base_branch = _get_current_branch(self._project_dir)
+        pipeline_branch = f"forge/pipeline-{pid[:8]}"
+        # Create an isolated pipeline branch — all task merges go here,
+        # never to main.  Code reaches main only through a PR.
+        subprocess.run(
+            ["git", "branch", "-f", pipeline_branch, base_branch],
+            cwd=self._project_dir, check=True, capture_output=True,
+        )
+        console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
+        merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
+
+        # Store base_branch so auto-PR knows the target
+        await db.set_pipeline_base_branch(pid, base_branch)
 
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
         await self._emit("pipeline:phase_changed", {"phase": "complete"}, db=db, pipeline_id=pid)
