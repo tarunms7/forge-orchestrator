@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -30,7 +31,6 @@ async def list_history(
     for p in pipelines:
         duration = None
         if p.created_at and p.completed_at:
-            from datetime import datetime
             try:
                 start = datetime.fromisoformat(p.created_at)
                 end = datetime.fromisoformat(p.completed_at)
@@ -75,6 +75,15 @@ async def get_history_detail(
         except (json.JSONDecodeError, AttributeError):
             pass
 
+    duration = None
+    if pipeline.created_at and pipeline.completed_at:
+        try:
+            start = datetime.fromisoformat(pipeline.created_at)
+            end = datetime.fromisoformat(pipeline.completed_at)
+            duration = int((end - start).total_seconds())
+        except (ValueError, TypeError):
+            pass
+
     return {
         "pipeline_id": pipeline.id,
         "description": pipeline.description,
@@ -82,6 +91,6 @@ async def get_history_detail(
         "phase": pipeline.status,
         "tasks": tasks_data,
         "created_at": pipeline.created_at or "",
-        "duration": None,
+        "duration": duration,
         "pr_url": getattr(pipeline, "pr_url", None),
     }
