@@ -1,7 +1,10 @@
 """Tests for the history endpoints."""
 
+import uuid
+
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 
 @pytest.fixture
@@ -40,6 +43,54 @@ async def _register_and_get_token(client: AsyncClient) -> str:
 
 def _auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _get_user_id(client: AsyncClient, email: str) -> str:
+    """Look up a user by email in the DB and return their id."""
+    from forge.storage.db import UserRow
+
+    app = client._transport.app
+    db = app.state.db
+    async with db._session_factory() as session:
+        result = await session.execute(
+            select(UserRow).where(UserRow.email == email)
+        )
+        return result.scalar_one().id
+
+
+async def _create_pipeline_in_db(
+    client: AsyncClient,
+    *,
+    user_id: str,
+    description: str = "Test pipeline",
+    created_at: str,
+    completed_at: str | None = None,
+    status: str = "complete",
+) -> str:
+    """Insert a PipelineRow directly into the DB with specific timestamps.
+
+    Bypasses the POST /api/tasks endpoint (and its background planner) so
+    tests can control created_at / completed_at precisely.  Returns the new
+    pipeline_id.
+    """
+    from forge.storage.db import PipelineRow
+
+    pipeline_id = str(uuid.uuid4())
+    app = client._transport.app
+    db = app.state.db
+    async with db._session_factory() as session:
+        row = PipelineRow(
+            id=pipeline_id,
+            description=description,
+            project_dir="/tmp/proj",
+            status=status,
+            user_id=user_id,
+            created_at=created_at,
+            completed_at=completed_at,
+        )
+        session.add(row)
+        await session.commit()
+    return pipeline_id
 
 
 class TestListHistory:
@@ -86,6 +137,29 @@ class TestListHistory:
             assert "phase" in item
             assert "task_count" in item
 
+    async def test_history_list_duration_in_items(self, client):
+        """GET /history should include a correctly computed duration in each list item."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+        user_id = await _get_user_id(client, "history-user@example.com")
+
+        # Insert a pipeline directly in the DB with a known 90-second run
+        await _create_pipeline_in_db(
+            client,
+            user_id=user_id,
+            description="Duration list task",
+            created_at="2026-01-01T00:00:00+00:00",
+            completed_at="2026-01-01T00:01:30+00:00",
+        )
+
+        resp = await client.get("/api/history", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        item = data[0]
+        assert "duration" in item
+        assert item["duration"] == 90
+
 
 class TestHistoryDetail:
     """Tests for GET /history/{pipeline_id}."""
@@ -127,3 +201,48 @@ class TestHistoryDetail:
         assert data["project_path"] == "/tmp/proj"
         assert "phase" in data
         assert "tasks" in data
+
+    async def test_history_detail_duration_computed(self, client):
+        """duration is correctly computed when created_at and completed_at are both set.
+
+        Sets created_at='2026-01-01T00:00:00+00:00' and
+        completed_at='2026-01-01T00:01:30+00:00', so the expected duration is
+        90 seconds.  The pipeline is inserted directly into the DB to avoid
+        background-planner interference with the timestamps.
+        """
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+        user_id = await _get_user_id(client, "history-user@example.com")
+
+        # Insert a completed pipeline with a precise 90-second run
+        pipeline_id = await _create_pipeline_in_db(
+            client,
+            user_id=user_id,
+            description="Duration task",
+            created_at="2026-01-01T00:00:00+00:00",
+            completed_at="2026-01-01T00:01:30+00:00",
+        )
+
+        resp = await client.get(f"/api/history/{pipeline_id}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["duration"] == 90
+
+    async def test_history_detail_duration_none_when_not_completed(self, client):
+        """duration is None when completed_at is not set (newly created pipeline)."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+        user_id = await _get_user_id(client, "history-user@example.com")
+
+        # Insert a pipeline that has never been completed (no completed_at)
+        pipeline_id = await _create_pipeline_in_db(
+            client,
+            user_id=user_id,
+            description="Incomplete task",
+            created_at="2026-01-01T00:00:00+00:00",
+            completed_at=None,
+            status="planning",
+        )
+
+        resp = await client.get(f"/api/history/{pipeline_id}", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["duration"] is None
