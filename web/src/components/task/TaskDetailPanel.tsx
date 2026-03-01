@@ -1,6 +1,7 @@
 "use client";
 
 import type { TaskState } from "@/stores/taskStore";
+import { useTaskStore } from "@/stores/taskStore";
 
 const STATE_BADGE: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending", color: "bg-zinc-700 text-zinc-300" },
@@ -19,6 +20,8 @@ export default function TaskDetailPanel({
   onClose: () => void;
 }) {
   const badge = STATE_BADGE[task.state] ?? STATE_BADGE.pending;
+  const timeline = useTaskStore((s) => s.timeline);
+  const taskTimeline = timeline.filter(e => e.taskId === task.id);
 
   return (
     <>
@@ -70,6 +73,30 @@ export default function TaskDetailPanel({
             <div className="max-h-64 overflow-y-auto rounded-lg bg-zinc-900 p-3 font-mono text-xs text-zinc-400">
               {task.output.map((line, i) => (
                 <div key={i} className="whitespace-pre-wrap">{line}</div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Activity Log */}
+        {taskTimeline.length > 0 && (
+          <section className="mb-6">
+            <h3 className="mb-2 text-sm font-semibold text-zinc-300">
+              Activity ({taskTimeline.length} events)
+            </h3>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+              {taskTimeline.map((ev, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <span className="shrink-0 font-mono text-zinc-600">
+                    {new Date(ev.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span className="text-zinc-400">
+                    {ev.type.split(":")[1] || ev.type}
+                  </span>
+                  <span className="text-zinc-500 truncate">
+                    {JSON.stringify(ev.payload).slice(0, 100)}
+                  </span>
+                </div>
               ))}
             </div>
           </section>
