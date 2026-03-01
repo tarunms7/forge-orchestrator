@@ -1,0 +1,274 @@
+"""ExecutorMixin — decomposed _execute_task extracted from ForgeDaemon."""
+from __future__ import annotations
+
+import logging
+import os
+import time
+
+from rich.console import Console
+
+from forge.core.daemon_helpers import (
+    _build_agent_prompt,
+    _build_retry_prompt,
+    _extract_text,
+    _get_diff_stats,
+    _get_diff_vs_main,
+)
+from forge.core.model_router import select_model
+from forge.core.models import TaskState
+
+logger = logging.getLogger("forge")
+console = Console()
+
+
+class ExecutorMixin:
+    """Mixin providing the decomposed ``_execute_task`` pipeline.
+
+    Host class must supply: ``_project_dir``, ``_strategy``, ``_snapshot``,
+    ``_settings``, ``_emit``, ``_run_review``, ``_resolve_conflicts``,
+    ``_handle_retry``, ``_handle_merge_retry``.
+    """
+
+    # -- orchestrator ----------------------------------------------------
+
+    async def _execute_task(
+        self, db, runtime, worktree_mgr, merge_worker,
+        task_id: str, agent_id: str, pipeline_id: str | None = None,
+    ) -> None:
+        """Execute a single task: worktree → agent → review → merge."""
+        task = await db.get_task(task_id)
+        if not task:
+            await db.release_agent(agent_id)
+            return
+        pid = pipeline_id or ""
+        console.print(f"\n[cyan]{'='*50}[/cyan]")
+        console.print(f"[cyan]Starting {task_id}: {task.title}[/cyan]")
+        console.print(f"[cyan]{'='*50}[/cyan]")
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_progress"}, db=db, pipeline_id=pid)
+        if getattr(task, "retry_reason", None) == "merge_failed":
+            await self._handle_merge_fast_path(db, merge_worker, worktree_mgr, task, task_id, agent_id, pipeline_id)
+            return
+        worktree_path = await self._prepare_worktree(worktree_mgr, task_id, pid, db)
+        if worktree_path is None:
+            await db.release_agent(agent_id)
+            return
+        ok = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid)
+        if not ok:
+            await db.release_agent(agent_id)
+            return
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        await self._attempt_merge(db, merge_worker, worktree_mgr, task, task_id, worktree_path, agent_model, pid)
+        await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+
+    # -- merge-only fast path -------------------------------------------
+
+    async def _handle_merge_fast_path(
+        self, db, merge_worker, worktree_mgr, task,
+        task_id: str, agent_id: str, pipeline_id: str | None,
+    ) -> None:
+        """Skip agent+review when only the merge previously failed."""
+        pid = pipeline_id or ""
+        console.print(f"[yellow]{task_id}: merge-only retry — skipping agent + review[/yellow]")
+        worktree_path = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
+        if not os.path.isdir(worktree_path):
+            console.print(f"[red]{task_id}: worktree missing — falling back to full retry[/red]")
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
+            await db.release_agent(agent_id)
+            return
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        await db.update_task_state(task_id, TaskState.MERGING.value)
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
+        branch = f"forge/{task_id}"
+        merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
+        if merge_result.success:
+            await self._emit_merge_success(db, task_id, pid)
+        else:
+            await self._emit_merge_failure(db, task_id, merge_result.error, pid)
+            await self._attempt_merge_with_resolution(
+                db, merge_worker, worktree_mgr, merge_result, task_id, worktree_path, branch, agent_model, pid,
+            )
+        await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+
+    # -- worktree creation ----------------------------------------------
+
+    async def _prepare_worktree(self, worktree_mgr, task_id: str, pid: str, db) -> str | None:
+        """Create or reuse a worktree. Returns path or ``None`` on failure."""
+        try:
+            return worktree_mgr.create(task_id)
+        except ValueError:
+            wt = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
+            if os.path.isdir(wt):
+                return wt
+            console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
+        except Exception as exc:
+            console.print(f"[red]Worktree creation failed for {task_id}: {exc}[/red]")
+        await db.update_task_state(task_id, TaskState.ERROR.value)
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
+        return None
+
+    # -- agent execution + streaming + cost -----------------------------
+
+    async def _run_agent(
+        self, db, runtime, worktree_mgr, task, task_id: str, agent_id: str,
+        worktree_path: str, pid: str,
+    ) -> bool:
+        """Run the agent, stream output, track cost. Returns ``True`` on success."""
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
+        prompt = self._build_prompt(task)
+        result = await self._stream_agent(runtime, agent_id, prompt, worktree_path, task, task_id, pid, db, agent_model)
+        if hasattr(result, "cost_usd") and result.cost_usd > 0:
+            await db.add_task_cost(task_id, result.cost_usd)
+            await self._emit("task:cost_update", {"task_id": task_id, "cost_usd": result.cost_usd}, db=db, pipeline_id=pid)
+        if not result.success:
+            console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            return False
+        diff = _get_diff_vs_main(worktree_path)
+        if not diff.strip():
+            console.print(f"[red]{task_id} agent produced no changes[/red]")
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            return False
+        console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
+        if result.files_changed:
+            await self._emit("task:files_changed", {"task_id": task_id, "files": result.files_changed}, db=db, pipeline_id=pid)
+        return True
+
+    # -- post-review merge with Tier 1/Tier 2 --------------------------
+
+    async def _attempt_merge(
+        self, db, merge_worker, worktree_mgr, task,
+        task_id: str, worktree_path: str, agent_model: str, pid: str,
+    ) -> None:
+        """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
+        diff = _get_diff_vs_main(worktree_path)
+        await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
+        passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid)
+        if not passed:
+            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=feedback, pipeline_id=pid)
+            return
+        await db.update_task_state(task_id, TaskState.MERGING.value)
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
+        branch = f"forge/{task_id}"
+        merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
+        if merge_result.success:
+            await self._emit_merge_success(db, task_id, pid)
+            return
+        console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
+        await self._emit_merge_failure(db, task_id, merge_result.error, pid)
+        retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
+        if retry_result.success:
+            await self._emit_merge_success(db, task_id, pid, label="on retry")
+            return
+        console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
+        await self._attempt_tier2_resolution(
+            db, merge_worker, worktree_mgr, retry_result, task_id, worktree_path, branch, agent_model, pid,
+        )
+
+    # -- Tier 2 conflict resolution -------------------------------------
+
+    async def _attempt_tier2_resolution(
+        self, db, merge_worker, worktree_mgr, retry_result,
+        task_id: str, worktree_path: str, branch: str, agent_model: str, pid: str,
+    ) -> None:
+        """Tier 2: agent-based conflict resolution."""
+        if not retry_result.conflicting_files:
+            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            return
+        prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
+        if prep.success:
+            await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid)
+            return
+        resolved = await self._resolve_conflicts(task_id, worktree_path, prep.conflicting_files, agent_model, db=db)
+        if resolved:
+            final = merge_worker.merge(branch, worktree_path=worktree_path)
+            if final.success:
+                await self._emit_merge_success(db, task_id, pid, label="after conflict resolution")
+                return
+            merge_worker._abort_rebase(worktree_path)
+        else:
+            merge_worker._abort_rebase(worktree_path)
+        await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+
+    async def _attempt_merge_with_resolution(
+        self, db, merge_worker, worktree_mgr, merge_result,
+        task_id: str, worktree_path: str, branch: str, agent_model: str, pid: str,
+    ) -> None:
+        """Tier 2 for the merge-only fast path."""
+        if not merge_result.conflicting_files:
+            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            return
+        await self._attempt_tier2_resolution(
+            db, merge_worker, worktree_mgr, merge_result, task_id, worktree_path, branch, agent_model, pid,
+        )
+
+    # -- cleanup --------------------------------------------------------
+
+    async def _cleanup_and_release(self, db, worktree_mgr, task_id: str, agent_id: str) -> None:
+        """Remove worktree for terminal states and release agent slot."""
+        task_after = await db.get_task(task_id)
+        if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
+            try:
+                worktree_mgr.remove(task_id)
+            except Exception as exc:
+                logger.warning("Worktree cleanup failed for %s: %s", task_id, exc)
+        await db.release_agent(agent_id)
+
+    # -- small helpers ---------------------------------------------------
+
+    def _build_prompt(self, task) -> str:
+        """Select the correct prompt template for new or retry runs."""
+        if task.retry_count > 0 and getattr(task, "review_feedback", None):
+            console.print(f"[yellow]{getattr(task, 'id', '?')}: retry {task.retry_count} — including review feedback[/yellow]")
+            return _build_retry_prompt(task.title, task.description, task.files, task.review_feedback, task.retry_count)
+        return _build_agent_prompt(task.title, task.description, task.files)
+
+    async def _stream_agent(self, runtime, agent_id: str, prompt: str, worktree_path: str, task, task_id: str, pid: str, db, agent_model: str):
+        """Run agent with batched streaming callback."""
+        _last_flush = [time.monotonic()]
+        _batch: list[str] = []
+
+        async def _on_msg(msg):
+            text = _extract_text(msg)
+            if not text:
+                return
+            _batch.append(text)
+            now = time.monotonic()
+            if now - _last_flush[0] >= 0.1:
+                for line in _batch:
+                    await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
+                _batch.clear()
+                _last_flush[0] = now
+
+        result = await runtime.run_task(
+            agent_id, prompt, worktree_path, task.files,
+            allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
+            project_context=self._snapshot.format_for_agent() if self._snapshot else "",
+        )
+        for line in _batch:
+            await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
+        _batch.clear()
+        return result
+
+    async def _try_race_resolved_merge(self, db, merge_worker, worktree_mgr, task_id: str, worktree_path: str, branch: str, pid: str) -> None:
+        """Rebase completed cleanly (race resolved) — attempt final merge."""
+        ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
+        if ff_result.success:
+            await self._emit_merge_success(db, task_id, pid, label="Tier 2 prep resolved race")
+        else:
+            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+
+    async def _emit_merge_success(self, db, task_id: str, pid: str, *, label: str = "") -> None:
+        """Mark task done and emit merge-success events."""
+        tag = f" ({label})" if label else ""
+        console.print(f"[bold green]{task_id} merged{tag}![/bold green]")
+        await db.update_task_state(task_id, TaskState.DONE.value)
+        stats = _get_diff_stats(self._project_dir)
+        await self._emit("task:merge_result", {"task_id": task_id, "success": True, "error": None, **stats}, db=db, pipeline_id=pid)
+        await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+
+    async def _emit_merge_failure(self, db, task_id: str, error: str | None, pid: str) -> None:
+        """Emit merge-failure event (does not change task state)."""
+        console.print(f"[red]{task_id} merge failed: {error}[/red]")
+        await self._emit("task:merge_result", {"task_id": task_id, "success": False, "error": error}, db=db, pipeline_id=pid)

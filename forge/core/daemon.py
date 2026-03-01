@@ -7,7 +7,6 @@ import subprocess
 import uuid
 
 from rich.console import Console
-from rich.table import Table
 
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
@@ -24,32 +23,30 @@ from forge.core.scheduler import Scheduler
 from forge.core.state import TaskStateMachine
 from forge.merge.worker import MergeWorker
 from forge.merge.worktree import WorktreeManager
-from forge.review.llm_review import gate2_llm_review
-from forge.review.pipeline import GateResult
 from forge.storage.db import Database
+
+# Mixin classes providing decomposed daemon functionality
+from forge.core.daemon_executor import ExecutorMixin
+from forge.core.daemon_review import ReviewMixin
+from forge.core.daemon_merge import MergeMixin
+
+# Re-export all helpers at module level for backward compatibility.
+from forge.core.daemon_helpers import (  # noqa: F401
+    _extract_text,
+    _get_current_branch,
+    _build_agent_prompt,
+    _build_retry_prompt,
+    _get_diff_vs_main,
+    _get_diff_stats,
+    _get_changed_files_vs_main,
+    _print_status_table,
+)
 
 logger = logging.getLogger("forge")
 console = Console()
 
 
-def _extract_text(message) -> str | None:
-    """Extract human-readable text from a claude-code-sdk message."""
-    try:
-        from claude_code_sdk import AssistantMessage, ResultMessage
-    except ImportError:
-        return None
-    if isinstance(message, AssistantMessage):
-        parts = []
-        for block in (message.content or []):
-            if hasattr(block, "text"):
-                parts.append(block.text)
-        return "\n".join(parts) if parts else None
-    if isinstance(message, ResultMessage):
-        return message.result if message.result else None
-    return None
-
-
-class ForgeDaemon:
+class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     """Main orchestration loop. Ties all components together."""
 
     def __init__(
@@ -68,10 +65,9 @@ class ForgeDaemon:
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""
         await self._events.emit(event_type, data)
-        task_id = data.get("task_id")
         await db.log_event(
             pipeline_id=pipeline_id,
-            task_id=task_id,
+            task_id=data.get("task_id"),
             event_type=event_type,
             payload=data,
         )
@@ -79,10 +75,9 @@ class ForgeDaemon:
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
         import shutil
-
         errors = []
 
-        # Check: valid git repo
+        # Valid git repo?
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
             cwd=project_dir, capture_output=True, text=True,
@@ -90,11 +85,9 @@ class ForgeDaemon:
         if result.returncode != 0:
             errors.append("Not a git repository")
 
-        # Ensure repo has at least one commit — worktrees and merges
-        # require a valid HEAD. Create an initial empty commit if needed.
+        # Ensure at least one commit exists (worktrees need valid HEAD)
         has_commits = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_dir, capture_output=True,
+            ["git", "rev-parse", "HEAD"], cwd=project_dir, capture_output=True,
         ).returncode == 0
         if not has_commits:
             console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
@@ -103,28 +96,24 @@ class ForgeDaemon:
                 cwd=project_dir, capture_output=True, text=True,
             )
 
-        # Check: git remote exists (warning only — not needed for local execution)
+        # Git remote (warning only)
         result = subprocess.run(
             ["git", "remote"], cwd=project_dir, capture_output=True, text=True,
         )
         if not result.stdout.strip():
             console.print("[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]")
 
-        # Check: gh CLI available and authed (optional — warn, don't fail)
+        # gh CLI auth (optional)
         if shutil.which("gh"):
-            result = subprocess.run(
-                ["gh", "auth", "status"], capture_output=True, text=True,
-            )
+            result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
             if result.returncode != 0:
                 console.print("[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]")
 
         if errors:
-            detail = "; ".join(errors)
-            console.print(f"[bold red]Pre-flight failed: {detail}[/bold red]")
+            console.print(f"[bold red]Pre-flight failed: {'; '.join(errors)}[/bold red]")
             await self._emit("pipeline:preflight_failed", {"errors": errors}, db=db, pipeline_id=pipeline_id)
             await db.update_pipeline_status(pipeline_id, "error")
             return False
-
         return True
 
     async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None) -> TaskGraph:
@@ -158,21 +147,15 @@ class ForgeDaemon:
         self._snapshot = gather_project_snapshot(self._project_dir)
         graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
-
         for task_def in graph.tasks:
             console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
 
         if emit_plan_ready:
-            plan_data = {
-                "tasks": [
-                    {
-                        "id": t.id, "title": t.title, "description": t.description,
-                        "files": t.files, "depends_on": t.depends_on,
-                        "complexity": t.complexity.value,
-                    }
-                    for t in graph.tasks
-                ]
-            }
+            plan_data = {"tasks": [
+                {"id": t.id, "title": t.title, "description": t.description,
+                 "files": t.files, "depends_on": t.depends_on, "complexity": t.complexity.value}
+                for t in graph.tasks
+            ]}
             if pipeline_id:
                 await self._emit("pipeline:plan_ready", plan_data, db=db, pipeline_id=pipeline_id)
             else:
@@ -186,23 +169,17 @@ class ForgeDaemon:
             resume: If True, skip task/agent creation (they already exist
                 from the original run). Used by the resume endpoint.
         """
-
-        # Use provided pipeline_id, fall back to self._pipeline_id (CLI flow), or generate one
         pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
         prefix = pid[:8]
 
-        # Pre-flight checks
         if not await self._preflight_checks(self._project_dir, db, pid):
             raise RuntimeError("Pre-flight checks failed — see pipeline events for details")
 
         if not resume:
-            # Task IDs may already be prefixed (web flow remaps in _run_plan).
-            # Only remap if they haven't been prefixed yet (CLI flow).
+            # Only remap IDs if they haven't been prefixed yet (CLI flow)
             first_id = graph.tasks[0].id if graph.tasks else ""
-            needs_remap = not first_id.startswith(prefix)
-
-            if needs_remap:
+            if not first_id.startswith(prefix):
                 id_map = {t.id: f"{prefix}-{t.id}" for t in graph.tasks}
                 for t in graph.tasks:
                     t.depends_on = [id_map.get(d, d) for d in t.depends_on]
@@ -210,15 +187,10 @@ class ForgeDaemon:
 
             for task_def in graph.tasks:
                 await db.create_task(
-                    id=task_def.id,
-                    title=task_def.title,
-                    description=task_def.description,
-                    files=task_def.files,
-                    depends_on=task_def.depends_on,
-                    complexity=task_def.complexity.value,
-                    pipeline_id=pid,
+                    id=task_def.id, title=task_def.title, description=task_def.description,
+                    files=task_def.files, depends_on=task_def.depends_on,
+                    complexity=task_def.complexity.value, pipeline_id=pid,
                 )
-
             for i in range(self._settings.max_agents):
                 await db.create_agent(f"{prefix}-agent-{i}")
 
@@ -227,24 +199,18 @@ class ForgeDaemon:
             memory_threshold_pct=self._settings.memory_threshold_pct,
             disk_threshold_gb=self._settings.disk_threshold_gb,
         )
-        worktree_mgr = WorktreeManager(
-            self._project_dir,
-            f"{self._project_dir}/.forge/worktrees",
-        )
+        worktree_mgr = WorktreeManager(self._project_dir, f"{self._project_dir}/.forge/worktrees")
         adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
         base_branch = _get_current_branch(self._project_dir)
         pipeline_branch = f"forge/pipeline-{pid[:8]}"
-        # Create an isolated pipeline branch — all task merges go here,
-        # never to main.  Code reaches main only through a PR.
+        # Isolated pipeline branch — code reaches main only through a PR
         subprocess.run(
             ["git", "branch", "-f", pipeline_branch, base_branch],
             cwd=self._project_dir, check=True, capture_output=True,
         )
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
-
-        # Store base_branch so auto-PR knows the target
         await db.set_pipeline_base_branch(pid, base_branch)
 
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
@@ -254,44 +220,27 @@ class ForgeDaemon:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
         db_path = os.path.join(self._project_dir, ".forge", "forge.db")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        db_url = f"sqlite+aiosqlite:///{db_path}"
-
-        # DB is persistent — each run creates a new pipeline with a unique ID.
-
-        db = Database(db_url)
+        db = Database(f"sqlite+aiosqlite:///{db_path}")
         await db.initialize()
-
         try:
             self._pipeline_id = str(uuid.uuid4())
             await db.create_pipeline(
-                id=self._pipeline_id,
-                description=user_input[:200],
-                project_dir=self._project_dir,
-                model_strategy=self._strategy,
+                id=self._pipeline_id, description=user_input[:200],
+                project_dir=self._project_dir, model_strategy=self._strategy,
             )
-
             graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
         finally:
             await db.close()
 
     async def _execution_loop(
-        self,
-        db: Database,
-        runtime: AgentRuntime,
-        worktree_mgr: WorktreeManager,
-        merge_worker: MergeWorker,
-        monitor: ResourceMonitor,
-        pipeline_id: str | None = None,
+        self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
+        merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
         prefix = pipeline_id[:8] if pipeline_id else None
         while True:
-            # Scope to current pipeline only — avoids stale tasks/agents from prior runs
-            if pipeline_id:
-                tasks = await db.list_tasks_by_pipeline(pipeline_id)
-            else:
-                tasks = await db.list_tasks()
+            tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
             _print_status_table(tasks)
 
             all_done = all(t.state in (TaskState.DONE.value, TaskState.ERROR.value) for t in tasks)
@@ -303,8 +252,7 @@ class ForgeDaemon:
 
             snapshot = monitor.take_snapshot()
             if not monitor.can_dispatch(snapshot):
-                reasons = monitor.blocked_reasons(snapshot)
-                console.print(f"[yellow]Backpressure: {', '.join(reasons)}[/yellow]")
+                console.print(f"[yellow]Backpressure: {', '.join(monitor.blocked_reasons(snapshot))}[/yellow]")
                 await asyncio.sleep(self._settings.scheduler_poll_interval)
                 continue
 
@@ -312,14 +260,10 @@ class ForgeDaemon:
             agents = await db.list_agents(prefix=prefix)
             from forge.core.engine import _row_to_agent
             agent_records = [_row_to_agent(a) for a in agents]
-
-            dispatch_plan = Scheduler.dispatch_plan(
-                task_records, agent_records, self._settings.max_agents,
-            )
+            dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._settings.max_agents)
 
             if not dispatch_plan:
-                in_progress = any(t.state == TaskState.IN_PROGRESS.value for t in tasks)
-                if not in_progress:
+                if not any(t.state == TaskState.IN_PROGRESS.value for t in tasks):
                     console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
                     break
                 await asyncio.sleep(self._settings.scheduler_poll_interval)
@@ -329,809 +273,7 @@ class ForgeDaemon:
                 await db.assign_task(task_id, agent_id)
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
 
-            coros = [
+            await asyncio.gather(*[
                 self._execute_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id, pipeline_id=pipeline_id)
                 for task_id, agent_id in dispatch_plan
-            ]
-            await asyncio.gather(*coros)
-
-    async def _execute_task(
-        self,
-        db: Database,
-        runtime: AgentRuntime,
-        worktree_mgr: WorktreeManager,
-        merge_worker: MergeWorker,
-        task_id: str,
-        agent_id: str,
-        pipeline_id: str | None = None,
-    ) -> None:
-        """Execute a single task: create worktree -> run agent -> review -> merge."""
-        task = await db.get_task(task_id)
-        if not task:
-            await db.release_agent(agent_id)
-            return
-
-        console.print(f"\n[cyan]{'='*50}[/cyan]")
-        console.print(f"[cyan]Starting {task_id}: {task.title}[/cyan]")
-        console.print(f"[cyan]{'='*50}[/cyan]")
-
-        pid = pipeline_id or ""
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_progress"}, db=db, pipeline_id=pid)
-
-        # ── Merge-only fast path ──────────────────────────────────────
-        # If this task previously passed review but the merge failed,
-        # skip the agent + review and go directly to merge.
-        if getattr(task, "retry_reason", None) == "merge_failed":
-            console.print(f"[yellow]{task_id}: merge-only retry — skipping agent + review[/yellow]")
-            worktree_path = os.path.join(
-                self._project_dir, ".forge", "worktrees", task_id,
-            )
-            if not os.path.isdir(worktree_path):
-                console.print(f"[red]{task_id}: worktree missing for merge retry — falling back to full retry[/red]")
-                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                await db.release_agent(agent_id)
-                return
-
-            agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
-            await db.update_task_state(task_id, TaskState.MERGING.value)
-            await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
-            branch = f"forge/{task_id}"
-
-            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
-            if merge_result.success:
-                console.print(f"[bold green]{task_id} merged on merge-only retry![/bold green]")
-                await db.update_task_state(task_id, TaskState.DONE.value)
-                stats = _get_diff_stats(self._project_dir)
-                await self._emit("task:merge_result", {
-                    "task_id": task_id, "success": True, "error": None,
-                    **stats,
-                }, db=db, pipeline_id=pid)
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-            else:
-                console.print(f"[red]{task_id} merge-only retry failed: {merge_result.error}[/red]")
-                await self._emit("task:merge_result", {
-                    "task_id": task_id, "success": False, "error": merge_result.error,
-                }, db=db, pipeline_id=pid)
-
-                # Try Tier 2 conflict resolution if we have conflicting files
-                if merge_result.conflicting_files:
-                    prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
-                    if prep.success:
-                        # Race resolved — rebase completed cleanly this time
-                        ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
-                        if ff_result.success:
-                            console.print(f"[bold green]{task_id} merged (merge retry Tier 2 race resolved)![/bold green]")
-                            await db.update_task_state(task_id, TaskState.DONE.value)
-                            stats = _get_diff_stats(self._project_dir)
-                            await self._emit("task:merge_result", {
-                                "task_id": task_id, "success": True, "error": None,
-                                **stats,
-                            }, db=db, pipeline_id=pid)
-                            await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-                        else:
-                            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                    else:
-                        resolved = await self._resolve_conflicts(
-                            task_id, worktree_path,
-                            prep.conflicting_files, agent_model,
-                            db=db,
-                        )
-                        if resolved:
-                            final = merge_worker.merge(branch, worktree_path=worktree_path)
-                            if final.success:
-                                console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
-                                await db.update_task_state(task_id, TaskState.DONE.value)
-                                stats = _get_diff_stats(self._project_dir)
-                                await self._emit("task:merge_result", {
-                                    "task_id": task_id, "success": True, "error": None,
-                                    **stats,
-                                }, db=db, pipeline_id=pid)
-                                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-                            else:
-                                merge_worker._abort_rebase(worktree_path)
-                                await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                        else:
-                            merge_worker._abort_rebase(worktree_path)
-                            await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                else:
-                    await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-
-            # Clean up worktree for terminal states, release agent
-            task_after = await db.get_task(task_id)
-            if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
-                try:
-                    worktree_mgr.remove(task_id)
-                except Exception as e:
-                    logger.warning("Worktree cleanup failed for %s (merge fast-path): %s", task_id, e)
-            await db.release_agent(agent_id)
-            return
-        # ── End merge-only fast path ──────────────────────────────────
-
-        try:
-            worktree_path = worktree_mgr.create(task_id)
-        except ValueError:
-            # Worktree already exists from a previous retry — reuse it
-            worktree_path = os.path.join(
-                self._project_dir, ".forge", "worktrees", task_id,
-            )
-            if not os.path.isdir(worktree_path):
-                console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
-                await db.update_task_state(task_id, TaskState.ERROR.value)
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
-                await db.release_agent(agent_id)
-                return
-        except Exception as e:
-            console.print(f"[red]Worktree creation failed for {task_id}: {e}[/red]")
-            await db.update_task_state(task_id, TaskState.ERROR.value)
-            await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
-            await db.release_agent(agent_id)
-            return
-
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
-        console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
-
-        # Build prompt — include review feedback if this is a retry
-        if task.retry_count > 0 and getattr(task, "review_feedback", None):
-            prompt = _build_retry_prompt(
-                task.title, task.description, task.files,
-                task.review_feedback, task.retry_count,
-            )
-            console.print(f"[yellow]{task_id}: retry {task.retry_count} — including review feedback in prompt[/yellow]")
-        else:
-            prompt = _build_agent_prompt(task.title, task.description, task.files)
-
-        # Create streaming callback for live logs
-        import time
-
-        _last_flush = [time.monotonic()]
-        _batch: list[str] = []
-
-        async def _on_agent_message(msg):
-            text = _extract_text(msg)
-            if not text:
-                return
-            _batch.append(text)
-            now = time.monotonic()
-            # Batch: flush every 100ms to prevent WebSocket flooding
-            if now - _last_flush[0] >= 0.1:
-                for line in _batch:
-                    await self._emit("task:agent_output", {
-                        "task_id": task_id, "line": line,
-                    }, db=db, pipeline_id=pid)
-                _batch.clear()
-                _last_flush[0] = now
-
-        result = await runtime.run_task(
-            agent_id, prompt, worktree_path, task.files,
-            allowed_dirs=self._settings.allowed_dirs,
-            model=agent_model,
-            on_message=_on_agent_message,
-            project_context=self._snapshot.format_for_agent() if self._snapshot else "",
-        )
-
-        # Flush any remaining batched messages
-        for line in _batch:
-            await self._emit("task:agent_output", {
-                "task_id": task_id, "line": line,
-            }, db=db, pipeline_id=pid)
-        _batch.clear()
-
-        # Track cost
-        if hasattr(result, 'cost_usd') and result.cost_usd > 0:
-            await db.add_task_cost(task_id, result.cost_usd)
-            await self._emit("task:cost_update", {
-                "task_id": task_id, "cost_usd": result.cost_usd,
-            }, db=db, pipeline_id=pid)
-
-        if not result.success:
-            console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
-            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-            await db.release_agent(agent_id)
-            return
-
-        # Check what actually changed vs main branch
-        diff = _get_diff_vs_main(worktree_path)
-        if not diff.strip():
-            console.print(f"[red]{task_id} agent produced no changes[/red]")
-            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-            await db.release_agent(agent_id)
-            return
-
-        console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
-
-        if result.files_changed:
-            await self._emit("task:files_changed", {
-                "task_id": task_id, "files": result.files_changed,
-            }, db=db, pipeline_id=pid)
-
-        await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
-
-        review_passed, review_feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid)
-
-        if review_passed:
-            await db.update_task_state(task_id, TaskState.MERGING.value)
-            await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
-            branch = f"forge/{task_id}"
-            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
-            if merge_result.success:
-                console.print(f"[bold green]{task_id} merged successfully![/bold green]")
-                await db.update_task_state(task_id, TaskState.DONE.value)
-                stats = _get_diff_stats(self._project_dir)
-                await self._emit("task:merge_result", {
-                    "task_id": task_id, "success": True, "error": None,
-                    **stats,
-                }, db=db, pipeline_id=pid)
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-            else:
-                console.print(f"[red]{task_id} merge failed: {merge_result.error}[/red]")
-                console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
-                await self._emit("task:merge_result", {
-                    "task_id": task_id, "success": False, "error": merge_result.error,
-                }, db=db, pipeline_id=pid)
-
-                # Tier 1: retry merge only (no agent re-run)
-                retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
-                if retry_result.success:
-                    console.print(f"[bold green]{task_id} merged on retry![/bold green]")
-                    await db.update_task_state(task_id, TaskState.DONE.value)
-                    stats = _get_diff_stats(self._project_dir)
-                    await self._emit("task:merge_result", {
-                        "task_id": task_id, "success": True, "error": None,
-                        **stats,
-                    }, db=db, pipeline_id=pid)
-                    await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-                else:
-                    console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
-                    # Tier 2: try agent conflict resolution if we have conflicting files
-                    if retry_result.conflicting_files:
-                        # Start a fresh rebase but leave it PAUSED so the
-                        # resolver agent sees conflict markers in the files.
-                        # (merge/retry_merge abort the rebase before returning,
-                        #  which wipes the markers — that's why Tier 2 was failing.)
-                        prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
-                        if prep.success:
-                            # Rebase completed cleanly this time (race resolved)
-                            ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
-                            if ff_result.success:
-                                console.print(f"[bold green]{task_id} merged (Tier 2 prep resolved race)![/bold green]")
-                                await db.update_task_state(task_id, TaskState.DONE.value)
-                                stats = _get_diff_stats(self._project_dir)
-                                await self._emit("task:merge_result", {
-                                    "task_id": task_id, "success": True, "error": None,
-                                    **stats,
-                                }, db=db, pipeline_id=pid)
-                                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-                            else:
-                                await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                        else:
-                            # Rebase paused with conflicts — resolver can now see markers
-                            resolved = await self._resolve_conflicts(
-                                task_id, worktree_path,
-                                prep.conflicting_files, agent_model,
-                                db=db,
-                            )
-                            if resolved:
-                                # Resolver did `git rebase --continue` — rebase
-                                # should be complete.  merge() will be a no-op
-                                # rebase + fast-forward.
-                                final_result = merge_worker.merge(branch, worktree_path=worktree_path)
-                                if final_result.success:
-                                    console.print(f"[bold green]{task_id} merged after conflict resolution![/bold green]")
-                                    await db.update_task_state(task_id, TaskState.DONE.value)
-                                    stats = _get_diff_stats(self._project_dir)
-                                    await self._emit("task:merge_result", {
-                                        "task_id": task_id, "success": True, "error": None,
-                                        **stats,
-                                    }, db=db, pipeline_id=pid)
-                                    await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
-                                else:
-                                    # Resolver claimed success but merge still failed — abort and retry
-                                    merge_worker._abort_rebase(worktree_path)
-                                    await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                            else:
-                                # Resolver failed — abort the paused rebase before merge-only retry
-                                merge_worker._abort_rebase(worktree_path)
-                                await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-                    else:
-                        # No conflicting files detected — merge-only retry
-                        await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
-        else:
-            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=review_feedback, pipeline_id=pipeline_id)
-
-        # Only clean up worktree for terminal states (done/error).
-        # Retrying tasks keep their worktree so the agent can fix in-place
-        # instead of rebuilding from scratch (saves massive token waste).
-        task_after = await db.get_task(task_id)
-        if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
-            try:
-                worktree_mgr.remove(task_id)
-            except Exception as e:
-                logger.warning("Worktree cleanup failed for %s (execute_task): %s", task_id, e)
-
-        # Release the agent so the scheduler can reuse it for the next task
-        await db.release_agent(agent_id)
-
-    async def _run_review(self, task, worktree_path: str, diff: str, *, db: Database, pipeline_id: str) -> tuple[bool, str | None]:
-        """Run the 3-gate review pipeline.
-
-        Returns:
-            (passed, feedback) — feedback is a string with failure details
-            if any gate failed, None if all passed.
-        """
-        feedback_parts: list[str] = []
-
-        # L1: lint only the changed files (not full test suite)
-        console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
-        gate1_result = await self._gate1(worktree_path)
-        await self._emit("task:review_update", {
-            "task_id": task.id, "gate": "L1", "passed": gate1_result.passed,
-            "details": gate1_result.details,
-        }, db=db, pipeline_id=pipeline_id)
-        if not gate1_result.passed:
-            console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
-            feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
-            return False, "\n\n".join(feedback_parts)
-        console.print("[green]  L1 passed[/green]")
-
-        # L2: LLM review
-        # Pass prior feedback so the reviewer focuses on verifying fixes
-        # instead of inventing new complaints on every retry.
-        prior_feedback = getattr(task, "review_feedback", None) if task.retry_count > 0 else None
-        console.print(f"[blue]  L2 (LLM): Code review for {task.id}{'  (re-review)' if prior_feedback else ''}...[/blue]")
-        reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
-        gate2_result = await gate2_llm_review(
-            task.title, task.description, diff, worktree_path,
-            model=reviewer_model,
-            prior_feedback=prior_feedback,
-            project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
-        )
-        await self._emit("task:review_update", {
-            "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
-            "details": gate2_result.details,
-        }, db=db, pipeline_id=pipeline_id)
-        if not gate2_result.passed:
-            console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
-            feedback_parts.append(f"L2 (LLM code review) FAILED:\n{gate2_result.details}")
-            return False, "\n\n".join(feedback_parts)
-        console.print("[green]  L2 passed[/green]")
-
-        # Gate 3: skip for now — merge check is handled by merge_worker
-        console.print("[green]  Gate 3 (merge readiness): auto-pass[/green]")
-        return True, None
-
-    async def _gate1(self, worktree_path: str) -> GateResult:
-        """Gate 1: Lint check on the worktree. Simple and fast."""
-        import sys
-
-        # Only run ruff on changed files vs main
-        changed = _get_changed_files_vs_main(worktree_path)
-        py_files = [f for f in changed if f.endswith(".py")]
-
-        if not py_files:
-            return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
-
-        # Auto-fix trivial lint issues (unused imports, etc.) before checking.
-        # Agents commonly add `import pytest` or unused imports — ruff can fix
-        # these automatically, avoiding wasted retries on mechanical issues.
-        subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "--fix"] + py_files,
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-        # Commit any auto-fixes so they're included in the diff
-        subprocess.run(
-            ["git", "add", "-A"],
-            cwd=worktree_path,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=worktree_path,
-            capture_output=True,
-        )
-        # Only commit if there are staged changes
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-        if staged.stdout.strip():
-            subprocess.run(
-                ["git", "commit", "-m", "fix: auto-fix lint issues (ruff)"],
-                cwd=worktree_path,
-                capture_output=True,
-            )
-
-        # Use sys.executable so we get the same Python (and venv) as forge itself
-        lint_result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check"] + py_files,
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-        lint_clean = lint_result.returncode == 0
-
-        if lint_clean:
-            return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
-
-        # Include both stdout and stderr — ruff errors may go to either
-        output = (lint_result.stdout or lint_result.stderr or "Unknown error")[:500]
-        return GateResult(
-            passed=False,
-            gate="gate1_auto_check",
-            details=f"Lint errors:\n{output}",
-        )
-
-    async def _resolve_conflicts(
-        self, task_id: str, worktree_path: str,
-        conflicting_files: list[str], agent_model: str,
-        db: Database,
-    ) -> bool:
-        """Tier 2: Use a targeted Claude call to resolve merge conflicts."""
-        if not conflicting_files:
-            return False
-
-        console.print(f"[yellow]{task_id}: Tier 2 — asking Claude to resolve {len(conflicting_files)} conflicts[/yellow]")
-
-        # Look up task context so the resolver understands what this task does
-        task = await db.get_task(task_id)
-        task_context = ""
-        if task:
-            task_context = (
-                f"## Current Task Context\n"
-                f"Task: {task.title}\n"
-                f"Description: {task.description}\n\n"
-            )
-
-        conflict_prompt = (
-            f"{task_context}"
-            f"## Situation\n"
-            f"This task was developed in parallel with other tasks. The other tasks have "
-            f"already been merged to the pipeline branch. When rebasing this task's branch "
-            f"onto the updated pipeline branch, merge conflicts arose.\n\n"
-            f"A `git rebase` is currently IN PROGRESS and paused on the conflicting commit. "
-            f"The following files have conflict markers (<<<<<<, =======, >>>>>>):\n"
-            f"{', '.join(conflicting_files)}\n\n"
-            f"## Instructions\n"
-            f"1. Open each conflicting file listed above\n"
-            f"2. You WILL see conflict markers (<<<<<<< HEAD, =======, >>>>>>> commit). "
-            f"Resolve them by keeping the intent of BOTH sides.\n"
-            f"3. Do not discard either side unless the changes are truly redundant.\n"
-            f"4. Ensure the resolved code is syntactically correct and logically coherent.\n"
-            f"5. Stage the resolved files and continue the rebase:\n"
-            f"   git add -A && git rebase --continue\n"
-            f"   IMPORTANT: Do NOT use `git commit`. The rebase is in progress — "
-            f"use `git rebase --continue` to advance it.\n"
-            f"6. If the rebase pauses again with more conflicts, resolve those too "
-            f"and run `git add -A && git rebase --continue` again.\n"
-            f"7. Repeat until the rebase completes successfully.\n"
-        )
-
-        adapter = ClaudeAdapter()
-        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
-        result = await runtime.run_task(
-            agent_id=f"resolver-{task_id}",
-            task_prompt=conflict_prompt,
-            worktree_path=worktree_path,
-            allowed_files=conflicting_files,
-            model=agent_model,
-        )
-
-        return result.success
-
-    async def _handle_retry(
-        self, db: Database, task_id: str, worktree_mgr: WorktreeManager,
-        review_feedback: str | None = None,
-        pipeline_id: str | None = None,
-    ) -> None:
-        """Handle task failure: retry up to max_retries, then mark as error.
-
-        Args:
-            review_feedback: If provided, stored on the task so the next
-                agent run can see what the reviewer flagged and fix it.
-        """
-        task = await db.get_task(task_id)
-        if not task:
-            return
-
-        if task.retry_count < self._settings.max_retries:
-            console.print(
-                f"[yellow]{task_id}: retry {task.retry_count + 1}/{self._settings.max_retries}"
-                f" — {'with review feedback' if review_feedback else 'clean retry'}[/yellow]"
-            )
-            await db.retry_task(task_id, review_feedback=review_feedback)
-            if pipeline_id:
-                await self._emit("task:state_changed", {
-                    "task_id": task_id, "state": "retrying",
-                }, db=db, pipeline_id=pipeline_id)
-            else:
-                await self._events.emit("task:state_changed", {
-                    "task_id": task_id, "state": "retrying",
-                })
-            # KEEP the worktree — the retry agent needs the existing code
-            # to fix specific review issues instead of rebuilding from scratch.
-        else:
-            console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
-            await db.update_task_state(task_id, TaskState.ERROR.value)
-            if pipeline_id:
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pipeline_id)
-            else:
-                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
-            # Only clean up worktree when we're done with the task entirely
-            try:
-                worktree_mgr.remove(task_id)
-            except Exception as e:
-                logger.warning("Worktree cleanup failed for %s (_handle_retry): %s", task_id, e)
-
-    async def _handle_merge_retry(
-        self, db: Database, task_id: str, worktree_mgr: WorktreeManager,
-        pipeline_id: str | None = None,
-    ) -> None:
-        """Handle merge failure: retry merge only (skip agent + review).
-
-        Unlike ``_handle_retry()``, this sets ``retry_reason='merge_failed'``
-        so the next ``_execute_task()`` call skips the agent and review
-        pipeline and goes directly to the merge step.
-        """
-        task = await db.get_task(task_id)
-        if not task:
-            return
-
-        if task.retry_count < self._settings.max_retries:
-            console.print(
-                f"[yellow]{task_id}: merge-only retry "
-                f"{task.retry_count + 1}/{self._settings.max_retries}"
-                f" — skipping agent + review[/yellow]"
-            )
-            await db.retry_task_for_merge(task_id)
-            if pipeline_id:
-                await self._emit("task:state_changed", {
-                    "task_id": task_id, "state": "retrying",
-                }, db=db, pipeline_id=pipeline_id)
-            else:
-                await self._events.emit("task:state_changed", {
-                    "task_id": task_id, "state": "retrying",
-                })
-            # KEEP the worktree — merge needs the existing code
-        else:
-            console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
-            await db.update_task_state(task_id, TaskState.ERROR.value)
-            if pipeline_id:
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pipeline_id)
-            else:
-                await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
-            try:
-                worktree_mgr.remove(task_id)
-            except Exception as e:
-                logger.warning("Worktree cleanup failed for %s (_handle_merge_retry): %s", task_id, e)
-
-
-def _get_current_branch(repo_path: str) -> str:
-    """Get the current branch name of the repo.
-
-    Falls back to 'main' if the branch can't be determined (e.g. detached
-    HEAD or empty repo). Never returns the literal string 'HEAD' since
-    that's not a valid branch name for merge targets.
-    """
-    result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    branch = result.stdout.strip()
-    # "HEAD" is returned for detached HEAD — not a valid branch name.
-    # Empty string means the command failed (no commits yet).
-    if branch and branch != "HEAD":
-        return branch
-    # Try symbolic-ref as fallback (works even before first commit)
-    sym = subprocess.run(
-        ["git", "symbolic-ref", "--short", "HEAD"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    sym_branch = sym.stdout.strip()
-    return sym_branch if sym_branch else "main"
-
-
-def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
-    return (
-        f"Task: {title}\n\n"
-        f"Description: {description}\n\n"
-        f"Files to create/modify: {', '.join(files)}\n\n"
-        "Instructions:\n"
-        "1. Implement this task completely\n"
-        "2. Write clean, working code\n"
-        "3. When done, stage and commit all changes with: git add -A && git commit -m 'feat: <description>'\n"
-        "4. Make sure you actually commit — the system checks for committed changes"
-    )
-
-
-def _build_retry_prompt(
-    title: str, description: str, files: list[str],
-    review_feedback: str, retry_number: int,
-) -> str:
-    """Build a prompt for a retry that includes the review failure feedback.
-
-    The agent gets the original task spec PLUS the reviewer's notes so it
-    can fix the specific issues instead of starting from scratch.
-    """
-    return (
-        f"Task: {title}\n\n"
-        f"Description: {description}\n\n"
-        f"Files to create/modify: {', '.join(files)}\n\n"
-        f"=== IMPORTANT: This is RETRY #{retry_number} ===\n\n"
-        f"Your previous implementation was reviewed and REJECTED. "
-        f"The worktree already contains your previous changes. "
-        f"DO NOT start from scratch — fix the specific issues below.\n\n"
-        f"Review feedback from the reviewer:\n"
-        f"---\n"
-        f"{review_feedback}\n"
-        f"---\n\n"
-        "Instructions:\n"
-        "1. Read the review feedback above carefully\n"
-        "2. Look at your existing code (it's already in the worktree)\n"
-        "3. Fix ONLY the issues the reviewer flagged\n"
-        "4. Make sure your code actually works — run it if possible\n"
-        "5. Stage and commit your fixes: git add -A && git commit -m 'fix: address review feedback'\n"
-        "6. Make sure you actually commit — the system checks for committed changes"
-    )
-
-
-def _get_diff_vs_main(worktree_path: str) -> str:
-    """Get diff of the worktree branch vs its merge-base with the parent branch.
-
-    Uses ``git rev-list`` to count how many commits the agent added,
-    then diffs against ``HEAD~N``.  Handles root commits (orphan branches
-    from repos with no prior history) by diffing against the empty tree.
-    """
-    # Try to find how many commits the agent added on top of the base
-    count_result = subprocess.run(
-        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-    )
-    try:
-        commit_count = int(count_result.stdout.strip())
-        if commit_count <= 0:
-            commit_count = 1
-    except (ValueError, AttributeError):
-        commit_count = 1
-
-    # Check if HEAD~{commit_count} exists (won't if this is a root commit)
-    base_ref = f"HEAD~{commit_count}"
-    verify = subprocess.run(
-        ["git", "rev-parse", "--verify", base_ref],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-    )
-
-    if verify.returncode == 0:
-        # Normal case: diff the agent's commits against their base
-        result = subprocess.run(
-            ["git", "diff", base_ref, "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-    else:
-        # Root commit (orphan branch / new repo): diff against empty tree
-        empty_tree = subprocess.run(
-            ["git", "hash-object", "-t", "tree", "/dev/null"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        result = subprocess.run(
-            ["git", "diff", empty_tree, "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-
-    return result.stdout
-
-
-def _get_diff_stats(repo_path: str) -> dict[str, int]:
-    """Get lines added/removed for the last merge commit."""
-    result = subprocess.run(
-        ["git", "diff", "--shortstat", "HEAD~1", "HEAD"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    added, removed = 0, 0
-    if result.returncode == 0 and result.stdout.strip():
-        import re
-        m_add = re.search(r"(\d+) insertion", result.stdout)
-        m_del = re.search(r"(\d+) deletion", result.stdout)
-        if m_add:
-            added = int(m_add.group(1))
-        if m_del:
-            removed = int(m_del.group(1))
-    return {"linesAdded": added, "linesRemoved": removed}
-
-
-def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
-    """Get list of files changed by the agent (not the entire feature branch)."""
-    count_result = subprocess.run(
-        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-    )
-    try:
-        commit_count = int(count_result.stdout.strip())
-        if commit_count <= 0:
-            commit_count = 1
-    except (ValueError, AttributeError):
-        commit_count = 1
-
-    base_ref = f"HEAD~{commit_count}"
-    verify = subprocess.run(
-        ["git", "rev-parse", "--verify", base_ref],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-    )
-
-    if verify.returncode == 0:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", base_ref, "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-    else:
-        # Root commit: diff against empty tree
-        empty_tree = subprocess.run(
-            ["git", "hash-object", "-t", "tree", "/dev/null"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        result = subprocess.run(
-            ["git", "diff", "--name-only", empty_tree, "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-
-    return [f for f in result.stdout.strip().split("\n") if f.strip()]
-
-
-def _print_status_table(tasks) -> None:
-    table = Table(title="Forge Tasks")
-    table.add_column("ID", style="cyan")
-    table.add_column("Title")
-    table.add_column("State")
-    table.add_column("Agent")
-    table.add_column("Retries")
-
-    state_colors = {
-        "todo": "white",
-        "in_progress": "yellow",
-        "in_review": "blue",
-        "merging": "magenta",
-        "done": "green",
-        "error": "red",
-        "cancelled": "dim",
-    }
-
-    for t in tasks:
-        color = state_colors.get(t.state, "white")
-        table.add_row(
-            t.id,
-            t.title,
-            f"[{color}]{t.state}[/{color}]",
-            t.assigned_agent or "-",
-            str(t.retry_count),
-        )
-
-    console.print(table)
+            ])
