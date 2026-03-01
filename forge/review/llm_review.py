@@ -62,19 +62,35 @@ async def gate2_llm_review(
     if worktree_path:
         options.cwd = worktree_path
 
-    try:
-        result = await sdk_query(prompt=prompt, options=options)
-    except Exception as e:
-        logger.warning("L2 review SDK call failed: %s", e)
-        return GateResult(
-            passed=False, gate="gate2_llm_review",
-            details=f"SDK error during review: {e}",
+    # Retry the SDK call up to 3 times if the result is empty.
+    # Empty results are transient SDK issues (rate limits, timeouts) —
+    # retrying the review is much cheaper than retrying the entire task.
+    max_review_attempts = 3
+    for attempt in range(1, max_review_attempts + 1):
+        try:
+            result = await sdk_query(prompt=prompt, options=options)
+        except Exception as e:
+            logger.warning("L2 review SDK call failed (attempt %d/%d): %s", attempt, max_review_attempts, e)
+            if attempt == max_review_attempts:
+                return GateResult(
+                    passed=False, gate="gate2_llm_review",
+                    details=f"SDK error during review after {max_review_attempts} attempts: {e}",
+                )
+            continue
+
+        result_text = result.result if result and result.result else ""
+        if result_text:
+            return _parse_review_result(result_text)
+
+        logger.warning(
+            "L2 review returned empty result (attempt %d/%d)", attempt, max_review_attempts,
         )
 
-    result_text = result.result if result and result.result else ""
-    if not result_text:
-        logger.warning("L2 review returned empty result (SDK returned None or empty)")
-    return _parse_review_result(result_text)
+    # All attempts returned empty
+    return GateResult(
+        passed=False, gate="gate2_llm_review",
+        details=f"Empty review response after {max_review_attempts} attempts",
+    )
 
 
 def _build_review_prompt(

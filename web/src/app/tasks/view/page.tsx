@@ -505,9 +505,6 @@ function TaskExecutionPageInner() {
             alignItems: "center",
             justifyContent: "center",
             height: 256,
-            borderRadius: "var(--radius-lg)",
-            border: "1px solid var(--border)",
-            background: "var(--bg-surface-1)",
           }}>
             <div style={{ textAlign: "center" }}>
               <div style={{ marginBottom: 8, fontSize: 18, color: "var(--text-tertiary)" }}>

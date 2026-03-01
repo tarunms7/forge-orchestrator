@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTaskStore } from "@/stores/taskStore";
+import { FormattedLine } from "./FormattedLine";
 
 export default function PlannerCard() {
   const plannerOutput = useTaskStore((s) => s.plannerOutput);
@@ -73,7 +74,7 @@ export default function PlannerCard() {
               key={i}
               className={`terminal-line ${isActive && i === lineCount - 1 ? "active" : ""}`}
             >
-              {line}
+              <FormattedLine text={line} />
             </div>
           ))}
         </div>
