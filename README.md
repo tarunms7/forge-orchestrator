@@ -25,7 +25,7 @@ Starting task-2: Implement JWT auth middleware
 Complete: 4 done, 0 errors
 ```
 
-One command. Multiple agents. Reviewed and merged code on your `main` branch.
+One command. Multiple agents. Reviewed code delivered via pull request.
 
 ---
 
@@ -82,7 +82,7 @@ Forge takes a natural language task, breaks it into sub-tasks, and runs them thr
 - **Gate 2 (LLM):** A *separate* Claude session reviews the diff against the task spec. Returns `PASS` or `FAIL` with reasoning.
 - **Gate 3 (Merge):** Auto-pass (merge readiness is handled by the merge step).
 
-**5. Merge** — The task branch is rebased onto `main` and fast-forward merged. If there's a conflict, the task retries.
+**5. Merge & PR** — The task branch is rebased onto `main` and fast-forward merged locally. Once all tasks pass, Forge creates a pull request for review.
 
 **6. Retry** — If any step fails (agent error, review rejection, merge conflict), the task retries up to 3 times with a fresh attempt.
 
@@ -90,27 +90,25 @@ Forge takes a natural language task, breaks it into sub-tasks, and runs them thr
 
 ## Where Does the Code Go?
 
-Your generated code ends up **on your `main` branch**, with clean commits:
+Your generated code is delivered as a **pull request** for review:
 
-```
-$ git log --oneline
-edba7f5 feat: add comprehensive pytest test suite for fibonacci module
-3cf368e feat: implement Fibonacci module with recursive and iterative approaches
-69e9eef init
-```
+1. Each task works in an isolated git worktree (its own branch + directory)
+2. After passing review, each task branch is rebased onto `main` and merged locally
+3. When all tasks complete, Forge automatically creates a PR via `gh pr create`
+4. You review and merge the PR through your normal workflow
 
 During execution, each task works in an isolated directory:
 
 ```
 your-project/
   .forge/
-    forge.db              # Task state (SQLite, fresh per run)
+    forge.db              # Pipeline state (SQLite)
     worktrees/
       task-1/             # Isolated git worktree (auto-cleaned)
       task-2/             # Each task gets its own branch + directory
 ```
 
-After merge, worktrees are deleted. Only the merged commits on `main` remain.
+After the PR is merged, worktrees are deleted. Only the merged commits remain.
 
 ---
 
@@ -120,9 +118,9 @@ Forge spawns **separate Claude CLI processes** for each step. They do not share 
 
 | Step | Claude Session | Tools | Purpose |
 |------|---------------|-------|---------|
-| Planning | `claude --print --max-turns 1` | None | Decompose task into JSON TaskGraph |
-| Agent Execution | `claude --print --permission-mode bypassPermissions` | Read, Edit, Write, Glob, Grep, Bash | Write code in isolated worktree |
-| Gate 2 Review | `claude --print --max-turns 1` | None | Review diff against task spec |
+| Planning | `claude --print --max-turns 10` | Read, Glob, Grep | Decompose task into JSON TaskGraph |
+| Agent Execution | `claude --print --permission-mode acceptEdits` | Read, Edit, Write, Glob, Grep, Bash | Write code in isolated worktree |
+| Gate 2 Review | `claude --print --max-turns 2` | None | Review diff against task spec |
 
 **Total Claude sessions per task:** 3 (plan once + execute + review). For N tasks, Forge spawns 1 + 2N Claude sessions.
 
@@ -181,6 +179,28 @@ Forge will:
 
 ---
 
+## Web UI
+
+Forge includes a real-time web dashboard for managing pipelines:
+
+```bash
+# Set JWT secret for auth
+export FORGE_JWT_SECRET="your-secret-key"
+
+# Start backend (port 8000) + frontend (port 3000)
+forge serve
+```
+
+Features:
+- Real-time pipeline progress via WebSocket
+- Agent output streaming (watch code being written in real-time)
+- Review gate results and merge status per task
+- Per-task activity logs with timestamps
+- One-click task retry and pipeline resume
+- Auto-PR creation when all tasks pass
+
+---
+
 ## Configuration
 
 All settings are in `forge/config/settings.py` and can be overridden via environment variables with the `FORGE_` prefix:
@@ -194,11 +214,30 @@ All settings are in `forge/config/settings.py` and can be overridden via environ
 | `memory_threshold_pct` | 10.0 | `FORGE_MEMORY_THRESHOLD_PCT` | Min memory % available |
 | `disk_threshold_gb` | 5.0 | `FORGE_DISK_THRESHOLD_GB` | Min disk GB free |
 | `scheduler_poll_interval` | 1.0 | `FORGE_SCHEDULER_POLL_INTERVAL` | Seconds between dispatch cycles |
+| `model_strategy` | balanced | `FORGE_MODEL_STRATEGY` | Model routing strategy |
 
 Example:
 
 ```bash
 FORGE_MAX_AGENTS=2 FORGE_MAX_RETRIES=1 forge run "Add dark mode support"
+```
+
+---
+
+## Model Routing
+
+Control cost vs quality by routing different pipeline stages to different models:
+
+| Strategy | Planner | Agent | Reviewer |
+|----------|---------|-------|----------|
+| `cost-optimized` | haiku | sonnet | haiku |
+| `balanced` (default) | sonnet | sonnet | haiku |
+| `quality-first` | opus | opus | sonnet |
+
+Set via environment variable:
+
+```bash
+FORGE_MODEL_STRATEGY=quality-first forge run "Build authentication system"
 ```
 
 ---
@@ -223,9 +262,15 @@ forge/
     errors.py               Error hierarchy
     engine.py               Deterministic engine (internal)
     continuity.py           Session handoff files
+    context.py              Project snapshot gathering
+    events.py               Async event emitter (pub/sub)
+    model_router.py         Strategy-based model selection
   agents/
     adapter.py              Agent interface + ClaudeAdapter
     runtime.py              Timeout-wrapped agent execution
+  api/
+    routes/tasks.py         REST API + WebSocket endpoints
+    ws/manager.py           WebSocket connection manager
   storage/
     db.py                   Async SQLAlchemy (SQLite or Postgres)
   merge/
@@ -243,6 +288,12 @@ forge/
     settings.py             ForgeSettings (pydantic-settings)
   tui/
     dashboard.py            Rich status table
+web/
+  src/
+    app/tasks/view/         Pipeline execution view
+    components/task/        AgentCard, PlannerCard, PipelineProgress
+    stores/taskStore.ts     Zustand state management
+    hooks/useWebSocket.ts   WebSocket connection hook
 ```
 
 ### Task State Machine
@@ -347,7 +398,7 @@ Every task passes through 3 gates before merging:
 
 ## Testing
 
-Forge has 117 unit tests covering all modules:
+Forge has 421+ unit tests across 30+ modules:
 
 ```bash
 # Run all tests
@@ -369,14 +420,16 @@ Test files follow the pattern `{module}_test.py` and live next to their source f
 - **Speed**: Sequential within dependencies. A 4-task linear chain takes 4x agent execution time.
 - **Language**: Gate 1 only lints Python files (via ruff). Other languages pass Gate 1 automatically.
 - **Merge conflicts**: If two tasks touch the same file (which the planner is instructed to avoid), the second task's merge will fail and retry.
-- **No streaming output**: Agent execution output is not streamed — you see results after each step completes.
 
 ---
 
 ## Project Status
 
-- 117 unit tests passing
-- E2E pipeline verified: plan -> execute -> review -> merge
+- 421+ unit tests passing across 30+ modules
+- E2E pipeline verified: plan → execute → review → merge → PR
+- Web UI with real-time dashboard (`forge serve`)
+- PR-based merge workflow with auto-PR creation
+- Smart model routing (cost-optimized, balanced, quality-first)
 - Tested with fibonacci, REST API, and multi-file tasks
 - Works from Claude Code terminal sessions (CLAUDECODE env var handled)
 
