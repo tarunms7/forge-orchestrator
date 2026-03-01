@@ -384,8 +384,10 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
             if (!pipelineId || !token) return;
             try {
               await apiPost(`/tasks/${pipelineId}/${task.id}/retry`, {}, token);
-              window.location.reload();
-            } catch {}
+              // WebSocket will deliver state updates — no reload needed
+            } catch (err) {
+              console.warn("Retry failed:", err);
+            }
           }}
           className="mt-2 w-full rounded bg-yellow-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-yellow-700"
         >

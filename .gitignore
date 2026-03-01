@@ -3,6 +3,11 @@
 __pycache__/
 *.pyc
 forge.db
+forge_pipelines.db
+*.sqlite
 .venv
 *ruff*
 *cache*
+.env
+.env.local
+.env.production

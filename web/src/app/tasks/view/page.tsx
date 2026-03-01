@@ -373,9 +373,11 @@ export default function TaskExecutionPage() {
                 if (!confirm("Cancel all running tasks?")) return;
                 try {
                   await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
-                  window.location.reload();
+                  // Re-fetch state — WebSocket will also deliver updates
+                  const data = await apiGet(`/tasks/${pipelineId}`, token);
+                  hydrateFromRest(data);
                 } catch (e) {
-                  // Error surfaces via events
+                  console.warn("Cancel failed:", e);
                 }
               }}
               className="rounded-lg bg-red-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
@@ -393,9 +395,11 @@ export default function TaskExecutionPage() {
                 if (!token || !pipelineId) return;
                 try {
                   await apiPost(`/tasks/${pipelineId}/resume`, {}, token);
-                  window.location.reload();
+                  // Re-fetch state — WebSocket will also deliver updates
+                  const data = await apiGet(`/tasks/${pipelineId}`, token);
+                  hydrateFromRest(data);
                 } catch (e) {
-                  // Error will surface via events
+                  console.warn("Resume failed:", e);
                 }
               }}
               className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"

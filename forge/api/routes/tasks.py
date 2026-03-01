@@ -130,10 +130,13 @@ async def create_task(
                             ]
                         }),
                     )
-                    # Store graph for later execution
-                    if not hasattr(request.app.state, "pending_graphs"):
-                        request.app.state.pending_graphs = {}
-                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                    # Store graph for later execution (lock protects concurrent access)
+                    lock = getattr(request.app.state, "pending_graphs_lock", None)
+                    if lock:
+                        async with lock:
+                            request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                    else:
+                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
                 except Exception as exc:
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
@@ -200,8 +203,15 @@ async def execute_pipeline(
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    lock = getattr(request.app.state, "pending_graphs_lock", None)
     pending_graphs = getattr(request.app.state, "pending_graphs", {})
-    entry = pending_graphs.get(pipeline_id)
+
+    if lock:
+        async with lock:
+            entry = pending_graphs.get(pipeline_id)
+    else:
+        entry = pending_graphs.get(pipeline_id)
+
     if entry is None:
         raise HTTPException(status_code=404, detail="No pending plan found for this pipeline")
 
@@ -248,7 +258,13 @@ async def execute_pipeline(
             })
 
     asyncio.create_task(_run_execute())
-    del pending_graphs[pipeline_id]
+
+    # Remove from pending_graphs under lock (use app.state directly, not local var)
+    if lock:
+        async with lock:
+            request.app.state.pending_graphs.pop(pipeline_id, None)
+    else:
+        request.app.state.pending_graphs.pop(pipeline_id, None)
 
     return {"status": "executing", "pipeline_id": pipeline_id}
 

@@ -441,8 +441,8 @@ class ForgeDaemon:
             if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
                 try:
                     worktree_mgr.remove(task_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Worktree cleanup failed for %s (merge fast-path): %s", task_id, e)
             await db.release_agent(agent_id)
             return
         # ── End merge-only fast path ──────────────────────────────────
@@ -646,8 +646,8 @@ class ForgeDaemon:
         if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
             try:
                 worktree_mgr.remove(task_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Worktree cleanup failed for %s (execute_task): %s", task_id, e)
 
         # Release the agent so the scheduler can reuse it for the next task
         await db.release_agent(agent_id)
@@ -863,8 +863,8 @@ class ForgeDaemon:
             # Only clean up worktree when we're done with the task entirely
             try:
                 worktree_mgr.remove(task_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Worktree cleanup failed for %s (_handle_retry): %s", task_id, e)
 
     async def _handle_merge_retry(
         self, db: Database, task_id: str, worktree_mgr: WorktreeManager,
@@ -905,8 +905,8 @@ class ForgeDaemon:
                 await self._events.emit("task:state_changed", {"task_id": task_id, "state": "error"})
             try:
                 worktree_mgr.remove(task_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Worktree cleanup failed for %s (_handle_merge_retry): %s", task_id, e)
 
 
 def _get_current_branch(repo_path: str) -> str:
