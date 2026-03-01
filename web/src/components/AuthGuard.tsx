@@ -35,8 +35,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (checking) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950">
-        <div className="text-zinc-400">Loading...</div>
+      <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "var(--bg-base)" }}>
+        <div style={{ color: "var(--text-tertiary)" }}>Loading...</div>
       </div>
     );
   }

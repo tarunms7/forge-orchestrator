@@ -24,6 +24,25 @@ async def client():
     await app.state.db.close()
 
 
+@pytest.fixture
+async def client_with_app():
+    """Like `client`, but also yields the app for direct DB access."""
+    from forge.api.app import create_app
+
+    app = create_app(
+        db_url="sqlite+aiosqlite:///:memory:",
+        jwt_secret="test-secret-for-stats",
+    )
+
+    await app.state.db.initialize()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, app
+
+    await app.state.db.close()
+
+
 async def _register_and_get_token(
     client: AsyncClient,
     email: str = "tasks-user@example.com",
@@ -305,3 +324,84 @@ class TestRetryTaskEndpoint:
             headers=_auth_header(token),
         )
         assert resp.status_code == 404
+
+
+# ── Stats endpoint tests ─────────────────────────────────────────────
+
+
+class TestStats:
+    """Tests for GET /api/tasks/stats, focusing on avg_duration_secs."""
+
+    async def test_stats_no_pipelines_avg_duration_is_none(self, client_with_app):
+        """With no pipelines, avg_duration_secs should be None."""
+        client, _app = client_with_app
+        token = await _register_and_get_token(client, email="stats-empty@example.com")
+
+        resp = await client.get("/api/tasks/stats", headers=_auth_header(token))
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["avg_duration_secs"] is None
+
+    async def test_stats_avg_duration_computed_from_complete_pipelines(self, client_with_app):
+        """avg_duration_secs should be the mean of complete pipeline durations.
+
+        Pipeline A: 60 s  |  Pipeline B: 120 s  ->  average = 90.0 s
+        """
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="stats-dur@example.com")
+        headers = _auth_header(token)
+
+        # Decode the JWT to obtain the authenticated user's ID so we can
+        # insert pipeline rows directly in the DB (bypasses daemon planning,
+        # which would race with our status updates).
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        # Build deterministic timestamps: A = 60 s, B = 120 s -> avg = 90 s.
+        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        created_a = base.isoformat()
+        completed_a = (base + timedelta(seconds=60)).isoformat()
+
+        base_b = base + timedelta(hours=1)
+        created_b = base_b.isoformat()
+        completed_b = (base_b + timedelta(seconds=120)).isoformat()
+
+        # Insert complete pipeline rows directly, owned by the registered user.
+        pipeline_id_a = str(uuid.uuid4())
+        pipeline_id_b = str(uuid.uuid4())
+
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pipeline_id_a,
+                description="Pipeline A",
+                project_dir="/proj/a",
+                status="complete",
+                user_id=user_id,
+                created_at=created_a,
+                completed_at=completed_a,
+            ))
+            session.add(PipelineRow(
+                id=pipeline_id_b,
+                description="Pipeline B",
+                project_dir="/proj/b",
+                status="complete",
+                user_id=user_id,
+                created_at=created_b,
+                completed_at=completed_b,
+            ))
+            await session.commit()
+
+        resp = await client.get("/api/tasks/stats", headers=headers)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["completed"] == 2
+        assert data["avg_duration_secs"] == 90.0

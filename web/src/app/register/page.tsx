@@ -37,99 +37,74 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4">
-      <div className="w-full max-w-md space-y-8">
-        {/* Logo / Title */}
-        <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-white">
-            Forge
-          </h1>
-          <p className="mt-2 text-sm text-zinc-400">
-            Create your account
-          </p>
+    <div className="auth-page">
+      <div className="auth-card">
+        {/* Logo */}
+        <div className="auth-header">
+          <svg className="auth-logo" width="36" height="36" viewBox="0 0 20 20" fill="none">
+            <rect x="3" y="2" width="3.5" height="16" rx="1" fill="var(--accent)" />
+            <rect x="3" y="2" width="14" height="3.5" rx="1" fill="var(--accent)" />
+            <rect x="3" y="8.5" width="10" height="3" rx="1" fill="var(--accent)" opacity="0.6" />
+          </svg>
+          <h1 className="auth-title">Create your account</h1>
+          <p className="auth-subtitle">Get started with Forge</p>
         </div>
 
         {/* Error */}
         {error && (
-          <div className="rounded-md border border-red-800 bg-red-950 px-4 py-3 text-sm text-red-400">
-            {error}
-          </div>
+          <div className="auth-error">{error}</div>
         )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label
-              htmlFor="displayName"
-              className="block text-sm font-medium text-zinc-300"
-            >
-              Display Name
-            </label>
+        <form onSubmit={handleSubmit} className="auth-form">
+          <div className="auth-field">
+            <label htmlFor="displayName" className="auth-label">Display Name</label>
             <input
               id="displayName"
               type="text"
               required
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              className="auth-input"
               placeholder="Jane Doe"
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-zinc-300"
-            >
-              Email
-            </label>
+          <div className="auth-field">
+            <label htmlFor="email" className="auth-label">Email</label>
             <input
               id="email"
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+              className="auth-input"
               placeholder="you@example.com"
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-zinc-300"
-            >
-              Password
-            </label>
+          <div className="auth-field">
+            <label htmlFor="password" className="auth-label">Password</label>
             <input
               id="password"
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-              placeholder="********"
+              className="auth-input"
+              placeholder="••••••••"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:opacity-50"
-          >
+          <button type="submit" disabled={loading} className="auth-submit">
             {loading ? "Creating account..." : "Create Account"}
           </button>
         </form>
 
         {/* Login link */}
-        <p className="text-center text-sm text-zinc-400">
+        <p className="auth-footer">
           Already have an account?{" "}
-          <Link
-            href="/login"
-            className="font-medium text-white underline-offset-4 hover:underline"
-          >
-            Sign in
-          </Link>
+          <Link href="/login" className="auth-link">Sign in</Link>
         </p>
       </div>
     </div>
