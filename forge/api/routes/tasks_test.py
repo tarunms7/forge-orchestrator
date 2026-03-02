@@ -405,3 +405,140 @@ class TestStats:
         data = resp.json()
         assert data["completed"] == 2
         assert data["avg_duration_secs"] == 90.0
+
+    async def test_stats_total_spend_null_when_no_cost_events(self, client_with_app):
+        """total_spend_usd should be None when no cost events exist."""
+        client, _app = client_with_app
+        token = await _register_and_get_token(client, email="stats-no-cost@example.com")
+
+        resp = await client.get("/api/tasks/stats", headers=_auth_header(token))
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_spend_usd"] is None
+
+    async def test_stats_total_spend_aggregated_from_cost_events(self, client_with_app):
+        """total_spend_usd should sum cost_usd from task:cost_update events."""
+        import uuid
+
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="stats-cost@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        # Create two pipelines owned by this user.
+        pid_a = str(uuid.uuid4())
+        pid_b = str(uuid.uuid4())
+
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid_a, description="Cost A", project_dir="/proj/a",
+                status="complete", user_id=user_id,
+            ))
+            session.add(PipelineRow(
+                id=pid_b, description="Cost B", project_dir="/proj/b",
+                status="complete", user_id=user_id,
+            ))
+            await session.commit()
+
+        # Log cost events across both pipelines.
+        await db.log_event(
+            pipeline_id=pid_a, task_id="t1",
+            event_type="task:cost_update", payload={"cost_usd": 0.05},
+        )
+        await db.log_event(
+            pipeline_id=pid_a, task_id="t2",
+            event_type="task:cost_update", payload={"cost_usd": 0.10},
+        )
+        await db.log_event(
+            pipeline_id=pid_b, task_id="t3",
+            event_type="task:cost_update", payload={"cost_usd": 0.25},
+        )
+        # Non-cost event should be ignored.
+        await db.log_event(
+            pipeline_id=pid_a, task_id="t1",
+            event_type="task:agent_output", payload={"line": "hello"},
+        )
+
+        resp = await client.get("/api/tasks/stats", headers=headers)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_spend_usd"] == 0.4
+
+
+# ── Image upload tests ────────────────────────────────────────────
+
+
+class TestCreateTaskWithImages:
+    """Tests for image upload support in POST /tasks."""
+
+    async def test_create_task_with_images_appends_note(self, client_with_app):
+        """Images should append a note to the stored description."""
+        from forge.api.security.jwt import decode_token
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="img@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Build feature X",
+                "project_path": "/some/path",
+                "images": ["data:image/png;base64,abc123", "data:image/jpeg;base64,def456"],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        # Verify description in DB includes the image note.
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert "[2 image(s) attached]" in pipeline.description
+
+        # Verify images stored in app.state.
+        assert pipeline_id in app.state.pipeline_images
+        assert len(app.state.pipeline_images[pipeline_id]) == 2
+
+    async def test_create_task_without_images_no_note(self, client_with_app):
+        """Without images, description should remain unchanged."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="noimg@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Simple task",
+                "project_path": "/some/path",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert pipeline.description == "Simple task"
+        assert "image(s) attached" not in pipeline.description
+
+    async def test_create_task_images_default_empty(self, client):
+        """CreateTaskRequest.images should default to empty list."""
+        token = await _register_and_get_token(client, email="default-img@example.com")
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "No images field",
+                "project_path": "/path",
+            },
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 201

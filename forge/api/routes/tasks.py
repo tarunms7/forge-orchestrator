@@ -71,10 +71,21 @@ async def create_task(
     pipeline_id = str(uuid.uuid4())
     forge_db = _get_forge_db(request)
 
+    # Prepare description: append image note if images are attached.
+    description = body.description
+    if body.images:
+        description += f"\n\n[{len(body.images)} image(s) attached]"
+
+    # Store images in app.state for the daemon to access later.
+    if body.images:
+        if not hasattr(request.app.state, "pipeline_images"):
+            request.app.state.pipeline_images = {}
+        request.app.state.pipeline_images[pipeline_id] = body.images
+
     if forge_db is not None:
         await forge_db.create_pipeline(
             id=pipeline_id,
-            description=body.description,
+            description=description,
             project_dir=body.project_path,
             model_strategy=body.model_strategy,
             user_id=user_id,
@@ -90,7 +101,7 @@ async def create_task(
             async def _run_plan():
                 try:
                     graph = await daemon.plan(
-                        body.description, forge_db,
+                        description, forge_db,
                         emit_plan_ready=False, pipeline_id=pipeline_id,
                     )
 
@@ -155,7 +166,7 @@ async def create_task(
         request.app.state.pipelines[pipeline_id] = {
             "pipeline_id": pipeline_id,
             "user_id": user_id,
-            "description": body.description,
+            "description": description,
             "project_path": body.project_path,
             "extra_dirs": body.extra_dirs,
             "model_strategy": body.model_strategy,
@@ -174,7 +185,7 @@ async def get_stats(
     """Return dashboard statistics for the authenticated user."""
     forge_db = _get_forge_db(request)
     if forge_db is None:
-        return {"total_runs": 0, "active": 0, "completed": 0, "failed": 0, "avg_duration_secs": None}
+        return {"total_runs": 0, "active": 0, "completed": 0, "failed": 0, "avg_duration_secs": None, "total_spend_usd": None}
 
     pipelines = await forge_db.list_pipelines(user_id=user_id)
     total = len(pipelines)
@@ -194,12 +205,25 @@ async def get_stats(
                 pass
     avg_duration_secs: float | None = round(sum(durations) / len(durations), 1) if durations else None
 
+    # Compute total spend by aggregating task:cost_update events across all pipelines.
+    total_spend: float = 0.0
+    has_cost_data = False
+    for p in pipelines:
+        events = await forge_db.list_events(p.id, event_type="task:cost_update")
+        for ev in events:
+            cost = ev.payload.get("cost_usd", 0) if ev.payload else 0
+            if cost:
+                has_cost_data = True
+                total_spend += cost
+    total_spend_usd: float | None = round(total_spend, 4) if has_cost_data else None
+
     return {
         "total_runs": total,
         "active": active,
         "completed": completed,
         "failed": failed,
         "avg_duration_secs": avg_duration_secs,
+        "total_spend_usd": total_spend_usd,
     }
 
 
