@@ -40,16 +40,15 @@ function formatFileSize(bytes: number): string {
 
 export default function TaskForm({ value, onChange }: TaskFormProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const createdUrlsRef = useRef<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
 
-  // Clean up object URLs on unmount
+  // Clean up all created object URLs on unmount
   useEffect(() => {
     return () => {
-      value.images.forEach((img) => URL.revokeObjectURL(img.preview));
+      createdUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     };
-    // Only run cleanup on unmount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addImages = useCallback(
@@ -63,30 +62,33 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
         setImageError(`Maximum ${MAX_IMAGES} images allowed.`);
         return;
       }
+
+      const messages: string[] = [];
       if (fileArray.length > remaining) {
-        setImageError(
+        messages.push(
           `Can only add ${remaining} more image${remaining === 1 ? "" : "s"} (max ${MAX_IMAGES}).`
         );
       }
 
       const toAdd = fileArray.slice(0, remaining);
-      const errors: string[] = [];
       const valid: ImageAttachment[] = [];
 
       for (const file of toAdd) {
         if (!file.type.startsWith("image/")) {
-          errors.push(`"${file.name}" is not an image file.`);
+          messages.push(`"${file.name}" is not an image file.`);
           continue;
         }
         if (file.size > MAX_IMAGE_SIZE_BYTES) {
-          errors.push(`"${file.name}" exceeds 10MB limit (${formatFileSize(file.size)}).`);
+          messages.push(`"${file.name}" exceeds 10MB limit (${formatFileSize(file.size)}).`);
           continue;
         }
-        valid.push({ file, preview: URL.createObjectURL(file) });
+        const url = URL.createObjectURL(file);
+        createdUrlsRef.current.push(url);
+        valid.push({ file, preview: url });
       }
 
-      if (errors.length > 0) {
-        setImageError(errors.join(" "));
+      if (messages.length > 0) {
+        setImageError(messages.join(" "));
       }
 
       if (valid.length > 0) {
@@ -183,13 +185,15 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => value.images.length < MAX_IMAGES && fileInputRef.current?.click()}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              fileInputRef.current?.click();
+              if (value.images.length < MAX_IMAGES) {
+                fileInputRef.current?.click();
+              }
             }
           }}
           style={{
