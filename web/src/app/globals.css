@@ -1632,18 +1632,26 @@ body {
 }
 .new-pipeline-form {
   display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 .new-pipeline-input {
-  flex: 1;
+  width: 100%;
   padding: 10px 16px;
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: 14px;
-  font-family: var(--font-sans);
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 80px;
   transition: var(--transition);
+}
+.new-pipeline-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 .new-pipeline-input::placeholder { color: var(--text-dim); }
 .new-pipeline-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
