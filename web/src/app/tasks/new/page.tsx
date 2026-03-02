@@ -52,6 +52,15 @@ function StepIndicator({ current }: { current: number }) {
   );
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
 function ReviewSummary({
   project,
   task,
@@ -93,6 +102,14 @@ function ReviewSummary({
               : "Local"}
           </span>
         </div>
+        {task.images.length > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Images</span>
+            <span style={{ color: "var(--text-primary)" }}>
+              {task.images.length} image{task.images.length === 1 ? "" : "s"} attached
+            </span>
+          </div>
+        )}
         <div>
           <span style={{ color: "var(--text-tertiary)" }}>Description</span>
           <p style={{ marginTop: "4px", whiteSpace: "pre-wrap", color: "var(--text-primary)" }}>{task.description || "\u2014"}</p>
@@ -129,6 +146,7 @@ function NewTaskPageInner() {
     description: searchParams.get("desc") || "",
     priority: "medium",
     additionalContext: "",
+    images: [],
   });
   const [execution, setExecution] = useState<ExecutionConfig>({ target: "local" });
 
@@ -161,6 +179,13 @@ function NewTaskPageInner() {
     setError(null);
 
     try {
+      // Convert images to base64 data URIs
+      const imageDataUris: string[] = [];
+      for (const img of task.images) {
+        const dataUri = await fileToBase64(img.file);
+        imageDataUris.push(dataUri);
+      }
+
       const body: Record<string, unknown> = {
         description: task.description,
         project_path: resolveProjectPath(),
@@ -170,6 +195,10 @@ function NewTaskPageInner() {
 
       if (task.additionalContext.trim()) {
         body.description = `${task.description}\n\n---\nContext: ${task.additionalContext}`;
+      }
+
+      if (imageDataUris.length > 0) {
+        body.images = imageDataUris;
       }
 
       const data = await apiPost("/tasks", body, token);
