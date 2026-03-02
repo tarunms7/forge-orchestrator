@@ -481,7 +481,6 @@ class TestCreateTaskWithImages:
 
     async def test_create_task_with_images_appends_note(self, client_with_app):
         """Images should append a note to the stored description."""
-        from forge.api.security.jwt import decode_token
 
         client, app = client_with_app
         token = await _register_and_get_token(client, email="img@example.com")
