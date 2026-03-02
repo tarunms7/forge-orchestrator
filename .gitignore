@@ -8,6 +8,8 @@ forge_pipelines.db
 .venv
 *ruff*
 *cache*
+web/out/
+web/.next/
 .env
 .env.local
 .env.production
