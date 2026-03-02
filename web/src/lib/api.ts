@@ -1,20 +1,5 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
-/** Attempt to refresh the access token via the httpOnly refresh cookie. */
-async function tryRefreshToken(): Promise<string | null> {
-  try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.access_token || null;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchWithAuth(
   path: string,
   options: RequestInit,
@@ -30,29 +15,31 @@ async function fetchWithAuth(
     credentials: "include",
   });
 
-  // Auto-refresh on 401 (token expired) — retry once with new token
+  // Auto-refresh on 401 (token expired or invalid secret) — retry once with new token.
+  // We delegate to useAuthStore.refreshToken() so that the userId is properly
+  // recovered from the JWT `sub` claim even after a hard page reload.
   if (res.status === 401 && !_retried) {
-    const newToken = await tryRefreshToken();
-    if (newToken) {
-      // Update the auth store with the new token
-      try {
-        const { useAuthStore } = await import("@/stores/authStore");
-        const current = useAuthStore.getState();
-        useAuthStore.setState({ token: newToken, userId: current.userId });
-      } catch {
-        // Store import may fail in some contexts — continue anyway
-      }
-      return fetchWithAuth(path, options, newToken, true);
-    }
-    // Refresh also failed (e.g. server restarted with a new JWT secret).
-    // Clear the auth state and force the user back to the login page so they
-    // aren't left on a broken page where every action silently fails.
     try {
       const { useAuthStore } = await import("@/stores/authStore");
+      const refreshed = await useAuthStore.getState().refreshToken();
+
+      if (refreshed) {
+        // refreshToken() already updated the store (token + userId from JWT).
+        // Grab the new token and retry the original request.
+        const newToken = useAuthStore.getState().token;
+        if (newToken) {
+          return fetchWithAuth(path, options, newToken, true);
+        }
+      }
+
+      // Refresh failed (e.g. server restarted with a new JWT secret).
+      // Clear auth state and force navigation to login so the user isn't left
+      // on a broken page where every subsequent action silently fails.
       useAuthStore.getState().logout();
     } catch {
-      // Store import may fail in some contexts — ignore
+      // Store import failed — fall through to the redirect below.
     }
+
     if (typeof window !== "undefined") {
       window.location.href = "/login";
     }
