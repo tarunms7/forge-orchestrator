@@ -44,6 +44,18 @@ async function fetchWithAuth(
       }
       return fetchWithAuth(path, options, newToken, true);
     }
+    // Refresh also failed (e.g. server restarted with a new JWT secret).
+    // Clear the auth state and force the user back to the login page so they
+    // aren't left on a broken page where every action silently fails.
+    try {
+      const { useAuthStore } = await import("@/stores/authStore");
+      useAuthStore.getState().logout();
+    } catch {
+      // Store import may fail in some contexts — ignore
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
   }
 
   return res;
