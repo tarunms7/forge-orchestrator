@@ -79,7 +79,7 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
 @cli.command()
 @click.option("--port", default=8000, help="API server port")
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
-@click.option("--db-url", default="sqlite+aiosqlite:///forge.db", help="Database URL")
+@click.option("--db-url", default=None, help="Database URL (default: forge.db in repo root)")
 @click.option(
     "--jwt-secret",
     default=None,
@@ -91,10 +91,18 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
     default=True,
     help="Build Next.js before serving",
 )
-def serve(port: int, host: str, db_url: str, jwt_secret: str | None, build_frontend: bool):
+def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, build_frontend: bool):
     """Start the Forge web server."""
     if build_frontend:
         _build_frontend()
+
+    # Resolve DB path relative to repo root (not CWD) so `forge serve`
+    # always uses the same database regardless of where it's invoked from.
+    if db_url is None:
+        repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        db_path = os.path.join(repo_root, "forge.db")
+        db_url = f"sqlite+aiosqlite:///{db_path}"
+
     import uvicorn
     from forge.api.app import create_app
     app = create_app(db_url=db_url, jwt_secret=jwt_secret)
@@ -103,15 +111,16 @@ def serve(port: int, host: str, db_url: str, jwt_secret: str | None, build_front
 
 
 def _build_frontend():
-    """Build the Next.js frontend if web/ directory exists."""
+    """Build the Next.js frontend if web/ directory exists.
+
+    Always rebuilds to avoid serving stale bundles after branch switches
+    or code changes. The Next.js build is fast (~5s) on incremental runs.
+    """
     import subprocess
     web_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web")
     web_dir = os.path.normpath(web_dir)
     if not os.path.isdir(web_dir):
         return
-    out_dir = os.path.join(web_dir, "out")
-    if os.path.isdir(out_dir):
-        return  # already built
     click.echo("Building frontend...")
     subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
 
