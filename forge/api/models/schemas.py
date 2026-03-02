@@ -12,6 +12,7 @@ class CreateTaskRequest(BaseModel):
     project_path: str
     extra_dirs: list[str] = Field(default_factory=list)
     model_strategy: str = "auto"
+    images: list[str] = Field(default_factory=list, description="Base64-encoded image data URIs (e.g. data:image/png;base64,...)")
 
 
 class ExecuteRequest(BaseModel):

@@ -11,6 +11,8 @@ interface DashboardStats {
   active: number;
   completed: number;
   failed: number;
+  avg_duration_secs: number | null;
+  total_spend_usd: number | null;
 }
 
 interface RecentPipeline {
@@ -19,6 +21,15 @@ interface RecentPipeline {
   phase: string;
   created_at: string;
   task_count: number;
+}
+
+function formatDuration(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.round(secs % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 const phaseToStatus: Record<string, string> = {
@@ -38,6 +49,8 @@ export default function DashboardPage() {
     active: 0,
     completed: 0,
     failed: 0,
+    avg_duration_secs: null,
+    total_spend_usd: null,
   });
   const [recent, setRecent] = useState<RecentPipeline[]>([]);
   const [pipelineInput, setPipelineInput] = useState("");
@@ -78,30 +91,35 @@ export default function DashboardPage() {
       <div className="new-pipeline-card">
         <div className="new-pipeline-label">Start a new pipeline</div>
         <div className="new-pipeline-form">
-          <input
-            type="text"
+          <textarea
             className="new-pipeline-input"
+            rows={3}
             placeholder="Describe what you want to build or fix..."
             value={pipelineInput}
             onChange={(e) => setPipelineInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleStartPipeline();
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleStartPipeline();
+              }
             }}
           />
-          <button
-            className="btn btn-primary btn-glow"
-            onClick={handleStartPipeline}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 14 14"
-              fill="currentColor"
+          <div className="new-pipeline-actions">
+            <button
+              className="btn btn-primary btn-glow"
+              onClick={handleStartPipeline}
             >
-              <path d="M3 1l10 6-10 6V1z" />
-            </svg>
-            Run Pipeline
-          </button>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 14 14"
+                fill="currentColor"
+              >
+                <path d="M3 1l10 6-10 6V1z" />
+              </svg>
+              Run Pipeline
+            </button>
+          </div>
         </div>
       </div>
 
@@ -125,11 +143,19 @@ export default function DashboardPage() {
           <div className="overview-label">Success Rate</div>
         </div>
         <div className="overview-card">
-          <div className="overview-value">--</div>
+          <div className="overview-value">
+            {stats.total_spend_usd !== null
+              ? `$${stats.total_spend_usd.toFixed(2)}`
+              : "--"}
+          </div>
           <div className="overview-label">Total Spend</div>
         </div>
         <div className="overview-card">
-          <div className="overview-value">--</div>
+          <div className="overview-value">
+            {stats.avg_duration_secs !== null
+              ? formatDuration(stats.avg_duration_secs)
+              : "--"}
+          </div>
           <div className="overview-label">Avg Duration</div>
         </div>
       </div>

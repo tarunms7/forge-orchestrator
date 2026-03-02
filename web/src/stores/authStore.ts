@@ -1,5 +1,18 @@
 import { create } from "zustand";
 
+/** Decode the payload of a JWT without verifying the signature (client-side only). */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // Convert base64url → base64, then decode
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(base64)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 interface AuthState {
   token: string | null;
   userId: string | null;
@@ -36,8 +49,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       );
       if (!res.ok) return false;
       const data = await res.json();
+      // userId is stored in memory only and is lost on a hard page reload.
+      // Recover it from the JWT `sub` claim so the store stays consistent
+      // even when the access token is silently refreshed after a reload.
+      const payload = decodeJwtPayload(data.access_token);
       const current = get();
-      set({ token: data.access_token, userId: current.userId });
+      const userId = (payload?.sub as string | undefined) ?? current.userId;
+      set({ token: data.access_token, userId });
       return true;
     } catch {
       return false;
