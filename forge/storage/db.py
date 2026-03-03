@@ -108,6 +108,8 @@ class PipelineRow(Base):
     completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     base_branch: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    cancelled_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class PipelineEventRow(Base):
@@ -373,13 +375,13 @@ class Database:
     async def create_pipeline(
         self, id: str, description: str, project_dir: str,
         model_strategy: str = "auto", user_id: str | None = None,
-        base_branch: str | None = None,
+        base_branch: str | None = None, branch_name: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
                 id=id, description=description, project_dir=project_dir,
                 model_strategy=model_strategy, user_id=user_id,
-                base_branch=base_branch,
+                base_branch=base_branch, branch_name=branch_name,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)
@@ -453,6 +455,95 @@ class Database:
                 query = query.where(PipelineRow.user_id == user_id)
             result = await session.execute(query.order_by(PipelineRow.created_at.desc()))
             return list(result.scalars().all())
+
+    async def restart_pipeline(self, pipeline_id: str) -> dict:
+        """Reset a pipeline for a fresh restart.
+
+        - Sets all tasks to CANCELLED state
+        - Clears task assignments, retry counts, worktree paths
+        - Resets pipeline status to 'pending'
+        - Clears pipeline's task_graph_json so fresh planning occurs
+        - Deletes all pipeline events (clean slate)
+
+        Returns dict with counts: {'tasks_reset': int, 'events_deleted': int}
+        """
+        from sqlalchemy import delete
+
+        async with self._session_factory() as session:
+            # Reset pipeline
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            pipeline = result.scalar_one_or_none()
+            if pipeline is None:
+                return {"tasks_reset": 0, "events_deleted": 0}
+
+            pipeline.status = "pending"
+            pipeline.task_graph_json = None
+            pipeline.completed_at = None
+            pipeline.pr_url = None
+            pipeline.cancelled_at = None
+
+            # Reset all tasks: set to cancelled, clear assignments
+            task_result = await session.execute(
+                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            )
+            tasks = list(task_result.scalars().all())
+            tasks_reset = 0
+            for task in tasks:
+                task.state = "cancelled"
+                task.assigned_agent = None
+                task.retry_count = 0
+                task.worktree_path = None
+                task.review_feedback = None
+                task.retry_reason = None
+                tasks_reset += 1
+
+            # Delete all pipeline events
+            del_result = await session.execute(
+                delete(PipelineEventRow).where(
+                    PipelineEventRow.pipeline_id == pipeline_id
+                )
+            )
+            events_deleted = del_result.rowcount
+
+            await session.commit()
+            return {"tasks_reset": tasks_reset, "events_deleted": events_deleted}
+
+    async def cancel_pipeline_hard(self, pipeline_id: str) -> dict:
+        """Hard-cancel a pipeline: mark everything cancelled with a timestamp.
+
+        - Sets pipeline status to 'cancelled'
+        - Sets cancelled_at timestamp
+        - Marks all non-terminal tasks as CANCELLED
+
+        Returns dict with counts: {'tasks_cancelled': int}
+        """
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            pipeline = result.scalar_one_or_none()
+            if pipeline is None:
+                return {"tasks_cancelled": 0}
+
+            pipeline.status = "cancelled"
+            pipeline.cancelled_at = datetime.now(timezone.utc).isoformat()
+
+            # Cancel all non-terminal tasks
+            task_result = await session.execute(
+                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            )
+            tasks = list(task_result.scalars().all())
+            _terminal_states = {"done", "error", "cancelled"}
+            tasks_cancelled = 0
+            for task in tasks:
+                if task.state not in _terminal_states:
+                    task.state = "cancelled"
+                    tasks_cancelled += 1
+
+            await session.commit()
+            return {"tasks_cancelled": tasks_cancelled}
 
     # ── Pipeline events ──────────────────────────────────────────────
 
