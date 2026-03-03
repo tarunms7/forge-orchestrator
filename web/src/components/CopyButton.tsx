@@ -5,14 +5,14 @@ import { useState } from "react";
 interface CopyButtonProps {
   text: string;
   label?: string;
-  variant?: "icon-only" | "with-label";
+  variant?: "default" | "inline";
   className?: string;
 }
 
 export function CopyButton({
   text,
   label,
-  variant = "icon-only",
+  variant = "default",
   className = "",
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
@@ -27,20 +27,20 @@ export function CopyButton({
     }
   }
 
-  const isInline = variant === "icon-only";
+  const btnClass = variant === "inline" ? "copy-btn-inline" : "copy-btn";
 
   return (
     <button
       type="button"
       onClick={handleCopy}
-      className={`${isInline ? "copy-btn-inline" : "copy-btn"} ${copied ? "copied" : ""} ${className}`.trim()}
+      className={`${btnClass} ${copied ? "copied" : ""} ${className}`.trim()}
       title={copied ? "Copied!" : label ? `Copy ${label}` : "Copy to clipboard"}
       aria-label={copied ? "Copied!" : label ? `Copy ${label}` : "Copy to clipboard"}
     >
       {copied ? (
         /* Checkmark icon */
         <svg
-          className="copied-icon"
+          className="copy-btn-icon"
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="none"
@@ -54,7 +54,7 @@ export function CopyButton({
       ) : (
         /* Clipboard icon */
         <svg
-          className="copy-icon"
+          className="copy-btn-icon"
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="none"
@@ -67,11 +67,9 @@ export function CopyButton({
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
       )}
-      {variant === "with-label" && (
-        <span className="copy-btn-label">
-          {copied ? "Copied!" : label ?? "Copy"}
-        </span>
-      )}
+      <span className="copy-btn-label">
+        {copied ? "Copied!" : label ?? "Copy"}
+      </span>
     </button>
   );
 }

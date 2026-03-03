@@ -131,7 +131,7 @@ export default function TaskDetailPanel({
             {task.output.length > 0 ? (
               <div className="detail-terminal">
                 <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px 0" }}>
-                  <CopyButton text={task.output.join('\n')} label="Copy output" variant="with-label" />
+                  <CopyButton text={task.output.join('\n')} label="Copy" />
                 </div>
                 {task.output.map((line, i) => (
                   <div key={i} className="output-line">
