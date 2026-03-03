@@ -17,8 +17,16 @@ class WorktreeManager:
     def _branch_name(self, task_id: str) -> str:
         return f"forge/{task_id}"
 
-    def create(self, task_id: str) -> str:
+    def create(self, task_id: str, base_ref: str | None = None) -> str:
         """Create a worktree for a task. Returns the worktree path.
+
+        Args:
+            base_ref: The git ref (branch or commit SHA) to base the new
+                worktree on.  When running inside a pipeline this should be
+                the **pipeline branch** (e.g. ``forge/pipeline-abc123``) so
+                that dependent tasks see files created by already-merged
+                dependencies.  If ``None``, Git defaults to the repo HEAD
+                (which is typically ``main``).
 
         Handles repos with no commits by using ``--orphan`` flag so that
         each worktree branch starts as an independent root.
@@ -39,6 +47,9 @@ class WorktreeManager:
 
         if has_commits:
             cmd = ["git", "worktree", "add", "-b", branch, path]
+            # Base on the pipeline branch so dependent tasks inherit merged files
+            if base_ref:
+                cmd.append(base_ref)
         else:
             cmd = ["git", "worktree", "add", "--orphan", "-b", branch, path]
 

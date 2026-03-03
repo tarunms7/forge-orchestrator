@@ -49,7 +49,7 @@ class ExecutorMixin:
         if getattr(task, "retry_reason", None) == "merge_failed":
             await self._handle_merge_fast_path(db, merge_worker, worktree_mgr, task, task_id, agent_id, pipeline_id)
             return
-        worktree_path = await self._prepare_worktree(worktree_mgr, task_id, pid, db)
+        worktree_path = await self._prepare_worktree(worktree_mgr, task_id, pid, db, base_ref=merge_worker._main)
         if worktree_path is None:
             await db.release_agent(agent_id)
             return
@@ -95,10 +95,10 @@ class ExecutorMixin:
 
     # -- worktree creation ----------------------------------------------
 
-    async def _prepare_worktree(self, worktree_mgr, task_id: str, pid: str, db) -> str | None:
+    async def _prepare_worktree(self, worktree_mgr, task_id: str, pid: str, db, base_ref: str | None = None) -> str | None:
         """Create or reuse a worktree. Returns path or ``None`` on failure."""
         try:
-            return worktree_mgr.create(task_id)
+            return worktree_mgr.create(task_id, base_ref=base_ref)
         except ValueError:
             wt = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
             if os.path.isdir(wt):
