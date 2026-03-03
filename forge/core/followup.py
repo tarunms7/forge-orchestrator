@@ -204,7 +204,7 @@ async def execute_followups(
 
     project_dir = pipeline.project_dir
     pipeline_id = pipeline.id
-    branch_name = f"forge/pipeline-{pipeline_id[:8]}"
+    branch_name = getattr(pipeline, "branch_name", None) or f"forge/pipeline-{pipeline_id[:8]}"
 
     for task_id, indexed_questions in task_questions.items():
         task_info = task_info_map.get(task_id, {})
