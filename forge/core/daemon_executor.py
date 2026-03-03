@@ -81,7 +81,7 @@ class ExecutorMixin:
         branch = f"forge/{task_id}"
         merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path)
+            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=merge_worker._main)
         else:
             await self._emit_merge_failure(db, task_id, merge_result.error, pid)
             await self._attempt_merge_with_resolution(
@@ -153,13 +153,13 @@ class ExecutorMixin:
         branch = f"forge/{task_id}"
         merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path)
+            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=merge_worker._main)
             return
         console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
         await self._emit_merge_failure(db, task_id, merge_result.error, pid)
         retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry")
+            await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=merge_worker._main)
             return
         console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
         await self._attempt_tier2_resolution(
@@ -184,7 +184,7 @@ class ExecutorMixin:
         if resolved:
             final = merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
-                await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution")
+                await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution", pipeline_branch=merge_worker._main)
                 return
             merge_worker._abort_rebase(worktree_path)
         else:
@@ -255,16 +255,33 @@ class ExecutorMixin:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
         ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race")
+            await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race", pipeline_branch=merge_worker._main)
         else:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
 
-    async def _emit_merge_success(self, db, task_id: str, pid: str, worktree_path: str, *, label: str = "") -> None:
-        """Mark task done and emit merge-success events."""
+    async def _emit_merge_success(
+        self,
+        db,
+        task_id: str,
+        pid: str,
+        worktree_path: str,
+        *,
+        label: str = "",
+        pipeline_branch: str | None = None,
+    ) -> None:
+        """Mark task done and emit merge-success events.
+
+        Args:
+            pipeline_branch: The pipeline branch ref (e.g. ``forge/pipeline-abc123``)
+                used as the diff base so that stats reflect only *this* task's
+                own changes rather than the cumulative total of all previously
+                merged tasks.  When ``None``, falls back to the commit-count
+                heuristic.
+        """
         tag = f" ({label})" if label else ""
         console.print(f"[bold green]{task_id} merged{tag}![/bold green]")
         await db.update_task_state(task_id, TaskState.DONE.value)
-        stats = _get_diff_stats(worktree_path)
+        stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit("task:merge_result", {"task_id": task_id, "success": True, "error": None, **stats}, db=db, pipeline_id=pid)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
 
