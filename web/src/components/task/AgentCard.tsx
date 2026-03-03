@@ -7,6 +7,7 @@ import { useTaskStore } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
 import { apiPost } from "@/lib/api";
 import { FormattedLine } from "./FormattedLine";
+import { CopyButton } from "@/components/CopyButton";
 
 const STATE_CLASS: Record<TaskState["state"], { label: string; cardClass: string; badgeClass: string }> = {
   pending: { label: "Pending", cardClass: "pending", badgeClass: "state-badge pending" },
@@ -84,6 +85,13 @@ function LogModal({
             <span className="log-modal-title">{task.title}</span>
             <span className="log-modal-subtitle">{task.output.length} lines</span>
           </div>
+          <span onClick={(e) => e.stopPropagation()}>
+            <CopyButton
+              text={task.output.join("\n")}
+              label="log"
+              variant="icon-only"
+            />
+          </span>
           <button className="log-modal-close" onClick={onClose}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
