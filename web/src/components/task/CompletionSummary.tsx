@@ -31,6 +31,7 @@ export default function CompletionSummary({
   const prUrl = useTaskStore((s) => s.prUrl);
   const prLoading = useTaskStore((s) => s.prLoading);
   const prError = useTaskStore((s) => s.prError);
+  const followUpStatus = useTaskStore((s) => s.followUpStatus);
 
   // Local fallback for manual PR creation (if auto-PR fails)
   const [manualPrLoading, setManualPrLoading] = useState(false);
@@ -47,6 +48,10 @@ export default function CompletionSummary({
   );
   const totalRemoved = taskList.reduce(
     (sum, t) => sum + (t.mergeResult?.linesRemoved ?? 0),
+    0,
+  );
+  const totalCost = taskList.reduce(
+    (sum, t) => sum + (t.costUsd ?? 0),
     0,
   );
   const allPassed = failedCount === 0 && passedCount === totalTasks;
@@ -66,8 +71,27 @@ export default function CompletionSummary({
     }
   };
 
+  const scrollToFollowUp = () => {
+    const el = document.getElementById("follow-up-panel");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      // Focus the textarea after scrolling
+      setTimeout(() => {
+        const textarea = el.querySelector("textarea");
+        if (textarea) textarea.focus();
+      }, 400);
+    }
+  };
+
   const isCreatingPR = prLoading || manualPrLoading;
   const displayError = prError || manualPrError;
+
+  // Follow-up status label
+  const followUpLabel =
+    followUpStatus === "submitting" ? "Submitting follow-up..." :
+    followUpStatus === "executing" ? "Follow-up in progress..." :
+    followUpStatus === "done" ? "Follow-up complete" :
+    null;
 
   return (
     <div className="complete-container">
@@ -149,6 +173,12 @@ export default function CompletionSummary({
           </div>
           <div className="stat-label">Lines Changed</div>
         </div>
+        {totalCost > 0 && (
+          <div className="stat-card">
+            <div className="stat-value">${totalCost.toFixed(2)}</div>
+            <div className="stat-label">Total Cost</div>
+          </div>
+        )}
       </div>
 
       {/* Task Results */}
@@ -181,11 +211,57 @@ export default function CompletionSummary({
         </div>
       </div>
 
-      {/* New Task link */}
-      <div style={{ marginTop: "24px" }}>
+      {/* Follow-up CTA and status */}
+      <div style={{ marginTop: 24, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <Link href="/tasks/new" className="btn btn-primary btn-glow">
           New Task
         </Link>
+
+        <button
+          type="button"
+          onClick={scrollToFollowUp}
+          className="btn btn-ghost"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 16px",
+            fontSize: 13,
+            fontWeight: 500,
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+            cursor: "pointer",
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Have follow-up questions?
+        </button>
+
+        {followUpLabel && (
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              color: followUpStatus === "done" ? "var(--green)" : "var(--accent)",
+              padding: "4px 10px",
+              borderRadius: "var(--radius-sm)",
+              background: followUpStatus === "done" ? "rgba(52,211,153,0.1)" : "var(--accent-glow)",
+            }}
+          >
+            {followUpStatus !== "done" && (
+              <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            {followUpLabel}
+          </span>
+        )}
       </div>
     </div>
   );

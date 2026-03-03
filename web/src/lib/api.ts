@@ -91,3 +91,21 @@ export async function apiDelete(path: string, token: string) {
   }
   return res.json();
 }
+
+/* ── Pipeline Action Helpers ─────────────────────────────────────── */
+
+export async function submitFollowUp(
+  pipelineId: string,
+  questions: string,
+  token: string,
+) {
+  return apiPost(`/tasks/${pipelineId}/followup`, { questions }, token);
+}
+
+export async function cancelPipeline(pipelineId: string, token: string) {
+  return apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
+}
+
+export async function restartPipeline(pipelineId: string, token: string) {
+  return apiPost(`/tasks/${pipelineId}/restart`, {}, token);
+}

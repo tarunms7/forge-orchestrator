@@ -9,12 +9,13 @@ import type { WsStatus } from "@/hooks/useWebSocket";
 import { useTaskStore } from "@/stores/taskStore";
 import type { TaskState } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, cancelPipeline, restartPipeline } from "@/lib/api";
 import AgentCard from "@/components/task/AgentCard";
 import PipelineProgress from "@/components/task/PipelineProgress";
 import PlannerCard from "@/components/task/PlannerCard";
 import CompletionSummary from "@/components/task/CompletionSummary";
 import TaskDetailPanel from "@/components/task/TaskDetailPanel";
+import FollowUpPanel from "@/components/task/FollowUpPanel";
 
 /* ── Plan Panel ───────────────────────────────────────────────────── */
 
@@ -216,6 +217,144 @@ function ConnectionBanner({ status, onRetry }: { status: WsStatus; onRetry?: () 
   );
 }
 
+/* ── Confirmation Dialog ──────────────────────────────────────────── */
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  confirmColor,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  confirmColor: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  // Lock body scroll while dialog is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onCancel]);
+
+  return createPortal(
+    <div
+      className="log-modal-overlay"
+      onClick={onCancel}
+      style={{ zIndex: 9999 }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-surface-2)",
+          borderRadius: "var(--radius-lg)",
+          border: "1px solid var(--border)",
+          padding: 24,
+          maxWidth: 420,
+          width: "90%",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+        }}
+      >
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
+          {title}
+        </h3>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 20 }}>
+          {message}
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="btn btn-ghost"
+            style={{
+              padding: "8px 16px",
+              fontSize: 13,
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-md)",
+              cursor: "pointer",
+            }}
+          >
+            Go Back
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="btn"
+            style={{
+              padding: "8px 20px",
+              fontSize: 13,
+              fontWeight: 600,
+              background: confirmColor,
+              color: "white",
+              borderRadius: "var(--radius-md)",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/* ── Cancelled Banner ─────────────────────────────────────────────── */
+
+function CancelledBanner({ onRestart }: { onRestart: () => void }) {
+  return (
+    <div
+      style={{
+        marginBottom: 24,
+        borderRadius: "var(--radius-lg)",
+        border: "1px solid rgba(107,114,128,0.3)",
+        background: "rgba(107,114,128,0.08)",
+        padding: "20px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <svg style={{ width: 24, height: 24, color: "var(--text-tertiary)", flexShrink: 0 }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+        </svg>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+            Pipeline Cancelled
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>
+            This pipeline was cancelled. You can restart it to begin fresh planning.
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRestart}
+        className="btn btn-primary"
+        style={{ padding: "8px 20px", fontSize: 13, fontWeight: 600, flexShrink: 0 }}
+      >
+        Restart Pipeline
+      </button>
+    </div>
+  );
+}
+
 /* ── Description Modal ────────────────────────────────────────────── */
 
 function DescriptionModal({
@@ -299,6 +438,10 @@ function TaskExecutionPageInner() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [pipelineDesc, setPipelineDesc] = useState<string | null>(null);
   const [showDescModal, setShowDescModal] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showRestartDialog, setShowRestartDialog] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [restartLoading, setRestartLoading] = useState(false);
   const hydrated = useRef(false);
 
   // Request browser notification permission on mount
@@ -377,6 +520,38 @@ function TaskExecutionPageInner() {
     }
   }
 
+  async function handleCancel() {
+    if (!token || !pipelineId) return;
+    setCancelLoading(true);
+    setShowCancelDialog(false);
+    try {
+      await cancelPipeline(pipelineId, token);
+      // Re-fetch state — WebSocket will also deliver updates
+      const data = await apiGet(`/tasks/${pipelineId}`, token);
+      hydrateFromRest(data);
+    } catch (e) {
+      console.warn("Cancel failed:", e);
+    } finally {
+      setCancelLoading(false);
+    }
+  }
+
+  async function handleRestart() {
+    if (!token || !pipelineId) return;
+    setRestartLoading(true);
+    setShowRestartDialog(false);
+    try {
+      await restartPipeline(pipelineId, token);
+      // Re-fetch state — WebSocket will also deliver updates
+      const data = await apiGet(`/tasks/${pipelineId}`, token);
+      hydrateFromRest(data);
+    } catch (e) {
+      console.warn("Restart failed:", e);
+    } finally {
+      setRestartLoading(false);
+    }
+  }
+
   if (!pipelineId) {
     return (
       <div className="phase-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", color: "var(--text-tertiary)" }}>
@@ -387,8 +562,13 @@ function TaskExecutionPageInner() {
 
   // Determine if we should show the plan panel (always, once tasks exist)
   const hasTasks = taskList.length > 0;
-  // Show agent cards during execution/review/complete phases
+  // Show agent cards during execution/review/complete/cancelled phases
   const showAgentCards = phase !== "idle" && phase !== "planning" && phase !== "planned" && hasTasks;
+  const isCancelled = phase === "cancelled";
+  // Phases where cancel button is shown
+  const showCancelButton = phase === "idle" || phase === "planning" || phase === "planned" || phase === "executing" || phase === "reviewing";
+  // Phases where restart button is shown
+  const showRestartButton = isCancelled || (phase === "complete" && taskList.some(t => t.state === "error"));
 
   return (
     <div className="phase-content">
@@ -462,6 +642,11 @@ function TaskExecutionPageInner() {
         </div>
       )}
 
+      {/* Cancelled Banner */}
+      {isCancelled && (
+        <CancelledBanner onRestart={() => setShowRestartDialog(true)} />
+      )}
+
       {/* Planner Card — shown during planning phase */}
       <PlannerCard />
 
@@ -479,9 +664,15 @@ function TaskExecutionPageInner() {
       {showAgentCards && (
         <div className="exec-header">
           <div style={{ display: "flex", alignItems: "center" }}>
-            <span className="live-dot"></span>
+            {!isCancelled && <span className="live-dot"></span>}
             <span className="section-title" style={{ fontSize: 16 }}>
-              {phase === "executing" ? "Executing" : phase === "reviewing" ? "Reviewing" : "Complete"}
+              {isCancelled
+                ? "Cancelled"
+                : phase === "executing"
+                  ? "Executing"
+                  : phase === "reviewing"
+                    ? "Reviewing"
+                    : "Complete"}
             </span>
             <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>
               {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks
@@ -492,9 +683,9 @@ function TaskExecutionPageInner() {
 
       {/* Agent Cards Grid — shown during execution */}
       {showAgentCards ? (
-        <div className="task-grid">
+        <div className={`task-grid ${isCancelled ? "opacity-50" : ""}`} style={isCancelled ? { pointerEvents: "none" } : {}}>
           {taskList.map((task) => (
-            <AgentCard key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+            <AgentCard key={task.id} task={task} onClick={isCancelled ? undefined : () => setSelectedTaskId(task.id)} />
           ))}
         </div>
       ) : (
@@ -529,38 +720,46 @@ function TaskExecutionPageInner() {
         )
       )}
 
-      {/* Cancel Button — shown only during active execution */}
-      {phase === "executing" && (
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 12 }}>
+      {/* Cancel / Restart Buttons */}
+      <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 12 }}>
+        {showCancelButton && (
           <button
-            onClick={async () => {
-              if (!token || !pipelineId) return;
-              if (!confirm("Cancel all running tasks?")) return;
-              try {
-                await apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
-                // Re-fetch state — WebSocket will also deliver updates
-                const data = await apiGet(`/tasks/${pipelineId}`, token);
-                hydrateFromRest(data);
-              } catch (e) {
-                console.warn("Cancel failed:", e);
-              }
-            }}
+            onClick={() => setShowCancelDialog(true)}
+            disabled={cancelLoading}
             className="btn"
             style={{
               background: "var(--red)",
               color: "white",
               padding: "10px 24px",
               fontWeight: 600,
+              opacity: cancelLoading ? 0.5 : 1,
+              cursor: cancelLoading ? "not-allowed" : "pointer",
             }}
           >
-            Cancel Pipeline
+            {cancelLoading ? "Cancelling..." : "Cancel Pipeline"}
           </button>
-        </div>
-      )}
+        )}
+
+        {showRestartButton && (
+          <button
+            onClick={() => setShowRestartDialog(true)}
+            disabled={restartLoading}
+            className="btn btn-primary btn-glow"
+            style={{
+              padding: "10px 24px",
+              fontWeight: 600,
+              opacity: restartLoading ? 0.5 : 1,
+              cursor: restartLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {restartLoading ? "Restarting..." : "Restart Pipeline"}
+          </button>
+        )}
+      </div>
 
       {/* Resume Button — shown only when pipeline is complete with errored tasks */}
       {phase === "complete" && taskList.some(t => t.state === "error") && (
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 12 }}>
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "center", gap: 12 }}>
           <button
             onClick={async () => {
               if (!token || !pipelineId) return;
@@ -588,6 +787,11 @@ function TaskExecutionPageInner() {
         </div>
       )}
 
+      {/* Follow-Up Panel — shown after completion */}
+      {phase === "complete" && (
+        <FollowUpPanel pipelineId={pipelineId} />
+      )}
+
       {/* Task Detail Slide-out Panel */}
       {selectedTaskId && tasks[selectedTaskId] && (
         <TaskDetailPanel
@@ -601,6 +805,30 @@ function TaskExecutionPageInner() {
         <DescriptionModal
           description={pipelineDesc}
           onClose={() => setShowDescModal(false)}
+        />
+      )}
+
+      {/* Cancel Confirmation Dialog */}
+      {showCancelDialog && (
+        <ConfirmDialog
+          title="Cancel Pipeline"
+          message="Are you sure you want to cancel this pipeline? All running tasks will be stopped. You can restart the pipeline later to begin fresh planning."
+          confirmLabel="Cancel Pipeline"
+          confirmColor="var(--red)"
+          onConfirm={handleCancel}
+          onCancel={() => setShowCancelDialog(false)}
+        />
+      )}
+
+      {/* Restart Confirmation Dialog */}
+      {showRestartDialog && (
+        <ConfirmDialog
+          title="Restart Pipeline"
+          message="This will start fresh planning. All previous work will be discarded. Are you sure you want to restart?"
+          confirmLabel="Restart Pipeline"
+          confirmColor="var(--accent)"
+          onConfirm={handleRestart}
+          onCancel={() => setShowRestartDialog(false)}
         />
       )}
     </div>

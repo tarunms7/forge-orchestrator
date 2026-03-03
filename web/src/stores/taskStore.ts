@@ -44,9 +44,17 @@ export interface TimelineEntry {
   timestamp: string;
 }
 
+export interface FollowUpResult {
+  taskId: string;
+  title: string;
+  status: "working" | "done" | "error";
+  output: string[];
+  filesChanged?: string[];
+}
+
 export interface PipelineState {
   pipelineId: string | null;
-  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete";
+  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete" | "cancelled";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
   timeline: TimelineEntry[];
@@ -54,6 +62,12 @@ export interface PipelineState {
   prLoading: boolean;
   prError: string | null;
   hydrationError: string | null;
+
+  /* Follow-up state */
+  followUpQuestions: string[];
+  followUpStatus: "idle" | "submitting" | "executing" | "done";
+  followUpResults: Record<string, FollowUpResult>;
+
   setPipelineId: (id: string) => void;
   setHydrationError: (err: string | null) => void;
   hydrateFromRest: (data: {
@@ -68,6 +82,11 @@ export interface PipelineState {
     data: Record<string, unknown>;
   }) => void;
   reset: () => void;
+
+  /* Follow-up actions */
+  setFollowUpStatus: (status: PipelineState["followUpStatus"]) => void;
+  addFollowUpQuestion: (question: string) => void;
+  resetFollowUp: () => void;
 }
 
 // Backend daemon uses different state names than the frontend UI.
@@ -89,6 +108,12 @@ function mapState(raw: string): TaskState["state"] {
   return BACKEND_STATE_MAP[raw] ?? "pending";
 }
 
+const INITIAL_FOLLOWUP = {
+  followUpQuestions: [] as string[],
+  followUpStatus: "idle" as PipelineState["followUpStatus"],
+  followUpResults: {} as Record<string, FollowUpResult>,
+};
+
 export const useTaskStore = create<PipelineState>((set) => ({
   pipelineId: null,
   phase: "idle",
@@ -99,8 +124,18 @@ export const useTaskStore = create<PipelineState>((set) => ({
   prLoading: false,
   prError: null,
   hydrationError: null,
+  ...INITIAL_FOLLOWUP,
   setPipelineId: (id) => set({ pipelineId: id }),
   setHydrationError: (err) => set({ hydrationError: err }),
+
+  /* Follow-up actions */
+  setFollowUpStatus: (status) => set({ followUpStatus: status }),
+  addFollowUpQuestion: (question) =>
+    set((state) => ({
+      followUpQuestions: [...state.followUpQuestions, question],
+    })),
+  resetFollowUp: () => set(INITIAL_FOLLOWUP),
+
   hydrateFromRest: (data) => {
     const newTasks: Record<string, TaskState> = {};
     for (const t of data.tasks) {
@@ -137,7 +172,18 @@ export const useTaskStore = create<PipelineState>((set) => ({
     });
   },
   reset: () =>
-    set({ pipelineId: null, phase: "idle", tasks: {}, plannerOutput: [], timeline: [], prUrl: null, prLoading: false, prError: null, hydrationError: null }),
+    set({
+      pipelineId: null,
+      phase: "idle",
+      tasks: {},
+      plannerOutput: [],
+      timeline: [],
+      prUrl: null,
+      prLoading: false,
+      prError: null,
+      hydrationError: null,
+      ...INITIAL_FOLLOWUP,
+    }),
   handleEvent: (event) =>
     set((state) => {
       const { event: eventName, data } = event;
@@ -189,6 +235,93 @@ export const useTaskStore = create<PipelineState>((set) => ({
             };
           }
           return { tasks: newTasks, phase: "planned", timeline: newTimeline };
+        }
+
+        case "pipeline:cancelled": {
+          // Mark all non-done tasks as error (cancelled) and set phase
+          const cancelledTasks = { ...state.tasks };
+          for (const taskId of Object.keys(cancelledTasks)) {
+            const task = cancelledTasks[taskId];
+            if (task.state !== "done") {
+              cancelledTasks[taskId] = { ...task, state: "error" };
+            }
+          }
+          sendNotification("Pipeline cancelled", "The pipeline has been cancelled");
+          return {
+            phase: "cancelled" as PipelineState["phase"],
+            tasks: cancelledTasks,
+            timeline: newTimeline,
+          };
+        }
+
+        case "pipeline:restarted": {
+          // Reset all state and set phase to planning
+          sendNotification("Pipeline restarted", "The pipeline is being re-planned");
+          return {
+            phase: "planning" as PipelineState["phase"],
+            tasks: {},
+            plannerOutput: [],
+            prUrl: null,
+            prLoading: false,
+            prError: null,
+            timeline: newTimeline,
+            ...INITIAL_FOLLOWUP,
+          };
+        }
+
+        case "followup:started": {
+          return {
+            followUpStatus: "executing" as PipelineState["followUpStatus"],
+            timeline: newTimeline,
+          };
+        }
+
+        case "followup:progress": {
+          const taskId = data.task_id as string;
+          const existing = state.followUpResults[taskId];
+          const output = existing
+            ? [...existing.output, data.line as string]
+            : [data.line as string];
+          return {
+            followUpResults: {
+              ...state.followUpResults,
+              [taskId]: {
+                taskId,
+                title: (data.title as string) || existing?.title || taskId,
+                status: "working",
+                output,
+                filesChanged: (data.files_changed as string[]) || existing?.filesChanged,
+              },
+            },
+            timeline: newTimeline,
+          };
+        }
+
+        case "followup:completed": {
+          // Mark all follow-up results as done
+          const doneResults = { ...state.followUpResults };
+          for (const key of Object.keys(doneResults)) {
+            doneResults[key] = { ...doneResults[key], status: "done" };
+          }
+          // If the event includes task-level results, merge them
+          if (data.results && Array.isArray(data.results)) {
+            for (const r of data.results as Array<Record<string, unknown>>) {
+              const tid = r.task_id as string;
+              doneResults[tid] = {
+                taskId: tid,
+                title: (r.title as string) || tid,
+                status: "done",
+                output: doneResults[tid]?.output || [],
+                filesChanged: (r.files_changed as string[]) || undefined,
+              };
+            }
+          }
+          sendNotification("Follow-up complete", "Follow-up questions have been addressed");
+          return {
+            followUpStatus: "done" as PipelineState["followUpStatus"],
+            followUpResults: doneResults,
+            timeline: newTimeline,
+          };
         }
 
         case "task:state_changed": {
