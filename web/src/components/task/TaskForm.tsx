@@ -404,15 +404,16 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           placeholder="forge/my-feature-branch"
           className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
-        {validateBranchName(value.branchName) ? (
-          <p className="mt-1 text-xs text-red-400">
-            {validateBranchName(value.branchName)}
-          </p>
-        ) : (
-          <p className="mt-1 text-xs text-text-dim">
-            Optional — a branch name will be auto-generated if left empty.
-          </p>
-        )}
+        {(() => {
+          const branchError = validateBranchName(value.branchName);
+          return branchError ? (
+            <p className="mt-1 text-xs text-red-400">{branchError}</p>
+          ) : (
+            <p className="mt-1 text-xs text-text-dim">
+              Optional — a branch name will be auto-generated if left empty.
+            </p>
+          );
+        })()}
       </div>
 
       {/* Additional context textarea */}
