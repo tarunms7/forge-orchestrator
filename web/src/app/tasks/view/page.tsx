@@ -392,7 +392,7 @@ function DescriptionModal({
           <span onClick={(e) => e.stopPropagation()}>
             <CopyButton
               text={description}
-              variant="inline"
+              variant="default"
               label="Copy"
             />
           </span>

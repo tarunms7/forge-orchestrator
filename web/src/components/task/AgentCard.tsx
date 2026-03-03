@@ -89,6 +89,7 @@ function LogModal({
             <CopyButton
               text={task.output.join("\n")}
               variant="inline"
+              label="log"
             />
           </span>
           <button className="log-modal-close" onClick={onClose}>
