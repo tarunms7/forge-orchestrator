@@ -55,9 +55,13 @@ async def gate2_llm_review(
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
         # max_turns=2 gives the model one turn to respond + buffer for
-        # rate_limit_event recovery. The reviewer doesn't need tools.
+        # rate_limit_event recovery.  The reviewer reads the diff from
+        # the prompt — it doesn't need filesystem tools.  Restricting
+        # tools prevents wasted turns and permission hangs.
         max_turns=2,
         model=model,
+        allowed_tools=["Read", "Glob", "Grep"],
+        permission_mode="acceptEdits",
     )
     if worktree_path:
         options.cwd = worktree_path
