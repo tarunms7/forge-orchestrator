@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiPost } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import ProjectSelector, { ProjectConfig } from "@/components/task/ProjectSelector";
-import TaskForm, { TaskFormData } from "@/components/task/TaskForm";
+import TaskForm, { TaskFormData, validateBranchName } from "@/components/task/TaskForm";
 import ExecutionTargetSelector, { ExecutionConfig } from "@/components/task/ExecutionTargetSelector";
 import TemplatePicker from "@/components/task/TemplatePicker";
 
@@ -102,6 +102,14 @@ function ReviewSummary({
               : "Local"}
           </span>
         </div>
+        {task.branchName.trim() && (
+          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Branch</span>
+            <span style={{ color: "var(--text-primary)", fontFamily: "monospace", fontSize: "12px" }}>
+              {task.branchName.trim()}
+            </span>
+          </div>
+        )}
         {task.images.length > 0 && (
           <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
             <span style={{ color: "var(--text-tertiary)" }}>Images</span>
@@ -147,6 +155,7 @@ function NewTaskPageInner() {
     priority: "medium",
     additionalContext: "",
     images: [],
+    branchName: "",
   });
   const [execution, setExecution] = useState<ExecutionConfig>({ target: "local" });
 
@@ -158,7 +167,9 @@ function NewTaskPageInner() {
       return true;
     }
     if (step === 2) {
-      return task.description.trim().length > 0;
+      if (!task.description.trim()) return false;
+      if (task.branchName.trim() && validateBranchName(task.branchName.trim())) return false;
+      return true;
     }
     return true;
   }
@@ -199,6 +210,10 @@ function NewTaskPageInner() {
 
       if (imageDataUris.length > 0) {
         body.images = imageDataUris;
+      }
+
+      if (task.branchName.trim()) {
+        body.branch_name = task.branchName.trim();
       }
 
       const data = await apiPost("/tasks", body, token);

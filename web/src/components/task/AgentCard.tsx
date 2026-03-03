@@ -15,6 +15,7 @@ const STATE_CLASS: Record<TaskState["state"], { label: string; cardClass: string
   done: { label: "Done", cardClass: "done", badgeClass: "state-badge done" },
   error: { label: "Error", cardClass: "error-card", badgeClass: "state-badge error" },
   retrying: { label: "Retrying", cardClass: "working", badgeClass: "state-badge retrying" },
+  cancelled: { label: "Cancelled", cardClass: "pending", badgeClass: "state-badge pending" },
 };
 
 function ReviewGateIcon({ result }: { result: string }) {

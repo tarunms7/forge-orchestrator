@@ -13,6 +13,13 @@ class CreateTaskRequest(BaseModel):
     extra_dirs: list[str] = Field(default_factory=list)
     model_strategy: str = "auto"
     images: list[str] = Field(default_factory=list, description="Base64-encoded image data URIs (e.g. data:image/png;base64,...)")
+    branch_name: str | None = None
+
+
+class RestartPipelineRequest(BaseModel):
+    """Optional request body for restarting a pipeline."""
+
+    clean_worktrees: bool = True
 
 
 class ExecuteRequest(BaseModel):

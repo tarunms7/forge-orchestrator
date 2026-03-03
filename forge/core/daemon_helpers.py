@@ -161,14 +161,68 @@ def _get_diff_vs_main(worktree_path: str) -> str:
     return result.stdout
 
 
-def _get_diff_stats(worktree_path: str) -> dict[str, int]:
+def _resolve_ref(repo_path: str, ref: str) -> str | None:
+    """Resolve a git ref (branch name) to its immutable commit SHA.
+
+    Used to snapshot the pipeline branch *before* a merge so that
+    ``_get_diff_stats`` can compute per-task stats against a fixed
+    point rather than the (now-moved) branch tip.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", ref],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> dict[str, int]:
     """Get lines added/removed for this task's commits in its worktree.
 
-    Computes the diff between the agent's commits and the base they branched
-    from, so each task shows only *its own* contribution — not the cumulative
-    pipeline branch total.
+    When ``pipeline_branch`` is provided the diff is computed as
+    ``git diff --shortstat <pipeline_branch> HEAD``, which returns only the
+    delta between the pipeline branch tip and this task's HEAD — i.e. only
+    this task's own changes, not the cumulative total of all previously merged
+    tasks.
+
+    Falls back to the commit-count heuristic (``HEAD~N``) when the pipeline
+    branch ref cannot be resolved, logging a warning so the degradation is
+    visible in the logs.
     """
-    # Find how many commits the agent added on top of the base
+    if pipeline_branch is not None:
+        # Verify that the pipeline branch ref exists in this worktree
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", pipeline_branch],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode == 0:
+            result = subprocess.run(
+                ["git", "diff", "--shortstat", pipeline_branch, "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+            )
+            added, removed = 0, 0
+            if result.returncode == 0 and result.stdout.strip():
+                m_add = re.search(r"(\d+) insertion", result.stdout)
+                m_del = re.search(r"(\d+) deletion", result.stdout)
+                if m_add:
+                    added = int(m_add.group(1))
+                if m_del:
+                    removed = int(m_del.group(1))
+            return {"linesAdded": added, "linesRemoved": removed}
+        else:
+            logger.warning(
+                "_get_diff_stats: pipeline branch %r not found in %s — "
+                "falling back to commit-count heuristic",
+                pipeline_branch,
+                worktree_path,
+            )
+
+    # Fallback: find how many commits the agent added on top of the base
     count_result = subprocess.run(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,

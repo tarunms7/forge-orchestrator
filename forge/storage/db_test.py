@@ -188,7 +188,7 @@ async def test_migrate_adds_missing_columns():
     from forge.storage.db import Database as DB
     db = DB.__new__(DB)
     db._engine = engine
-    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+    from sqlalchemy.ext.asyncio import async_sessionmaker
     db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
     await db.initialize()
 
@@ -281,3 +281,154 @@ async def test_list_events_by_type(db: Database):
     await db.log_event(pipeline_id="pipe-1", task_id="t1", event_type="review_update", payload={})
     events = await db.list_events("pipe-1", event_type="review_update")
     assert len(events) == 1
+
+
+# ── branch_name tests ──────────────────────────────────────────────
+
+
+async def test_create_pipeline_with_branch_name(db: Database):
+    """create_pipeline should store branch_name."""
+    await db.create_pipeline(
+        id="pipe-bn", description="Branch test", project_dir="/tmp",
+        model_strategy="auto", branch_name="feat/my-feature",
+    )
+    pipeline = await db.get_pipeline("pipe-bn")
+    assert pipeline is not None
+    assert pipeline.branch_name == "feat/my-feature"
+
+
+async def test_create_pipeline_branch_name_defaults_to_none(db: Database):
+    """create_pipeline without branch_name should default to None."""
+    await db.create_pipeline(
+        id="pipe-no-bn", description="No branch", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    pipeline = await db.get_pipeline("pipe-no-bn")
+    assert pipeline.branch_name is None
+
+
+# ── restart_pipeline tests ──────────────────────────────────────────
+
+
+async def test_restart_pipeline_resets_state(db: Database):
+    """restart_pipeline should reset pipeline and tasks, delete events."""
+    # Setup: create pipeline with tasks and events
+    await db.create_pipeline(
+        id="pipe-r1", description="Restart test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.set_pipeline_plan("pipe-r1", '{"tasks": []}')
+    await db.update_pipeline_status("pipe-r1", "executing")
+
+    await db.create_task(
+        id="t1", title="T1", description="D", files=["a.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-r1",
+    )
+    await db.create_task(
+        id="t2", title="T2", description="D", files=["b.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-r1",
+    )
+    await db.update_task_state("t1", "done")
+    await db.update_task_state("t2", "in_progress")
+
+    # Add some events
+    await db.log_event(pipeline_id="pipe-r1", task_id="t1", event_type="agent_output", payload={"line": "hi"})
+    await db.log_event(pipeline_id="pipe-r1", task_id="t2", event_type="agent_output", payload={"line": "bye"})
+
+    # Act
+    result = await db.restart_pipeline("pipe-r1")
+
+    # Assert pipeline reset
+    pipeline = await db.get_pipeline("pipe-r1")
+    assert pipeline.status == "pending"
+    assert pipeline.task_graph_json is None
+    assert pipeline.completed_at is None
+    assert pipeline.pr_url is None
+
+    # Assert tasks reset
+    assert result["tasks_reset"] == 2
+    tasks = await db.list_tasks_by_pipeline("pipe-r1")
+    for task in tasks:
+        assert task.state == "cancelled"
+        assert task.assigned_agent is None
+        assert task.retry_count == 0
+        assert task.worktree_path is None
+
+    # Assert events deleted
+    assert result["events_deleted"] == 2
+    events = await db.list_events("pipe-r1")
+    assert len(events) == 0
+
+
+async def test_restart_pipeline_nonexistent_returns_zeros(db: Database):
+    """restart_pipeline on a nonexistent pipeline should return zero counts."""
+    result = await db.restart_pipeline("nonexistent")
+    assert result == {"tasks_reset": 0, "events_deleted": 0}
+
+
+# ── cancel_pipeline_hard tests ──────────────────────────────────────
+
+
+async def test_cancel_pipeline_hard_marks_cancelled(db: Database):
+    """cancel_pipeline_hard should cancel pipeline and non-terminal tasks."""
+    await db.create_pipeline(
+        id="pipe-c1", description="Cancel test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.create_task(
+        id="t1", title="T1", description="D", files=["a.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-c1",
+    )
+    await db.create_task(
+        id="t2", title="T2", description="D", files=["b.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-c1",
+    )
+    await db.create_task(
+        id="t3", title="T3", description="D", files=["c.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-c1",
+    )
+    # t1 is in progress, t2 is done, t3 is todo
+    await db.update_task_state("t1", "in_progress")
+    await db.update_task_state("t2", "done")
+
+    result = await db.cancel_pipeline_hard("pipe-c1")
+
+    # Only t1 (in_progress) and t3 (todo) should be cancelled
+    assert result["tasks_cancelled"] == 2
+
+    pipeline = await db.get_pipeline("pipe-c1")
+    assert pipeline.status == "cancelled"
+    assert pipeline.cancelled_at is not None
+
+    # Verify individual task states
+    t1 = await db.get_task("t1")
+    assert t1.state == "cancelled"
+    t2 = await db.get_task("t2")
+    assert t2.state == "done"  # terminal, should not change
+    t3 = await db.get_task("t3")
+    assert t3.state == "cancelled"
+
+
+async def test_cancel_pipeline_hard_nonexistent_returns_zero(db: Database):
+    """cancel_pipeline_hard on nonexistent pipeline should return zero."""
+    result = await db.cancel_pipeline_hard("nonexistent")
+    assert result == {"tasks_cancelled": 0}
+
+
+async def test_cancel_pipeline_hard_skips_error_tasks(db: Database):
+    """cancel_pipeline_hard should not cancel tasks in 'error' state."""
+    await db.create_pipeline(
+        id="pipe-c2", description="Cancel skip error", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.create_task(
+        id="te1", title="T1", description="D", files=[],
+        depends_on=[], complexity="low", pipeline_id="pipe-c2",
+    )
+    await db.update_task_state("te1", "error")
+
+    result = await db.cancel_pipeline_hard("pipe-c2")
+    assert result["tasks_cancelled"] == 0
+
+    t = await db.get_task("te1")
+    assert t.state == "error"

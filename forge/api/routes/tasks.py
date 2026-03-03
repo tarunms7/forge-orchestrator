@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from forge.api.models.schemas import (
     CreateTaskRequest,
     PipelineResponse,
+    RestartPipelineRequest,
     TaskListItem,
     TaskStatusResponse,
 )
@@ -111,6 +112,7 @@ async def create_task(
             project_dir=body.project_path,
             model_strategy=body.model_strategy,
             user_id=user_id,
+            branch_name=body.branch_name,
         )
 
         # Start planning in background if daemon factory is available
@@ -545,7 +547,14 @@ async def cancel_pipeline(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Cancel a running pipeline. Sets all non-terminal tasks to cancelled."""
+    """Cancel a running pipeline.
+
+    - Sets pipeline status to 'cancelled' (acts as a flag for the daemon loop)
+    - Marks all non-terminal tasks as CANCELLED
+    - Handles pipelines stuck in 'planning' phase
+    - Emits pipeline:cancelled WebSocket event
+    - Returns list of cancelled task IDs
+    """
     forge_db = _get_forge_db(request)
     if forge_db is None:
         raise HTTPException(500, "Database not configured")
@@ -554,15 +563,186 @@ async def cancel_pipeline(
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(404, "Pipeline not found")
 
-    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
-    cancelled_count = 0
-    for task in tasks:
-        if task.state not in ("done", "error", "cancelled"):
-            await forge_db.update_task_state(task.id, "cancelled")
-            cancelled_count += 1
+    if pipeline.status == "cancelled":
+        return {"status": "already_cancelled", "tasks_cancelled": [], "pipeline_id": pipeline_id}
 
-    await forge_db.update_pipeline_status(pipeline_id, "cancelled")
-    return {"status": "cancelled", "tasks_cancelled": cancelled_count}
+    # Use cancel_pipeline_hard for atomicity and timestamp
+    await forge_db.cancel_pipeline_hard(pipeline_id)
+
+    # Collect the IDs of tasks that were cancelled
+    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+    cancelled_task_ids = [t.id for t in tasks if t.state == "cancelled"]
+
+    # If pipeline was in planning phase, remove from pending_graphs
+    if pipeline.status == "planning":
+        lock = getattr(request.app.state, "pending_graphs_lock", None)
+        if lock:
+            async with lock:
+                request.app.state.pending_graphs.pop(pipeline_id, None)
+        else:
+            pending = getattr(request.app.state, "pending_graphs", {})
+            pending.pop(pipeline_id, None)
+
+    # Emit WebSocket event so frontend updates immediately
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager:
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "pipeline:cancelled",
+            "pipeline_id": pipeline_id,
+            "tasks_cancelled": cancelled_task_ids,
+        })
+
+    return {
+        "status": "cancelled",
+        "pipeline_id": pipeline_id,
+        "tasks_cancelled": cancelled_task_ids,
+    }
+
+
+@router.post("/{pipeline_id}/restart")
+async def restart_pipeline(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+    body: RestartPipelineRequest | None = None,
+):
+    """Restart a pipeline from scratch.
+
+    - Resets all tasks and clears pipeline state via db.restart_pipeline()
+    - Optionally cleans up leftover worktrees
+    - Re-invokes daemon factory for fresh planning
+    - Emits pipeline:restarted WebSocket event
+    - Returns new pipeline status
+    """
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(500, "Database not configured")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(404, "Pipeline not found")
+
+    # Save original description and config before reset
+    original_description = pipeline.description
+    project_dir = pipeline.project_dir
+    model_strategy = pipeline.model_strategy
+
+    # Reset all state in DB
+    reset_result = await forge_db.restart_pipeline(pipeline_id)
+
+    # Remove from pending_graphs if present
+    lock = getattr(request.app.state, "pending_graphs_lock", None)
+    if lock:
+        async with lock:
+            request.app.state.pending_graphs.pop(pipeline_id, None)
+    else:
+        pending = getattr(request.app.state, "pending_graphs", {})
+        pending.pop(pipeline_id, None)
+
+    # Clean up leftover worktrees if requested
+    clean_worktrees = body.clean_worktrees if body else True
+    if clean_worktrees:
+        try:
+            from forge.merge.worktree import WorktreeManager
+            wt_manager = WorktreeManager(project_dir)
+            tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+            for task in tasks:
+                if task.worktree_path:
+                    try:
+                        wt_manager.remove(task.worktree_path)
+                    except Exception:
+                        logger.debug("Failed to clean worktree %s", task.worktree_path)
+        except ImportError:
+            logger.debug("WorktreeManager not available for worktree cleanup")
+        except Exception:
+            logger.debug("Worktree cleanup skipped: %s", pipeline_id)
+
+    # Set pipeline back to planning status
+    await forge_db.update_pipeline_status(pipeline_id, "planning")
+
+    # Emit WebSocket event
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager:
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "pipeline:restarted",
+            "pipeline_id": pipeline_id,
+        })
+
+    # Re-invoke daemon factory to start fresh planning
+    daemon_factory = getattr(request.app.state, "daemon_factory", None)
+    if daemon_factory:
+        daemon, emitter = daemon_factory(project_dir, model_strategy)
+        if ws_manager:
+            _bridge_events(emitter, ws_manager, pipeline_id)
+
+        async def _run_restart_plan():
+            try:
+                graph = await daemon.plan(
+                    original_description, forge_db,
+                    emit_plan_ready=False, pipeline_id=pipeline_id,
+                )
+
+                # Remap task IDs to be globally unique
+                prefix = pipeline_id[:8]
+                id_map = {t.id: f"{prefix}-{t.id}" for t in graph.tasks}
+                for t in graph.tasks:
+                    t.depends_on = [id_map.get(d, d) for d in t.depends_on]
+                    t.id = id_map[t.id]
+
+                # Re-emit plan_ready with remapped IDs
+                if ws_manager:
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "pipeline:plan_ready",
+                        "tasks": [
+                            {
+                                "id": t.id, "title": t.title,
+                                "description": t.description,
+                                "files": t.files, "depends_on": t.depends_on,
+                                "complexity": t.complexity.value,
+                            }
+                            for t in graph.tasks
+                        ],
+                    })
+
+                await forge_db.set_pipeline_plan(
+                    pipeline_id,
+                    json.dumps({
+                        "tasks": [
+                            {
+                                "id": t.id, "title": t.title,
+                                "description": t.description,
+                                "files": t.files, "depends_on": t.depends_on,
+                                "complexity": t.complexity.value,
+                            }
+                            for t in graph.tasks
+                        ]
+                    }),
+                )
+                await forge_db.update_pipeline_status(pipeline_id, "planned")
+
+                # Store graph for later execution
+                graph_lock = getattr(request.app.state, "pending_graphs_lock", None)
+                if graph_lock:
+                    async with graph_lock:
+                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                else:
+                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+            except Exception as exc:
+                logger.exception("Restart planning failed for pipeline %s", pipeline_id)
+                await forge_db.update_pipeline_status(pipeline_id, "error")
+                if ws_manager:
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "pipeline:error", "error": str(exc),
+                    })
+
+        asyncio.create_task(_run_restart_plan())
+
+    return {
+        "status": "restarting",
+        "pipeline_id": pipeline_id,
+        "tasks_reset": reset_result["tasks_reset"],
+        "events_deleted": reset_result["events_deleted"],
+    }
 
 
 @router.post("/{pipeline_id}/{task_id}/retry")
@@ -875,6 +1055,8 @@ def _bridge_events(emitter, ws_manager, pipeline_id: str) -> None:
         "pipeline:phase_changed",
         "pipeline:plan_ready",
         "pipeline:preflight_failed",
+        "pipeline:cancelled",
+        "pipeline:restarted",
         "task:state_changed",
         "task:agent_output",
         "task:files_changed",

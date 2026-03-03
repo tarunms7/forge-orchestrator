@@ -304,6 +304,75 @@ class TestCancelEndpoint:
         )
         assert resp.status_code == 404
 
+    async def test_cancel_returns_cancelled_task_ids(self, client_with_app):
+        """POST /tasks/{id}/cancel should return list of cancelled task IDs."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="cancel-ids@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Cancel test", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id="ct1", title="T1", description="D", files=[], depends_on=[],
+                complexity="low", state="in_progress", pipeline_id=pid,
+            ))
+            session.add(TaskRow(
+                id="ct2", title="T2", description="D", files=[], depends_on=[],
+                complexity="low", state="todo", pipeline_id=pid,
+            ))
+            session.add(TaskRow(
+                id="ct3", title="T3", description="D", files=[], depends_on=[],
+                complexity="low", state="done", pipeline_id=pid,
+            ))
+            await session.commit()
+
+        resp = await client.post(f"/api/tasks/{pid}/cancel", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "cancelled"
+        assert data["pipeline_id"] == pid
+        # ct1 and ct2 should be cancelled, ct3 (done) should not
+        assert set(data["tasks_cancelled"]) == {"ct1", "ct2"}
+
+    async def test_cancel_already_cancelled_returns_already(self, client_with_app):
+        """POST /tasks/{id}/cancel on already-cancelled pipeline returns already_cancelled."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="cancel-again@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Already cancelled", project_dir="/proj",
+                status="cancelled", user_id=user_id,
+            ))
+            await session.commit()
+
+        resp = await client.post(f"/api/tasks/{pid}/cancel", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "already_cancelled"
+
 
 # ── Retry task endpoint tests ────────────────────────────────────
 
@@ -541,3 +610,147 @@ class TestCreateTaskWithImages:
             headers=_auth_header(token),
         )
         assert resp.status_code == 201
+
+
+# ── Restart endpoint tests ────────────────────────────────────────
+
+
+class TestRestartEndpoint:
+    """Tests for POST /tasks/{pipeline_id}/restart."""
+
+    async def test_restart_requires_auth(self, client):
+        """POST /tasks/{id}/restart without auth should return 401."""
+        resp = await client.post("/api/tasks/some-id/restart")
+        assert resp.status_code == 401
+
+    async def test_restart_nonexistent_returns_404(self, client):
+        """POST /tasks/{id}/restart for unknown pipeline should return 404."""
+        token = await _register_and_get_token(client, email="restart-404@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/restart",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+    async def test_restart_resets_pipeline(self, client_with_app):
+        """POST /tasks/{id}/restart should reset pipeline to pending and clear state."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="restart-ok@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Restart me", project_dir="/proj",
+                status="error", user_id=user_id,
+                task_graph_json='{"tasks": []}',
+            ))
+            session.add(TaskRow(
+                id="rt1", title="T1", description="D", files=[], depends_on=[],
+                complexity="low", state="error", pipeline_id=pid,
+            ))
+            await session.commit()
+
+        # Log an event so we can verify it gets deleted
+        await db.log_event(pipeline_id=pid, task_id="rt1", event_type="agent_output", payload={"line": "hi"})
+
+        resp = await client.post(f"/api/tasks/{pid}/restart", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "restarting"
+        assert data["pipeline_id"] == pid
+        assert data["tasks_reset"] == 1
+        assert data["events_deleted"] == 1
+
+        # Pipeline should be in planning state (restart sets to pending, then planning)
+        pipeline = await db.get_pipeline(pid)
+        assert pipeline.status == "planning"
+        assert pipeline.task_graph_json is None
+
+    async def test_restart_idor_protection(self, client_with_app):
+        """POST /tasks/{id}/restart should 404 for another user's pipeline."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+
+        # Create user A and their pipeline
+        token_a = await _register_and_get_token(client, email="restart-a@example.com")
+        payload_a = decode_token(token_a, secret="test-secret-for-stats")
+        user_id_a = payload_a["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="User A pipeline", project_dir="/proj",
+                status="error", user_id=user_id_a,
+            ))
+            await session.commit()
+
+        # User B tries to restart user A's pipeline
+        token_b = await _register_and_get_token(client, email="restart-b@example.com")
+        resp = await client.post(
+            f"/api/tasks/{pid}/restart",
+            headers=_auth_header(token_b),
+        )
+        assert resp.status_code == 404
+
+
+# ── Branch name passthrough tests ────────────────────────────────────
+
+
+class TestBranchNamePassthrough:
+    """Tests for branch_name support in task creation."""
+
+    async def test_create_task_with_branch_name(self, client_with_app):
+        """POST /tasks with branch_name should store it in the pipeline."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="branch@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Feature with branch",
+                "project_path": "/proj",
+                "branch_name": "feat/my-feature",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert pipeline.branch_name == "feat/my-feature"
+
+    async def test_create_task_without_branch_name(self, client_with_app):
+        """POST /tasks without branch_name should default to None."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="no-branch@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Feature without branch",
+                "project_path": "/proj",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert pipeline.branch_name is None

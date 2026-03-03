@@ -48,6 +48,17 @@ async function fetchWithAuth(
   return res;
 }
 
+/** Extract a human-readable error message from a failed response body.
+ *  FastAPI 422 returns `detail` as an array of validation errors — stringify them. */
+function extractErrorMessage(data: Record<string, unknown>, fallback: string): string {
+  if (Array.isArray(data.detail)) {
+    return data.detail
+      .map((d: Record<string, unknown>) => (d.msg as string) || JSON.stringify(d))
+      .join("; ");
+  }
+  return (data.detail as string) || fallback;
+}
+
 export async function apiPost(path: string, body: Record<string, unknown>, token?: string) {
   const res = await fetchWithAuth(path, {
     method: "POST",
@@ -56,7 +67,7 @@ export async function apiPost(path: string, body: Record<string, unknown>, token
   }, token);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || res.statusText);
+    throw new Error(extractErrorMessage(data, res.statusText));
   }
   return res.json();
 }
@@ -65,7 +76,7 @@ export async function apiGet(path: string, token: string) {
   const res = await fetchWithAuth(path, { method: "GET" }, token);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || res.statusText);
+    throw new Error(extractErrorMessage(data, res.statusText));
   }
   return res.json();
 }
@@ -78,7 +89,7 @@ export async function apiPut(path: string, body: Record<string, unknown>, token:
   }, token);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || res.statusText);
+    throw new Error(extractErrorMessage(data, res.statusText));
   }
   return res.json();
 }
@@ -87,7 +98,25 @@ export async function apiDelete(path: string, token: string) {
   const res = await fetchWithAuth(path, { method: "DELETE" }, token);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || res.statusText);
+    throw new Error(extractErrorMessage(data, res.statusText));
   }
   return res.json();
+}
+
+/* ── Pipeline Action Helpers ─────────────────────────────────────── */
+
+export async function submitFollowUp(
+  pipelineId: string,
+  questions: string,
+  token: string,
+) {
+  return apiPost(`/tasks/${pipelineId}/followup`, { questions: [{ text: questions }] }, token);
+}
+
+export async function cancelPipeline(pipelineId: string, token: string) {
+  return apiPost(`/tasks/${pipelineId}/cancel`, {}, token);
+}
+
+export async function restartPipeline(pipelineId: string, token: string) {
+  return apiPost(`/tasks/${pipelineId}/restart`, {}, token);
 }

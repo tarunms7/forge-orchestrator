@@ -18,6 +18,7 @@ const PHASE_ORDER: Record<PipelineState["phase"], number> = {
   executing: 2,
   reviewing: 3,
   complete: 4,
+  cancelled: -2,
 };
 
 function CheckIcon() {
