@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { TaskState } from "@/stores/taskStore";
 import { useTaskStore } from "@/stores/taskStore";
+import { CopyButton } from "@/components/CopyButton";
 import { FormattedLine } from "./FormattedLine";
 
 const STATE_CLASS: Record<string, { label: string; badgeClass: string }> = {
@@ -120,12 +121,18 @@ export default function TaskDetailPanel({
           {/* Output Tab */}
           <div className={`tab-content ${activeTab === 'output' ? 'active' : ''}`}>
             {task.description && (
-              <div style={{ marginBottom: "16px", fontSize: "13px", color: "var(--text-secondary)", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+              <div style={{ marginBottom: "16px", fontSize: "13px", color: "var(--text-secondary)", whiteSpace: "pre-wrap", lineHeight: 1.5, position: "relative" }}>
+                <div style={{ position: "absolute", top: 0, right: 0 }}>
+                  <CopyButton text={task.description} label="description" />
+                </div>
                 {task.description}
               </div>
             )}
             {task.output.length > 0 ? (
               <div className="detail-terminal">
+                <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px 0" }}>
+                  <CopyButton text={task.output.join('\n')} label="Copy output" variant="with-label" />
+                </div>
                 {task.output.map((line, i) => (
                   <div key={i} className="output-line">
                     <FormattedLine text={line} />
@@ -156,6 +163,9 @@ export default function TaskDetailPanel({
                         )}
                       </div>
                       <h4>{gate.gate}</h4>
+                      {gate.details && (
+                        <CopyButton text={gate.details} label="feedback" />
+                      )}
                     </div>
                     {gate.details && (
                       <div className="review-details">
@@ -186,6 +196,9 @@ export default function TaskDetailPanel({
                           <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                         </svg>
                         <span style={{ color: "var(--red)" }}>Merge failed: {mergeResult.error}</span>
+                        {mergeResult.error && (
+                          <CopyButton text={mergeResult.error} label="error" />
+                        )}
                       </>
                     )}
                   </div>
@@ -200,7 +213,10 @@ export default function TaskDetailPanel({
           <div className={`tab-content ${activeTab === 'files' ? 'active' : ''}`}>
             {task.files.length > 0 && (
               <div className="files-section">
-                <div className="files-heading">Files Changed ({task.files.length})</div>
+                <div className="files-heading">
+                  Files Changed ({task.files.length})
+                  <CopyButton text={task.files.join('\n')} label="file paths" />
+                </div>
                 {task.files.map((f) => (
                   <div key={f} className="file-row">
                     <span className="file-path">{f}</span>
@@ -210,7 +226,10 @@ export default function TaskDetailPanel({
             )}
             {task.targetFiles && task.targetFiles.length > 0 && (
               <div className="files-section">
-                <div className="files-heading">Target Files ({task.targetFiles.length})</div>
+                <div className="files-heading">
+                  Target Files ({task.targetFiles.length})
+                  <CopyButton text={task.targetFiles.join('\n')} label="target file paths" />
+                </div>
                 {task.targetFiles.map((f) => (
                   <div key={f} className="file-row">
                     <span className="file-path">{f}</span>
