@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTaskStore } from "@/stores/taskStore";
 import type { FollowUpResult } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
+import { CopyButton } from "@/components/CopyButton";
 
 /* ── Follow-Up Result Card ─────────────────────────────────────────── */
 
@@ -67,23 +68,35 @@ function FollowUpResultCard({ result }: { result: FollowUpResult }) {
       </div>
 
       {expanded && result.output.length > 0 && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: "8px 12px",
-            borderRadius: "var(--radius-sm)",
-            background: "var(--bg-surface-1)",
-            maxHeight: 200,
-            overflowY: "auto",
-            fontFamily: "var(--font-mono, monospace)",
-            fontSize: 11,
-            lineHeight: 1.6,
-            color: "var(--text-secondary)",
-          }}
-        >
-          {result.output.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
+        <div style={{ marginTop: 8, position: "relative" }}>
+          <div
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 8,
+              zIndex: 1,
+            }}
+          >
+            <CopyButton text={result.output.join("\n")} label="output" />
+          </div>
+          <div
+            style={{
+              padding: "8px 12px",
+              paddingTop: 32,
+              borderRadius: "var(--radius-sm)",
+              background: "var(--bg-surface-1)",
+              maxHeight: 200,
+              overflowY: "auto",
+              fontFamily: "var(--font-mono, monospace)",
+              fontSize: 11,
+              lineHeight: 1.6,
+              color: "var(--text-secondary)",
+            }}
+          >
+            {result.output.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
         </div>
       )}
     </div>

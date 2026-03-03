@@ -6,6 +6,22 @@ import type { TaskState } from "@/stores/taskStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
 import { apiPost } from "@/lib/api";
+import { CopyButton } from "@/components/CopyButton";
+
+function buildResultsSummary(tasks: TaskState[]): string {
+  const header = `Task Results\n${"=".repeat(60)}`;
+  const rows = tasks.map((task, i) => {
+    const statusSymbol =
+      task.state === "done" ? "✓" : task.state === "error" ? "✗" : "~";
+    const added = task.mergeResult?.linesAdded ?? 0;
+    const removed = task.mergeResult?.linesRemoved ?? 0;
+    const diff = task.mergeResult?.success
+      ? `  +${added} / -${removed} lines`
+      : "";
+    return `${statusSymbol} #${i + 1}  ${task.title} [${task.state}]${diff}`;
+  });
+  return [header, ...rows].join("\n");
+}
 
 function StatusDot({ state }: { state: TaskState["state"] }) {
   const colors: Record<TaskState["state"], string> = {
@@ -136,6 +152,7 @@ export default function CompletionSummary({
           ) : displayError ? (
             <>
               <span style={{ fontSize: "13px", color: "var(--red)" }}>{displayError}</span>
+              <CopyButton text={displayError} label="error message" />
               <button type="button" onClick={handleRetryPR} className="btn btn-ghost">
                 Retry PR
               </button>
@@ -184,7 +201,10 @@ export default function CompletionSummary({
 
       {/* Task Results */}
       <div className="results-section">
-        <h3 className="results-title">Task Results</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <h3 className="results-title" style={{ margin: 0 }}>Task Results</h3>
+          <CopyButton text={buildResultsSummary(taskList)} label="results summary" />
+        </div>
         <div className="results-list">
           {taskList.map((task, i) => (
             <div
