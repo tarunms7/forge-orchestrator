@@ -161,6 +161,22 @@ def _get_diff_vs_main(worktree_path: str) -> str:
     return result.stdout
 
 
+def _resolve_ref(repo_path: str, ref: str) -> str | None:
+    """Resolve a git ref (branch name) to its immutable commit SHA.
+
+    Used to snapshot the pipeline branch *before* a merge so that
+    ``_get_diff_stats`` can compute per-task stats against a fixed
+    point rather than the (now-moved) branch tip.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", ref],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> dict[str, int]:
     """Get lines added/removed for this task's commits in its worktree.
 

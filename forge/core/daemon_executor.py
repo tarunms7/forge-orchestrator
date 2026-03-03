@@ -13,6 +13,7 @@ from forge.core.daemon_helpers import (
     _extract_text,
     _get_diff_stats,
     _get_diff_vs_main,
+    _resolve_ref,
 )
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
@@ -79,13 +80,16 @@ class ExecutorMixin:
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
+        # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
+        pre_merge_ref = _resolve_ref(worktree_path, merge_worker._main)
         merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=merge_worker._main)
+            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
         else:
             await self._emit_merge_failure(db, task_id, merge_result.error, pid)
             await self._attempt_merge_with_resolution(
                 db, merge_worker, worktree_mgr, merge_result, task_id, worktree_path, branch, agent_model, pid,
+                pre_merge_ref=pre_merge_ref,
             )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
@@ -151,19 +155,22 @@ class ExecutorMixin:
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
+        # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
+        pre_merge_ref = _resolve_ref(worktree_path, merge_worker._main)
         merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=merge_worker._main)
+            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
             return
         console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
         await self._emit_merge_failure(db, task_id, merge_result.error, pid)
         retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=merge_worker._main)
+            await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref)
             return
         console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
         await self._attempt_tier2_resolution(
             db, merge_worker, worktree_mgr, retry_result, task_id, worktree_path, branch, agent_model, pid,
+            pre_merge_ref=pre_merge_ref,
         )
 
     # -- Tier 2 conflict resolution -------------------------------------
@@ -171,6 +178,7 @@ class ExecutorMixin:
     async def _attempt_tier2_resolution(
         self, db, merge_worker, worktree_mgr, retry_result,
         task_id: str, worktree_path: str, branch: str, agent_model: str, pid: str,
+        pre_merge_ref: str | None = None,
     ) -> None:
         """Tier 2: agent-based conflict resolution."""
         if not retry_result.conflicting_files:
@@ -178,13 +186,13 @@ class ExecutorMixin:
             return
         prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
-            await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid)
+            await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid, pre_merge_ref=pre_merge_ref)
             return
         resolved = await self._resolve_conflicts(task_id, worktree_path, prep.conflicting_files, agent_model, db=db)
         if resolved:
             final = merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
-                await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution", pipeline_branch=merge_worker._main)
+                await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution", pipeline_branch=pre_merge_ref)
                 return
             merge_worker._abort_rebase(worktree_path)
         else:
@@ -194,6 +202,7 @@ class ExecutorMixin:
     async def _attempt_merge_with_resolution(
         self, db, merge_worker, worktree_mgr, merge_result,
         task_id: str, worktree_path: str, branch: str, agent_model: str, pid: str,
+        pre_merge_ref: str | None = None,
     ) -> None:
         """Tier 2 for the merge-only fast path."""
         if not merge_result.conflicting_files:
@@ -201,6 +210,7 @@ class ExecutorMixin:
             return
         await self._attempt_tier2_resolution(
             db, merge_worker, worktree_mgr, merge_result, task_id, worktree_path, branch, agent_model, pid,
+            pre_merge_ref=pre_merge_ref,
         )
 
     # -- cleanup --------------------------------------------------------
@@ -251,11 +261,14 @@ class ExecutorMixin:
         _batch.clear()
         return result
 
-    async def _try_race_resolved_merge(self, db, merge_worker, worktree_mgr, task_id: str, worktree_path: str, branch: str, pid: str) -> None:
+    async def _try_race_resolved_merge(
+        self, db, merge_worker, worktree_mgr, task_id: str, worktree_path: str,
+        branch: str, pid: str, pre_merge_ref: str | None = None,
+    ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
         ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race", pipeline_branch=merge_worker._main)
+            await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race", pipeline_branch=pre_merge_ref)
         else:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
 

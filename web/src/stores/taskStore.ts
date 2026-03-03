@@ -354,7 +354,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
               const tid = r.task_id as string;
               doneResults[tid] = {
                 taskId: tid,
-                title: (r.title as string) || tid,
+                title: (r.task_title as string) || (r.title as string) || tid,
                 status: "done",
                 output: doneResults[tid]?.output || [],
                 filesChanged: (r.files_changed as string[]) || undefined,
