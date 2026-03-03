@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import uuid
 
@@ -44,6 +45,33 @@ from forge.core.daemon_helpers import (  # noqa: F401
 
 logger = logging.getLogger("forge")
 console = Console()
+
+
+def _sanitize_branch_name(description: str) -> str:
+    """Generate a clean git branch name from a task description.
+
+    Sanitizes: lowercase, replace spaces/underscores with hyphens, remove
+    special chars, truncate to ~50 chars, prefix with ``forge/``.
+
+    Example: "Add JWT auth and user registration" → "forge/add-jwt-auth-and-user-registration"
+    """
+    name = description.lower().strip()
+    # Replace whitespace and underscores with hyphens
+    name = re.sub(r"[\s_]+", "-", name)
+    # Remove anything that isn't alphanumeric or hyphen
+    name = re.sub(r"[^a-z0-9\-]", "", name)
+    # Collapse multiple consecutive hyphens
+    name = re.sub(r"-{2,}", "-", name)
+    # Strip leading/trailing hyphens
+    name = name.strip("-")
+    # Truncate to ~50 chars, preferring to break at a hyphen boundary
+    if len(name) > 50:
+        truncated = name[:50]
+        last_hyphen = truncated.rfind("-")
+        name = truncated[:last_hyphen] if last_hyphen > 10 else truncated
+    if not name:
+        name = "pipeline-task"
+    return f"forge/{name}"
 
 
 class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
@@ -203,7 +231,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
         base_branch = _get_current_branch(self._project_dir)
-        pipeline_branch = f"forge/pipeline-{pid[:8]}"
+
+        # Determine pipeline branch name: use user-supplied name, or auto-generate from description
+        pipeline_record = await db.get_pipeline(pid)
+        custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
+        if custom_branch and custom_branch.strip():
+            pipeline_branch = custom_branch.strip()
+        else:
+            description = pipeline_record.description if pipeline_record else ""
+            pipeline_branch = _sanitize_branch_name(description) if description else f"forge/pipeline-{pid[:8]}"
+        # Persist the final computed branch name so the PR creation endpoint can use it
+        await db.set_pipeline_branch_name(pid, pipeline_branch)
+
         # Isolated pipeline branch — code reaches main only through a PR
         subprocess.run(
             ["git", "branch", "-f", pipeline_branch, base_branch],

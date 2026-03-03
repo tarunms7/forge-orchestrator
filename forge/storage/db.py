@@ -435,6 +435,17 @@ class Database:
                 row.base_branch = base_branch
                 await session.commit()
 
+    async def set_pipeline_branch_name(self, pipeline_id: str, branch_name: str) -> None:
+        """Store the computed pipeline branch name (custom or auto-generated)."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.branch_name = branch_name
+                await session.commit()
+
     async def list_pipelines(self, user_id: str | None = None) -> list[PipelineRow]:
         async with self._session_factory() as session:
             query = select(PipelineRow)

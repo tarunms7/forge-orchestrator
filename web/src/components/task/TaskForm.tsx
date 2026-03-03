@@ -14,6 +14,7 @@ export interface TaskFormData {
   priority: Priority;
   additionalContext: string;
   images: ImageAttachment[];
+  branchName: string;
 }
 
 interface TaskFormProps {
@@ -31,6 +32,22 @@ const MAX_DESCRIPTION_LENGTH = 4000;
 const MAX_CONTEXT_LENGTH = 2000;
 const MAX_IMAGES = 5;
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+
+/**
+ * Validate a git branch name.
+ * Returns an error message if invalid, or null if valid/empty.
+ */
+export function validateBranchName(name: string): string | null {
+  if (!name) return null; // empty is fine — auto-generated
+  if (/\s/.test(name)) return "Branch name cannot contain spaces.";
+  if (/\.\./.test(name)) return "Branch name cannot contain '..'.";
+  if (/[~^:?*\[\]\\]/.test(name)) return "Branch name contains invalid characters (~^:?*[]\\).";
+  if (name.startsWith(".") || name.startsWith("-")) return "Branch name cannot start with '.' or '-'.";
+  if (name.endsWith("/") || name.endsWith(".")) return "Branch name cannot end with '/' or '.'.";
+  if (name.endsWith(".lock")) return "Branch name cannot end with '.lock'.";
+  if (name.includes("@{")) return "Branch name cannot contain '@{'.";
+  return null;
+}
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -372,6 +389,30 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Branch name input */}
+      <div>
+        <label htmlFor="branch-name" className="block text-sm font-medium text-text-secondary">
+          Branch name <span className="text-text-dim">(optional)</span>
+        </label>
+        <input
+          id="branch-name"
+          type="text"
+          value={value.branchName}
+          onChange={(e) => onChange({ ...value, branchName: e.target.value })}
+          placeholder="forge/my-feature-branch"
+          className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        {validateBranchName(value.branchName) ? (
+          <p className="mt-1 text-xs text-red-400">
+            {validateBranchName(value.branchName)}
+          </p>
+        ) : (
+          <p className="mt-1 text-xs text-text-dim">
+            Optional — a branch name will be auto-generated if left empty.
+          </p>
+        )}
       </div>
 
       {/* Additional context textarea */}
