@@ -70,7 +70,7 @@ function FollowUpResultCard({ result }: { result: FollowUpResult }) {
       {expanded && result.output.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 4 }}>
-            <CopyButton text={result.output.join("\n")} variant="with-label" label="Copy" />
+            <CopyButton text={result.output.join("\n")} label="Copy" />
           </div>
           <div
             style={{

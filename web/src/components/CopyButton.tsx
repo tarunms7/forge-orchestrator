@@ -5,7 +5,7 @@ import { useState } from "react";
 interface CopyButtonProps {
   text: string;
   label?: string;
-  variant?: "default" | "inline" | "with-label";
+  variant?: "default" | "inline";
   className?: string;
 }
 
@@ -27,8 +27,7 @@ export function CopyButton({
     }
   }
 
-  const btnClass = variant === "inline" ? "copy-btn-inline" : "copy-btn"
-    + (variant === "with-label" ? " copy-btn-with-label" : "");
+  const btnClass = variant === "inline" ? "copy-btn-inline" : "copy-btn";
 
   return (
     <button

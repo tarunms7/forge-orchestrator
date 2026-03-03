@@ -124,7 +124,7 @@ export default function TaskDetailPanel({
               <div style={{ marginBottom: "16px" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "8px" }}>
                   <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Description</span>
-                  <CopyButton text={task.description} variant="with-label" label="Copy" />
+                  <CopyButton text={task.description} label="Copy" />
                 </div>
                 <div style={{ fontSize: "13px", color: "var(--text-secondary)", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
                   {task.description}
@@ -134,7 +134,7 @@ export default function TaskDetailPanel({
             {task.output.length > 0 ? (
               <div className="detail-terminal">
                 <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px 0" }}>
-                  <CopyButton text={task.output.join('\n')} variant="with-label" label="Copy" />
+                  <CopyButton text={task.output.join('\n')} label="Copy" />
                 </div>
                 {task.output.map((line, i) => (
                   <div key={i} className="output-line">
@@ -167,7 +167,7 @@ export default function TaskDetailPanel({
                       </div>
                       <h4>{gate.gate}</h4>
                       {gate.details && (
-                        <CopyButton text={gate.details} variant="with-label" label="Copy" />
+                        <CopyButton text={gate.details} label="Copy" />
                       )}
                     </div>
                     {gate.details && (
@@ -200,7 +200,7 @@ export default function TaskDetailPanel({
                         </svg>
                         <span style={{ color: "var(--red)" }}>Merge failed: {mergeResult.error}</span>
                         {mergeResult.error && (
-                          <CopyButton text={mergeResult.error} variant="with-label" label="Copy" />
+                          <CopyButton text={mergeResult.error} label="Copy" />
                         )}
                       </>
                     )}
@@ -218,7 +218,7 @@ export default function TaskDetailPanel({
               <div className="files-section">
                 <div className="files-heading">
                   Files Changed ({task.files.length})
-                  <CopyButton text={task.files.join('\n')} variant="with-label" label="Copy" />
+                  <CopyButton text={task.files.join('\n')} label="Copy" />
                 </div>
                 {task.files.map((f) => (
                   <div key={f} className="file-row">
@@ -231,7 +231,7 @@ export default function TaskDetailPanel({
               <div className="files-section">
                 <div className="files-heading">
                   Target Files ({task.targetFiles.length})
-                  <CopyButton text={task.targetFiles.join('\n')} variant="with-label" label="Copy" />
+                  <CopyButton text={task.targetFiles.join('\n')} label="Copy" />
                 </div>
                 {task.targetFiles.map((f) => (
                   <div key={f} className="file-row">
