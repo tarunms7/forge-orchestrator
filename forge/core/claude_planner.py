@@ -60,6 +60,13 @@ class ClaudePlannerLLM(PlannerLLM):
             # the codebase, then 1 turn to output the TaskGraph.
             max_turns=10,
             model=self._model,
+            # Read-only tools: planner explores the codebase but must NOT
+            # write files — its only output is the TaskGraph JSON in the
+            # result text.  Without these settings the SDK defaults give
+            # all tools + interactive permission mode, causing Write
+            # attempts to hang (no terminal) and waste turns.
+            allowed_tools=["Read", "Glob", "Grep", "Bash"],
+            permission_mode="acceptEdits",
         )
         if self._cwd:
             options.cwd = self._cwd
