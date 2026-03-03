@@ -88,7 +88,6 @@ function LogModal({
           <span onClick={(e) => e.stopPropagation()}>
             <CopyButton
               text={task.output.join("\n")}
-              label="Copy"
               variant="inline"
             />
           </span>
