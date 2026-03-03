@@ -68,21 +68,13 @@ function FollowUpResultCard({ result }: { result: FollowUpResult }) {
       </div>
 
       {expanded && result.output.length > 0 && (
-        <div style={{ marginTop: 8, position: "relative" }}>
-          <div
-            style={{
-              position: "absolute",
-              top: 6,
-              right: 8,
-              zIndex: 1,
-            }}
-          >
-            <CopyButton text={result.output.join("\n")} label="output" />
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 4 }}>
+            <CopyButton text={result.output.join("\n")} label="Copy" />
           </div>
           <div
             style={{
               padding: "8px 12px",
-              paddingTop: 32,
               borderRadius: "var(--radius-sm)",
               background: "var(--bg-surface-1)",
               maxHeight: 200,

@@ -46,8 +46,7 @@ function PlannerLogModal({ lines, onClose }: { lines: string[]; onClose: () => v
           <span onClick={(e) => e.stopPropagation()}>
             <CopyButton
               text={lines.join("\n")}
-              label="log"
-              variant="icon-only"
+              label="Copy"
             />
           </span>
           <button className="log-modal-close" onClick={onClose}>

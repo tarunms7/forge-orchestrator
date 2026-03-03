@@ -2372,23 +2372,28 @@ body {
    COPY BUTTON
    ======================================== */
 
-/* Base ghost button — used with variant="with-label" */
-.copy-btn {
+/* Shared base for all copy button variants */
+.copy-btn,
+.copy-btn-inline {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-tertiary);
   font-size: 12px;
   font-family: inherit;
   line-height: 1;
   cursor: pointer;
+  flex-shrink: 0;
   transition: background var(--transition), color var(--transition),
     border-color var(--transition);
-  flex-shrink: 0;
+}
+
+/* Default variant — bordered ghost button for section headers and content areas */
+.copy-btn {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
 }
 .copy-btn:hover {
   background: var(--bg-hover);
@@ -2401,60 +2406,43 @@ body {
   border-color: rgba(34, 197, 94, 0.25);
 }
 
-/* Icon sizing inside .copy-btn */
-.copy-btn .copy-icon,
-.copy-btn .copied-icon {
-  width: 13px;
-  height: 13px;
-  flex-shrink: 0;
-}
-.copy-btn .copy-icon {
-  color: var(--text-tertiary);
-}
-.copy-btn .copied-icon {
-  color: var(--green);
-}
-.copy-btn:hover .copy-icon {
-  color: var(--text-secondary);
-}
-
-/* Label text */
-.copy-btn-label {
-  user-select: none;
-}
-
-/* Inline variant — icon only, no border, for tight spaces like modal headers */
+/* Inline variant — borderless for modal headers and tight spaces */
 .copy-btn-inline {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
+  padding: 3px 6px;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-dim);
-  cursor: pointer;
-  transition: background var(--transition), color var(--transition);
-  flex-shrink: 0;
-  line-height: 1;
 }
 .copy-btn-inline:hover {
   background: var(--bg-hover);
   color: var(--text-secondary);
 }
 .copy-btn-inline.copied {
+  background: transparent;
   color: var(--green);
 }
 
-/* Icon sizing inside .copy-btn-inline */
-.copy-btn-inline .copy-icon,
-.copy-btn-inline .copied-icon {
-  width: 14px;
-  height: 14px;
+/* Icon sizing — unified across both variants */
+.copy-btn .copy-btn-icon,
+.copy-btn-inline .copy-btn-icon {
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
 }
-.copy-btn-inline .copied-icon {
+.copy-btn:hover .copy-btn-icon {
+  color: var(--text-secondary);
+}
+.copy-btn.copied .copy-btn-icon,
+.copy-btn-inline.copied .copy-btn-icon {
   color: var(--green);
+}
+
+/* Label text — always shown next to the icon */
+.copy-btn-label {
+  user-select: none;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 /* ========================================
