@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import subprocess
 import uuid
 from datetime import datetime
@@ -71,16 +73,36 @@ async def create_task(
     pipeline_id = str(uuid.uuid4())
     forge_db = _get_forge_db(request)
 
-    # Prepare description: append image note if images are attached.
+    # Save uploaded images to disk so planner & agents can read them.
     description = body.description
+    image_paths: list[str] = []
     if body.images:
-        description += f"\n\n[{len(body.images)} image(s) attached]"
+        project_dir = body.project_path or os.getcwd()
+        images_dir = os.path.join(project_dir, ".forge", "images", pipeline_id)
+        os.makedirs(images_dir, exist_ok=True)
+        for idx, data_uri in enumerate(body.images):
+            # data_uri format: "data:image/png;base64,iVBOR..."
+            try:
+                header, b64data = data_uri.split(",", 1)
+                ext = "png"
+                if "image/jpeg" in header or "image/jpg" in header:
+                    ext = "jpg"
+                elif "image/gif" in header:
+                    ext = "gif"
+                elif "image/webp" in header:
+                    ext = "webp"
+                file_path = os.path.join(images_dir, f"image_{idx + 1}.{ext}")
+                with open(file_path, "wb") as f:
+                    f.write(base64.b64decode(b64data))
+                image_paths.append(file_path)
+            except Exception:
+                logger.warning("Failed to decode image %d for pipeline %s", idx, pipeline_id)
 
-    # Store images in app.state for the daemon to access later.
-    if body.images:
-        if not hasattr(request.app.state, "pipeline_images"):
-            request.app.state.pipeline_images = {}
-        request.app.state.pipeline_images[pipeline_id] = body.images
+        if image_paths:
+            description += "\n\n## Attached Images\n"
+            description += "The user has attached the following image files. Use the Read tool to view them:\n"
+            for path in image_paths:
+                description += f"- {path}\n"
 
     if forge_db is not None:
         await forge_db.create_pipeline(
@@ -653,7 +675,7 @@ async def get_task_status(
 
             if ev.task_id:
                 te = task_events.setdefault(ev.task_id, {
-                    "output": [], "reviewGates": [], "mergeResult": None, "cost_usd": 0,
+                    "output": [], "reviewGates": [], "mergeResult": None, "cost_usd": 0, "files_changed": [],
                 })
                 if ev.event_type == "task:agent_output":
                     te["output"].append(ev.payload.get("line", ""))
@@ -667,6 +689,8 @@ async def get_task_status(
                     te["mergeResult"] = ev.payload
                 elif ev.event_type == "task:cost_update":
                     te["cost_usd"] = (te["cost_usd"] or 0) + (ev.payload.get("cost_usd", 0))
+                elif ev.event_type == "task:files_changed":
+                    te["files_changed"] = ev.payload.get("files", [])
                 elif ev.event_type == "task:state_changed":
                     te["state"] = ev.payload.get("state")
                     # Clear review gates when a retry starts so REST hydration

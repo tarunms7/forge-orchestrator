@@ -26,7 +26,8 @@ Rules:
 - Follow existing code style and patterns
 - Write tests for any new functionality
 - Commit your changes with a clear commit message when done
-- If you encounter an error, fix it rather than giving up"""
+- If you encounter an error, fix it rather than giving up
+- If image file paths are mentioned in the task description, use the Read tool to view them (images are readable)"""
 
 
 @dataclass
