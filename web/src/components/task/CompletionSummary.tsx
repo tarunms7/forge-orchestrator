@@ -152,7 +152,7 @@ export default function CompletionSummary({
           ) : displayError ? (
             <>
               <span style={{ fontSize: "13px", color: "var(--red)" }}>{displayError}</span>
-              <CopyButton text={displayError} label="error message" />
+              <CopyButton text={displayError} variant="with-label" label="Copy" />
               <button type="button" onClick={handleRetryPR} className="btn btn-ghost">
                 Retry PR
               </button>
@@ -203,7 +203,7 @@ export default function CompletionSummary({
       <div className="results-section">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <h3 className="results-title" style={{ margin: 0 }}>Task Results</h3>
-          <CopyButton text={buildResultsSummary(taskList)} label="results summary" />
+          <CopyButton text={buildResultsSummary(taskList)} variant="with-label" label="Copy" />
         </div>
         <div className="results-list">
           {taskList.map((task, i) => (

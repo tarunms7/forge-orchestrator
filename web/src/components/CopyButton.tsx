@@ -5,7 +5,7 @@ import { useState } from "react";
 interface CopyButtonProps {
   text: string;
   label?: string;
-  variant?: "default" | "inline";
+  variant?: "default" | "inline" | "with-label";
   className?: string;
 }
 
@@ -27,15 +27,16 @@ export function CopyButton({
     }
   }
 
-  const btnClass = variant === "inline" ? "copy-btn-inline" : "copy-btn";
+  const btnClass = variant === "inline" ? "copy-btn-inline" : "copy-btn"
+    + (variant === "with-label" ? " copy-btn-with-label" : "");
 
   return (
     <button
       type="button"
       onClick={handleCopy}
       className={`${btnClass} ${copied ? "copied" : ""} ${className}`.trim()}
-      title={copied ? "Copied!" : label ? `Copy ${label}` : "Copy to clipboard"}
-      aria-label={copied ? "Copied!" : label ? `Copy ${label}` : "Copy to clipboard"}
+      title={copied ? "Copied!" : label && label !== "Copy" ? `Copy ${label}` : "Copy to clipboard"}
+      aria-label={copied ? "Copied!" : label && label !== "Copy" ? `Copy ${label}` : "Copy to clipboard"}
     >
       {copied ? (
         /* Checkmark icon */
