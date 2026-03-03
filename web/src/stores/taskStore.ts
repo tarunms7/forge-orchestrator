@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  submitFollowUp as apiSubmitFollowUp,
+  cancelPipeline as apiCancelPipeline,
+  restartPipeline as apiRestartPipeline,
+  apiGet,
+} from "@/lib/api";
 
 /** Maximum timeline entries to keep in memory (prevents unbounded growth). */
 const MAX_TIMELINE_ENTRIES = 500;
@@ -14,7 +20,7 @@ function sendNotification(title: string, body: string) {
 export interface TaskState {
   id: string;
   title: string;
-  state: "pending" | "working" | "in_review" | "done" | "error" | "retrying";
+  state: "pending" | "working" | "in_review" | "done" | "error" | "retrying" | "cancelled";
   branch: string;
   /** Description from the plan (what this task does). */
   description?: string;
@@ -87,6 +93,11 @@ export interface PipelineState {
   setFollowUpStatus: (status: PipelineState["followUpStatus"]) => void;
   addFollowUpQuestion: (question: string) => void;
   resetFollowUp: () => void;
+
+  /* Pipeline control actions */
+  submitFollowUp: (questions: string, token: string) => Promise<void>;
+  cancelPipeline: (token: string) => Promise<void>;
+  restartPipeline: (token: string) => Promise<void>;
 }
 
 // Backend daemon uses different state names than the frontend UI.
@@ -98,6 +109,7 @@ const BACKEND_STATE_MAP: Record<string, TaskState["state"]> = {
   merging: "working",
   done: "done",
   error: "error",
+  cancelled: "cancelled",
   // Frontend-native states pass through
   pending: "pending",
   working: "working",
@@ -114,7 +126,7 @@ const INITIAL_FOLLOWUP = {
   followUpResults: {} as Record<string, FollowUpResult>,
 };
 
-export const useTaskStore = create<PipelineState>((set) => ({
+export const useTaskStore = create<PipelineState>((set, get) => ({
   pipelineId: null,
   phase: "idle",
   tasks: {},
@@ -135,6 +147,39 @@ export const useTaskStore = create<PipelineState>((set) => ({
       followUpQuestions: [...state.followUpQuestions, question],
     })),
   resetFollowUp: () => set(INITIAL_FOLLOWUP),
+
+  /* Pipeline control actions */
+  submitFollowUp: async (questions, token) => {
+    const pid = get().pipelineId;
+    if (!pid) return;
+    set({ followUpStatus: "submitting" });
+    set((state) => ({ followUpQuestions: [...state.followUpQuestions, questions] }));
+    try {
+      await apiSubmitFollowUp(pid, questions, token);
+      // Status will transition to "executing" via WebSocket followup:started event
+    } catch (err) {
+      set({ followUpStatus: "idle" });
+      throw err; // let caller handle error display
+    }
+  },
+
+  cancelPipeline: async (token) => {
+    const pid = get().pipelineId;
+    if (!pid) return;
+    await apiCancelPipeline(pid, token);
+    // Re-fetch state — WebSocket will also deliver updates
+    const data = await apiGet(`/tasks/${pid}`, token);
+    get().hydrateFromRest(data);
+  },
+
+  restartPipeline: async (token) => {
+    const pid = get().pipelineId;
+    if (!pid) return;
+    await apiRestartPipeline(pid, token);
+    // Re-fetch state — WebSocket will also deliver updates
+    const data = await apiGet(`/tasks/${pid}`, token);
+    get().hydrateFromRest(data);
+  },
 
   hydrateFromRest: (data) => {
     const newTasks: Record<string, TaskState> = {};
@@ -238,12 +283,12 @@ export const useTaskStore = create<PipelineState>((set) => ({
         }
 
         case "pipeline:cancelled": {
-          // Mark all non-done tasks as error (cancelled) and set phase
+          // Mark all non-done tasks as cancelled and set phase
           const cancelledTasks = { ...state.tasks };
           for (const taskId of Object.keys(cancelledTasks)) {
             const task = cancelledTasks[taskId];
             if (task.state !== "done") {
-              cancelledTasks[taskId] = { ...task, state: "error" };
+              cancelledTasks[taskId] = { ...task, state: "cancelled" };
             }
           }
           sendNotification("Pipeline cancelled", "The pipeline has been cancelled");

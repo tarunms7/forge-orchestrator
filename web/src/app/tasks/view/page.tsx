@@ -9,7 +9,7 @@ import type { WsStatus } from "@/hooks/useWebSocket";
 import { useTaskStore } from "@/stores/taskStore";
 import type { TaskState } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
-import { apiGet, apiPost, cancelPipeline, restartPipeline } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import AgentCard from "@/components/task/AgentCard";
 import PipelineProgress from "@/components/task/PipelineProgress";
 import PlannerCard from "@/components/task/PlannerCard";
@@ -433,6 +433,8 @@ function TaskExecutionPageInner() {
   const reset = useTaskStore((s) => s.reset);
   const hydrationError = useTaskStore((s) => s.hydrationError);
   const setHydrationError = useTaskStore((s) => s.setHydrationError);
+  const storeCancelPipeline = useTaskStore((s) => s.cancelPipeline);
+  const storeRestartPipeline = useTaskStore((s) => s.restartPipeline);
 
   const [executing, setExecuting] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -525,10 +527,7 @@ function TaskExecutionPageInner() {
     setCancelLoading(true);
     setShowCancelDialog(false);
     try {
-      await cancelPipeline(pipelineId, token);
-      // Re-fetch state — WebSocket will also deliver updates
-      const data = await apiGet(`/tasks/${pipelineId}`, token);
-      hydrateFromRest(data);
+      await storeCancelPipeline(token);
     } catch (e) {
       console.warn("Cancel failed:", e);
     } finally {
@@ -541,10 +540,7 @@ function TaskExecutionPageInner() {
     setRestartLoading(true);
     setShowRestartDialog(false);
     try {
-      await restartPipeline(pipelineId, token);
-      // Re-fetch state — WebSocket will also deliver updates
-      const data = await apiGet(`/tasks/${pipelineId}`, token);
-      hydrateFromRest(data);
+      await storeRestartPipeline(token);
     } catch (e) {
       console.warn("Restart failed:", e);
     } finally {

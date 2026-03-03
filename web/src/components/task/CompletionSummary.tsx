@@ -15,6 +15,7 @@ function StatusDot({ state }: { state: TaskState["state"] }) {
     done: "pass",
     error: "fail",
     retrying: "pass",
+    cancelled: "blocked-status",
   };
 
   return <span className={`result-status ${colors[state]}`} />;

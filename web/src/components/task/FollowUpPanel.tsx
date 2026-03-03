@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useTaskStore } from "@/stores/taskStore";
 import type { FollowUpResult } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
-import { submitFollowUp } from "@/lib/api";
 
 /* ── Follow-Up Result Card ─────────────────────────────────────────── */
 
@@ -94,12 +93,12 @@ function FollowUpResultCard({ result }: { result: FollowUpResult }) {
 /* ── Follow-Up Panel ───────────────────────────────────────────────── */
 
 export default function FollowUpPanel({ pipelineId }: { pipelineId: string }) {
+  void pipelineId; // pipelineId is managed by the store
   const token = useAuthStore((s) => s.token);
   const followUpStatus = useTaskStore((s) => s.followUpStatus);
   const followUpResults = useTaskStore((s) => s.followUpResults);
   const followUpQuestions = useTaskStore((s) => s.followUpQuestions);
-  const setFollowUpStatus = useTaskStore((s) => s.setFollowUpStatus);
-  const addFollowUpQuestion = useTaskStore((s) => s.addFollowUpQuestion);
+  const storeSubmitFollowUp = useTaskStore((s) => s.submitFollowUp);
 
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -122,19 +121,16 @@ export default function FollowUpPanel({ pipelineId }: { pipelineId: string }) {
 
   async function handleSubmit() {
     const trimmed = input.trim();
-    if (!trimmed || !token || !pipelineId) return;
+    if (!trimmed || !token) return;
 
     setError(null);
-    setFollowUpStatus("submitting");
-    addFollowUpQuestion(trimmed);
 
     try {
-      await submitFollowUp(pipelineId, trimmed, token);
+      await storeSubmitFollowUp(trimmed, token);
       setInput("");
       // Status will transition to "executing" via WebSocket followup:started event
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to submit follow-up");
-      setFollowUpStatus("idle");
     }
   }
 
