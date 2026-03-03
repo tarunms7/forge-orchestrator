@@ -188,7 +188,7 @@ async def test_migrate_adds_missing_columns():
     from forge.storage.db import Database as DB
     db = DB.__new__(DB)
     db._engine = engine
-    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+    from sqlalchemy.ext.asyncio import async_sessionmaker
     db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
     await db.initialize()
 
