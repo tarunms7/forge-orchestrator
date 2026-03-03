@@ -358,7 +358,11 @@ async def create_pr(
         return {"pr_url": pipeline.pr_url, "already_existed": True}
 
     project_dir = pipeline.project_dir
-    branch_name = f"forge/pipeline-{pipeline_id[:8]}"
+    # Use the actual branch name stored by the daemon (supports custom names from UI)
+    branch_name = getattr(pipeline, "branch_name", None)
+    if not branch_name:
+        branch_name = f"forge/pipeline-{pipeline_id[:8]}"
+        logger.warning("Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name)
 
     # Use base_branch from DB (stored by daemon at pipeline start)
     base_branch = getattr(pipeline, "base_branch", None) or "main"
@@ -960,7 +964,11 @@ async def _auto_create_pr(forge_db, pipeline_id: str) -> str:
         return pipeline.pr_url
 
     project_dir = pipeline.project_dir
-    branch_name = f"forge/pipeline-{pipeline_id[:8]}"
+    # Use the actual branch name stored by the daemon (supports custom names from UI)
+    branch_name = getattr(pipeline, "branch_name", None)
+    if not branch_name:
+        branch_name = f"forge/pipeline-{pipeline_id[:8]}"
+        logger.warning("Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name)
 
     # Detect remote name — fail early if no remote configured
     remote_result = subprocess.run(
