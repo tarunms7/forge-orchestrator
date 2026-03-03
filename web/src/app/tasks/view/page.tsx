@@ -16,6 +16,7 @@ import PlannerCard from "@/components/task/PlannerCard";
 import CompletionSummary from "@/components/task/CompletionSummary";
 import TaskDetailPanel from "@/components/task/TaskDetailPanel";
 import FollowUpPanel from "@/components/task/FollowUpPanel";
+import { CopyButton } from "@/components/CopyButton";
 
 /* ── Plan Panel ───────────────────────────────────────────────────── */
 
@@ -388,6 +389,13 @@ function DescriptionModal({
           <div>
             <span className="log-modal-title">Pipeline Description</span>
           </div>
+          <span onClick={(e) => e.stopPropagation()}>
+            <CopyButton
+              text={description}
+              variant="inline"
+              label="Copy"
+            />
+          </span>
           <button className="log-modal-close" onClick={onClose}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
