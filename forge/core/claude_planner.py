@@ -36,6 +36,7 @@ Rules:
 - Aim for 2-6 tasks. Only go higher for genuinely large features.
 - MINIMIZE dependencies. Only add depends_on when a task genuinely needs another task's output files. Independent tasks should have empty depends_on so they run in parallel.
 - Never make test tasks depend on implementation tasks — tests should be self-contained with mocks.
+- If the user request mentions attached images (file paths), you MUST read them first with the Read tool before planning. Include the image paths in relevant task descriptions so agents can also read them.
 - Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object."""
 
 

@@ -1,4 +1,6 @@
 .worktrees/
+.forge/images/
+.forge/worktrees/
 .venv/
 __pycache__/
 *.pyc
