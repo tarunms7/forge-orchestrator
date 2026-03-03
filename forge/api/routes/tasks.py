@@ -567,7 +567,7 @@ async def cancel_pipeline(
         return {"status": "already_cancelled", "tasks_cancelled": [], "pipeline_id": pipeline_id}
 
     # Use cancel_pipeline_hard for atomicity and timestamp
-    result = await forge_db.cancel_pipeline_hard(pipeline_id)
+    await forge_db.cancel_pipeline_hard(pipeline_id)
 
     # Collect the IDs of tasks that were cancelled
     tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
