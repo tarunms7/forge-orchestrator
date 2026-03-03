@@ -95,6 +95,7 @@ def create_app(
     # ── Routers (all under /api prefix) ──────────────────────────────
     from forge.api.routes.auth import router as auth_router
     from forge.api.routes.diff import router as diff_router
+    from forge.api.routes.followup import router as followup_router
     from forge.api.routes.github import router as github_router
     from forge.api.routes.history import router as history_router
     from forge.api.routes.settings import router as settings_router
@@ -103,6 +104,7 @@ def create_app(
 
     app.include_router(auth_router, prefix="/api")
     app.include_router(tasks_router, prefix="/api/tasks")
+    app.include_router(followup_router, prefix="/api/tasks")
     app.include_router(diff_router, prefix="/api")
     app.include_router(history_router, prefix="/api")
     app.include_router(github_router, prefix="/api")
