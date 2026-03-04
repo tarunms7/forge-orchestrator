@@ -1372,8 +1372,15 @@ async def list_tasks(
     ]
 
 
-async def _auto_create_pr(forge_db, pipeline_id: str) -> str:
-    """Create a GitHub PR for a completed pipeline. Returns the PR URL."""
+async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | None = None) -> str:
+    """Create a GitHub PR for a completed pipeline. Returns the PR URL.
+
+    Args:
+        forge_db: Database instance.
+        pipeline_id: Pipeline to create PR for.
+        issue_number: If set, appends ``Closes #N`` to the PR body
+            (used by webhook-triggered pipelines).
+    """
     pipeline = await forge_db.get_pipeline(pipeline_id)
     if not pipeline:
         raise ValueError("Pipeline not found")
@@ -1449,9 +1456,11 @@ async def _auto_create_pr(forge_db, pipeline_id: str) -> str:
     task_list = tasks_json.get("tasks", [])
     task_summary = "\n".join(f"- {t.get('title', t.get('id', ''))}" for t in task_list)
 
+    closes_line = f"\nCloses #{issue_number}\n" if issue_number else ""
     pr_body = (
         f"## Summary\n\n"
         f"{pipeline.description}\n\n"
+        f"{closes_line}"
         f"## Tasks Completed\n\n"
         f"{task_summary}\n\n"
         f"---\n"

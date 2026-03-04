@@ -126,6 +126,8 @@ class PipelineRow(Base):
     paused: Mapped[bool] = mapped_column(default=False)
     conventions_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     require_approval: Mapped[bool] = mapped_column(default=False)
+    github_issue_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    github_issue_number: Mapped[int | None] = mapped_column(default=None)
 
 
 class PipelineEventRow(Base):
@@ -449,6 +451,8 @@ class Database:
         base_branch: str | None = None, branch_name: str | None = None,
         build_cmd: str | None = None, test_cmd: str | None = None,
         budget_limit_usd: float = 0.0,
+        github_issue_url: str | None = None,
+        github_issue_number: int | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
@@ -457,6 +461,8 @@ class Database:
                 base_branch=base_branch, branch_name=branch_name,
                 build_cmd=build_cmd, test_cmd=test_cmd,
                 budget_limit_usd=budget_limit_usd,
+                github_issue_url=github_issue_url,
+                github_issue_number=github_issue_number,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)
