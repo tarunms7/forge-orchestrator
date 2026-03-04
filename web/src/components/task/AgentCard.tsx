@@ -19,6 +19,13 @@ const STATE_CLASS: Record<TaskState["state"], { label: string; cardClass: string
   cancelled: { label: "Cancelled", cardClass: "pending", badgeClass: "state-badge pending" },
 };
 
+const GATE_LABELS: Record<string, string> = {
+  Build: "Build",
+  L1: "Lint",
+  Test: "Test",
+  L2: "Review",
+};
+
 function ReviewGateIcon({ result }: { result: string }) {
   if (result === "pass") {
     return (
@@ -183,10 +190,7 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
         {task.reviewGates.length > 0 && (
           <div className="review-gates-detail">
             {task.reviewGates.map((gate, i) => {
-              const label =
-                gate.gate === "L1" ? "L1 (general)" :
-                gate.gate === "L2" ? "L2 (LLM)" :
-                String(gate.gate);
+              const label = GATE_LABELS[gate.gate] || String(gate.gate);
               return (
                 <div
                   key={`${gate.gate}-${i}`}
@@ -208,6 +212,7 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
               <div
                 key={`dot-${gate.gate}-${i}`}
                 className={`gate-dot ${gate.result === "pass" ? "pass" : gate.result === "fail" ? "fail" : "pending-gate"}`}
+                title={`${GATE_LABELS[gate.gate] || gate.gate}: ${gate.result}`}
               />
             ))}
           </div>

@@ -110,6 +110,22 @@ function ReviewSummary({
             </span>
           </div>
         )}
+        {task.buildCmd.trim() && (
+          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Build command</span>
+            <span style={{ color: "var(--text-primary)", fontFamily: "monospace", fontSize: "12px" }}>
+              {task.buildCmd.trim()}
+            </span>
+          </div>
+        )}
+        {task.testCmd.trim() && (
+          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Test command</span>
+            <span style={{ color: "var(--text-primary)", fontFamily: "monospace", fontSize: "12px" }}>
+              {task.testCmd.trim()}
+            </span>
+          </div>
+        )}
         {task.images.length > 0 && (
           <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
             <span style={{ color: "var(--text-tertiary)" }}>Images</span>
@@ -156,6 +172,8 @@ function NewTaskPageInner() {
     additionalContext: "",
     images: [],
     branchName: "",
+    buildCmd: "",
+    testCmd: "",
   });
   const [execution, setExecution] = useState<ExecutionConfig>({ target: "local" });
 
@@ -215,6 +233,9 @@ function NewTaskPageInner() {
       if (task.branchName.trim()) {
         body.branch_name = task.branchName.trim();
       }
+
+      body.build_cmd = task.buildCmd || null;
+      body.test_cmd = task.testCmd || null;
 
       const data = await apiPost("/tasks", body, token);
       router.push(`/tasks/view?id=${data.pipeline_id}`);

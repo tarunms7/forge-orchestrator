@@ -14,6 +14,8 @@ class CreateTaskRequest(BaseModel):
     model_strategy: str = "auto"
     images: list[str] = Field(default_factory=list, description="Base64-encoded image data URIs (e.g. data:image/png;base64,...)")
     branch_name: str | None = None
+    build_cmd: str | None = Field(default=None, description="Shell command to verify the build after agent work")
+    test_cmd: str | None = Field(default=None, description="Shell command to run tests after agent work")
 
 
 class RestartPipelineRequest(BaseModel):

@@ -187,6 +187,8 @@ async def create_task(
             model_strategy=body.model_strategy,
             user_id=user_id,
             branch_name=body.branch_name,
+            build_cmd=body.build_cmd,
+            test_cmd=body.test_cmd,
         )
 
         # Start planning in background if daemon factory is available

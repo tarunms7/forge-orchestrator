@@ -12,6 +12,8 @@ interface HistoryItem {
   created_at: string;
   duration: number | null;
   task_count: number;
+  build_cmd: string | null;
+  test_cmd: string | null;
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -177,6 +179,18 @@ export default function HistoryPage() {
                   <div className="history-pipeline-cell">
                     <span className="history-pipeline-title">{item.description}</span>
                     <span className="history-id">{item.pipeline_id.slice(0, 8)}</span>
+                    {item.build_cmd && (
+                      <span
+                        title={`Build: ${item.build_cmd}`}
+                        style={{ marginLeft: "6px", fontSize: "10px", fontWeight: 600, padding: "1px 5px", borderRadius: "4px", background: "rgba(99,102,241,0.18)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.3)", letterSpacing: "0.03em" }}
+                      >B</span>
+                    )}
+                    {item.test_cmd && (
+                      <span
+                        title={`Test: ${item.test_cmd}`}
+                        style={{ marginLeft: "4px", fontSize: "10px", fontWeight: 600, padding: "1px 5px", borderRadius: "4px", background: "rgba(34,197,94,0.15)", color: "#86efac", border: "1px solid rgba(34,197,94,0.3)", letterSpacing: "0.03em" }}
+                      >T</span>
+                    )}
                   </div>
                 </td>
                 <td><span className="history-tasks">{item.task_count}</span></td>
