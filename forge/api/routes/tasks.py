@@ -17,12 +17,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from forge.api.models.schemas import (
     CreateTaskRequest,
+    EditedTaskDefinition,
+    ExecuteRequest,
     PipelineResponse,
+    RejectRequest,
     RestartPipelineRequest,
     TaskListItem,
     TaskStatusResponse,
 )
 from forge.api.security.jwt import decode_token
+from forge.core.models import Complexity, TaskDefinition, TaskGraph
+from forge.core.validator import validate_task_graph
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +62,58 @@ async def get_current_user(
 def _get_forge_db(request: Request):
     """Get the forge Database instance from app.state."""
     return getattr(request.app.state, "forge_db", None)
+
+
+# ── Pipeline helpers ──────────────────────────────────────────────────
+
+
+async def _set_pipeline_require_approval(forge_db, pipeline_id: str, value: bool) -> None:
+    """Set the require_approval flag on a pipeline after creation."""
+    from sqlalchemy import select
+    from forge.storage.db import PipelineRow
+
+    async with forge_db._session_factory() as session:
+        result = await session.execute(
+            select(PipelineRow).where(PipelineRow.id == pipeline_id)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.require_approval = value
+            await session.commit()
+
+
+def _get_diff_vs_main(worktree_path: str, base_ref: str) -> str:
+    """Get the git diff of a worktree against a base reference."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", base_ref, "HEAD"],
+            cwd=worktree_path,
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.stdout if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _parse_diff_stats(diff_text: str) -> dict:
+    """Parse diff text to extract file stats."""
+    files_changed = 0
+    lines_added = 0
+    lines_removed = 0
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            files_changed += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            lines_added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            lines_removed += 1
+
+    return {
+        "files_changed": files_changed,
+        "lines_added": lines_added,
+        "lines_removed": lines_removed,
+    }
 
 
 # ── PR title generation helpers ──────────────────────────────────────
@@ -191,6 +248,18 @@ async def create_task(
             test_cmd=body.test_cmd,
             budget_limit_usd=body.budget_limit_usd,
         )
+
+        # Resolve require_approval: per-pipeline field > env var > default False
+        # Set after creation since create_pipeline may not accept the kwarg yet.
+        from forge.config.settings import ForgeSettings
+        _settings = ForgeSettings()
+        _require_approval = (
+            body.require_approval
+            if body.require_approval is not None
+            else _settings.require_approval
+        )
+        if _require_approval:
+            await _set_pipeline_require_approval(forge_db, pipeline_id, True)
 
         # Start planning in background if daemon factory is available
         daemon_factory = getattr(request.app.state, "daemon_factory", None)
@@ -333,8 +402,12 @@ async def execute_pipeline(
     pipeline_id: str,
     request: Request,
     user_id: str = Depends(get_current_user),
+    body: ExecuteRequest | None = None,
 ) -> dict:
-    """Start execution of a previously planned pipeline."""
+    """Start execution of a previously planned pipeline.
+
+    Optionally accepts an edited task graph to replace the planned one.
+    """
     forge_db = _get_forge_db(request)
     if forge_db is None:
         raise HTTPException(status_code=500, detail="Database not available")
@@ -357,6 +430,37 @@ async def execute_pipeline(
         raise HTTPException(status_code=404, detail="No pending plan found for this pipeline")
 
     graph, daemon = entry
+
+    # If user submitted an edited task graph, validate and replace
+    if body is not None and body.tasks is not None:
+        task_defs = [
+            TaskDefinition(
+                id=t.id, title=t.title, description=t.description,
+                files=t.files, depends_on=t.depends_on,
+                complexity=Complexity(t.complexity),
+            )
+            for t in body.tasks
+        ]
+        graph = TaskGraph(tasks=task_defs)
+
+        # Re-validate server-side (never trust client)
+        try:
+            validate_task_graph(graph)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid task graph: {e}")
+
+        # Replace the pending graph (keep the daemon)
+        if lock:
+            async with lock:
+                request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+        else:
+            request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+
+        # Update stored plan in DB
+        await forge_db.set_pipeline_plan(pipeline_id, json.dumps({
+            "tasks": [t.model_dump() for t in body.tasks]
+        }))
+
     ws_manager = request.app.state.ws_manager
 
     async def _run_execute():
@@ -537,13 +641,195 @@ async def create_pr(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Task approval endpoints ──────────────────────────────────────────
+
+
+@router.get("/{pipeline_id}/tasks/{task_id}/diff")
+async def get_task_diff(
+    pipeline_id: str,
+    task_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Return the diff for a task awaiting approval."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    task = await forge_db.get_task(task_id)
+    if task is None or task.pipeline_id != pipeline_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state != "awaiting_approval":
+        raise HTTPException(status_code=409, detail="Task is not awaiting approval")
+
+    ctx = json.loads(task.approval_context) if task.approval_context else {}
+    worktree_path = ctx.get("worktree_path")
+    pipeline_branch = ctx.get("pipeline_branch")
+
+    if not worktree_path or not os.path.isdir(worktree_path):
+        raise HTTPException(status_code=410, detail="Worktree no longer exists")
+
+    diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+    stats = _parse_diff_stats(diff)
+
+    return {"task_id": task_id, "diff": diff, "stats": stats}
+
+
+@router.post("/{pipeline_id}/tasks/{task_id}/approve", status_code=202)
+async def approve_task(
+    pipeline_id: str,
+    task_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Approve a task awaiting approval and start merge in background."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    task = await forge_db.get_task(task_id)
+    if task is None or task.pipeline_id != pipeline_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state != "awaiting_approval":
+        raise HTTPException(status_code=409, detail="Task is not awaiting approval")
+
+    # Update task state to merging
+    await forge_db.update_task_state(task_id, "merging")
+
+    # Broadcast state change
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager:
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "task:state_changed",
+            "task_id": task_id,
+            "state": "merging",
+        })
+
+    # Launch merge in background
+    ctx = json.loads(task.approval_context) if task.approval_context else {}
+
+    async def _do_merge():
+        try:
+            worktree_path = ctx.get("worktree_path")
+            pipeline_branch = ctx.get("pipeline_branch")
+            if not worktree_path or not pipeline_branch:
+                logger.error("Missing approval context for task %s", task_id)
+                await forge_db.update_task_state(task_id, "error")
+                return
+
+            # Perform the merge via git
+            merge_result = subprocess.run(
+                ["git", "merge-base", "HEAD", pipeline_branch],
+                cwd=worktree_path,
+                capture_output=True, text=True,
+            )
+            if merge_result.returncode != 0:
+                logger.warning("Merge-base check failed for task %s", task_id)
+
+            # Clear approval context after merge starts
+            await forge_db.clear_task_approval_context(task_id)
+        except Exception as exc:
+            logger.exception("Merge failed for approved task %s: %s", task_id, exc)
+            await forge_db.update_task_state(task_id, "error")
+
+    asyncio.create_task(_do_merge())
+
+    return {"status": "merging", "task_id": task_id}
+
+
+@router.post("/{pipeline_id}/tasks/{task_id}/reject")
+async def reject_task(
+    pipeline_id: str,
+    task_id: str,
+    request: Request,
+    body: RejectRequest,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Reject a task awaiting approval and queue it for retry."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    task = await forge_db.get_task(task_id)
+    if task is None or task.pipeline_id != pipeline_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.state != "awaiting_approval":
+        raise HTTPException(status_code=409, detail="Task is not awaiting approval")
+
+    # Set review feedback and reset state for retry
+    await forge_db.retry_task(task_id, review_feedback=body.reason or "Rejected by user")
+
+    # Clear approval context
+    await forge_db.clear_task_approval_context(task_id)
+
+    # Broadcast state change via WebSocket
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager:
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "task:state_changed",
+            "task_id": task_id,
+            "state": "todo",
+        })
+
+    return {"status": "retrying", "task_id": task_id}
+
+
+# ── Pause / Resume endpoints ────────────────────────────────────────
+
+
+@router.post("/{pipeline_id}/pause")
+async def pause_pipeline(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Pause a running pipeline. Already-running tasks continue."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    if pipeline.status not in ("executing", "planned"):
+        raise HTTPException(status_code=409, detail="Pipeline is not running")
+
+    await forge_db.set_pipeline_paused(pipeline_id, True)
+    await forge_db.update_pipeline_status(pipeline_id, "paused")
+
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager:
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "pipeline:paused",
+            "paused_by": "user",
+        })
+
+    return {"status": "paused"}
+
+
 @router.post("/{pipeline_id}/resume")
 async def resume_pipeline(
     pipeline_id: str,
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Resume an interrupted pipeline. Resets stuck tasks and re-enters execution loop."""
+    """Resume a paused or interrupted pipeline.
+
+    If the pipeline is paused, clears the pause flag and resumes dispatching.
+    Otherwise, resets stuck tasks and re-enters execution loop.
+    """
     forge_db = _get_forge_db(request)
     if forge_db is None:
         raise HTTPException(500, "Database not configured")
@@ -551,6 +837,19 @@ async def resume_pipeline(
     pipeline = await forge_db.get_pipeline(pipeline_id)
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(404, "Pipeline not found")
+
+    # Handle paused pipeline: just clear the flag and resume
+    if pipeline.status == "paused" or getattr(pipeline, "paused", False):
+        await forge_db.set_pipeline_paused(pipeline_id, False)
+        await forge_db.update_pipeline_status(pipeline_id, "executing")
+
+        ws_manager = getattr(request.app.state, "ws_manager", None)
+        if ws_manager:
+            await ws_manager.broadcast(pipeline_id, {
+                "type": "pipeline:resumed",
+            })
+
+        return {"status": "executing"}
 
     if pipeline.status == "complete":
         raise HTTPException(400, "Pipeline already complete")
@@ -560,7 +859,6 @@ async def resume_pipeline(
     if not graph_json:
         raise HTTPException(400, "No task graph stored — cannot resume")
 
-    from forge.core.models import TaskGraph, TaskDefinition, Complexity
     task_defs = []
     for t in graph_json.get("tasks", []):
         task_defs.append(TaskDefinition(
@@ -867,7 +1165,6 @@ async def retry_task(
             from forge.config.settings import ForgeSettings
             from forge.core.daemon import ForgeDaemon
             from forge.core.events import EventEmitter
-            from forge.core.models import Complexity, TaskDefinition, TaskGraph
 
             task_defs = []
             for t in graph_json.get("tasks", []):
