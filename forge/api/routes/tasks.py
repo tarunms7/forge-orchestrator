@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import os
+import re
 import subprocess
 import uuid
 from datetime import datetime
@@ -56,6 +57,79 @@ async def get_current_user(
 def _get_forge_db(request: Request):
     """Get the forge Database instance from app.state."""
     return getattr(request.app.state, "forge_db", None)
+
+
+# ── PR title generation helpers ──────────────────────────────────────
+
+
+def _sanitize_pr_title(description: str) -> str:
+    """Generate a clean PR title from raw user description (heuristic fallback).
+
+    Extracts the first meaningful sentence, strips list markers and numbering,
+    lowercases, and truncates to fit within the ``forge: `` prefix budget.
+    """
+    # Take the first line / first sentence
+    text = description.strip()
+    # Split on common sentence boundaries and list starters
+    first_sentence = re.split(r'[.!?\n]|(?:\d+[.)]\s)', text)[0].strip()
+    # Strip leading list markers like "- ", "* ", "1. ", etc.
+    first_sentence = re.sub(r'^[\-\*•]\s*', '', first_sentence).strip()
+    # Remove question marks and trailing punctuation
+    first_sentence = first_sentence.rstrip('?!.:;,')
+    # Lowercase the first character for conventional commit style
+    if first_sentence:
+        first_sentence = first_sentence[0].lower() + first_sentence[1:]
+    # Truncate to ~50 chars to keep total title (with "forge: " prefix) under ~60
+    if len(first_sentence) > 50:
+        # Cut at last word boundary
+        truncated = first_sentence[:50].rsplit(' ', 1)[0]
+        first_sentence = truncated
+    return first_sentence or description[:50]
+
+
+async def _generate_pr_title(description: str, task_summaries: str) -> str:
+    """Generate a concise PR title using an LLM call, with heuristic fallback.
+
+    Uses ``sdk_query()`` with haiku model for fast, cheap title generation.
+    Falls back to ``_sanitize_pr_title()`` if the LLM call fails.
+
+    Returns:
+        A short title string (without the ``forge: `` prefix).
+    """
+    from claude_code_sdk import ClaudeCodeOptions
+    from forge.core.sdk_helpers import sdk_query
+
+    prompt = (
+        "Generate a short, concise PR title for the following changes. "
+        "The title should be in conventional commit style (e.g., 'fix: button alignment', "
+        "'feat: add dark mode toggle', 'refactor: simplify auth flow'). "
+        "Reply with ONLY the title text, nothing else. No quotes, no explanation. "
+        "Keep it under 50 characters.\n\n"
+        f"Pipeline description: {description}\n\n"
+    )
+    if task_summaries.strip():
+        prompt += f"Tasks completed:\n{task_summaries}\n"
+
+    try:
+        result = await sdk_query(
+            prompt=prompt,
+            options=ClaudeCodeOptions(
+                max_turns=1,
+                model="haiku",
+            ),
+        )
+        if result and result.result:
+            title = result.result.strip().strip('"\'').strip()
+            # Remove any "forge: " prefix the LLM might add (we add it ourselves)
+            if title.lower().startswith("forge:"):
+                title = title[6:].strip()
+            # Validate: non-empty, reasonable length
+            if title and len(title) <= 80:
+                return title
+    except Exception as e:
+        logger.warning("LLM PR title generation failed, using fallback: %s", e)
+
+    return _sanitize_pr_title(description)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -430,12 +504,16 @@ async def create_pr(
             f"pipeline `{pipeline_id[:8]}`*"
         )
 
+        # Generate a proper PR title via LLM (with heuristic fallback)
+        pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
+        pr_title = f"forge: {pr_title_body}"
+
         # Create PR — base_branch from DB, head is the pipeline branch
         pr_result = subprocess.run(
             ["gh", "pr", "create",
              "--base", base_branch,
              "--head", branch_name,
-             "--title", f"forge: {pipeline.description[:60]}",
+             "--title", pr_title,
              "--body", pr_body],
             cwd=project_dir, capture_output=True, text=True,
         )

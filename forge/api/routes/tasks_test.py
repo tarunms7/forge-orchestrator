@@ -1,5 +1,7 @@
 """Integration tests for task REST endpoints."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -754,3 +756,138 @@ class TestBranchNamePassthrough:
         db = app.state.db
         pipeline = await db.get_pipeline(pipeline_id)
         assert pipeline.branch_name is None
+
+
+# ── PR title generation tests ────────────────────────────────────────
+
+
+class TestSanitizePrTitle:
+    """Tests for _sanitize_pr_title heuristic fallback."""
+
+    def test_simple_description(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title("Fix the login button")
+        assert result == "fix the login button"
+
+    def test_strips_trailing_punctuation(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title("Can we fix the copy button alignment??")
+        assert result == "can we fix the copy button alignment"
+
+    def test_takes_first_sentence(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title(
+            "We need to fix some bugs. The lines changed by each agent are wrong."
+        )
+        assert result == "we need to fix some bugs"
+
+    def test_stops_at_newline(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title(
+            "Fix copy button alignment\nAlso fix the commit message formatting"
+        )
+        assert result == "fix copy button alignment"
+
+    def test_strips_numbered_list(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title(
+            "We need to fix some bugs: 1. The lines changed by each agent are wrong"
+        )
+        assert result == "we need to fix some bugs"
+
+    def test_strips_bullet_markers(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title("- Fix button alignment and design")
+        assert result == "fix button alignment and design"
+
+    def test_truncates_long_description(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        long_desc = "Implement the full user authentication system with OAuth2 support and refresh tokens and session management"
+        result = _sanitize_pr_title(long_desc)
+        assert len(result) <= 50
+
+    def test_empty_description_fallback(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title("")
+        assert isinstance(result, str)
+
+    def test_asterisk_bullet_stripped(self):
+        from forge.api.routes.tasks import _sanitize_pr_title
+
+        result = _sanitize_pr_title("* Refactor auth module")
+        assert result == "refactor auth module"
+
+
+class TestGeneratePrTitle:
+    """Tests for _generate_pr_title with LLM and fallback."""
+
+    async def test_returns_llm_title_on_success(self):
+        """When sdk_query returns a valid title, use it."""
+        from forge.api.routes.tasks import _generate_pr_title
+
+        mock_result = MagicMock()
+        mock_result.result = "fix: copy button alignment and commit formatting"
+
+        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+            title = await _generate_pr_title(
+                "Fix copy button and commit messages",
+                "- Fix copy button\n- Fix commit formatting",
+            )
+        assert title == "fix: copy button alignment and commit formatting"
+
+    async def test_strips_forge_prefix_from_llm(self):
+        """If LLM includes 'forge:' prefix, strip it."""
+        from forge.api.routes.tasks import _generate_pr_title
+
+        mock_result = MagicMock()
+        mock_result.result = "forge: fix button alignment"
+
+        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+            title = await _generate_pr_title("Fix button", "- Fix button")
+        assert title == "fix button alignment"
+
+    async def test_strips_quotes_from_llm(self):
+        """If LLM wraps title in quotes, strip them."""
+        from forge.api.routes.tasks import _generate_pr_title
+
+        mock_result = MagicMock()
+        mock_result.result = '"fix: improve error handling"'
+
+        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+            title = await _generate_pr_title("Improve error handling", "")
+        assert title == "fix: improve error handling"
+
+    async def test_falls_back_on_sdk_exception(self):
+        """When sdk_query raises, fall back to heuristic."""
+        from forge.api.routes.tasks import _generate_pr_title
+
+        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, side_effect=RuntimeError("SDK down")):
+            title = await _generate_pr_title("Fix the login button", "")
+        assert title == "fix the login button"
+
+    async def test_falls_back_on_empty_result(self):
+        """When sdk_query returns None, fall back to heuristic."""
+        from forge.api.routes.tasks import _generate_pr_title
+
+        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=None):
+            title = await _generate_pr_title("Fix the login button", "")
+        assert title == "fix the login button"
+
+    async def test_falls_back_on_empty_result_text(self):
+        """When result.result is empty string, fall back to heuristic."""
+        from forge.api.routes.tasks import _generate_pr_title
+
+        mock_result = MagicMock()
+        mock_result.result = ""
+
+        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+            title = await _generate_pr_title("Fix the login button", "")
+        assert title == "fix the login button"
