@@ -498,7 +498,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                costUsd: (existing.costUsd || 0) + (data.cost_usd as number),
+                costUsd: (existing.costUsd || 0) + ((data.agent_cost_usd as number) || (data.review_cost_usd as number) || 0),
                 agentCostUsd: data.agent_cost_usd != null
                   ? (data.agent_cost_usd as number)
                   : existing.agentCostUsd,
@@ -519,7 +519,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
 
         case "pipeline:cost_update": {
           return {
-            pipelineCost: data.cost_usd as number,
+            pipelineCost: data.total_cost_usd as number,
             timeline: newTimeline,
           };
         }
@@ -535,7 +535,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
         }
 
         case "pipeline:budget_exceeded": {
-          sendNotification("Budget exceeded", `Pipeline cost exceeded budget limit of $${data.budget_limit_usd}`);
+          sendNotification("Budget exceeded", `Pipeline cost exceeded budget limit of $${data.limit}`);
           return {
             phase: "error" as PipelineState["phase"],
             timeline: newTimeline,
