@@ -12,7 +12,9 @@ from rich.console import Console
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.settings import ForgeSettings
+from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
+from forge.core.cost_estimator import estimate_pipeline_cost
 from forge.core.engine import _row_to_record
 from forge.core.events import EventEmitter
 from forge.core.model_router import select_model
@@ -174,6 +176,28 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         self._snapshot = gather_project_snapshot(self._project_dir)
         graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
+
+        # Track planner cost
+        if pipeline_id and planner_llm._last_sdk_result:
+            sdk_result = planner_llm._last_sdk_result
+            if sdk_result.cost_usd > 0:
+                await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
+                total_cost = await db.get_pipeline_cost(pipeline_id)
+                await self._emit("pipeline:cost_update", {
+                    "planner_cost_usd": sdk_result.cost_usd,
+                    "total_cost_usd": total_cost,
+                }, db=db, pipeline_id=pipeline_id)
+
+        # Emit pipeline cost estimate
+        if pipeline_id and graph.tasks:
+            estimated = await estimate_pipeline_cost(
+                db, pipeline_id, len(graph.tasks), self._settings, strategy,
+            )
+            await self._emit("pipeline:cost_estimate", {
+                "estimated_cost_usd": estimated,
+                "task_count": len(graph.tasks),
+            }, db=db, pipeline_id=pipeline_id)
+
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
         for task_def in graph.tasks:
             console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
@@ -266,8 +290,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await db.create_pipeline(
                 id=self._pipeline_id, description=user_input[:200],
                 project_dir=self._project_dir, model_strategy=self._strategy,
+                budget_limit_usd=self._settings.budget_limit_usd,
             )
             graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
+            try:
+                await check_budget(db, self._pipeline_id, self._settings)
+            except BudgetExceededError as exc:
+                await self._emit("pipeline:budget_exceeded", {
+                    "spent": exc.spent,
+                    "limit": exc.limit,
+                }, db=db, pipeline_id=self._pipeline_id)
+                await db.update_pipeline_status(self._pipeline_id, "error")
+                raise
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
         finally:
             await db.close()

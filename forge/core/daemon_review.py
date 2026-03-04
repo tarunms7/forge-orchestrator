@@ -153,12 +153,26 @@ class ReviewMixin:
             f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
         )
         reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
-        gate2_result, _review_cost = await gate2_llm_review(
+        gate2_result, review_cost_info = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
             prior_feedback=prior_feedback,
             project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
         )
+        # Track review cost
+        if review_cost_info.cost_usd > 0:
+            await db.add_task_review_cost(task.id, review_cost_info.cost_usd)
+            await db.add_pipeline_cost(pipeline_id, review_cost_info.cost_usd)
+            await self._emit("task:cost_update", {
+                "task_id": task.id,
+                "review_cost_usd": review_cost_info.cost_usd,
+                "input_tokens": review_cost_info.input_tokens,
+                "output_tokens": review_cost_info.output_tokens,
+            }, db=db, pipeline_id=pipeline_id)
+            total_cost = await db.get_pipeline_cost(pipeline_id)
+            await self._emit("pipeline:cost_update", {
+                "total_cost_usd": total_cost,
+            }, db=db, pipeline_id=pipeline_id)
         await self._emit("task:review_update", {
             "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
             "details": gate2_result.details,
