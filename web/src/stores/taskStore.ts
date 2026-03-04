@@ -41,6 +41,10 @@ export interface TaskState {
     linesRemoved?: number;
   };
   costUsd?: number;
+  agentCostUsd?: number;
+  reviewCostUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 export interface TimelineEntry {
@@ -60,7 +64,7 @@ export interface FollowUpResult {
 
 export interface PipelineState {
   pipelineId: string | null;
-  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete" | "cancelled";
+  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete" | "cancelled" | "error";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
   timeline: TimelineEntry[];
@@ -68,6 +72,9 @@ export interface PipelineState {
   prLoading: boolean;
   prError: string | null;
   hydrationError: string | null;
+  pipelineCost: number;
+  estimatedCostUsd: number;
+  budgetLimitUsd: number;
 
   /* Follow-up state */
   followUpQuestions: string[];
@@ -82,6 +89,9 @@ export interface PipelineState {
     timeline?: Array<Record<string, unknown>>;
     pr_url?: string | null;
     planner_output?: string[];
+    total_cost_usd?: number;
+    estimated_cost_usd?: number;
+    budget_limit_usd?: number;
   }) => void;
   handleEvent: (event: {
     event: string;
@@ -136,6 +146,9 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   prLoading: false,
   prError: null,
   hydrationError: null,
+  pipelineCost: 0,
+  estimatedCostUsd: 0,
+  budgetLimitUsd: 0,
   ...INITIAL_FOLLOWUP,
   setPipelineId: (id) => set({ pipelineId: id }),
   setHydrationError: (err) => set({ hydrationError: err }),
@@ -198,6 +211,10 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
         reviewGates: (t.reviewGates as TaskState["reviewGates"]) || [],
         mergeResult: (t.mergeResult as TaskState["mergeResult"]) || undefined,
         costUsd: (t.cost_usd as number) || undefined,
+        agentCostUsd: (t.agent_cost_usd as number) || undefined,
+        reviewCostUsd: (t.review_cost_usd as number) || undefined,
+        inputTokens: (t.input_tokens as number) || undefined,
+        outputTokens: (t.output_tokens as number) || undefined,
       };
     }
     const phase = (data.phase || "idle") as PipelineState["phase"];
@@ -214,6 +231,9 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       prUrl: data.pr_url ?? null,
       plannerOutput: data.planner_output ?? [],
       hydrationError: null,
+      pipelineCost: (data.total_cost_usd as number) || 0,
+      estimatedCostUsd: (data.estimated_cost_usd as number) || 0,
+      budgetLimitUsd: (data.budget_limit_usd as number) || 0,
     });
   },
   reset: () =>
@@ -227,6 +247,9 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       prLoading: false,
       prError: null,
       hydrationError: null,
+      pipelineCost: 0,
+      estimatedCostUsd: 0,
+      budgetLimitUsd: 0,
       ...INITIAL_FOLLOWUP,
     }),
   handleEvent: (event) =>
@@ -475,9 +498,46 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                costUsd: (existing.costUsd || 0) + (data.cost_usd as number),
+                costUsd: (existing.costUsd || 0) + ((data.agent_cost_usd as number) || (data.review_cost_usd as number) || 0),
+                agentCostUsd: data.agent_cost_usd != null
+                  ? (data.agent_cost_usd as number)
+                  : existing.agentCostUsd,
+                reviewCostUsd: data.review_cost_usd != null
+                  ? (data.review_cost_usd as number)
+                  : existing.reviewCostUsd,
+                inputTokens: data.input_tokens != null
+                  ? (data.input_tokens as number)
+                  : existing.inputTokens,
+                outputTokens: data.output_tokens != null
+                  ? (data.output_tokens as number)
+                  : existing.outputTokens,
               },
             },
+            timeline: newTimeline,
+          };
+        }
+
+        case "pipeline:cost_update": {
+          return {
+            pipelineCost: data.total_cost_usd as number,
+            timeline: newTimeline,
+          };
+        }
+
+        case "pipeline:cost_estimate": {
+          return {
+            estimatedCostUsd: data.estimated_cost_usd as number,
+            budgetLimitUsd: data.budget_limit_usd != null
+              ? (data.budget_limit_usd as number)
+              : state.budgetLimitUsd,
+            timeline: newTimeline,
+          };
+        }
+
+        case "pipeline:budget_exceeded": {
+          sendNotification("Budget exceeded", `Pipeline cost exceeded budget limit of $${data.limit}`);
+          return {
+            phase: "error" as PipelineState["phase"],
             timeline: newTimeline,
           };
         }

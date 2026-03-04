@@ -2,6 +2,7 @@
 
 import logging
 import subprocess
+from dataclasses import dataclass
 
 from claude_code_sdk import ClaudeCodeOptions
 
@@ -9,6 +10,16 @@ from forge.core.sdk_helpers import sdk_query
 from forge.review.pipeline import GateResult
 
 logger = logging.getLogger("forge.review")
+
+
+@dataclass
+class ReviewCostInfo:
+    """Cost information from an LLM review call."""
+
+    cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
 
 REVIEW_SYSTEM_PROMPT = """You are a code reviewer for the Forge multi-agent orchestration engine.
 
@@ -37,7 +48,7 @@ async def gate2_llm_review(
     model: str = "sonnet",
     prior_feedback: str | None = None,
     project_context: str = "",
-) -> GateResult:
+) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
     Args:
@@ -46,9 +57,18 @@ async def gate2_llm_review(
             verifying those specific issues were fixed, not inventing
             new complaints.
         project_context: Project snapshot context for the reviewer.
+
+    Returns:
+        A tuple of (GateResult, ReviewCostInfo) with the review verdict
+        and accumulated cost information across all retry attempts.
     """
+    cost_info = ReviewCostInfo()
+
     if not diff.strip():
-        return GateResult(passed=False, gate="gate2_llm_review", details="No changes to review")
+        return (
+            GateResult(passed=False, gate="gate2_llm_review", details="No changes to review"),
+            cost_info,
+        )
 
     prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, project_context=project_context)
 
@@ -76,24 +96,36 @@ async def gate2_llm_review(
         except Exception as e:
             logger.warning("L2 review SDK call failed (attempt %d/%d): %s", attempt, max_review_attempts, e)
             if attempt == max_review_attempts:
-                return GateResult(
-                    passed=False, gate="gate2_llm_review",
-                    details=f"SDK error during review after {max_review_attempts} attempts: {e}",
+                return (
+                    GateResult(
+                        passed=False, gate="gate2_llm_review",
+                        details=f"SDK error during review after {max_review_attempts} attempts: {e}",
+                    ),
+                    cost_info,
                 )
             continue
 
+        # Accumulate cost info from each attempt
+        if result is not None:
+            cost_info.cost_usd += result.cost_usd
+            cost_info.input_tokens += result.input_tokens
+            cost_info.output_tokens += result.output_tokens
+
         result_text = result.result if result and result.result else ""
         if result_text:
-            return _parse_review_result(result_text)
+            return (_parse_review_result(result_text), cost_info)
 
         logger.warning(
             "L2 review returned empty result (attempt %d/%d)", attempt, max_review_attempts,
         )
 
     # All attempts returned empty
-    return GateResult(
-        passed=False, gate="gate2_llm_review",
-        details=f"Empty review response after {max_review_attempts} attempts",
+    return (
+        GateResult(
+            passed=False, gate="gate2_llm_review",
+            details=f"Empty review response after {max_review_attempts} attempts",
+        ),
+        cost_info,
     )
 
 

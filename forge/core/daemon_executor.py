@@ -7,6 +7,7 @@ import time
 
 from rich.console import Console
 
+from forge.core.budget import check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
@@ -120,10 +121,21 @@ class ExecutorMixin:
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = self._build_prompt(task)
+        await check_budget(db, pid, self._settings)
         result = await self._stream_agent(runtime, agent_id, prompt, worktree_path, task, task_id, pid, db, agent_model)
         if hasattr(result, "cost_usd") and result.cost_usd > 0:
-            await db.add_task_cost(task_id, result.cost_usd)
-            await self._emit("task:cost_update", {"task_id": task_id, "cost_usd": result.cost_usd}, db=db, pipeline_id=pid)
+            await db.add_task_agent_cost(task_id, result.cost_usd, result.input_tokens, result.output_tokens)
+            await db.add_pipeline_cost(pid, result.cost_usd)
+            await self._emit("task:cost_update", {
+                "task_id": task_id,
+                "agent_cost_usd": result.cost_usd,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+            }, db=db, pipeline_id=pid)
+            total_cost = await db.get_pipeline_cost(pid)
+            await self._emit("pipeline:cost_update", {
+                "total_cost_usd": total_cost,
+            }, db=db, pipeline_id=pid)
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)

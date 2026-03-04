@@ -7,7 +7,7 @@ from collections.abc import Callable
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.planner import PlannerLLM
-from forge.core.sdk_helpers import sdk_query
+from forge.core.sdk_helpers import SdkResult, sdk_query
 
 logger = logging.getLogger("forge.planner")
 
@@ -46,6 +46,7 @@ class ClaudePlannerLLM(PlannerLLM):
     def __init__(self, model: str = "sonnet", cwd: str | None = None) -> None:
         self._model = model
         self._cwd = cwd
+        self._last_sdk_result: SdkResult | None = None
 
     async def generate_plan(
         self, user_input: str, context: str, feedback: str | None = None,
@@ -79,6 +80,7 @@ class ClaudePlannerLLM(PlannerLLM):
             logger.warning("SDK call failed during planning: %s", e)
             return ""  # Empty string → triggers Planner's validation retry
 
+        self._last_sdk_result = result
         logger.info("SDK result type: %s", type(result).__name__ if result else "None")
         logger.info("SDK result.result: %s", (result.result[:300] if result.result else "<None>") if result else "<no result obj>")
 

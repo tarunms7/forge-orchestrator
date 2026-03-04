@@ -121,6 +121,19 @@ function LogModal({
 
 /* ── Agent Card ────────────────────────────────────────────────────── */
 
+/** Format token counts for compact display: 32000 → "32K", 1500000 → "1.5M" */
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) {
+    const m = count / 1_000_000;
+    return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+  }
+  if (count >= 1_000) {
+    const k = count / 1_000;
+    return k % 1 === 0 ? `${k}K` : `${k.toFixed(1)}K`;
+  }
+  return String(count);
+}
+
 const COLLAPSED_LINE_LIMIT = 6;
 
 export default function AgentCard({ task, onClick }: { task: TaskState; onClick?: () => void }) {
@@ -221,6 +234,13 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
             <span className="merge-stats">
               <span className="stat-add">+{task.mergeResult.linesAdded ?? 0}</span>
               <span className="stat-del">-{task.mergeResult.linesRemoved ?? 0}</span>
+            </span>
+          )}
+
+          {((task.inputTokens != null && task.inputTokens > 0) ||
+            (task.outputTokens != null && task.outputTokens > 0)) && (
+            <span className="token-label" title={`Input: ${task.inputTokens ?? 0} / Output: ${task.outputTokens ?? 0}`}>
+              {formatTokenCount(task.inputTokens ?? 0)}/{formatTokenCount(task.outputTokens ?? 0)} tok
             </span>
           )}
 

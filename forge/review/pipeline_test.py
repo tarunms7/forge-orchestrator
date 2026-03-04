@@ -55,3 +55,27 @@ async def test_gate2_fail_stops_pipeline(mock_gate1, mock_gate2, mock_gate3):
     assert outcome.approved is False
     assert outcome.failed_gate == "llm-review"
     mock_gate3.assert_not_called()
+
+
+async def test_gate_returning_tuple_is_unpacked(mock_gate1, mock_gate2, mock_gate3):
+    """Gates that return (GateResult, extra_info) tuples are handled correctly."""
+    mock_gate1.return_value = _pass()
+    # Simulate gate2_llm_review which returns (GateResult, ReviewCostInfo)
+    mock_gate2.return_value = (_pass(), {"cost_usd": 0.05})
+    mock_gate3.return_value = _pass()
+    pipeline = ReviewPipeline(gate1=mock_gate1, gate2=mock_gate2, gate3=mock_gate3, max_retries=3)
+    outcome = await pipeline.review("task-1")
+    assert outcome.approved is True
+    assert len(outcome.gate_results) == 3
+    assert all(r.passed for r in outcome.gate_results)
+
+
+async def test_gate_returning_tuple_fail_is_unpacked(mock_gate1, mock_gate2, mock_gate3):
+    """Gates returning (GateResult, extra) tuples with failures are handled."""
+    mock_gate1.return_value = _pass()
+    mock_gate2.return_value = (_fail("llm-review", "Issues found"), {"cost_usd": 0.02})
+    pipeline = ReviewPipeline(gate1=mock_gate1, gate2=mock_gate2, gate3=mock_gate3, max_retries=3)
+    outcome = await pipeline.review("task-1")
+    assert outcome.approved is False
+    assert outcome.failed_gate == "llm-review"
+    mock_gate3.assert_not_called()

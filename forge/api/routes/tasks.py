@@ -189,6 +189,7 @@ async def create_task(
             branch_name=body.branch_name,
             build_cmd=body.build_cmd,
             test_cmd=body.test_cmd,
+            budget_limit_usd=body.budget_limit_usd,
         )
 
         # Start planning in background if daemon factory is available
@@ -966,6 +967,7 @@ async def get_task_status(
         # Also get live task states from DB
         db_tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
         task_state_map = {t.id: t.state for t in db_tasks}
+        task_row_map = {t.id: t for t in db_tasks}
 
         # Merge event data into task list
         enriched_tasks = []
@@ -976,6 +978,13 @@ async def get_task_status(
             # Use live DB state if available (more accurate than last event)
             if tid in task_state_map:
                 enriched["state"] = task_state_map[tid]
+            # Include per-task cost fields from TaskRow
+            if tid in task_row_map:
+                row = task_row_map[tid]
+                enriched["agent_cost_usd"] = row.agent_cost_usd
+                enriched["review_cost_usd"] = row.review_cost_usd
+                enriched["input_tokens"] = row.input_tokens
+                enriched["output_tokens"] = row.output_tokens
             enriched_tasks.append(enriched)
 
         return TaskStatusResponse(
@@ -985,6 +994,10 @@ async def get_task_status(
             timeline=timeline,
             pr_url=pipeline.pr_url,
             planner_output=planner_output_lines,
+            total_cost_usd=pipeline.total_cost_usd,
+            planner_cost_usd=pipeline.planner_cost_usd,
+            budget_limit_usd=pipeline.budget_limit_usd,
+            estimated_cost_usd=pipeline.estimated_cost_usd,
         )
 
     # Fallback: in-memory

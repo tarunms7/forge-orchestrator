@@ -84,6 +84,10 @@ class TaskRow(Base):
     review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     retry_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     cost_usd: Mapped[float] = mapped_column(default=0.0)
+    agent_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    review_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    input_tokens: Mapped[int] = mapped_column(default=0)
+    output_tokens: Mapped[int] = mapped_column(default=0)
 
 
 class AgentRow(Base):
@@ -112,6 +116,10 @@ class PipelineRow(Base):
     cancelled_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     build_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     test_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    planner_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    total_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    budget_limit_usd: Mapped[float] = mapped_column(default=0.0)
+    estimated_cost_usd: Mapped[float] = mapped_column(default=0.0)
 
 
 class PipelineEventRow(Base):
@@ -299,6 +307,61 @@ class Database:
                 task.cost_usd = (task.cost_usd or 0) + cost
                 await session.commit()
 
+    async def add_task_agent_cost(
+        self, task_id: str, cost: float, input_tokens: int, output_tokens: int,
+    ) -> None:
+        """Record agent execution cost and token usage for a task."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.agent_cost_usd = (task.agent_cost_usd or 0) + cost
+                task.cost_usd = (task.cost_usd or 0) + cost
+                task.input_tokens = (task.input_tokens or 0) + input_tokens
+                task.output_tokens = (task.output_tokens or 0) + output_tokens
+                await session.commit()
+
+    async def add_task_review_cost(self, task_id: str, cost: float) -> None:
+        """Record review cost for a task."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.review_cost_usd = (task.review_cost_usd or 0) + cost
+                task.cost_usd = (task.cost_usd or 0) + cost
+                await session.commit()
+
+    async def add_pipeline_cost(self, pipeline_id: str, cost: float) -> None:
+        """Add cost to the pipeline total."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.total_cost_usd = (row.total_cost_usd or 0) + cost
+                await session.commit()
+
+    async def get_pipeline_cost(self, pipeline_id: str) -> float:
+        """Return the current total cost for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                return row.total_cost_usd or 0.0
+            return 0.0
+
+    async def get_pipeline_budget(self, pipeline_id: str) -> float:
+        """Return the budget limit for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                return row.budget_limit_usd or 0.0
+            return 0.0
+
     # ── Agents ────────────────────────────────────────────────────────
 
     async def create_agent(self, id: str) -> None:
@@ -379,6 +442,7 @@ class Database:
         model_strategy: str = "auto", user_id: str | None = None,
         base_branch: str | None = None, branch_name: str | None = None,
         build_cmd: str | None = None, test_cmd: str | None = None,
+        budget_limit_usd: float = 0.0,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
@@ -386,6 +450,7 @@ class Database:
                 model_strategy=model_strategy, user_id=user_id,
                 base_branch=base_branch, branch_name=branch_name,
                 build_cmd=build_cmd, test_cmd=test_cmd,
+                budget_limit_usd=budget_limit_usd,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)

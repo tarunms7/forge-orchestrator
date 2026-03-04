@@ -38,6 +38,8 @@ class AgentResult:
     files_changed: list[str]
     summary: str
     cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
     error: str | None = None
 
 
@@ -123,8 +125,8 @@ class ClaudeAdapter(AgentAdapter):
                 error="SDK returned no result",
             )
 
-        result_text = result.result or ""
-        cost_usd = result.total_cost_usd or 0.0
+        result_text = result.result_text
+        cost_usd = result.cost_usd
 
         if result.is_error:
             return AgentResult(
@@ -132,6 +134,8 @@ class ClaudeAdapter(AgentAdapter):
                 files_changed=files_changed,
                 summary=result_text,
                 error=result_text,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
             )
 
         return AgentResult(
@@ -139,6 +143,8 @@ class ClaudeAdapter(AgentAdapter):
             files_changed=files_changed,
             summary=result_text[:500] if result_text else "Task completed",
             cost_usd=cost_usd,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
         )
 
 
