@@ -226,7 +226,7 @@ export default function CompletionSummary({
             </div>
           )}
           {/* CSS-only bar chart */}
-          <div className="cost-bar-chart">
+          <div className="cost-bar-chart" role="img" aria-label={`Cost breakdown: Planner $${plannerCost.toFixed(2)}, Agents $${totalAgentCost.toFixed(2)}, Review $${totalReviewCost.toFixed(2)}`}>
             {plannerCost > 0 && (
               <div
                 className="cost-bar-segment cost-bar-planner"

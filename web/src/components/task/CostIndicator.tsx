@@ -50,7 +50,15 @@ export default function CostIndicator() {
 
       {/* Progress bar (only when budget is set) */}
       {hasBudget && (
-        <div className="cost-indicator-bar-track" style={{ background: bgColor }}>
+        <div
+          className="cost-indicator-bar-track"
+          style={{ background: bgColor }}
+          role="progressbar"
+          aria-valuenow={pipelineCost}
+          aria-valuemin={0}
+          aria-valuemax={budgetLimitUsd}
+          aria-label={`Cost: $${pipelineCost.toFixed(2)} of $${budgetLimitUsd.toFixed(2)} budget`}
+        >
           <div
             className="cost-indicator-bar-fill"
             style={{
