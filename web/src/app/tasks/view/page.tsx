@@ -26,10 +26,19 @@ import { pausePipeline, resumePipeline } from "@/lib/api";
 function PlanTaskCard({ task, allTasks }: { task: TaskState; allTasks: TaskState[] }) {
   const [open, setOpen] = useState(false);
 
-  // Resolve dependency names
-  const depNames = (task.dependsOn ?? []).map((depId) => {
+  // Resolve dependency IDs to short labels (e.g. "task-1")
+  const depIds = task.dependsOn ?? [];
+  // Resolve dependency names for expanded view
+  const depNames = depIds.map((depId) => {
     const dep = allTasks.find((t) => t.id === depId);
     return dep ? dep.title : depId;
+  });
+
+  // Extract short suffix for dependency pills (e.g. "9df8148-task-2" → "task-2")
+  const depShortLabels = depIds.map((depId) => {
+    const parts = depId.split("-");
+    // Take last two segments (e.g. "task-2")
+    return parts.length >= 2 ? parts.slice(-2).join("-") : depId;
   });
 
   return (
@@ -49,9 +58,23 @@ function PlanTaskCard({ task, allTasks }: { task: TaskState; allTasks: TaskState
           <span className="task-number">{task.id}</span>
           <span className="plan-task-title">{task.title}</span>
         </div>
-        <span className={`complexity-badge ${task.complexity ?? "medium"}`}>
-          {task.complexity ?? "medium"}
-        </span>
+        <div className="plan-task-right">
+          {/* Dependency pills — shown on collapsed row */}
+          {depShortLabels.length > 0 && (
+            <div className="dep-pills">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ color: "var(--text-dim)", flexShrink: 0 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.102 1.101" />
+              </svg>
+              {depShortLabels.map((label) => (
+                <span key={label} className="dep-pill">{label}</span>
+              ))}
+            </div>
+          )}
+          <span className={`complexity-badge ${task.complexity ?? "medium"}`}>
+            {task.complexity ?? "medium"}
+          </span>
+        </div>
       </div>
 
       {open && (
