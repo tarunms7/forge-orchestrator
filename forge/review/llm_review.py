@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from claude_code_sdk import ClaudeCodeOptions
 
-from forge.core.sdk_helpers import SdkResult, sdk_query
+from forge.core.sdk_helpers import sdk_query
 from forge.review.pipeline import GateResult
 
 logger = logging.getLogger("forge.review")
