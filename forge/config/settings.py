@@ -32,5 +32,16 @@ class ForgeSettings(BaseSettings):
     # Database
     db_url: str = "sqlite+aiosqlite:///forge.db"
 
+    # Budget & cost tracking
+    budget_limit_usd: float = 0.0  # 0 means unlimited
+
+    # Cost rates per 1K tokens (USD)
+    cost_rate_sonnet_input: float = 0.003
+    cost_rate_sonnet_output: float = 0.015
+    cost_rate_haiku_input: float = 0.00025
+    cost_rate_haiku_output: float = 0.00125
+    cost_rate_opus_input: float = 0.015
+    cost_rate_opus_output: float = 0.075
+
     # Polling
     scheduler_poll_interval: float = 1.0

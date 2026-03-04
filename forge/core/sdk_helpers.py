@@ -3,6 +3,7 @@
 import logging
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage, query
@@ -10,6 +11,40 @@ from claude_code_sdk._internal import client as _sdk_client
 from claude_code_sdk._internal import message_parser as _sdk_parser
 
 logger = logging.getLogger("forge.sdk")
+
+
+@dataclass
+class SdkResult:
+    """Structured result from an SDK query with cost and token tracking."""
+
+    result_text: str
+    is_error: bool
+    cost_usd: float
+    input_tokens: int
+    output_tokens: int
+    session_id: str
+    duration_ms: int
+
+    @property
+    def result(self) -> str:
+        """Backward-compatible alias for result_text."""
+        return self.result_text
+
+    @classmethod
+    def from_result_message(cls, msg: ResultMessage) -> "SdkResult":
+        """Extract cost and token info from a ResultMessage."""
+        usage = msg.usage or {}
+        input_tokens = int(usage.get("input_tokens", 0))
+        output_tokens = int(usage.get("output_tokens", 0))
+        return cls(
+            result_text=msg.result or "",
+            is_error=msg.is_error,
+            cost_usd=msg.total_cost_usd or 0.0,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            session_id=msg.session_id,
+            duration_ms=msg.duration_ms,
+        )
 
 # Patch the SDK's message parser to gracefully skip unknown message types
 # (e.g. rate_limit_event) instead of crashing the entire query.
@@ -42,8 +77,8 @@ async def sdk_query(
     prompt: str,
     options: ClaudeCodeOptions,
     on_message: Callable[[Any], Any] | None = None,
-) -> ResultMessage | None:
-    """Run a claude-code-sdk query with clean environment. Returns the ResultMessage or None.
+) -> SdkResult | None:
+    """Run a claude-code-sdk query with clean environment. Returns an SdkResult or None.
 
     Removes CLAUDECODE from os.environ (also removed at CLI entry, but belt-and-suspenders)
     so the SDK subprocess doesn't reject our call as a 'nested session'.
@@ -59,11 +94,15 @@ async def sdk_query(
                 await on_message(message)
             if isinstance(message, ResultMessage):
                 last_result = message
-        return last_result
+        if last_result is None:
+            return None
+        return SdkResult.from_result_message(last_result)
     except Exception as e:
         if "Unknown message type" in str(e):
             logger.debug("Ignoring unknown message type from CLI: %s", e)
-            return last_result
+            if last_result is None:
+                return None
+            return SdkResult.from_result_message(last_result)
         # Surface the actual error details instead of opaque SDK message
         error_msg = str(e)
         if "exit code" in error_msg:
