@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { createPortal } from "react-dom";
-import type { EditableTask } from "./AddTaskForm";
+import { useTaskStore } from "@/stores/taskStore";
+import type { EditableTask } from "@/lib/validateTaskGraph";
 
 const COMPLEXITY_OPTIONS: EditableTask["complexity"][] = ["low", "medium", "high"];
 
@@ -129,17 +130,13 @@ function DeleteConfirmDialog({
 
 /* ── Editable Task Card ───────────────────────────────────────────── */
 
-export default function EditableTaskCard({
-  task,
-  allTasks,
-  onUpdate,
-  onDelete,
-}: {
-  task: EditableTask;
-  allTasks: EditableTask[];
-  onUpdate: (id: string, patch: Partial<EditableTask>) => void;
-  onDelete: (id: string) => void;
-}) {
+export default function EditableTaskCard({ taskId }: { taskId: string }) {
+  const editedTasks = useTaskStore((s) => s.editedTasks) || [];
+  const updateEditedTask = useTaskStore((s) => s.updateEditedTask);
+  const deleteEditedTask = useTaskStore((s) => s.deleteEditedTask);
+
+  const task = editedTasks.find((t) => t.id === taskId);
+
   const [expanded, setExpanded] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [fileInput, setFileInput] = useState("");
@@ -151,7 +148,7 @@ export default function EditableTaskCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: task.id });
+  } = useSortable({ id: taskId });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -159,8 +156,10 @@ export default function EditableTaskCard({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  if (!task) return null;
+
   // Find tasks that depend on this one
-  const dependentTasks = allTasks.filter((t) =>
+  const dependentTasks = editedTasks.filter((t) =>
     t.depends_on.includes(task.id),
   );
 
@@ -168,19 +167,19 @@ export default function EditableTaskCard({
     if (dependentTasks.length > 0) {
       setShowDeleteDialog(true);
     } else {
-      onDelete(task.id);
+      deleteEditedTask(task!.id);
     }
   }
 
   function handleConfirmDelete() {
     setShowDeleteDialog(false);
-    onDelete(task.id);
+    deleteEditedTask(task!.id);
   }
 
   function handleAddFile() {
     const trimmed = fileInput.trim();
-    if (trimmed && !task.files.includes(trimmed)) {
-      onUpdate(task.id, { files: [...task.files, trimmed] });
+    if (trimmed && !task!.files.includes(trimmed)) {
+      updateEditedTask(task!.id, { files: [...task!.files, trimmed] });
       setFileInput("");
     }
   }
@@ -193,21 +192,21 @@ export default function EditableTaskCard({
   }
 
   function handleRemoveFile(file: string) {
-    onUpdate(task.id, { files: task.files.filter((f) => f !== file) });
+    updateEditedTask(task!.id, { files: task!.files.filter((f) => f !== file) });
   }
 
   function toggleDependency(depId: string) {
-    if (task.depends_on.includes(depId)) {
-      onUpdate(task.id, {
-        depends_on: task.depends_on.filter((d) => d !== depId),
+    if (task!.depends_on.includes(depId)) {
+      updateEditedTask(task!.id, {
+        depends_on: task!.depends_on.filter((d) => d !== depId),
       });
     } else {
-      onUpdate(task.id, { depends_on: [...task.depends_on, depId] });
+      updateEditedTask(task!.id, { depends_on: [...task!.depends_on, depId] });
     }
   }
 
   // Available dependencies: all other tasks except self
-  const availableDeps = allTasks.filter((t) => t.id !== task.id);
+  const availableDeps = editedTasks.filter((t) => t.id !== task.id);
 
   return (
     <>
@@ -266,7 +265,7 @@ export default function EditableTaskCard({
           <input
             type="text"
             value={task.title}
-            onChange={(e) => onUpdate(task.id, { title: e.target.value })}
+            onChange={(e) => updateEditedTask(task.id, { title: e.target.value })}
             placeholder="Task title..."
             style={{
               flex: 1,
@@ -284,7 +283,7 @@ export default function EditableTaskCard({
           <select
             value={task.complexity}
             onChange={(e) =>
-              onUpdate(task.id, {
+              updateEditedTask(task.id, {
                 complexity: e.target.value as EditableTask["complexity"],
               })
             }
@@ -402,7 +401,7 @@ export default function EditableTaskCard({
                 rows={3}
                 value={task.description}
                 onChange={(e) =>
-                  onUpdate(task.id, { description: e.target.value })
+                  updateEditedTask(task.id, { description: e.target.value })
                 }
                 placeholder="Detailed description..."
                 style={{

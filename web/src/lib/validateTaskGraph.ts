@@ -67,32 +67,32 @@ export function validateTaskGraph(tasks: EditableTask[]): ValidationResult {
     if (!visited.has(t.id)) dfs(t.id);
   }
 
-  // 6. Every task must have at least one file
-  for (const t of tasks) {
-    if (t.files.length === 0) {
-      errors.push(`Task "${t.id}" must declare at least one target file.`);
-    }
-  }
-
-  // 7. No file conflicts (same file in two independent tasks)
-  // NOTE: file conflicts between tasks with a dependency chain are OK
-  // (the dependent task intentionally modifies the same file).
-  // Only flag conflicts between tasks with NO transitive dependency.
-  const fileOwners: Record<string, string> = {};
+  // 6. No file conflicts (same file in two independent tasks)
+  // Track ALL owners of each file to detect all pairwise conflicts.
+  const fileOwners: Record<string, string[]> = {};
   for (const t of tasks) {
     for (const f of t.files) {
-      if (f in fileOwners && !hasTransitiveDep(tasks, t.id, fileOwners[f]) &&
-          !hasTransitiveDep(tasks, fileOwners[f], t.id)) {
-        errors.push(
-          `File "${f}" is claimed by both "${fileOwners[f]}" and "${t.id}" ` +
-          `with no dependency between them.`
-        );
+      if (!fileOwners[f]) fileOwners[f] = [];
+      fileOwners[f].push(t.id);
+    }
+  }
+  for (const [file, owners] of Object.entries(fileOwners)) {
+    for (let i = 0; i < owners.length; i++) {
+      for (let j = i + 1; j < owners.length; j++) {
+        if (
+          !hasTransitiveDep(tasks, owners[i], owners[j]) &&
+          !hasTransitiveDep(tasks, owners[j], owners[i])
+        ) {
+          errors.push(
+            `File "${file}" is claimed by both "${owners[i]}" and "${owners[j]}" ` +
+            `with no dependency between them.`
+          );
+        }
       }
-      if (!(f in fileOwners)) fileOwners[f] = t.id;
     }
   }
 
-  // 8. Non-empty title
+  // 7. Non-empty title
   for (const t of tasks) {
     if (!t.title.trim()) errors.push(`Task "${t.id}" has an empty title.`);
   }

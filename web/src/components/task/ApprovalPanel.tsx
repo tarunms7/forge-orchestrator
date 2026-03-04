@@ -107,7 +107,7 @@ export default function ApprovalPanel({ task }: { task: TaskState }) {
   const [diffError, setDiffError] = useState<string | null>(null);
 
   // Get the diff preview (first 200 lines)
-  const diffPreview = (task as TaskState & { diffPreview?: string }).diffPreview || "";
+  const diffPreview = task.diffPreview || "";
 
   async function handleViewFullDiff() {
     if (!token || !pipelineId) return;

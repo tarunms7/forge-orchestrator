@@ -1,15 +1,8 @@
 "use client";
 
 import { useState } from "react";
-
-export interface EditableTask {
-  id: string;
-  title: string;
-  description: string;
-  files: string[];
-  depends_on: string[];
-  complexity: "low" | "medium" | "high";
-}
+import { useTaskStore } from "@/stores/taskStore";
+import type { EditableTask } from "@/lib/validateTaskGraph";
 
 const COMPLEXITY_OPTIONS: { value: EditableTask["complexity"]; label: string }[] = [
   { value: "low", label: "Low" },
@@ -28,17 +21,18 @@ export function generateTaskId(existingIds: Set<string>, prefix: string): string
 }
 
 export default function AddTaskForm({
-  existingTaskIds,
   pipelinePrefix,
-  onAdd,
+  onDone,
   onCancel,
 }: {
-  existingTaskIds: string[];
   pipelinePrefix: string;
-  onAdd: (task: EditableTask) => void;
+  onDone: () => void;
   onCancel: () => void;
 }) {
-  const idSet = new Set(existingTaskIds);
+  const editedTasks = useTaskStore((s) => s.editedTasks) || [];
+  const addEditedTask = useTaskStore((s) => s.addEditedTask);
+
+  const idSet = new Set(editedTasks.map((t) => t.id));
   const generatedId = generateTaskId(idSet, pipelinePrefix);
 
   const [title, setTitle] = useState("");
@@ -79,7 +73,7 @@ export default function AddTaskForm({
 
   function handleSubmit() {
     if (!canSubmit) return;
-    onAdd({
+    addEditedTask({
       id: generatedId,
       title: title.trim(),
       description: description.trim(),
@@ -87,7 +81,10 @@ export default function AddTaskForm({
       depends_on: dependsOn,
       complexity,
     });
+    onDone();
   }
+
+  const existingTaskIds = editedTasks.map((t) => t.id);
 
   return (
     <div

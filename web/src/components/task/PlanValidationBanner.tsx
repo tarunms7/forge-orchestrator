@@ -1,15 +1,10 @@
 "use client";
 
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-}
+import { useTaskStore } from "@/stores/taskStore";
 
-export default function PlanValidationBanner({
-  validation,
-}: {
-  validation: ValidationResult;
-}) {
+export default function PlanValidationBanner() {
+  const validation = useTaskStore((s) => s.planValidation);
+
   if (validation.valid) {
     return (
       <div
