@@ -150,9 +150,10 @@ class ReviewMixin:
             console.print("[green]  Gate 1.5 (test) passed[/green]")
 
         # L2: LLM review
-        # Pass prior feedback so the reviewer focuses on verifying fixes
-        # instead of inventing new complaints on every retry.
+        # Pass prior feedback + prior diff so the reviewer focuses on
+        # verifying fixes instead of inventing new complaints on every retry.
         prior_feedback = getattr(task, "review_feedback", None) if task.retry_count > 0 else None
+        prior_diff = getattr(task, "prior_diff", None) if task.retry_count > 0 else None
         console.print(
             f"[blue]  L2 (LLM): Code review for {task.id}"
             f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
@@ -162,6 +163,7 @@ class ReviewMixin:
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
             prior_feedback=prior_feedback,
+            prior_diff=prior_diff,
             project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
         )
         # Track review cost
@@ -184,7 +186,8 @@ class ReviewMixin:
         }, db=db, pipeline_id=pipeline_id)
         if not gate2_result.passed:
             console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
-            feedback_parts.append(f"L2 (LLM code review) FAILED:\n{gate2_result.details}")
+            prefix = "[RETRIABLE] " if gate2_result.retriable else ""
+            feedback_parts.append(f"{prefix}L2 (LLM code review) FAILED:\n{gate2_result.details}")
             return False, "\n\n".join(feedback_parts)
         console.print("[green]  L2 passed[/green]")
 

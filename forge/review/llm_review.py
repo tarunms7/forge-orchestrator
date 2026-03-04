@@ -1,5 +1,6 @@
 """Gate 2: LLM code review. A fresh Claude instance reviews changes against the task spec."""
 
+import asyncio
 import logging
 import subprocess
 from dataclasses import dataclass
@@ -47,6 +48,7 @@ async def gate2_llm_review(
     worktree_path: str | None = None,
     model: str = "sonnet",
     prior_feedback: str | None = None,
+    prior_diff: str | None = None,
     project_context: str = "",
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
@@ -56,6 +58,9 @@ async def gate2_llm_review(
             reviewer's feedback. The new reviewer is told to focus on
             verifying those specific issues were fixed, not inventing
             new complaints.
+        prior_diff: If this is a re-review, the diff from the previous
+            (rejected) attempt so the reviewer can compare and verify
+            fixes were actually made.
         project_context: Project snapshot context for the reviewer.
 
     Returns:
@@ -70,7 +75,7 @@ async def gate2_llm_review(
             cost_info,
         )
 
-    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, project_context=project_context)
+    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, prior_diff=prior_diff, project_context=project_context)
 
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
@@ -100,6 +105,7 @@ async def gate2_llm_review(
                     GateResult(
                         passed=False, gate="gate2_llm_review",
                         details=f"SDK error during review after {max_review_attempts} attempts: {e}",
+                        retriable=True,
                     ),
                     cost_info,
                 )
@@ -118,12 +124,15 @@ async def gate2_llm_review(
         logger.warning(
             "L2 review returned empty result (attempt %d/%d)", attempt, max_review_attempts,
         )
+        if attempt < max_review_attempts:
+            await asyncio.sleep(2)  # Brief pause before retrying
 
     # All attempts returned empty
     return (
         GateResult(
             passed=False, gate="gate2_llm_review",
             details=f"Empty review response after {max_review_attempts} attempts",
+            retriable=True,
         ),
         cost_info,
     )
@@ -132,6 +141,8 @@ async def gate2_llm_review(
 def _build_review_prompt(
     title: str, description: str, diff: str,
     prior_feedback: str | None = None,
+    *,
+    prior_diff: str | None = None,
     project_context: str = "",
 ) -> str:
     parts = []
@@ -147,10 +158,19 @@ def _build_review_prompt(
             "=== PRIOR REVIEW CONTEXT ===\n"
             "A previous reviewer rejected this code with the following feedback:\n"
             f"---\n{prior_feedback}\n---\n\n"
+        )
+        if prior_diff:
+            prior_diff_snippet = prior_diff[:6000]
+            parts.append(
+                "=== PRIOR DIFF (what was rejected) ===\n"
+                f"```diff\n{prior_diff_snippet}\n```\n\n"
+            )
+        parts.append(
             "The developer has attempted to fix these issues. Your PRIMARY job is to:\n"
-            "1. Verify that the specific issues above were actually fixed\n"
-            "2. Only flag NEW issues if they are genuine bugs or security concerns\n"
-            "3. Do NOT invent new stylistic complaints — focus on the prior feedback\n\n"
+            "1. Compare the current diff against the prior diff to verify changes were made\n"
+            "2. Verify that the specific issues above were actually fixed\n"
+            "3. Only flag NEW issues if they are genuine bugs or security concerns\n"
+            "4. Do NOT invent new stylistic complaints — focus on the prior feedback\n\n"
         )
     parts.append("Review this code. Respond with PASS or FAIL.")
     return "".join(parts)

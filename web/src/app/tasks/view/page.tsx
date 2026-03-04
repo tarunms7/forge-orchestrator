@@ -882,12 +882,12 @@ function TaskExecutionPageInner() {
               cursor: restartLoading ? "not-allowed" : "pointer",
             }}
           >
-            {restartLoading ? "Restarting..." : "Restart Pipeline"}
+            {restartLoading ? "Restarting..." : (isCancelled ? "Restart Pipeline" : "Start Over (Re-plan)")}
           </button>
         )}
       </div>
 
-      {/* Resume Button — shown only when pipeline is complete with errored tasks */}
+      {/* Retry Failed Tasks — shown only when pipeline is complete with errored tasks */}
       {phase === "complete" && taskList.some(t => t.state === "error") && (
         <div style={{ marginTop: 8, display: "flex", justifyContent: "center", gap: 12 }}>
           <button
@@ -905,7 +905,7 @@ function TaskExecutionPageInner() {
             className="btn btn-primary btn-glow"
             style={{ padding: "10px 24px", fontWeight: 600 }}
           >
-            Resume Pipeline
+            Retry {taskList.filter(t => t.state === "error").length} Failed Task{taskList.filter(t => t.state === "error").length !== 1 ? "s" : ""}
           </button>
         </div>
       )}
