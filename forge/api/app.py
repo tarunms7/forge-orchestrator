@@ -92,6 +92,14 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
     )
 
+    # ── GitHub webhook settings (from env) ──────────────────────────
+    from forge.config.settings import ForgeSettings as _ForgeSettings
+
+    _webhook_settings = _ForgeSettings()
+    app.state.github_webhook_secret = _webhook_settings.github_webhook_secret
+    app.state.github_allowed_repos = _webhook_settings.github_allowed_repos
+    app.state.webhook_project_dir = _webhook_settings.github_webhook_project_dir or None
+
     # ── Routers (all under /api prefix) ──────────────────────────────
     from forge.api.routes.auth import router as auth_router
     from forge.api.routes.diff import router as diff_router
@@ -101,6 +109,7 @@ def create_app(
     from forge.api.routes.settings import router as settings_router
     from forge.api.routes.tasks import router as tasks_router
     from forge.api.routes.templates import router as templates_router
+    from forge.api.routes.webhooks import router as webhooks_router
 
     app.include_router(auth_router, prefix="/api")
     app.include_router(tasks_router, prefix="/api/tasks")
@@ -110,6 +119,7 @@ def create_app(
     app.include_router(github_router, prefix="/api")
     app.include_router(settings_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
+    app.include_router(webhooks_router, prefix="/api")
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint

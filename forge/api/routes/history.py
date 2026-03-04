@@ -50,6 +50,8 @@ async def list_history(
             "task_count": len(tasks),
             "build_cmd": getattr(p, "build_cmd", None),
             "test_cmd": getattr(p, "test_cmd", None),
+            "github_issue_url": getattr(p, "github_issue_url", None),
+            "github_issue_number": getattr(p, "github_issue_number", None),
         })
     return results
 
@@ -95,4 +97,6 @@ async def get_history_detail(
         "created_at": pipeline.created_at or "",
         "duration": duration,
         "pr_url": getattr(pipeline, "pr_url", None),
+        "github_issue_url": getattr(pipeline, "github_issue_url", None),
+        "github_issue_number": getattr(pipeline, "github_issue_number", None),
     }

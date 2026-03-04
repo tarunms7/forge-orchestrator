@@ -51,3 +51,8 @@ class ForgeSettings(BaseSettings):
 
     # Polling
     scheduler_poll_interval: float = 1.0
+
+    # GitHub webhook integration
+    github_webhook_secret: str = ""
+    github_allowed_repos: list[str] = []
+    github_webhook_project_dir: str = ""
