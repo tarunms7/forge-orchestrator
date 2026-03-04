@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import time
 
 from rich.console import Console
@@ -62,6 +63,21 @@ class ExecutorMixin:
         if not ok:
             await db.release_agent(agent_id)
             return
+        # Strip out-of-scope changes before review
+        has_in_scope_changes = self._enforce_file_scope(task, worktree_path, pipeline_branch)
+        if not has_in_scope_changes:
+            console.print(f"[red]{task_id}: all changes were outside file scope[/red]")
+            await self._handle_retry(
+                db, task_id, worktree_mgr,
+                review_feedback=(
+                    "ALL your changes were to files outside your allowed scope.\n"
+                    f"You are ONLY allowed to modify: {', '.join(task.files)}\n"
+                    "Do NOT touch any other files — changes outside scope are automatically reverted."
+                ),
+                pipeline_id=pid,
+            )
+            await db.release_agent(agent_id)
+            return
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         await self._attempt_merge(db, merge_worker, worktree_mgr, task, task_id, worktree_path, agent_model, pid, pipeline_branch=pipeline_branch)
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
@@ -107,6 +123,11 @@ class ExecutorMixin:
         except ValueError:
             wt = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
             if os.path.isdir(wt):
+                # Reuse the worktree as-is.  The scope gate already stripped
+                # out-of-scope changes on the previous run, so only the
+                # agent's in-scope work remains.  The retry agent can patch
+                # the review issues on top instead of rewriting everything.
+                console.print(f"[yellow]{task_id}: reusing worktree for retry (in-scope changes preserved)[/yellow]")
                 return wt
             console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
         except Exception as exc:
@@ -153,6 +174,75 @@ class ExecutorMixin:
         if result.files_changed:
             await self._emit("task:files_changed", {"task_id": task_id, "files": result.files_changed}, db=db, pipeline_id=pid)
         return True
+
+    # -- file scope enforcement -------------------------------------------
+
+    def _enforce_file_scope(
+        self, task, worktree_path: str, pipeline_branch: str | None,
+    ) -> bool:
+        """Strip changes to files outside the task's allowed scope.
+
+        Runs after the agent finishes, before review.  Reverts any modified
+        files not in ``task.files`` back to the pipeline branch state.
+
+        Returns ``True`` if in-scope changes remain, ``False`` if nothing
+        is left (agent only made out-of-scope changes).
+        """
+        if not pipeline_branch:
+            return True  # Can't enforce without a base ref
+
+        allowed = set(task.files or [])
+        if not allowed:
+            return True  # No file list = no enforcement (safety valve)
+
+        # Get all files changed by the agent vs pipeline branch
+        result = subprocess.run(
+            ["git", "diff", "--name-only", pipeline_branch, "HEAD"],
+            cwd=worktree_path, capture_output=True, text=True,
+        )
+        changed = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+        out_of_scope = [f for f in changed if f not in allowed]
+
+        if not out_of_scope:
+            return True  # All changes are in scope
+
+        console.print(
+            f"[yellow]  Scope enforcement: reverting {len(out_of_scope)} "
+            f"out-of-scope file(s): {', '.join(out_of_scope[:5])}"
+            f"{'...' if len(out_of_scope) > 5 else ''}[/yellow]"
+        )
+
+        for file in out_of_scope:
+            # Restore file to pipeline branch state (works for modified/deleted)
+            restore = subprocess.run(
+                ["git", "checkout", pipeline_branch, "--", file],
+                cwd=worktree_path, capture_output=True,
+            )
+            if restore.returncode != 0:
+                # File was newly created (doesn't exist in base) — remove it
+                subprocess.run(
+                    ["git", "rm", "-f", file],
+                    cwd=worktree_path, capture_output=True,
+                )
+
+        # Stage and commit the reverts
+        subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True)
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=worktree_path, capture_output=True, text=True,
+        )
+        if staged.stdout.strip():
+            subprocess.run(
+                ["git", "commit", "-m", "chore: revert out-of-scope file changes"],
+                cwd=worktree_path, capture_output=True,
+            )
+
+        # Check if any in-scope changes remain
+        remaining = subprocess.run(
+            ["git", "diff", "--name-only", pipeline_branch, "HEAD"],
+            cwd=worktree_path, capture_output=True, text=True,
+        )
+        return bool(remaining.stdout.strip())
 
     # -- post-review merge with Tier 1/Tier 2 --------------------------
 

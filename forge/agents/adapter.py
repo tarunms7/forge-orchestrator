@@ -27,8 +27,10 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 
 {dependency_context}
 
+{file_scope_block}
+
 Rules:
-- Only modify files listed in your task specification
+- You MUST ONLY modify files listed in the File Scope section above. Changes to other files are automatically reverted by the system.
 - Follow existing code style and patterns — see the conventions section above
 - Write tests for any new functionality
 - Commit your changes with a SHORT conventional commit message (max 72 chars) — use feat/fix/refactor/test/docs/chore prefix and describe WHAT changed, not the task title
@@ -166,6 +168,7 @@ class ClaudeAdapter(AgentAdapter):
         conventions_json: str | None = None,
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
+        allowed_files: list[str] | None = None,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -176,11 +179,24 @@ class ClaudeAdapter(AgentAdapter):
             extra_dirs_clause = ""
         conventions_block = _build_conventions_block(conventions_json, conventions_md)
         dependency_context = _build_dependency_context(completed_deps)
+        if allowed_files:
+            files_list = "\n".join(f"- {f}" for f in allowed_files)
+            file_scope_block = (
+                "## File Scope (STRICT — enforced by the system)\n\n"
+                "You are ONLY allowed to modify these files:\n"
+                f"{files_list}\n\n"
+                "ANY changes to files outside this list will be AUTOMATICALLY REVERTED "
+                "before review. Do NOT modify, create, or delete any other files — "
+                "it wastes your time and tokens."
+            )
+        else:
+            file_scope_block = ""
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
             conventions_block=conventions_block,
             dependency_context=dependency_context,
+            file_scope_block=file_scope_block,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
@@ -211,6 +227,7 @@ class ClaudeAdapter(AgentAdapter):
             conventions_json=conventions_json,
             conventions_md=conventions_md,
             completed_deps=completed_deps,
+            allowed_files=allowed_files,
         )
 
         try:
