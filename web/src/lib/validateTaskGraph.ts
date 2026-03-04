@@ -1,3 +1,11 @@
+/**
+ * Client-side task graph validation.
+ *
+ * Runs on every edit in the plan editor and displays errors inline.
+ * Mirrors the server-side validate_task_graph() in forge/core/validator.py.
+ */
+
+
 export interface EditableTask {
   id: string;
   title: string;
@@ -67,8 +75,17 @@ export function validateTaskGraph(tasks: EditableTask[]): ValidationResult {
     if (!visited.has(t.id)) dfs(t.id);
   }
 
-  // 6. No file conflicts (same file in two independent tasks)
+  // 6. Every task must have at least one file
+  for (const t of tasks) {
+    if (t.files.length === 0) {
+      errors.push(`Task "${t.id}" must declare at least one target file.`);
+    }
+  }
+
+  // 7. No file conflicts (same file in two independent tasks)
   // Track ALL owners of each file to detect all pairwise conflicts.
+  // File conflicts between tasks with a dependency chain are OK
+  // (the dependent task intentionally modifies the same file).
   const fileOwners: Record<string, string[]> = {};
   for (const t of tasks) {
     for (const f of t.files) {
@@ -92,7 +109,7 @@ export function validateTaskGraph(tasks: EditableTask[]): ValidationResult {
     }
   }
 
-  // 7. Non-empty title
+  // 8. Non-empty title
   for (const t of tasks) {
     if (!t.title.trim()) errors.push(`Task "${t.id}" has an empty title.`);
   }
