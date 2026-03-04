@@ -724,16 +724,46 @@ async def approve_task(
                 await forge_db.update_task_state(task_id, "error")
                 return
 
-            # Perform the merge via git
-            merge_result = subprocess.run(
-                ["git", "merge-base", "HEAD", pipeline_branch],
-                cwd=worktree_path,
-                capture_output=True, text=True,
-            )
-            if merge_result.returncode != 0:
-                logger.warning("Merge-base check failed for task %s", task_id)
+            # Perform the actual merge via MergeWorker
+            from forge.merge.worker import MergeWorker
+            project_dir = pipeline.project_dir
+            merge_worker = MergeWorker(project_dir, main_branch=pipeline_branch)
+            branch = f"forge/{task_id}"
+            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
 
-            # Clear approval context after merge starts
+            if merge_result.success:
+                await forge_db.update_task_state(task_id, "done")
+                diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+                stats = _parse_diff_stats(diff)
+                if ws_manager:
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "task:merge_result",
+                        "task_id": task_id,
+                        "success": True,
+                        **stats,
+                    })
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "task:state_changed",
+                        "task_id": task_id,
+                        "state": "done",
+                    })
+            else:
+                logger.error("Merge failed for task %s: %s", task_id, merge_result.error)
+                await forge_db.update_task_state(task_id, "error")
+                if ws_manager:
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "task:merge_result",
+                        "task_id": task_id,
+                        "success": False,
+                        "error": merge_result.error,
+                    })
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "task:state_changed",
+                        "task_id": task_id,
+                        "state": "error",
+                    })
+
+            # Clear approval context after merge completes
             await forge_db.clear_task_approval_context(task_id)
         except Exception as exc:
             logger.exception("Merge failed for approved task %s: %s", task_id, exc)

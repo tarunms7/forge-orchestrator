@@ -315,8 +315,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         while True:
             # Check pause flag — don't dispatch new tasks while paused
             if pipeline_id:
-                pipeline = await db.get_pipeline(pipeline_id)
-                if pipeline and getattr(pipeline, "paused", False):
+                pipeline_rec = await db.get_pipeline(pipeline_id)
+                if pipeline_rec and getattr(pipeline_rec, "paused", False):
+                    # Don't dispatch new tasks. Already-running tasks continue.
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
 
@@ -324,14 +325,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             _print_status_table(tasks)
 
             # AWAITING_APPROVAL counts as "parked" — not blocking the loop
-            _parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value)
-            all_done = all(t.state in _parked_states for t in tasks)
-            if all_done:
+            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value)
+            all_parked = all(t.state in parked_states for t in tasks)
+            if all_parked:
                 # If any tasks are still awaiting approval, sleep and poll
                 # rather than exiting — approvals/rejections create new work
-                if any(t.state == TaskState.AWAITING_APPROVAL.value for t in tasks):
+                has_awaiting = any(t.state == TaskState.AWAITING_APPROVAL.value for t in tasks)
+                if has_awaiting:
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
+                # All tasks are truly terminal (done/error)
                 done_count = sum(1 for t in tasks if t.state == TaskState.DONE.value)
                 error_count = sum(1 for t in tasks if t.state == TaskState.ERROR.value)
                 console.print(f"\n[bold green]Complete: {done_count} done, {error_count} errors[/bold green]")

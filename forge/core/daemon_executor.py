@@ -173,7 +173,10 @@ class ExecutorMixin:
             return
 
         # ── Approval gate ─────────────────────────────────────────────
-        require_approval = getattr(pipeline, "require_approval", False) or self._settings.require_approval
+        require_approval = (
+            getattr(pipeline, "require_approval", False)
+            or getattr(self._settings, "require_approval", False)
+        )
         if require_approval:
             await db.update_task_state(task_id, TaskState.AWAITING_APPROVAL.value)
             await self._emit("task:state_changed", {
@@ -191,7 +194,10 @@ class ExecutorMixin:
                 "agent_model": agent_model,
                 "pipeline_branch": pipeline_branch,
             }))
-            return  # Do NOT proceed to merge — await human approval
+            # Do NOT proceed to merge — await human approval.
+            # The /approve endpoint triggers the merge. Agent is released by
+            # _cleanup_and_release in the caller.
+            return
 
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)

@@ -32,6 +32,8 @@ export interface TaskState {
   dependsOn?: string[];
   /** Complexity tier from the plan. */
   complexity?: string;
+  /** Diff preview for approval UI (first 200 lines). */
+  diffPreview?: string;
   /** Files actually changed during execution. */
   files: string[];
   output: string[];
