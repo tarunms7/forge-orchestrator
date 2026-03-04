@@ -89,6 +89,7 @@ class TaskRow(Base):
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
     approval_context: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    prior_diff: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -624,6 +625,14 @@ class Database:
             task = await session.get(TaskRow, task_id)
             if task:
                 task.approval_context = None
+                await session.commit()
+
+    async def set_task_prior_diff(self, task_id: str, diff: str) -> None:
+        """Store the rejected diff so the re-reviewer can compare on retry."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.prior_diff = diff
                 await session.commit()
 
     async def set_pipeline_paused(self, pipeline_id: str, paused: bool) -> None:

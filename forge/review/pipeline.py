@@ -11,6 +11,7 @@ class GateResult:
     passed: bool
     gate: str
     details: str
+    retriable: bool = False  # True = transient failure (empty response, SDK error) — re-review, don't re-agent
 
 
 @dataclass

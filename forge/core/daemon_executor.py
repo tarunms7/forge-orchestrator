@@ -167,9 +167,31 @@ class ExecutorMixin:
         pipeline = await db.get_pipeline(pid) if pid else None
         self._pipeline_build_cmd = getattr(pipeline, 'build_cmd', None) if pipeline else None
         self._pipeline_test_cmd = getattr(pipeline, 'test_cmd', None) if pipeline else None
-        passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid, pipeline_branch=pipeline_branch)
+        # Review with automatic re-review on transient failures (empty response,
+        # SDK errors) so they don't waste the task's limited retry budget.
+        max_re_reviews = 2
+        passed, feedback = False, None
+        for re_review_attempt in range(max_re_reviews + 1):
+            passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid, pipeline_branch=pipeline_branch)
+            if passed:
+                break
+            if feedback and "[RETRIABLE]" in feedback and re_review_attempt < max_re_reviews:
+                console.print(f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]")
+                continue
+            break
         if not passed:
-            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=feedback, pipeline_id=pid)
+            # Include the rejected diff so the retry agent knows exactly what it wrote
+            enriched_feedback = feedback or ""
+            if diff:
+                diff_snippet = diff[:8000]  # Cap at 8000 chars to save context
+                enriched_feedback = (
+                    f"=== YOUR REJECTED DIFF ===\n"
+                    f"```diff\n{diff_snippet}\n```\n\n"
+                    f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}"
+                )
+            # Store current diff so re-reviewer can compare on next attempt
+            await db.set_task_prior_diff(task_id, diff[:10000])
+            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid)
             return
 
         # ── Approval gate ─────────────────────────────────────────────
