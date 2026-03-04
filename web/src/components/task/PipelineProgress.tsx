@@ -17,6 +17,7 @@ const PHASE_ORDER: Record<PipelineState["phase"], number> = {
   planned: 1,
   executing: 2,
   reviewing: 3,
+  paused: 2,
   complete: 4,
   cancelled: -2,
   error: -3,

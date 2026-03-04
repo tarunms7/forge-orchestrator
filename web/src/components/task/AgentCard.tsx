@@ -13,6 +13,7 @@ const STATE_CLASS: Record<TaskState["state"], { label: string; cardClass: string
   pending: { label: "Pending", cardClass: "pending", badgeClass: "state-badge pending" },
   working: { label: "Working", cardClass: "working", badgeClass: "state-badge working" },
   in_review: { label: "In Review", cardClass: "in-review", badgeClass: "state-badge review" },
+  awaiting_approval: { label: "Awaiting Approval", cardClass: "in-review", badgeClass: "state-badge review" },
   done: { label: "Done", cardClass: "done", badgeClass: "state-badge done" },
   error: { label: "Error", cardClass: "error-card", badgeClass: "state-badge error" },
   retrying: { label: "Retrying", cardClass: "working", badgeClass: "state-badge retrying" },
