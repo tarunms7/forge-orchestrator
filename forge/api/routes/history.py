@@ -48,6 +48,8 @@ async def list_history(
             "created_at": p.created_at or "",
             "duration": duration,
             "task_count": len(tasks),
+            "build_cmd": getattr(p, "build_cmd", None),
+            "test_cmd": getattr(p, "test_cmd", None),
         })
     return results
 

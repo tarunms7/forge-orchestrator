@@ -110,6 +110,8 @@ class PipelineRow(Base):
     base_branch: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     cancelled_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    build_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    test_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class PipelineEventRow(Base):
@@ -376,12 +378,14 @@ class Database:
         self, id: str, description: str, project_dir: str,
         model_strategy: str = "auto", user_id: str | None = None,
         base_branch: str | None = None, branch_name: str | None = None,
+        build_cmd: str | None = None, test_cmd: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
                 id=id, description=description, project_dir=project_dir,
                 model_strategy=model_strategy, user_id=user_id,
                 base_branch=base_branch, branch_name=branch_name,
+                build_cmd=build_cmd, test_cmd=test_cmd,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)

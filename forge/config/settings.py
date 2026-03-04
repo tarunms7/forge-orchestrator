@@ -20,6 +20,10 @@ class ForgeSettings(BaseSettings):
     # Agent sandboxing
     allowed_dirs: list[str] = []  # Extra directories agents can access
 
+    # Build & test verification
+    build_cmd: str | None = None
+    test_cmd: str | None = None
+
     # Resource thresholds
     cpu_threshold: float = 80.0
     memory_threshold_pct: float = 10.0
