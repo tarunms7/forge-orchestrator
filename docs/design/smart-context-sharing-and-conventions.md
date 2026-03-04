@@ -103,14 +103,9 @@ Stores a brief (≤300 char) summary of what the agent actually implemented. Pop
 
 ### 3.3 Migration
 
-Alembic migration adds both nullable columns with `ALTER TABLE`:
+Both columns are nullable with defaults of `None`, so the existing `_add_missing_columns()` auto-migration in `Database.__init__()` (line 156 of `db.py`) handles them automatically — it detects columns present in the ORM model but missing from the DB table and runs `ALTER TABLE ... ADD COLUMN` on startup. No Alembic or manual migration needed.
 
-```sql
-ALTER TABLE pipelines ADD COLUMN conventions_json TEXT;
-ALTER TABLE tasks ADD COLUMN implementation_summary TEXT;
-```
-
-No data migration needed — existing rows get `NULL` and the code treats `None` as "no conventions/summary available."
+Existing rows get `NULL` and the code treats `None` as "no conventions/summary available."
 
 ---
 
@@ -270,6 +265,7 @@ After a successful pipeline completes, the daemon merges planner-extracted conve
 
 import json
 import os
+from datetime import datetime, timezone
 
 def update_conventions_file(
     project_dir: str,
@@ -320,7 +316,6 @@ def update_conventions_file(
     if not new_sections:
         return  # Nothing new to add
 
-    from datetime import datetime, timezone
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     appendix = (
@@ -371,6 +366,8 @@ Rules:
 
 ### 6.2 Conventions block construction
 
+Conventions from `.forge/conventions.md` (user authority) and planner-extracted conventions are merged into a **single** `## Project Conventions` section. The `.forge/conventions.md` content comes first (takes precedence), and planner-discovered entries are appended only for categories not already covered — avoiding duplicate or conflicting information.
+
 ```python
 # forge/agents/adapter.py — new helper
 
@@ -378,7 +375,11 @@ def _build_conventions_block(
     conventions_json: str | None,
     conventions_md: str | None,
 ) -> str:
-    """Build the conventions section for the agent system prompt.
+    """Build a unified conventions section for the agent system prompt.
+
+    Merges user conventions (.forge/conventions.md) with planner-extracted
+    conventions into a single block. User conventions take precedence —
+    planner entries are only included for categories not already covered.
 
     Args:
         conventions_json: Planner-extracted conventions (JSON string from DB).
@@ -387,26 +388,35 @@ def _build_conventions_block(
     Returns:
         Formatted conventions block, or empty string if none available.
     """
-    parts = []
+    if not conventions_json and not conventions_md:
+        return ""
 
+    lines = ["## Project Conventions"]
+
+    # User conventions first (highest authority)
+    if conventions_md:
+        lines.append(conventions_md)
+
+    # Planner-extracted conventions — only include categories not
+    # already covered in conventions.md
     if conventions_json:
         try:
             conventions = json.loads(conventions_json)
-            lines = ["## Project Conventions (from planner analysis)"]
+            md_lower = (conventions_md or "").lower()
+            extra = []
             for key, value in conventions.items():
-                heading = key.replace("_", " ").title()
-                lines.append(f"- **{heading}:** {value}")
-            parts.append("\n".join(lines))
+                heading = key.replace("_", " ")
+                # Skip if this category already appears in conventions.md
+                if f"## {heading}" in md_lower or f"**{heading}" in md_lower:
+                    continue
+                extra.append(f"- **{heading.title()}:** {value}")
+            if extra:
+                lines.append("\n_Additional conventions discovered by planner:_")
+                lines.extend(extra)
         except (json.JSONDecodeError, TypeError):
             pass
 
-    if conventions_md:
-        parts.append(
-            "## Project Conventions (from .forge/conventions.md)\n"
-            + conventions_md
-        )
-
-    return "\n\n".join(parts)
+    return "\n\n".join(lines)
 ```
 
 ### 6.3 Dependency context block construction
@@ -502,6 +512,7 @@ When an agent completes successfully and its task reaches `DONE` state, extract 
 def _extract_implementation_summary(
     worktree_path: str,
     agent_summary: str,
+    pipeline_branch: str | None = None,
 ) -> str:
     """Extract a brief implementation summary from a completed agent's work.
 
@@ -511,17 +522,36 @@ def _extract_implementation_summary(
     Args:
         worktree_path: Path to the agent's worktree (pre-cleanup).
         agent_summary: The AgentResult.summary text.
+        pipeline_branch: The pipeline branch ref to diff against.
+            Used to scope commit messages to only the agent's own
+            commits (not base branch commits). Falls back to
+            ``--not --remotes`` heuristic if not provided.
 
     Returns:
         A concise summary string.
     """
-    # Get commit message(s) from this worktree
-    result = subprocess.run(
-        ["git", "log", "--format=%s", "-3"],  # last 3 commit subjects
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-    )
+    # Get ONLY the agent's commit messages, not base branch commits.
+    # Use pipeline_branch as the boundary if available.
+    if pipeline_branch:
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", pipeline_branch],
+            cwd=worktree_path, capture_output=True, text=True,
+        )
+        if verify.returncode == 0:
+            result = subprocess.run(
+                ["git", "log", "--format=%s", f"{pipeline_branch}..HEAD"],
+                cwd=worktree_path, capture_output=True, text=True,
+            )
+        else:
+            result = subprocess.run(
+                ["git", "log", "--format=%s", "--not", "--remotes", "-5"],
+                cwd=worktree_path, capture_output=True, text=True,
+            )
+    else:
+        result = subprocess.run(
+            ["git", "log", "--format=%s", "--not", "--remotes", "-5"],
+            cwd=worktree_path, capture_output=True, text=True,
+        )
     commit_msgs = result.stdout.strip() if result.returncode == 0 else ""
 
     parts = []
@@ -542,14 +572,16 @@ In `ExecutorMixin._emit_merge_success()`, after the task is marked `DONE` but be
 ```python
 # forge/core/daemon_executor.py — _emit_merge_success (modified)
 
-async def _emit_merge_success(self, db, task_id, pid, worktree_path, **kwargs):
+async def _emit_merge_success(self, db, task_id, pid, worktree_path, *, pipeline_branch=None, **kwargs):
     # ... existing logic ...
     await db.update_task_state(task_id, TaskState.DONE.value)
 
     # NEW: extract and store implementation summary
     task = await db.get_task(task_id)
     summary = _extract_implementation_summary(
-        worktree_path, getattr(task, "summary", "") or ""
+        worktree_path,
+        getattr(task, "summary", "") or "",
+        pipeline_branch=pipeline_branch,
     )
     await db.update_task_implementation_summary(task_id, summary)
 
@@ -596,9 +628,11 @@ async def _run_agent(self, db, runtime, worktree_mgr, task, task_id, ...):
     # ...
 ```
 
-Where `_load_conventions_md` is a simple file reader:
+Where `_load_conventions_md` lives in `forge/core/daemon_helpers.py` (alongside other module-level helpers):
 
 ```python
+# forge/core/daemon_helpers.py — new function
+
 def _load_conventions_md(project_dir: str) -> str | None:
     """Load .forge/conventions.md if it exists."""
     path = os.path.join(project_dir, ".forge", "conventions.md")
@@ -628,7 +662,7 @@ When `True`, after a successful pipeline completes, the daemon calls `update_con
 
 ## 9. DB Helper Methods
 
-New methods on the `ForgeDB` class:
+New methods on the `Database` class (`forge/storage/db.py`):
 
 ```python
 # forge/storage/db.py
@@ -637,7 +671,7 @@ async def update_pipeline_conventions(
     self, pipeline_id: str, conventions_json: str
 ) -> None:
     """Store planner-extracted conventions JSON on a pipeline."""
-    async with self._session() as session:
+    async with self._session_factory() as session:
         pipeline = await session.get(PipelineRow, pipeline_id)
         if pipeline:
             pipeline.conventions_json = conventions_json
@@ -647,7 +681,7 @@ async def update_task_implementation_summary(
     self, task_id: str, summary: str
 ) -> None:
     """Store an implementation summary on a completed task."""
-    async with self._session() as session:
+    async with self._session_factory() as session:
         task = await session.get(TaskRow, task_id)
         if task:
             task.implementation_summary = summary
@@ -706,19 +740,18 @@ src/
     Button.tsx
     ...
 
-## Project Conventions (from planner analysis)
+## Project Conventions
+
+## Component Patterns
+React functional components only. 'use client' directive for client components.
+Keep components under 200 lines.
+
+_Additional conventions discovered by planner:_
 - **Styling:** Tailwind v4 utility classes, CSS variables in globals.css
 - **State Management:** Zustand stores in /stores/
 - **Naming:** camelCase for TS, snake_case for Python
 - **Testing:** pytest for Python, no frontend tests yet
 - **Imports:** absolute imports with @/ prefix for Next.js
-
-## Project Conventions (from .forge/conventions.md)
-# Project Conventions
-
-## Component Patterns
-React functional components only. 'use client' directive for client components.
-Keep components under 200 lines.
 
 ## Completed Dependencies
 
@@ -752,7 +785,7 @@ Rules:
 | `forge/core/claude_planner.py` | Modify | Update `PLANNER_SYSTEM_PROMPT` to request conventions, inject `conventions.md` into planner prompt |
 | `forge/agents/adapter.py` | Modify | Add `_build_conventions_block()`, `_build_dependency_context()`, update template and `_build_options()` signature |
 | `forge/core/daemon_executor.py` | Modify | Wire conventions + dependency context into `_run_agent()`, extract summary in `_emit_merge_success()` |
-| `forge/core/daemon_helpers.py` | Modify | Add `_extract_implementation_summary()` |
+| `forge/core/daemon_helpers.py` | Modify | Add `_extract_implementation_summary()`, `_load_conventions_md()` |
 | `forge/core/conventions.py` | Create | `update_conventions_file()` for auto-update merge strategy |
 | `forge/config/settings.py` | Modify | Add `auto_update_conventions: bool` |
 | `forge/core/daemon.py` | Modify | Call `update_conventions_file()` post-pipeline if setting enabled, store conventions after planning |
@@ -767,4 +800,5 @@ Rules:
 | conventions.md grows unboundedly | Auto-update only appends new headings. Cap file size at 10KB — if exceeded, skip auto-update and log a warning. |
 | Implementation summary too vague | Use commit messages as primary source (agents are instructed to write descriptive commits). Fallback to agent result text. |
 | Prompt size bloat from conventions + deps | Conventions block is ~200-400 tokens. Each dependency summary is ~100-150 tokens. With max 6 tasks, worst case adds ~1000 tokens — well within claude-code-sdk context. |
-| Planner conventions conflict with user conventions.md | Planner sees conventions.md content and should align. Both are injected into agent prompt — agent sees both and can reconcile. User conventions.md takes precedence (listed second = seen later). |
+| Planner conventions conflict with user conventions.md | Merged into a single `## Project Conventions` block — user conventions.md listed first (highest authority), planner entries only appended for new categories not already covered. No duplication. |
+| Reviewer doesn't know conventions | Out of scope for this design. The reviewer (`gate2_llm_review`) gets `project_context` but not conventions. If agents follow conventions but the reviewer flags them as "wrong style," consider threading conventions into `_build_review_prompt()` in a follow-up. |
