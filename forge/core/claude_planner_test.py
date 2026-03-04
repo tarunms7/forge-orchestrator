@@ -1,9 +1,6 @@
 """Tests for ClaudePlannerLLM prompt building and conventions injection."""
 
-import os
-import textwrap
 
-import pytest
 
 from forge.core.claude_planner import PLANNER_SYSTEM_PROMPT, ClaudePlannerLLM
 
