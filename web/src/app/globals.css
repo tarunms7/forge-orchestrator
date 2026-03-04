@@ -682,22 +682,52 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 12px;
 }
 .plan-task-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.plan-task-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 .task-number {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-tertiary);
   font-weight: 500;
+  flex-shrink: 0;
 }
 .plan-task-title {
   font-size: 14px;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Dependency pills — shown on collapsed plan task row */
+.dep-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.dep-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: var(--bg-surface-3);
+  border: 1px solid var(--border);
+  padding: 1px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
 }
 .complexity-badge {
   font-size: 11px;

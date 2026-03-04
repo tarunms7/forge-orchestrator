@@ -43,17 +43,14 @@ function PlannerLogModal({ lines, onClose }: { lines: string[]; onClose: () => v
             <span className="log-modal-title">Planner Output</span>
             <span className="log-modal-subtitle">{lines.length} lines</span>
           </div>
-          <span onClick={(e) => e.stopPropagation()}>
-            <CopyButton
-              text={lines.join("\n")}
-              label="Copy"
-            />
-          </span>
-          <button className="log-modal-close" onClick={onClose}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="log-modal-header-actions">
+            <CopyButton text={lines.join("\n")} variant="default" label="Copy" />
+            <button className="log-modal-close" onClick={onClose}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body */}
