@@ -71,6 +71,19 @@ export default function CompletionSummary({
     (sum, t) => sum + (t.costUsd ?? 0),
     0,
   );
+  const totalAgentCost = taskList.reduce(
+    (sum, t) => sum + (t.agentCostUsd ?? 0),
+    0,
+  );
+  const totalReviewCost = taskList.reduce(
+    (sum, t) => sum + (t.reviewCostUsd ?? 0),
+    0,
+  );
+  // Planner cost = total minus agent and review costs
+  const plannerCost = Math.max(0, totalCost - totalAgentCost - totalReviewCost);
+  const budgetLimitUsd = useTaskStore((s) => s.budgetLimitUsd);
+  const budgetPct = budgetLimitUsd > 0 ? Math.min((totalCost / budgetLimitUsd) * 100, 100) : 0;
+
   const allPassed = failedCount === 0 && passedCount === totalTasks;
 
   const handleRetryPR = async () => {
@@ -198,6 +211,66 @@ export default function CompletionSummary({
           </div>
         )}
       </div>
+
+      {/* Cost Breakdown */}
+      {totalCost > 0 && (
+        <div className="cost-breakdown-section">
+          <h3 className="results-title">Cost Breakdown</h3>
+          <div className="cost-breakdown-total">
+            <span className="cost-breakdown-total-label">Total Cost</span>
+            <span className="cost-breakdown-total-value">${totalCost.toFixed(2)}</span>
+          </div>
+          {budgetLimitUsd > 0 && (
+            <div className="cost-breakdown-budget">
+              Budget utilization: {budgetPct.toFixed(0)}% of ${budgetLimitUsd.toFixed(2)}
+            </div>
+          )}
+          {/* CSS-only bar chart */}
+          <div className="cost-bar-chart">
+            {plannerCost > 0 && (
+              <div
+                className="cost-bar-segment cost-bar-planner"
+                style={{ flex: plannerCost }}
+                title={`Planner: $${plannerCost.toFixed(2)}`}
+              />
+            )}
+            {totalAgentCost > 0 && (
+              <div
+                className="cost-bar-segment cost-bar-agent"
+                style={{ flex: totalAgentCost }}
+                title={`Agents: $${totalAgentCost.toFixed(2)}`}
+              />
+            )}
+            {totalReviewCost > 0 && (
+              <div
+                className="cost-bar-segment cost-bar-review"
+                style={{ flex: totalReviewCost }}
+                title={`Review: $${totalReviewCost.toFixed(2)}`}
+              />
+            )}
+          </div>
+          <div className="cost-bar-legend">
+            {plannerCost > 0 && (
+              <span className="cost-legend-item">
+                <span className="cost-legend-dot" style={{ background: "var(--purple)" }} />
+                Planner ${plannerCost.toFixed(2)}
+              </span>
+            )}
+            {totalAgentCost > 0 && (
+              <span className="cost-legend-item">
+                <span className="cost-legend-dot" style={{ background: "var(--accent)" }} />
+                Agents ${totalAgentCost.toFixed(2)}
+              </span>
+            )}
+            {totalReviewCost > 0 && (
+              <span className="cost-legend-item">
+                <span className="cost-legend-dot" style={{ background: "var(--amber)" }} />
+                Review ${totalReviewCost.toFixed(2)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Task Results */}
       <div className="results-section">
