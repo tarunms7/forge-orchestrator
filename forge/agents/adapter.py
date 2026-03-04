@@ -1,7 +1,9 @@
 """Agent adapter interface. Claude primary, others pluggable."""
 
 import asyncio
+import json
 import logging
+import re
 import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -21,13 +23,104 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 
 {project_context}
 
+{conventions_block}
+
+{dependency_context}
+
 Rules:
 - Only modify files listed in your task specification
-- Follow existing code style and patterns
+- Follow existing code style and patterns — see the conventions section above
 - Write tests for any new functionality
 - Commit your changes with a SHORT conventional commit message (max 72 chars) — use feat/fix/refactor/test/docs/chore prefix and describe WHAT changed, not the task title
 - If you encounter an error, fix it rather than giving up
 - If image file paths are mentioned in the task description, use the Read tool to view them (images are readable)"""
+
+
+def _build_conventions_block(
+    conventions_json: str | None, conventions_md: str | None,
+) -> str:
+    """Merge user conventions (.forge/conventions.md) with planner-extracted conventions.
+
+    User conventions (conventions_md) have highest authority and come first.
+    Planner entries (conventions_json) are only appended for categories not already
+    covered by user conventions. Checks both ``## heading`` and ``**heading**``
+    patterns case-insensitively.
+
+    Returns empty string if both inputs are None/empty.
+    """
+    sections: list[str] = []
+
+    # Collect user-convention headings for dedup
+    covered_headings: set[str] = set()
+    if conventions_md and conventions_md.strip():
+        sections.append(conventions_md.strip())
+        # Extract headings from ## Heading and **Heading** patterns
+        for match in re.finditer(r"^##\s+(.+)$", conventions_md, re.MULTILINE):
+            covered_headings.add(match.group(1).strip().lower())
+        for match in re.finditer(r"\*\*(.+?)\*\*", conventions_md):
+            covered_headings.add(match.group(1).strip().lower())
+
+    if conventions_json and conventions_json.strip():
+        try:
+            parsed = json.loads(conventions_json)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse conventions_json, skipping planner conventions")
+            parsed = None
+
+        if isinstance(parsed, dict):
+            for category, content in parsed.items():
+                if category.strip().lower() not in covered_headings:
+                    sections.append(f"**{category}**: {content}")
+        elif isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    for category, content in item.items():
+                        if category.strip().lower() not in covered_headings:
+                            sections.append(f"**{category}**: {content}")
+                elif isinstance(item, str):
+                    sections.append(f"- {item}")
+
+    if not sections:
+        return ""
+
+    body = "\n\n".join(sections)
+    return f"## Project Conventions\n\n{body}"
+
+
+def _build_dependency_context(completed_deps: list[dict] | None) -> str:
+    """Build a formatted section describing completed dependency tasks.
+
+    Each dict should have keys: task_id, title, implementation_summary (str|None),
+    files_changed (list[str]).
+
+    Returns empty string if no deps provided.
+    """
+    if not completed_deps:
+        return ""
+
+    parts: list[str] = [
+        "## Completed Dependencies",
+        "",
+        "The following tasks have already been completed and may affect your work:",
+    ]
+
+    for dep in completed_deps:
+        task_id = dep.get("task_id", "unknown")
+        title = dep.get("title", "Untitled")
+        summary = dep.get("implementation_summary")
+        files = dep.get("files_changed", [])
+
+        parts.append("")
+        parts.append(f"### Task: {title} ({task_id})")
+        parts.append(f"**What was done:** {summary or 'No summary available'}")
+        parts.append("**Files modified:**")
+        if files:
+            for f in files:
+                parts.append(f"- {f}")
+        else:
+            parts.append("- (none)")
+
+    return "\n".join(parts)
 
 
 @dataclass
@@ -57,6 +150,9 @@ class AgentAdapter(ABC):
         model: str = "sonnet",
         on_message: Callable | None = None,
         project_context: str = "",
+        conventions_json: str | None = None,
+        conventions_md: str | None = None,
+        completed_deps: list[dict] | None = None,
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -67,6 +163,9 @@ class ClaudeAdapter(AgentAdapter):
     def _build_options(
         self, worktree_path: str, allowed_dirs: list[str], model: str = "sonnet",
         project_context: str = "",
+        conventions_json: str | None = None,
+        conventions_md: str | None = None,
+        completed_deps: list[dict] | None = None,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -75,9 +174,13 @@ class ClaudeAdapter(AgentAdapter):
             )
         else:
             extra_dirs_clause = ""
+        conventions_block = _build_conventions_block(conventions_json, conventions_md)
+        dependency_context = _build_dependency_context(completed_deps)
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
+            conventions_block=conventions_block,
+            dependency_context=dependency_context,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
@@ -98,8 +201,17 @@ class ClaudeAdapter(AgentAdapter):
         model: str = "sonnet",
         on_message: Callable | None = None,
         project_context: str = "",
+        conventions_json: str | None = None,
+        conventions_md: str | None = None,
+        completed_deps: list[dict] | None = None,
     ) -> AgentResult:
-        options = self._build_options(worktree_path, allowed_dirs or [], model=model, project_context=project_context)
+        options = self._build_options(
+            worktree_path, allowed_dirs or [], model=model,
+            project_context=project_context,
+            conventions_json=conventions_json,
+            conventions_md=conventions_md,
+            completed_deps=completed_deps,
+        )
 
         try:
             result = await asyncio.wait_for(

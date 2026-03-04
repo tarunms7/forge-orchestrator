@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import AsyncMock
 
@@ -35,6 +36,9 @@ async def test_run_task_calls_adapter(mock_adapter):
         model="sonnet",
         on_message=None,
         project_context="",
+        conventions_json=None,
+        conventions_md=None,
+        completed_deps=None,
     )
 
 
@@ -85,3 +89,91 @@ async def test_runtime_passes_on_message_to_adapter():
     call_kwargs = mock_adapter.run.call_args[1]
     assert call_kwargs["on_message"] is callback
     assert result.success is True
+
+
+async def test_runtime_passes_conventions_to_adapter():
+    """AgentRuntime.run_task() should forward conventions params to adapter.run()."""
+    mock_adapter = AsyncMock()
+    mock_adapter.run.return_value = AgentResult(
+        success=True, files_changed=[], summary="Done",
+    )
+    conventions_md = "## Style\n\nUse black."
+    conventions_json = json.dumps({"Testing": "pytest"})
+
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="test",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        conventions_json=conventions_json,
+        conventions_md=conventions_md,
+    )
+
+    call_kwargs = mock_adapter.run.call_args[1]
+    assert call_kwargs["conventions_json"] == conventions_json
+    assert call_kwargs["conventions_md"] == conventions_md
+
+
+async def test_runtime_passes_completed_deps_to_adapter():
+    """AgentRuntime.run_task() should forward completed_deps to adapter.run()."""
+    mock_adapter = AsyncMock()
+    mock_adapter.run.return_value = AgentResult(
+        success=True, files_changed=[], summary="Done",
+    )
+    deps = [
+        {
+            "task_id": "task-1",
+            "title": "Add models",
+            "implementation_summary": "Created models",
+            "files_changed": ["models.py"],
+        }
+    ]
+
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="test",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        completed_deps=deps,
+    )
+
+    call_kwargs = mock_adapter.run.call_args[1]
+    assert call_kwargs["completed_deps"] == deps
+
+
+async def test_runtime_passes_all_new_params_together():
+    """All three new params should be forwarded correctly when used together."""
+    mock_adapter = AsyncMock()
+    mock_adapter.run.return_value = AgentResult(
+        success=True, files_changed=[], summary="Done",
+    )
+    conventions_md = "## Lint\nUse ruff."
+    conventions_json = json.dumps({"Naming": "snake_case"})
+    deps = [{"task_id": "t1", "title": "Setup", "implementation_summary": "Init", "files_changed": []}]
+
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="Build Y",
+        worktree_path="/tmp/wt2",
+        allowed_files=["b.py"],
+        conventions_json=conventions_json,
+        conventions_md=conventions_md,
+        completed_deps=deps,
+    )
+
+    mock_adapter.run.assert_called_once_with(
+        task_prompt="Build Y",
+        worktree_path="/tmp/wt2",
+        allowed_files=["b.py"],
+        timeout_seconds=60,
+        allowed_dirs=None,
+        model="sonnet",
+        on_message=None,
+        project_context="",
+        conventions_json=conventions_json,
+        conventions_md=conventions_md,
+        completed_deps=deps,
+    )
