@@ -41,7 +41,7 @@ class TestBuildPrompt:
         prompt = planner._build_prompt("add auth", "ctx", None)
         assert "User request: add auth" in prompt
         assert "Project context:\nctx" in prompt
-        assert "conventions" not in prompt.lower() or "Existing project conventions" not in prompt
+        assert "Existing project conventions" not in prompt
 
     def test_prompt_with_feedback(self):
         planner = ClaudePlannerLLM(cwd="/nonexistent")
