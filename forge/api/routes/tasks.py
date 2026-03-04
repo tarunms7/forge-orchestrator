@@ -711,19 +711,7 @@ async def restart_pipeline(
     project_dir = pipeline.project_dir
     model_strategy = pipeline.model_strategy
 
-    # Reset all state in DB
-    reset_result = await forge_db.restart_pipeline(pipeline_id)
-
-    # Remove from pending_graphs if present
-    lock = getattr(request.app.state, "pending_graphs_lock", None)
-    if lock:
-        async with lock:
-            request.app.state.pending_graphs.pop(pipeline_id, None)
-    else:
-        pending = getattr(request.app.state, "pending_graphs", {})
-        pending.pop(pipeline_id, None)
-
-    # Clean up leftover worktrees if requested
+    # Clean up leftover worktrees BEFORE deleting task rows (restart deletes them)
     clean_worktrees = body.clean_worktrees if body else True
     if clean_worktrees:
         try:
@@ -740,6 +728,18 @@ async def restart_pipeline(
             logger.debug("WorktreeManager not available for worktree cleanup")
         except Exception:
             logger.debug("Worktree cleanup skipped: %s", pipeline_id)
+
+    # Reset all state in DB (deletes task rows + events, clears plan)
+    reset_result = await forge_db.restart_pipeline(pipeline_id)
+
+    # Remove from pending_graphs if present
+    lock = getattr(request.app.state, "pending_graphs_lock", None)
+    if lock:
+        async with lock:
+            request.app.state.pending_graphs.pop(pipeline_id, None)
+    else:
+        pending = getattr(request.app.state, "pending_graphs", {})
+        pending.pop(pipeline_id, None)
 
     # Set pipeline back to planning status
     await forge_db.update_pipeline_status(pipeline_id, "planning")
