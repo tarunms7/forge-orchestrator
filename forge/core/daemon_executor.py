@@ -123,20 +123,11 @@ class ExecutorMixin:
         except ValueError:
             wt = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
             if os.path.isdir(wt):
-                # Reset worktree to pipeline branch for a clean retry.
-                # Previous (rejected) changes are stripped so the agent
-                # starts fresh.  The enriched feedback already includes the
-                # rejected diff so the agent knows what it tried before.
-                if base_ref:
-                    subprocess.run(
-                        ["git", "reset", "--hard", base_ref],
-                        cwd=wt, capture_output=True,
-                    )
-                    subprocess.run(
-                        ["git", "clean", "-fd"],
-                        cwd=wt, capture_output=True,
-                    )
-                    console.print(f"[yellow]{task_id}: worktree reset to {base_ref} for clean retry[/yellow]")
+                # Reuse the worktree as-is.  The scope gate already stripped
+                # out-of-scope changes on the previous run, so only the
+                # agent's in-scope work remains.  The retry agent can patch
+                # the review issues on top instead of rewriting everything.
+                console.print(f"[yellow]{task_id}: reusing worktree for retry (in-scope changes preserved)[/yellow]")
                 return wt
             console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
         except Exception as exc:
