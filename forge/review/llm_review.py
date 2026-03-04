@@ -50,7 +50,6 @@ async def gate2_llm_review(
     prior_feedback: str | None = None,
     prior_diff: str | None = None,
     project_context: str = "",
-    allowed_files: list[str] | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -63,8 +62,6 @@ async def gate2_llm_review(
             (rejected) attempt so the reviewer can compare and verify
             fixes were actually made.
         project_context: Project snapshot context for the reviewer.
-        allowed_files: List of files this task is allowed to modify.
-            The reviewer will flag any out-of-scope changes.
 
     Returns:
         A tuple of (GateResult, ReviewCostInfo) with the review verdict
@@ -78,7 +75,7 @@ async def gate2_llm_review(
             cost_info,
         )
 
-    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, prior_diff=prior_diff, project_context=project_context, allowed_files=allowed_files)
+    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, prior_diff=prior_diff, project_context=project_context)
 
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
@@ -147,7 +144,6 @@ def _build_review_prompt(
     *,
     prior_diff: str | None = None,
     project_context: str = "",
-    allowed_files: list[str] | None = None,
 ) -> str:
     parts = []
     if project_context:
@@ -155,16 +151,8 @@ def _build_review_prompt(
     parts += [
         f"Task: {title}\n",
         f"Description: {description}\n\n",
-    ]
-    if allowed_files:
-        parts.append(
-            f"File scope: This task is ONLY allowed to modify: {', '.join(allowed_files)}.\n"
-            "If the diff contains changes to files outside this list, "
-            "FAIL immediately with 'OUT OF SCOPE' and list the violating files.\n\n"
-        )
-    parts.append(
         f"Git diff of changes:\n```diff\n{diff}\n```\n\n",
-    )
+    ]
     if prior_feedback:
         parts.append(
             "=== PRIOR REVIEW CONTEXT ===\n"
