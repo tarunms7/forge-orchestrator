@@ -54,12 +54,13 @@ class ExecutorMixin:
         if worktree_path is None:
             await db.release_agent(agent_id)
             return
-        ok = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid)
+        pipeline_branch = merge_worker._main
+        ok = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid, pipeline_branch=pipeline_branch)
         if not ok:
             await db.release_agent(agent_id)
             return
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
-        await self._attempt_merge(db, merge_worker, worktree_mgr, task, task_id, worktree_path, agent_model, pid)
+        await self._attempt_merge(db, merge_worker, worktree_mgr, task, task_id, worktree_path, agent_model, pid, pipeline_branch=pipeline_branch)
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
     # -- merge-only fast path -------------------------------------------
@@ -115,7 +116,7 @@ class ExecutorMixin:
 
     async def _run_agent(
         self, db, runtime, worktree_mgr, task, task_id: str, agent_id: str,
-        worktree_path: str, pid: str,
+        worktree_path: str, pid: str, *, pipeline_branch: str | None = None,
     ) -> bool:
         """Run the agent, stream output, track cost. Returns ``True`` on success."""
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
@@ -140,7 +141,7 @@ class ExecutorMixin:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return False
-        diff = _get_diff_vs_main(worktree_path)
+        diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         if not diff.strip():
             console.print(f"[red]{task_id} agent produced no changes[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
@@ -155,16 +156,17 @@ class ExecutorMixin:
     async def _attempt_merge(
         self, db, merge_worker, worktree_mgr, task,
         task_id: str, worktree_path: str, agent_model: str, pid: str,
+        *, pipeline_branch: str | None = None,
     ) -> None:
         """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
-        diff = _get_diff_vs_main(worktree_path)
+        diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
         # Resolve per-pipeline build/test commands for review gates
         pipeline = await db.get_pipeline(pid) if pid else None
         self._pipeline_build_cmd = getattr(pipeline, 'build_cmd', None) if pipeline else None
         self._pipeline_test_cmd = getattr(pipeline, 'test_cmd', None) if pipeline else None
-        passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid)
+        passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid, pipeline_branch=pipeline_branch)
         if not passed:
             await self._handle_retry(db, task_id, worktree_mgr, review_feedback=feedback, pipeline_id=pid)
             return

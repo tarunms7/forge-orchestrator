@@ -114,14 +114,46 @@ def _build_retry_prompt(
     )
 
 
-def _get_diff_vs_main(worktree_path: str) -> str:
+def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str:
     """Get diff of the worktree branch vs its merge-base with the parent branch.
 
-    Uses ``git rev-list`` to count how many commits the agent added,
-    then diffs against ``HEAD~N``.  Handles root commits (orphan branches
-    from repos with no prior history) by diffing against the empty tree.
+    Args:
+        worktree_path: Path to the agent's git worktree.
+        base_ref: Explicit base ref (e.g. the pipeline branch name) to diff
+            against.  When provided, diffs ``base_ref..HEAD`` directly —
+            this is reliable regardless of remote state and avoids the
+            ``--not --remotes`` heuristic which breaks when the user's
+            workflow (squash-merge + delete remote branch) leaves local
+            commits unreachable from any remote.
+
+    Falls back to the commit-count heuristic (``HEAD~N``) when *base_ref*
+    is ``None`` or cannot be resolved.  Handles root commits (orphan
+    branches from repos with no prior history) by diffing against the
+    empty tree.
     """
-    # Try to find how many commits the agent added on top of the base
+    # ── Fast path: explicit base ref ──────────────────────────────────
+    if base_ref is not None:
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", base_ref],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode == 0:
+            result = subprocess.run(
+                ["git", "diff", base_ref, "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout
+        logger.warning(
+            "_get_diff_vs_main: base_ref %r not found in %s — "
+            "falling back to commit-count heuristic",
+            base_ref, worktree_path,
+        )
+
+    # ── Fallback: commit-count heuristic ──────────────────────────────
     count_result = subprocess.run(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
@@ -136,9 +168,9 @@ def _get_diff_vs_main(worktree_path: str) -> str:
         commit_count = 1
 
     # Check if HEAD~{commit_count} exists (won't if this is a root commit)
-    base_ref = f"HEAD~{commit_count}"
+    heuristic_ref = f"HEAD~{commit_count}"
     verify = subprocess.run(
-        ["git", "rev-parse", "--verify", base_ref],
+        ["git", "rev-parse", "--verify", heuristic_ref],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -147,7 +179,7 @@ def _get_diff_vs_main(worktree_path: str) -> str:
     if verify.returncode == 0:
         # Normal case: diff the agent's commits against their base
         result = subprocess.run(
-            ["git", "diff", base_ref, "HEAD"],
+            ["git", "diff", heuristic_ref, "HEAD"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -286,8 +318,38 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
     return {"linesAdded": added, "linesRemoved": removed}
 
 
-def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
-    """Get list of files changed by the agent (not the entire feature branch)."""
+def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = None) -> list[str]:
+    """Get list of files changed by the agent (not the entire feature branch).
+
+    Args:
+        worktree_path: Path to the agent's git worktree.
+        base_ref: Explicit base ref (e.g. the pipeline branch name) to diff
+            against.  See :func:`_get_diff_vs_main` for why this is preferred
+            over the ``--not --remotes`` heuristic.
+    """
+    # ── Fast path: explicit base ref ──────────────────────────────────
+    if base_ref is not None:
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", base_ref],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode == 0:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", base_ref, "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+            )
+            return [f for f in result.stdout.strip().split("\n") if f.strip()]
+        logger.warning(
+            "_get_changed_files_vs_main: base_ref %r not found in %s — "
+            "falling back to commit-count heuristic",
+            base_ref, worktree_path,
+        )
+
+    # ── Fallback: commit-count heuristic ──────────────────────────────
     count_result = subprocess.run(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
@@ -301,9 +363,9 @@ def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
     except (ValueError, AttributeError):
         commit_count = 1
 
-    base_ref = f"HEAD~{commit_count}"
+    heuristic_ref = f"HEAD~{commit_count}"
     verify = subprocess.run(
-        ["git", "rev-parse", "--verify", base_ref],
+        ["git", "rev-parse", "--verify", heuristic_ref],
         cwd=worktree_path,
         capture_output=True,
         text=True,
@@ -311,7 +373,7 @@ def _get_changed_files_vs_main(worktree_path: str) -> list[str]:
 
     if verify.returncode == 0:
         result = subprocess.run(
-            ["git", "diff", "--name-only", base_ref, "HEAD"],
+            ["git", "diff", "--name-only", heuristic_ref, "HEAD"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
