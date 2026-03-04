@@ -25,7 +25,7 @@ Rules:
 - Only modify files listed in your task specification
 - Follow existing code style and patterns
 - Write tests for any new functionality
-- Commit your changes with a clear commit message when done
+- Commit your changes with a SHORT conventional commit message (max 72 chars) — use feat/fix/refactor/test/docs/chore prefix and describe WHAT changed, not the task title
 - If you encounter an error, fix it rather than giving up
 - If image file paths are mentioned in the task description, use the Read tool to view them (images are readable)"""
 

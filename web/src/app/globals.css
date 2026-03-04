@@ -957,6 +957,11 @@ body {
   background: var(--bg-surface-2);
   flex-shrink: 0;
 }
+.log-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .log-modal-title {
   font-size: 14px;
   font-weight: 600;

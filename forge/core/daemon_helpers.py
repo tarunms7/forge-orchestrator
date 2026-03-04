@@ -69,7 +69,11 @@ def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
         "Instructions:\n"
         "1. Implement this task completely\n"
         "2. Write clean, working code\n"
-        "3. When done, stage and commit all changes with: git add -A && git commit -m 'feat: <description>'\n"
+        "3. When done, stage and commit all changes with: git add -A && git commit -m '<type>: <short summary>'\n"
+        "   - Use conventional commit types: feat, fix, refactor, test, docs, chore\n"
+        "   - Write a SHORT commit message (max 72 chars) that describes WHAT you actually changed — do NOT copy the task title or description verbatim\n"
+        "   - Good: 'feat: add JWT token refresh endpoint'\n"
+        "   - Bad: 'feat: Build a REST API with JWT auth, user registration, and integration tests'\n"
         "4. Make sure you actually commit — the system checks for committed changes"
     )
 
@@ -100,7 +104,12 @@ def _build_retry_prompt(
         "2. Look at your existing code (it's already in the worktree)\n"
         "3. Fix ONLY the issues the reviewer flagged\n"
         "4. Make sure your code actually works — run it if possible\n"
-        "5. Stage and commit your fixes: git add -A && git commit -m 'fix: address review feedback'\n"
+        "5. Stage and commit your fixes with a short, descriptive message:\n"
+        "   git add -A && git commit -m '<type>: <short summary of what you fixed>'\n"
+        "   - Use conventional commit types: feat, fix, refactor, test, docs, chore\n"
+        "   - Write a SHORT commit message (max 72 chars) describing WHAT you actually fixed — do NOT use the generic 'fix: address review feedback'\n"
+        "   - Good: 'fix: handle None return in token refresh'\n"
+        "   - Bad: 'fix: address review feedback'\n"
         "6. Make sure you actually commit — the system checks for committed changes"
     )
 
