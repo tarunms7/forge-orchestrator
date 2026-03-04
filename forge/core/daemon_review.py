@@ -91,8 +91,13 @@ class ReviewMixin:
 
     async def _run_review(
         self, task, worktree_path: str, diff: str, *, db, pipeline_id: str,
+        pipeline_branch: str | None = None,
     ) -> tuple[bool, str | None]:
         """Run the 3-gate review pipeline.
+
+        Args:
+            pipeline_branch: The pipeline branch ref used as the diff base
+                for ``_get_changed_files_vs_main`` in the lint gate.
 
         Returns:
             (passed, feedback) — feedback is a string with failure details
@@ -118,7 +123,7 @@ class ReviewMixin:
 
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
-        gate1_result = await self._gate1(worktree_path)
+        gate1_result = await self._gate1(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit("task:review_update", {
             "task_id": task.id, "gate": "L1", "passed": gate1_result.passed,
             "details": gate1_result.details,
@@ -187,11 +192,11 @@ class ReviewMixin:
         console.print("[green]  Gate 3 (merge readiness): auto-pass[/green]")
         return True, None
 
-    async def _gate1(self, worktree_path: str) -> GateResult:
+    async def _gate1(self, worktree_path: str, *, pipeline_branch: str | None = None) -> GateResult:
         """Gate 1: Lint check on the worktree. Simple and fast."""
 
         # Only run ruff on changed files vs main
-        changed = _get_changed_files_vs_main(worktree_path)
+        changed = _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
         py_files = [f for f in changed if f.endswith(".py")]
 
         if not py_files:

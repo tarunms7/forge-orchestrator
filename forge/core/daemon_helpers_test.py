@@ -2,7 +2,11 @@
 
 from unittest.mock import MagicMock, call, patch
 
-from forge.core.daemon_helpers import _get_diff_stats
+from forge.core.daemon_helpers import (
+    _get_changed_files_vs_main,
+    _get_diff_stats,
+    _get_diff_vs_main,
+)
 
 
 def _make_proc(stdout: str = "", returncode: int = 0) -> MagicMock:
@@ -11,6 +15,98 @@ def _make_proc(stdout: str = "", returncode: int = 0) -> MagicMock:
     m.stdout = stdout
     m.returncode = returncode
     return m
+
+
+class TestGetDiffVsMainBaseRef:
+    """_get_diff_vs_main() with explicit base_ref skips the --not --remotes heuristic."""
+
+    def test_uses_base_ref_when_provided(self):
+        """Should diff base_ref..HEAD directly, no rev-list call."""
+        verify_ok = _make_proc("abc123\n", returncode=0)
+        diff_proc = _make_proc("diff --git a/foo.py b/foo.py\n+new line\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, diff_proc]) as mock_run:
+            result = _get_diff_vs_main("/repo/worktrees/task-1", base_ref="forge/pipeline-abc")
+
+        assert "new line" in result
+        assert mock_run.call_count == 2
+        # First call: verify ref exists
+        assert mock_run.call_args_list[0] == call(
+            ["git", "rev-parse", "--verify", "forge/pipeline-abc"],
+            cwd="/repo/worktrees/task-1",
+            capture_output=True, text=True,
+        )
+        # Second call: git diff base_ref HEAD
+        assert mock_run.call_args_list[1] == call(
+            ["git", "diff", "forge/pipeline-abc", "HEAD"],
+            cwd="/repo/worktrees/task-1",
+            capture_output=True, text=True,
+        )
+
+    def test_falls_back_when_base_ref_not_found(self):
+        """When base_ref can't be resolved, falls back to --not --remotes heuristic."""
+        verify_fail = _make_proc("", returncode=128)
+        count_proc = _make_proc("1\n")
+        heuristic_verify = _make_proc("def456\n", returncode=0)
+        diff_proc = _make_proc("diff --git a/bar.py b/bar.py\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_fail, count_proc, heuristic_verify, diff_proc]):
+            result = _get_diff_vs_main("/repo", base_ref="forge/pipeline-missing")
+
+        assert result == "diff --git a/bar.py b/bar.py\n"
+
+    def test_none_base_ref_uses_heuristic(self):
+        """When base_ref is None, uses the commit-count heuristic directly."""
+        count_proc = _make_proc("1\n")
+        heuristic_verify = _make_proc("abc\n", returncode=0)
+        diff_proc = _make_proc("some diff\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, heuristic_verify, diff_proc]):
+            result = _get_diff_vs_main("/repo", base_ref=None)
+
+        assert result == "some diff\n"
+
+
+class TestGetChangedFilesVsMainBaseRef:
+    """_get_changed_files_vs_main() with explicit base_ref."""
+
+    def test_uses_base_ref_when_provided(self):
+        """Should use git diff --name-only base_ref HEAD."""
+        verify_ok = _make_proc("abc123\n", returncode=0)
+        name_only_proc = _make_proc("foo.py\nbar.py\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, name_only_proc]) as mock_run:
+            result = _get_changed_files_vs_main("/repo/wt", base_ref="forge/pipeline-abc")
+
+        assert result == ["foo.py", "bar.py"]
+        assert mock_run.call_args_list[1] == call(
+            ["git", "diff", "--name-only", "forge/pipeline-abc", "HEAD"],
+            cwd="/repo/wt",
+            capture_output=True, text=True,
+        )
+
+    def test_falls_back_when_base_ref_not_found(self):
+        """Falls back to heuristic when base_ref doesn't resolve."""
+        verify_fail = _make_proc("", returncode=128)
+        count_proc = _make_proc("1\n")
+        heuristic_verify = _make_proc("abc\n", returncode=0)
+        name_only_proc = _make_proc("baz.py\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_fail, count_proc, heuristic_verify, name_only_proc]):
+            result = _get_changed_files_vs_main("/repo", base_ref="forge/missing")
+
+        assert result == ["baz.py"]
+
+    def test_none_base_ref_uses_heuristic(self):
+        """When base_ref is None, uses heuristic directly."""
+        count_proc = _make_proc("2\n")
+        heuristic_verify = _make_proc("abc\n", returncode=0)
+        name_only_proc = _make_proc("x.py\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, heuristic_verify, name_only_proc]):
+            result = _get_changed_files_vs_main("/repo")
+
+        assert result == ["x.py"]
 
 
 class TestGetDiffStatsPipelineBranch:
