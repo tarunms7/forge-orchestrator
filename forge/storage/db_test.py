@@ -345,14 +345,10 @@ async def test_restart_pipeline_resets_state(db: Database):
     assert pipeline.completed_at is None
     assert pipeline.pr_url is None
 
-    # Assert tasks reset
+    # Assert tasks deleted (so re-planning can create fresh rows with same IDs)
     assert result["tasks_reset"] == 2
     tasks = await db.list_tasks_by_pipeline("pipe-r1")
-    for task in tasks:
-        assert task.state == "cancelled"
-        assert task.assigned_agent is None
-        assert task.retry_count == 0
-        assert task.worktree_path is None
+    assert len(tasks) == 0
 
     # Assert events deleted
     assert result["events_deleted"] == 2

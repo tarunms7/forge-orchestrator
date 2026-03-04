@@ -463,8 +463,7 @@ class Database:
     async def restart_pipeline(self, pipeline_id: str) -> dict:
         """Reset a pipeline for a fresh restart.
 
-        - Sets all tasks to CANCELLED state
-        - Clears task assignments, retry counts, worktree paths
+        - Deletes all task rows (so re-planning can create fresh ones)
         - Resets pipeline status to 'pending'
         - Clears pipeline's task_graph_json so fresh planning occurs
         - Deletes all pipeline events (clean slate)
@@ -488,20 +487,12 @@ class Database:
             pipeline.pr_url = None
             pipeline.cancelled_at = None
 
-            # Reset all tasks: set to cancelled, clear assignments
-            task_result = await session.execute(
-                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            # Delete all old tasks so re-planning can create fresh rows
+            # with the same prefixed IDs (pipeline_id[:8]-task-N).
+            del_tasks = await session.execute(
+                delete(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
             )
-            tasks = list(task_result.scalars().all())
-            tasks_reset = 0
-            for task in tasks:
-                task.state = "cancelled"
-                task.assigned_agent = None
-                task.retry_count = 0
-                task.worktree_path = None
-                task.review_feedback = None
-                task.retry_reason = None
-                tasks_reset += 1
+            tasks_reset = del_tasks.rowcount
 
             # Delete all pipeline events
             del_result = await session.execute(
