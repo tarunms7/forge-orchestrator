@@ -165,6 +165,7 @@ class ReviewMixin:
             prior_feedback=prior_feedback,
             prior_diff=prior_diff,
             project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
+            allowed_files=task.files,
         )
         # Track review cost
         if review_cost_info.cost_usd > 0:
