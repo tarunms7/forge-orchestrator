@@ -23,6 +23,15 @@ const PHASE_ORDER: Record<PipelineState["phase"], number> = {
   error: -3,
 };
 
+function PauseIcon() {
+  return (
+    <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" style={{ color: "var(--amber)" }}>
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+    </svg>
+  );
+}
+
 function CheckIcon() {
   return (
     <svg
@@ -47,6 +56,7 @@ export default function PipelineProgress({
   phase: PipelineState["phase"];
 }) {
   const currentIndex = PHASE_ORDER[phase];
+  const isPaused = phase === "paused";
 
   return (
     <div className="progress-track">
@@ -55,20 +65,30 @@ export default function PipelineProgress({
           const stepIndex = PHASE_ORDER[step.key];
           const isCompleted = stepIndex < currentIndex;
           const isActive = stepIndex === currentIndex;
+          // "paused" maps to the Execute step (index 2)
+          const isPausedStep = isPaused && step.key === "executing";
 
           return (
             <Fragment key={step.key}>
               <div
-                className={`step ${isCompleted ? "completed" : isActive ? "current" : ""}`}
+                className={`step ${isCompleted ? "completed" : isActive || isPausedStep ? "current" : ""}`}
+                style={isPausedStep ? { color: "var(--amber)" } : undefined}
               >
-                <div className="step-indicator">
+                <div
+                  className="step-indicator"
+                  style={isPausedStep ? { borderColor: "var(--amber)", background: "rgba(245,158,11,0.15)", boxShadow: "0 0 8px rgba(245,158,11,0.3)" } : undefined}
+                >
                   {isCompleted ? (
                     <CheckIcon />
+                  ) : isPausedStep ? (
+                    <PauseIcon />
                   ) : (
                     <span className="step-number">{i + 1}</span>
                   )}
                 </div>
-                <div className="step-label">{step.label}</div>
+                <div className="step-label" style={isPausedStep ? { color: "var(--amber)" } : undefined}>
+                  {isPausedStep ? "Paused" : step.label}
+                </div>
               </div>
 
               {i < STEPS.length - 1 && (

@@ -16,7 +16,10 @@ import PlannerCard from "@/components/task/PlannerCard";
 import CompletionSummary from "@/components/task/CompletionSummary";
 import TaskDetailPanel from "@/components/task/TaskDetailPanel";
 import FollowUpPanel from "@/components/task/FollowUpPanel";
+import EditablePlanPanel from "@/components/task/EditablePlanPanel";
+import ApprovalPanel from "@/components/task/ApprovalPanel";
 import { CopyButton } from "@/components/CopyButton";
+import { pausePipeline, resumePipeline } from "@/lib/api";
 
 /* ── Plan Panel ───────────────────────────────────────────────────── */
 
@@ -439,8 +442,12 @@ function TaskExecutionPageInner() {
   const setHydrationError = useTaskStore((s) => s.setHydrationError);
   const storeCancelPipeline = useTaskStore((s) => s.cancelPipeline);
   const storeRestartPipeline = useTaskStore((s) => s.restartPipeline);
+  const editedTasks = useTaskStore((s) => s.editedTasks);
+  const planValidation = useTaskStore((s) => s.planValidation);
 
   const [executing, setExecuting] = useState(false);
+  const [pauseLoading, setPauseLoading] = useState(false);
+  const [resumeLoading, setResumeLoading] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [pipelineDesc, setPipelineDesc] = useState<string | null>(null);
   const [showDescModal, setShowDescModal] = useState(false);
@@ -516,13 +523,40 @@ function TaskExecutionPageInner() {
 
   async function handleExecute() {
     if (!token || !pipelineId) return;
+    // Block execution if plan validation failed
+    if (editedTasks && !planValidation.valid) return;
     setExecuting(true);
     try {
-      await apiPost(`/tasks/${pipelineId}/execute`, {}, token);
+      const body = editedTasks ? { tasks: editedTasks } : {};
+      await apiPost(`/tasks/${pipelineId}/execute`, body, token);
     } catch {
       // errors will surface via WS events
     } finally {
       setExecuting(false);
+    }
+  }
+
+  async function handlePause() {
+    if (!token || !pipelineId) return;
+    setPauseLoading(true);
+    try {
+      await pausePipeline(pipelineId, token);
+    } catch (e) {
+      console.warn("Pause failed:", e);
+    } finally {
+      setPauseLoading(false);
+    }
+  }
+
+  async function handleResume() {
+    if (!token || !pipelineId) return;
+    setResumeLoading(true);
+    try {
+      await resumePipeline(pipelineId, token);
+    } catch (e) {
+      console.warn("Resume failed:", e);
+    } finally {
+      setResumeLoading(false);
     }
   }
 
@@ -562,13 +596,16 @@ function TaskExecutionPageInner() {
 
   // Determine if we should show the plan panel (always, once tasks exist)
   const hasTasks = taskList.length > 0;
-  // Show agent cards during execution/review/complete/cancelled phases
+  // Show agent cards during execution/review/complete/cancelled/paused phases
   const showAgentCards = phase !== "idle" && phase !== "planning" && phase !== "planned" && hasTasks;
   const isCancelled = phase === "cancelled";
+  const isPaused = phase === "paused";
   // Phases where cancel button is shown
-  const showCancelButton = phase === "idle" || phase === "planning" || phase === "planned" || phase === "executing" || phase === "reviewing";
+  const showCancelButton = phase === "idle" || phase === "planning" || phase === "planned" || phase === "executing" || phase === "reviewing" || phase === "paused";
   // Phases where restart button is shown
   const showRestartButton = isCancelled || (phase === "complete" && taskList.some(t => t.state === "error"));
+  // Tasks awaiting approval
+  const awaitingApprovalTasks = taskList.filter(t => t.state === "awaiting_approval");
 
   return (
     <div className="phase-content">
@@ -650,29 +687,39 @@ function TaskExecutionPageInner() {
       {/* Planner Card — shown during planning phase */}
       <PlannerCard />
 
-      {/* Plan Panel — shown whenever tasks exist (planned, executing, complete) */}
-      {hasTasks && (
+      {/* Plan Panel — editable during planned phase, read-only otherwise */}
+      {hasTasks && phase === "planned" ? (
+        <EditablePlanPanel />
+      ) : hasTasks ? (
         <PlanPanel
           taskList={taskList}
           phase={phase}
           executing={executing}
           onExecute={handleExecute}
         />
-      )}
+      ) : null}
 
       {/* Pipeline Status Banner */}
       {showAgentCards && (
         <div className="exec-header">
           <div style={{ display: "flex", alignItems: "center" }}>
-            {!isCancelled && <span className="live-dot"></span>}
-            <span className="section-title" style={{ fontSize: 16 }}>
+            {!isCancelled && !isPaused && <span className="live-dot"></span>}
+            {isPaused && (
+              <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" style={{ color: "var(--amber)", marginRight: 8 }}>
+                <rect x="6" y="4" width="4" height="16" rx="1" />
+                <rect x="14" y="4" width="4" height="16" rx="1" />
+              </svg>
+            )}
+            <span className="section-title" style={{ fontSize: 16, color: isPaused ? "var(--amber)" : undefined }}>
               {isCancelled
                 ? "Cancelled"
-                : phase === "executing"
-                  ? "Executing"
-                  : phase === "reviewing"
-                    ? "Reviewing"
-                    : "Complete"}
+                : isPaused
+                  ? "Paused"
+                  : phase === "executing"
+                    ? "Executing"
+                    : phase === "reviewing"
+                      ? "Reviewing"
+                      : "Complete"}
             </span>
             <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>
               {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks
@@ -720,8 +767,68 @@ function TaskExecutionPageInner() {
         )
       )}
 
-      {/* Cancel / Restart Buttons */}
+      {/* Approval Panels — shown for tasks awaiting approval */}
+      {awaitingApprovalTasks.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--amber)" }}>
+              {awaitingApprovalTasks.length} Task{awaitingApprovalTasks.length !== 1 ? "s" : ""} Awaiting Approval
+            </span>
+          </div>
+          {awaitingApprovalTasks.map((task) => (
+            <div key={task.id} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 8 }}>
+                <span style={{ color: "var(--text-tertiary)", marginRight: 6 }}>{task.id}</span>
+                {task.title}
+              </div>
+              <ApprovalPanel task={task} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Pause / Resume / Cancel / Restart Buttons */}
       <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 12 }}>
+        {/* Pause button — during executing phase */}
+        {phase === "executing" && (
+          <button
+            onClick={handlePause}
+            disabled={pauseLoading}
+            className="btn"
+            style={{
+              background: "var(--amber-dim, rgba(245,158,11,0.1))",
+              color: "var(--amber)",
+              border: "1px solid rgba(245,158,11,0.3)",
+              padding: "10px 24px",
+              fontWeight: 600,
+              opacity: pauseLoading ? 0.5 : 1,
+              cursor: pauseLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {pauseLoading ? "Pausing..." : "Pause Pipeline"}
+          </button>
+        )}
+
+        {/* Resume button — during paused phase */}
+        {isPaused && (
+          <button
+            onClick={handleResume}
+            disabled={resumeLoading}
+            className="btn btn-primary btn-glow"
+            style={{
+              padding: "10px 24px",
+              fontWeight: 600,
+              opacity: resumeLoading ? 0.5 : 1,
+              cursor: resumeLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {resumeLoading ? "Resuming..." : "Resume Pipeline"}
+          </button>
+        )}
+
         {showCancelButton && (
           <button
             onClick={() => setShowCancelDialog(true)}

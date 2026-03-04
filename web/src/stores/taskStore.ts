@@ -49,7 +49,6 @@ export interface TaskState {
   reviewCostUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
-  diffPreview?: string;
 }
 
 export interface TimelineEntry {
