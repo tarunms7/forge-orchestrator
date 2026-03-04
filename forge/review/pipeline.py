@@ -1,7 +1,7 @@
 """3-gate review pipeline. Mandatory, no exceptions."""
 
 from dataclasses import dataclass, field
-from typing import Callable, Awaitable
+from typing import Any, Callable, Awaitable, Union
 
 
 @dataclass
@@ -22,7 +22,17 @@ class ReviewOutcome:
     failed_gate: str | None = None
 
 
-GateFunc = Callable[[str], Awaitable[GateResult]]
+# Gate functions may return a plain GateResult or a tuple of
+# (GateResult, cost_info) — e.g. gate2_llm_review returns
+# tuple[GateResult, ReviewCostInfo].  The pipeline unpacks both.
+GateFunc = Callable[[str], Awaitable[Union[GateResult, tuple[GateResult, Any]]]]
+
+
+def _unpack_gate_result(raw: GateResult | tuple[GateResult, Any]) -> GateResult:
+    """Extract a GateResult from a plain value or a (GateResult, extra) tuple."""
+    if isinstance(raw, tuple):
+        return raw[0]
+    return raw
 
 
 class ReviewPipeline:
@@ -42,7 +52,8 @@ class ReviewPipeline:
         results: list[GateResult] = []
 
         for gate in self._gates:
-            result = await gate(task_id)
+            raw = await gate(task_id)
+            result = _unpack_gate_result(raw)
             results.append(result)
             if not result.passed:
                 return ReviewOutcome(
