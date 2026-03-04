@@ -16,6 +16,7 @@ class CreateTaskRequest(BaseModel):
     branch_name: str | None = None
     build_cmd: str | None = Field(default=None, description="Shell command to verify the build after agent work")
     test_cmd: str | None = Field(default=None, description="Shell command to run tests after agent work")
+    budget_limit_usd: float = Field(default=0.0, description="Maximum USD budget for this pipeline. 0 means unlimited.")
 
 
 class RestartPipelineRequest(BaseModel):
@@ -45,6 +46,10 @@ class TaskStatusResponse(BaseModel):
     timeline: list[dict] = Field(default_factory=list)
     pr_url: str | None = None
     planner_output: list[str] = Field(default_factory=list)
+    total_cost_usd: float = 0.0
+    planner_cost_usd: float = 0.0
+    budget_limit_usd: float = 0.0
+    estimated_cost_usd: float = 0.0
 
 
 class TaskListItem(BaseModel):

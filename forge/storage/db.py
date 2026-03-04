@@ -442,6 +442,7 @@ class Database:
         model_strategy: str = "auto", user_id: str | None = None,
         base_branch: str | None = None, branch_name: str | None = None,
         build_cmd: str | None = None, test_cmd: str | None = None,
+        budget_limit_usd: float = 0.0,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
@@ -449,6 +450,7 @@ class Database:
                 model_strategy=model_strategy, user_id=user_id,
                 base_branch=base_branch, branch_name=branch_name,
                 build_cmd=build_cmd, test_cmd=test_cmd,
+                budget_limit_usd=budget_limit_usd,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)
