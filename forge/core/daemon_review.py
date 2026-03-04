@@ -153,7 +153,7 @@ class ReviewMixin:
             f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
         )
         reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
-        gate2_result = await gate2_llm_review(
+        gate2_result, _review_cost = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
             prior_feedback=prior_feedback,
