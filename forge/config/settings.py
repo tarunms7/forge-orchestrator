@@ -46,5 +46,8 @@ class ForgeSettings(BaseSettings):
     # Approval gate
     require_approval: bool = False
 
+    # Conventions auto-update
+    auto_update_conventions: bool = False
+
     # Polling
     scheduler_poll_interval: float = 1.0

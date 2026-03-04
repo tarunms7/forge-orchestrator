@@ -50,6 +50,7 @@ class TaskGraph(BaseModel):
     """The planner's output: a validated set of tasks with dependencies."""
 
     tasks: list[TaskDefinition] = Field(min_length=1)
+    conventions: dict | None = None
 
 
 class TaskRecord(BaseModel):
