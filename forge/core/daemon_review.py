@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 import logging
@@ -27,6 +28,67 @@ class ReviewMixin:
         self._settings   — ForgeSettings
     """
 
+    # -- command resolution ------------------------------------------------
+
+    def _resolve_build_cmd(self) -> str | None:
+        """Return the build command: pipeline override → settings fallback."""
+        return getattr(self, '_pipeline_build_cmd', None) or getattr(self._settings, 'build_cmd', None)
+
+    def _resolve_test_cmd(self) -> str | None:
+        """Return the test command: pipeline override → settings fallback."""
+        return getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
+
+    # -- shell gate helpers ------------------------------------------------
+
+    async def _gate_build(self, worktree_path: str, build_cmd: str, timeout: int) -> GateResult:
+        """Gate 0: Build gate — run the project build command."""
+        return await self._run_shell_gate(worktree_path, build_cmd, timeout, gate_name='gate0_build')
+
+    async def _gate_test(self, worktree_path: str, test_cmd: str, timeout: int) -> GateResult:
+        """Gate 1.5: Test gate — run the project test command."""
+        return await self._run_shell_gate(worktree_path, test_cmd, timeout, gate_name='gate1_5_test')
+
+    async def _run_shell_gate(
+        self, worktree_path: str, cmd: str, timeout: int, *, gate_name: str,
+    ) -> GateResult:
+        """Execute a shell command as a review gate.
+
+        Runs *cmd* inside *worktree_path* with a timeout.  Captures stdout+stderr,
+        truncated to the last 5000 characters so logs stay manageable.
+        """
+        def _run() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                cmd,
+                shell=True,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+            )
+
+        try:
+            proc = await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout)
+        except asyncio.TimeoutError:
+            return GateResult(
+                passed=False,
+                gate=gate_name,
+                details=f"Command timed out after {timeout}s: {cmd}",
+            )
+
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        # Keep last 5000 chars so we see the tail of build/test output
+        truncated = combined[-5000:] if len(combined) > 5000 else combined
+
+        if proc.returncode == 0:
+            return GateResult(passed=True, gate=gate_name, details="OK")
+
+        return GateResult(
+            passed=False,
+            gate=gate_name,
+            details=f"Exit code {proc.returncode}:\n{truncated}",
+        )
+
+    # -- main review pipeline ----------------------------------------------
+
     async def _run_review(
         self, task, worktree_path: str, diff: str, *, db, pipeline_id: str,
     ) -> tuple[bool, str | None]:
@@ -37,6 +99,22 @@ class ReviewMixin:
             if any gate failed, None if all passed.
         """
         feedback_parts: list[str] = []
+        gate_timeout = self._settings.agent_timeout_seconds // 2
+
+        # Gate 0: Build gate (skip silently if no command configured)
+        build_cmd = self._resolve_build_cmd()
+        if build_cmd:
+            console.print(f"[blue]  Gate 0 (build): Running build for {task.id}...[/blue]")
+            build_result = await self._gate_build(worktree_path, build_cmd, gate_timeout)
+            await self._emit("task:review_update", {
+                "task_id": task.id, "gate": "Gate0_Build", "passed": build_result.passed,
+                "details": build_result.details,
+            }, db=db, pipeline_id=pipeline_id)
+            if not build_result.passed:
+                console.print(f"[red]  Gate 0 (build) failed: {build_result.details}[/red]")
+                feedback_parts.append(f"Gate 0 (build) FAILED:\n{build_result.details}")
+                return False, "\n\n".join(feedback_parts)
+            console.print("[green]  Gate 0 (build) passed[/green]")
 
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
@@ -50,6 +128,21 @@ class ReviewMixin:
             feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
             return False, "\n\n".join(feedback_parts)
         console.print("[green]  L1 passed[/green]")
+
+        # Gate 1.5: Test gate (skip silently if no command configured)
+        test_cmd = self._resolve_test_cmd()
+        if test_cmd:
+            console.print(f"[blue]  Gate 1.5 (test): Running tests for {task.id}...[/blue]")
+            test_result = await self._gate_test(worktree_path, test_cmd, gate_timeout)
+            await self._emit("task:review_update", {
+                "task_id": task.id, "gate": "Gate1_5_Test", "passed": test_result.passed,
+                "details": test_result.details,
+            }, db=db, pipeline_id=pipeline_id)
+            if not test_result.passed:
+                console.print(f"[red]  Gate 1.5 (test) failed: {test_result.details}[/red]")
+                feedback_parts.append(f"Gate 1.5 (test) FAILED:\n{test_result.details}")
+                return False, "\n\n".join(feedback_parts)
+            console.print("[green]  Gate 1.5 (test) passed[/green]")
 
         # L2: LLM review
         # Pass prior feedback so the reviewer focuses on verifying fixes

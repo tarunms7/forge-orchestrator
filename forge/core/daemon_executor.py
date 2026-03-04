@@ -148,6 +148,10 @@ class ExecutorMixin:
         diff = _get_diff_vs_main(worktree_path)
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
+        # Resolve per-pipeline build/test commands for review gates
+        pipeline = await db.get_pipeline(pid) if pid else None
+        self._pipeline_build_cmd = getattr(pipeline, 'build_cmd', None) if pipeline else None
+        self._pipeline_test_cmd = getattr(pipeline, 'test_cmd', None) if pipeline else None
         passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid)
         if not passed:
             await self._handle_retry(db, task_id, worktree_mgr, review_feedback=feedback, pipeline_id=pid)
