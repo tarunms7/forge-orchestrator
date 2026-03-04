@@ -20,6 +20,9 @@ class AgentRuntime:
         model: str = "sonnet",
         on_message=None,
         project_context: str = "",
+        conventions_json: str | None = None,
+        conventions_md: str | None = None,
+        completed_deps: list[dict] | None = None,
     ) -> AgentResult:
         try:
             return await self._adapter.run(
@@ -31,6 +34,9 @@ class AgentRuntime:
                 model=model,
                 on_message=on_message,
                 project_context=project_context,
+                conventions_json=conventions_json,
+                conventions_md=conventions_md,
+                completed_deps=completed_deps,
             )
         except TimeoutError:
             return AgentResult(

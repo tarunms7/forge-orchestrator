@@ -1,6 +1,7 @@
 """Claude-backed planner. Uses claude-code-sdk to decompose tasks into TaskGraph JSON."""
 
 import logging
+import os
 import re
 from collections.abc import Callable
 
@@ -16,6 +17,16 @@ PLANNER_SYSTEM_PROMPT = """You are a task decomposition engine for a multi-agent
 Given a user request and project context, produce a TaskGraph as valid JSON with this exact schema:
 
 {
+  "conventions": {
+    "styling": "...",
+    "state_management": "...",
+    "component_patterns": "...",
+    "naming": "...",
+    "testing": "...",
+    "imports": "...",
+    "error_handling": "...",
+    "other": "..."
+  },
   "tasks": [
     {
       "id": "task-1",
@@ -27,6 +38,8 @@ Given a user request and project context, produce a TaskGraph as valid JSON with
     }
   ]
 }
+
+The "conventions" object captures coding patterns observed in the existing codebase. Only include keys where you found clear evidence. Omit keys where the convention is unclear. These conventions will be forwarded to every coding agent so they write consistent code.
 
 Rules:
 - Each task must own specific files. No two tasks may own the same file.
@@ -95,6 +108,20 @@ class ClaudePlannerLLM(PlannerLLM):
         parts = [f"User request: {user_input}"]
         if context:
             parts.append(f"Project context:\n{context}")
+
+        # Inject existing conventions file if present
+        conventions_path = os.path.join(self._cwd or ".", ".forge", "conventions.md")
+        try:
+            if os.path.isfile(conventions_path):
+                with open(conventions_path) as f:
+                    content = f.read().strip()
+                if content:
+                    parts.append(
+                        f"Existing project conventions (from .forge/conventions.md):\n{content}"
+                    )
+        except OSError:
+            pass  # File unreadable — skip silently
+
         if feedback:
             parts.append(f"Previous attempt feedback:\n{feedback}")
         parts.append("Respond with ONLY the TaskGraph JSON.")

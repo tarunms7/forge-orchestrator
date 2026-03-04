@@ -1,6 +1,7 @@
 """Forge daemon. Async orchestration loop: plan -> schedule -> dispatch -> review -> merge."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -177,6 +178,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._snapshot = gather_project_snapshot(self._project_dir)
         graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
 
+        # Persist planner-discovered conventions
+        if pipeline_id and graph.conventions is not None:
+            await db.update_pipeline_conventions(pipeline_id, json.dumps(graph.conventions))
+
         # Track planner cost
         if pipeline_id and planner_llm._last_sdk_result:
             sdk_result = planner_llm._last_sdk_result
@@ -277,6 +282,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         await db.set_pipeline_base_branch(pid, base_branch)
 
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
+
+        # Auto-update conventions file after all tasks complete successfully
+        if self._settings.auto_update_conventions:
+            pipeline_rec = await db.get_pipeline(pid)
+            conventions_json_str = getattr(pipeline_rec, "conventions_json", None) if pipeline_rec else None
+            if conventions_json_str:
+                try:
+                    conventions = json.loads(conventions_json_str)
+                    from forge.core.conventions import update_conventions_file
+                    update_conventions_file(self._project_dir, conventions)
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Failed to parse conventions_json for auto-update")
+
         await self._emit("pipeline:phase_changed", {"phase": "complete"}, db=db, pipeline_id=pid)
 
     async def run(self, user_input: str) -> None:

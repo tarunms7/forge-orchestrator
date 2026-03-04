@@ -90,6 +90,7 @@ class TaskRow(Base):
     output_tokens: Mapped[int] = mapped_column(default=0)
     approval_context: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     prior_diff: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    implementation_summary: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -123,6 +124,7 @@ class PipelineRow(Base):
     budget_limit_usd: Mapped[float] = mapped_column(default=0.0)
     estimated_cost_usd: Mapped[float] = mapped_column(default=0.0)
     paused: Mapped[bool] = mapped_column(default=False)
+    conventions_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     require_approval: Mapped[bool] = mapped_column(default=False)
 
 
@@ -633,6 +635,25 @@ class Database:
             task = await session.get(TaskRow, task_id)
             if task:
                 task.prior_diff = diff
+                await session.commit()
+
+    async def update_pipeline_conventions(self, pipeline_id: str, conventions_json: str) -> None:
+        """Store conventions JSON for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.conventions_json = conventions_json
+                await session.commit()
+
+    async def update_task_implementation_summary(self, task_id: str, summary: str) -> None:
+        """Store implementation summary for a task."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.implementation_summary = summary
                 await session.commit()
 
     async def set_pipeline_paused(self, pipeline_id: str, paused: bool) -> None:
