@@ -5,6 +5,7 @@ and console output used by the Forge daemon orchestration loop.
 """
 
 import logging
+import os
 import re
 import subprocess
 
@@ -394,6 +395,86 @@ def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = Non
         )
 
     return [f for f in result.stdout.strip().split("\n") if f.strip()]
+
+
+def _load_conventions_md(project_dir: str) -> str | None:
+    """Read ``.forge/conventions.md`` from the project directory.
+
+    Returns the stripped file content, or ``None`` if the file doesn't
+    exist or is empty.
+    """
+    filepath = os.path.join(project_dir, ".forge", "conventions.md")
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            content = fh.read().strip()
+            return content if content else None
+    except (OSError, FileNotFoundError):
+        return None
+
+
+def _extract_implementation_summary(
+    worktree_path: str,
+    agent_summary: str,
+    pipeline_branch: str | None = None,
+) -> str:
+    """Extract a brief (≤300 char) summary from completed agent work.
+
+    Combines git commit messages with the agent's summary text to produce
+    a concise description of what was implemented.  Falls back to a generic
+    message when no useful information is available.
+    """
+    commit_messages: list[str] = []
+
+    # Try explicit base-ref first (most accurate)
+    if pipeline_branch is not None:
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", pipeline_branch],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode == 0:
+            result = subprocess.run(
+                ["git", "log", f"--format=%s", f"{pipeline_branch}..HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                commit_messages = [
+                    line.strip()
+                    for line in result.stdout.strip().splitlines()
+                    if line.strip()
+                ]
+
+    # Fallback: recent local-only commits
+    if not commit_messages:
+        result = subprocess.run(
+            ["git", "log", "--format=%s", "--not", "--remotes", "-5"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            commit_messages = [
+                line.strip()
+                for line in result.stdout.strip().splitlines()
+                if line.strip()
+            ]
+
+    parts: list[str] = []
+    if commit_messages:
+        parts.append("; ".join(commit_messages))
+
+    # Only include agent summary if it's not generic
+    if agent_summary and agent_summary.strip().lower() != "task completed":
+        parts.append(agent_summary.strip())
+
+    if parts:
+        summary = " | ".join(parts)
+        return summary[:300]
+
+    return "Task completed (no detailed summary available)"[:300]
 
 
 def _print_status_table(tasks) -> None:

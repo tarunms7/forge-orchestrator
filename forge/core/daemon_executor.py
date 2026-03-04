@@ -12,9 +12,11 @@ from forge.core.budget import check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
+    _extract_implementation_summary,
     _extract_text,
     _get_diff_stats,
     _get_diff_vs_main,
+    _load_conventions_md,
     _resolve_ref,
 )
 from forge.core.model_router import select_model
@@ -320,10 +322,37 @@ class ExecutorMixin:
                 _batch.clear()
                 _last_flush[0] = now
 
+        # Gather context-sharing data for the agent
+        conventions_json = None
+        conventions_md = None
+        completed_deps: list[dict] = []
+
+        if pid:
+            pipeline = await db.get_pipeline(pid)
+            if pipeline:
+                conventions_json = getattr(pipeline, "conventions_json", None)
+
+        conventions_md = _load_conventions_md(self._project_dir)
+
+        # Collect completed dependency info
+        if hasattr(task, "depends_on") and task.depends_on:
+            for dep_id in task.depends_on:
+                dep_task = await db.get_task(dep_id)
+                if dep_task and dep_task.state == TaskState.DONE.value:
+                    completed_deps.append({
+                        "task_id": dep_task.id,
+                        "title": dep_task.title,
+                        "implementation_summary": getattr(dep_task, "implementation_summary", None),
+                        "files_changed": dep_task.files or [],
+                    })
+
         result = await runtime.run_task(
             agent_id, prompt, worktree_path, task.files,
             allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
             project_context=self._snapshot.format_for_agent() if self._snapshot else "",
+            conventions_json=conventions_json,
+            conventions_md=conventions_md,
+            completed_deps=completed_deps if completed_deps else None,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
@@ -363,6 +392,15 @@ class ExecutorMixin:
         tag = f" ({label})" if label else ""
         console.print(f"[bold green]{task_id} merged{tag}![/bold green]")
         await db.update_task_state(task_id, TaskState.DONE.value)
+
+        # Extract and store implementation summary for downstream tasks
+        task = await db.get_task(task_id)
+        agent_summary = getattr(task, "description", "") if task else ""
+        # Use the agent result summary if available (stored during agent run)
+        # Fall back to task description
+        summary = _extract_implementation_summary(worktree_path, agent_summary, pipeline_branch)
+        await db.update_task_implementation_summary(task_id, summary)
+
         stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit("task:merge_result", {"task_id": task_id, "success": True, "error": None, **stats}, db=db, pipeline_id=pid)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)

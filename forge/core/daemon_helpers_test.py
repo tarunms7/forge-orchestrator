@@ -1,11 +1,15 @@
-"""Tests for daemon_helpers — git diff utilities."""
+"""Tests for daemon_helpers — git diff utilities and context helpers."""
+
+import os
 
 from unittest.mock import MagicMock, call, patch
 
 from forge.core.daemon_helpers import (
+    _extract_implementation_summary,
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
+    _load_conventions_md,
 )
 
 
@@ -223,3 +227,124 @@ class TestGetDiffStatsFallback:
             result = _get_diff_stats("/repo")
 
         assert result == {"linesAdded": 8, "linesRemoved": 2}
+
+
+class TestLoadConventionsMd:
+    """_load_conventions_md() reads .forge/conventions.md from project dir."""
+
+    def test_file_exists_with_content(self, tmp_path):
+        """Returns stripped content when file exists and has content."""
+        forge_dir = tmp_path / ".forge"
+        forge_dir.mkdir()
+        conventions_file = forge_dir / "conventions.md"
+        conventions_file.write_text("## Styling\n\nUse Tailwind.\n")
+
+        result = _load_conventions_md(str(tmp_path))
+
+        assert result == "## Styling\n\nUse Tailwind."
+
+    def test_file_missing(self, tmp_path):
+        """Returns None when the file doesn't exist."""
+        result = _load_conventions_md(str(tmp_path))
+
+        assert result is None
+
+    def test_file_empty(self, tmp_path):
+        """Returns None when the file is empty or whitespace-only."""
+        forge_dir = tmp_path / ".forge"
+        forge_dir.mkdir()
+        conventions_file = forge_dir / "conventions.md"
+        conventions_file.write_text("   \n  \n  ")
+
+        result = _load_conventions_md(str(tmp_path))
+
+        assert result is None
+
+
+class TestExtractImplementationSummary:
+    """_extract_implementation_summary() builds a short summary from git + agent."""
+
+    def test_with_commit_messages_and_agent_summary(self):
+        """Combines commit messages with agent summary."""
+        verify_ok = _make_proc("abc123\n", returncode=0)
+        log_proc = _make_proc("feat: add auth\nfix: handle edge case\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
+            result = _extract_implementation_summary(
+                "/repo/wt", "Added authentication module", pipeline_branch="forge/pipeline-abc",
+            )
+
+        assert "feat: add auth; fix: handle edge case" in result
+        assert "Added authentication module" in result
+        assert len(result) <= 300
+
+    def test_with_commit_messages_only(self):
+        """Uses commit messages when agent summary is generic 'Task completed'."""
+        verify_ok = _make_proc("abc123\n", returncode=0)
+        log_proc = _make_proc("feat: add new endpoint\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
+            result = _extract_implementation_summary(
+                "/repo/wt", "Task completed", pipeline_branch="forge/pipeline-abc",
+            )
+
+        assert "feat: add new endpoint" in result
+        # Generic "Task completed" should be excluded
+        assert "Task completed" not in result
+
+    def test_without_pipeline_branch_uses_fallback(self):
+        """Falls back to --not --remotes when pipeline_branch is None."""
+        log_proc = _make_proc("chore: initial setup\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[log_proc]):
+            result = _extract_implementation_summary("/repo/wt", "Task completed")
+
+        assert "chore: initial setup" in result
+
+    def test_with_pipeline_branch_that_resolves(self):
+        """Uses pipeline_branch..HEAD when the ref resolves."""
+        verify_ok = _make_proc("abc123\n", returncode=0)
+        log_proc = _make_proc("feat: add login\nfeat: add logout\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
+            result = _extract_implementation_summary(
+                "/repo/wt", "Task completed", pipeline_branch="forge/pipeline-abc",
+            )
+
+        assert "feat: add login; feat: add logout" in result
+
+    def test_pipeline_branch_not_found_falls_back(self):
+        """Falls back to --not --remotes when pipeline_branch can't be resolved."""
+        verify_fail = _make_proc("", returncode=128)
+        log_fallback = _make_proc("fix: something\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_fail, log_fallback]):
+            result = _extract_implementation_summary(
+                "/repo/wt", "Fixed the thing", pipeline_branch="forge/missing",
+            )
+
+        assert "fix: something" in result
+        assert "Fixed the thing" in result
+
+    def test_no_commits_no_summary_returns_fallback(self):
+        """Returns generic fallback when no commit messages and no agent summary."""
+        log_proc = _make_proc("", returncode=0)
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[log_proc]):
+            result = _extract_implementation_summary("/repo/wt", "Task completed")
+
+        assert "no detailed summary" in result.lower()
+
+    def test_truncates_to_300_chars(self):
+        """Summary is capped at 300 characters."""
+        long_messages = "\n".join([f"feat: implement feature number {i}" for i in range(50)])
+        verify_ok = _make_proc("abc123\n", returncode=0)
+        log_proc = _make_proc(long_messages + "\n")
+
+        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
+            result = _extract_implementation_summary(
+                "/repo/wt", "A very detailed agent summary that goes on and on",
+                pipeline_branch="forge/pipeline-abc",
+            )
+
+        assert len(result) <= 300
