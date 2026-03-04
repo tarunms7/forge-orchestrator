@@ -15,6 +15,8 @@ export interface TaskFormData {
   additionalContext: string;
   images: ImageAttachment[];
   branchName: string;
+  buildCmd: string;
+  testCmd: string;
 }
 
 interface TaskFormProps {
@@ -414,6 +416,42 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
             </p>
           );
         })()}
+      </div>
+
+      {/* Build command input */}
+      <div>
+        <label htmlFor="build-cmd" className="block text-sm font-medium text-text-secondary">
+          Build command <span className="text-text-dim">(optional)</span>
+        </label>
+        <input
+          id="build-cmd"
+          type="text"
+          value={value.buildCmd}
+          onChange={(e) => onChange({ ...value, buildCmd: e.target.value })}
+          placeholder="npm run build"
+          className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-mono text-sm"
+        />
+        <p className="mt-1 text-xs text-text-dim">
+          Runs before lint check. Overrides FORGE_BUILD_CMD env var for this pipeline.
+        </p>
+      </div>
+
+      {/* Test command input */}
+      <div>
+        <label htmlFor="test-cmd" className="block text-sm font-medium text-text-secondary">
+          Test command <span className="text-text-dim">(optional)</span>
+        </label>
+        <input
+          id="test-cmd"
+          type="text"
+          value={value.testCmd}
+          onChange={(e) => onChange({ ...value, testCmd: e.target.value })}
+          placeholder="pytest"
+          className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-mono text-sm"
+        />
+        <p className="mt-1 text-xs text-text-dim">
+          Runs after lint, before LLM review. Overrides FORGE_TEST_CMD env var for this pipeline.
+        </p>
       </div>
 
       {/* Additional context textarea */}
