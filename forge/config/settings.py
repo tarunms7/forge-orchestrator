@@ -43,5 +43,8 @@ class ForgeSettings(BaseSettings):
     cost_rate_opus_input: float = 0.015
     cost_rate_opus_output: float = 0.075
 
+    # Approval gate
+    require_approval: bool = False
+
     # Polling
     scheduler_poll_interval: float = 1.0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -17,6 +19,7 @@ class CreateTaskRequest(BaseModel):
     build_cmd: str | None = Field(default=None, description="Shell command to verify the build after agent work")
     test_cmd: str | None = Field(default=None, description="Shell command to run tests after agent work")
     budget_limit_usd: float = Field(default=0.0, description="Maximum USD budget for this pipeline. 0 means unlimited.")
+    require_approval: bool | None = None
 
 
 class RestartPipelineRequest(BaseModel):
@@ -25,10 +28,27 @@ class RestartPipelineRequest(BaseModel):
     clean_worktrees: bool = True
 
 
+class EditedTaskDefinition(BaseModel):
+    """A single task as edited by the user."""
+
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    description: str
+    files: list[str] = Field(min_length=1)
+    depends_on: list[str] = Field(default_factory=list)
+    complexity: Literal["low", "medium", "high"] = "medium"
+
+
 class ExecuteRequest(BaseModel):
     """Optional: edited task graph to execute instead of the planned one."""
 
-    tasks: list[dict] | None = None  # if provided, overrides planned graph
+    tasks: list[EditedTaskDefinition] | None = None
+
+
+class RejectRequest(BaseModel):
+    """Request body for rejecting a task awaiting approval."""
+
+    reason: str | None = None
 
 
 class PipelineResponse(BaseModel):

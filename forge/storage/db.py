@@ -88,6 +88,7 @@ class TaskRow(Base):
     review_cost_usd: Mapped[float] = mapped_column(default=0.0)
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
+    approval_context: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -120,6 +121,8 @@ class PipelineRow(Base):
     total_cost_usd: Mapped[float] = mapped_column(default=0.0)
     budget_limit_usd: Mapped[float] = mapped_column(default=0.0)
     estimated_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    paused: Mapped[bool] = mapped_column(default=False)
+    require_approval: Mapped[bool] = mapped_column(default=False)
 
 
 class PipelineEventRow(Base):
@@ -604,6 +607,35 @@ class Database:
 
             await session.commit()
             return {"tasks_cancelled": tasks_cancelled}
+
+    # ── Approval context ──────────────────────────────────────────────
+
+    async def set_task_approval_context(self, task_id: str, context_json: str) -> None:
+        """Store approval context JSON for a task awaiting human approval."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.approval_context = context_json
+                await session.commit()
+
+    async def clear_task_approval_context(self, task_id: str) -> None:
+        """Clear approval context after approval/rejection."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.approval_context = None
+                await session.commit()
+
+    async def set_pipeline_paused(self, pipeline_id: str, paused: bool) -> None:
+        """Set or clear the paused flag on a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.paused = paused
+                await session.commit()
 
     # ── Pipeline events ──────────────────────────────────────────────
 
