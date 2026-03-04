@@ -89,7 +89,7 @@ export interface PipelineState {
     timeline?: Array<Record<string, unknown>>;
     pr_url?: string | null;
     planner_output?: string[];
-    pipeline_cost?: number;
+    total_cost_usd?: number;
     estimated_cost_usd?: number;
     budget_limit_usd?: number;
   }) => void;
@@ -231,7 +231,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       prUrl: data.pr_url ?? null,
       plannerOutput: data.planner_output ?? [],
       hydrationError: null,
-      pipelineCost: (data.pipeline_cost as number) || 0,
+      pipelineCost: (data.total_cost_usd as number) || 0,
       estimatedCostUsd: (data.estimated_cost_usd as number) || 0,
       budgetLimitUsd: (data.budget_limit_usd as number) || 0,
     });
