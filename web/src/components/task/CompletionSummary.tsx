@@ -28,6 +28,7 @@ function StatusDot({ state }: { state: TaskState["state"] }) {
     pending: "blocked-status",
     working: "pass",
     in_review: "pass",
+    awaiting_approval: "pass",
     done: "pass",
     error: "fail",
     retrying: "pass",

@@ -13,6 +13,7 @@ const STATE_CLASS: Record<TaskState["state"], { label: string; cardClass: string
   pending: { label: "Pending", cardClass: "pending", badgeClass: "state-badge pending" },
   working: { label: "Working", cardClass: "working", badgeClass: "state-badge working" },
   in_review: { label: "In Review", cardClass: "in-review", badgeClass: "state-badge review" },
+  awaiting_approval: { label: "Awaiting Approval", cardClass: "awaiting-approval", badgeClass: "state-badge awaiting-approval" },
   done: { label: "Done", cardClass: "done", badgeClass: "state-badge done" },
   error: { label: "Error", cardClass: "error-card", badgeClass: "state-badge error" },
   retrying: { label: "Retrying", cardClass: "working", badgeClass: "state-badge retrying" },
@@ -193,8 +194,8 @@ export default function AgentCard({ task, onClick }: { task: TaskState; onClick?
               )}
             </>
           ) : (
-            <div className="task-card-output" style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 11 }}>
-              {task.state === "pending" ? "Waiting..." : "No output yet"}
+            <div className="task-card-output" style={{ display: "flex", alignItems: "center", justifyContent: "center", color: task.state === "awaiting_approval" ? "var(--amber)" : "var(--text-dim)", fontSize: 11 }}>
+              {task.state === "pending" ? "Waiting..." : task.state === "awaiting_approval" ? "⚠ Review and approve to merge" : "No output yet"}
             </div>
           )}
         </div>

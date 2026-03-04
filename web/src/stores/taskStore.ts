@@ -5,6 +5,8 @@ import {
   restartPipeline as apiRestartPipeline,
   apiGet,
 } from "@/lib/api";
+import type { EditableTask, ValidationResult } from "@/lib/validateTaskGraph";
+import { validateTaskGraph } from "@/lib/validateTaskGraph";
 
 /** Maximum timeline entries to keep in memory (prevents unbounded growth). */
 const MAX_TIMELINE_ENTRIES = 500;
@@ -20,7 +22,7 @@ function sendNotification(title: string, body: string) {
 export interface TaskState {
   id: string;
   title: string;
-  state: "pending" | "working" | "in_review" | "done" | "error" | "retrying" | "cancelled";
+  state: "pending" | "working" | "in_review" | "awaiting_approval" | "done" | "error" | "retrying" | "cancelled";
   branch: string;
   /** Description from the plan (what this task does). */
   description?: string;
@@ -30,6 +32,8 @@ export interface TaskState {
   dependsOn?: string[];
   /** Complexity tier from the plan. */
   complexity?: string;
+  /** Diff preview for approval UI (first 200 lines). */
+  diffPreview?: string;
   /** Files actually changed during execution. */
   files: string[];
   output: string[];
@@ -64,7 +68,7 @@ export interface FollowUpResult {
 
 export interface PipelineState {
   pipelineId: string | null;
-  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "complete" | "cancelled" | "error";
+  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "paused" | "complete" | "cancelled" | "error";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
   timeline: TimelineEntry[];
@@ -75,6 +79,10 @@ export interface PipelineState {
   pipelineCost: number;
   estimatedCostUsd: number;
   budgetLimitUsd: number;
+
+  /* Plan editing state */
+  editedTasks: EditableTask[] | null;
+  planValidation: ValidationResult;
 
   /* Follow-up state */
   followUpQuestions: string[];
@@ -99,6 +107,14 @@ export interface PipelineState {
   }) => void;
   reset: () => void;
 
+  /* Plan editing actions */
+  setEditedTasks: (tasks: EditableTask[]) => void;
+  updateEditedTask: (id: string, patch: Partial<EditableTask>) => void;
+  deleteEditedTask: (id: string) => void;
+  addEditedTask: (task: EditableTask) => void;
+  reorderEditedTasks: (fromIndex: number, toIndex: number) => void;
+  resetEdits: () => void;
+
   /* Follow-up actions */
   setFollowUpStatus: (status: PipelineState["followUpStatus"]) => void;
   addFollowUpQuestion: (question: string) => void;
@@ -116,6 +132,7 @@ const BACKEND_STATE_MAP: Record<string, TaskState["state"]> = {
   todo: "pending",
   in_progress: "working",
   in_review: "in_review",
+  awaiting_approval: "awaiting_approval",
   merging: "working",
   done: "done",
   error: "error",
@@ -149,9 +166,55 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   pipelineCost: 0,
   estimatedCostUsd: 0,
   budgetLimitUsd: 0,
+  editedTasks: null,
+  planValidation: { valid: true, errors: [] },
   ...INITIAL_FOLLOWUP,
   setPipelineId: (id) => set({ pipelineId: id }),
   setHydrationError: (err) => set({ hydrationError: err }),
+
+  /* Plan editing actions */
+  setEditedTasks: (tasks) =>
+    set({ editedTasks: tasks, planValidation: validateTaskGraph(tasks) }),
+
+  updateEditedTask: (id, patch) =>
+    set((state) => {
+      if (!state.editedTasks) return {};
+      const updated = state.editedTasks.map((t) =>
+        t.id === id ? { ...t, ...patch } : t
+      );
+      return { editedTasks: updated, planValidation: validateTaskGraph(updated) };
+    }),
+
+  deleteEditedTask: (id) =>
+    set((state) => {
+      if (!state.editedTasks) return {};
+      // Remove the task and clean up dangling dependency references
+      const updated = state.editedTasks
+        .filter((t) => t.id !== id)
+        .map((t) => ({
+          ...t,
+          depends_on: t.depends_on.filter((dep) => dep !== id),
+        }));
+      return { editedTasks: updated, planValidation: validateTaskGraph(updated) };
+    }),
+
+  addEditedTask: (task) =>
+    set((state) => {
+      const updated = [...(state.editedTasks || []), task];
+      return { editedTasks: updated, planValidation: validateTaskGraph(updated) };
+    }),
+
+  reorderEditedTasks: (fromIndex, toIndex) =>
+    set((state) => {
+      if (!state.editedTasks) return {};
+      const updated = [...state.editedTasks];
+      const [moved] = updated.splice(fromIndex, 1);
+      updated.splice(toIndex, 0, moved);
+      return { editedTasks: updated, planValidation: validateTaskGraph(updated) };
+    }),
+
+  resetEdits: () =>
+    set({ editedTasks: null, planValidation: { valid: true, errors: [] } }),
 
   /* Follow-up actions */
   setFollowUpStatus: (status) => set({ followUpStatus: status }),
@@ -250,6 +313,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       pipelineCost: 0,
       estimatedCostUsd: 0,
       budgetLimitUsd: 0,
+      editedTasks: null,
+      planValidation: { valid: true, errors: [] },
       ...INITIAL_FOLLOWUP,
     }),
   handleEvent: (event) =>
@@ -280,14 +345,15 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
 
         case "pipeline:plan_ready": {
           const newTasks: Record<string, TaskState> = {};
-          for (const t of data.tasks as Array<{
+          const incomingTasks = data.tasks as Array<{
             id: string;
             title: string;
             description?: string;
             files?: string[];
             depends_on?: string[];
             complexity?: string;
-          }>) {
+          }>;
+          for (const t of incomingTasks) {
             newTasks[t.id] = {
               id: t.id,
               title: t.title,
@@ -302,7 +368,22 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
               reviewGates: [],
             };
           }
-          return { tasks: newTasks, phase: "planned", timeline: newTimeline };
+          // Deep copy incoming tasks for plan editing
+          const editable: EditableTask[] = incomingTasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description || "",
+            files: [...(t.files || [])],
+            depends_on: [...(t.depends_on || [])],
+            complexity: (t.complexity as EditableTask["complexity"]) || "medium",
+          }));
+          return {
+            tasks: newTasks,
+            phase: "planned",
+            timeline: newTimeline,
+            editedTasks: editable,
+            planValidation: validateTaskGraph(editable),
+          };
         }
 
         case "pipeline:cancelled": {
@@ -557,6 +638,29 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
             plannerOutput: [...state.plannerOutput, data.line as string],
             timeline: newTimeline,
           };
+
+        case "task:awaiting_approval": {
+          const taskId = data.task_id as string;
+          const existing = state.tasks[taskId];
+          if (!existing) return { timeline: newTimeline };
+          return {
+            tasks: {
+              ...state.tasks,
+              [taskId]: {
+                ...existing,
+                state: "awaiting_approval",
+                diffPreview: data.diff_preview as string,
+              },
+            },
+            timeline: newTimeline,
+          };
+        }
+
+        case "pipeline:paused":
+          return { phase: "paused" as PipelineState["phase"], timeline: newTimeline };
+
+        case "pipeline:resumed":
+          return { phase: "executing" as PipelineState["phase"], timeline: newTimeline };
 
         case "pipeline:preflight_failed":
           return { phase: "idle" as PipelineState["phase"], timeline: newTimeline };

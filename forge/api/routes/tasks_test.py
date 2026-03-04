@@ -891,3 +891,987 @@ class TestGeneratePrTitle:
         with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
             title = await _generate_pr_title("Fix the login button", "")
         assert title == "fix the login button"
+
+
+# ── Execute with edited task graph tests ─────────────────────────────
+
+
+class TestExecuteWithEditedGraph:
+    """Tests for POST /tasks/{pipeline_id}/execute with edited task graph."""
+
+    async def test_execute_requires_auth(self, client):
+        """POST /tasks/{id}/execute without auth should return 401."""
+        resp = await client.post("/api/tasks/some-id/execute")
+        assert resp.status_code == 401
+
+    async def test_execute_nonexistent_returns_404(self, client):
+        """POST /tasks/{id}/execute for unknown pipeline should return 404."""
+        token = await _register_and_get_token(client, email="exec@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/execute",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+    async def test_execute_with_invalid_graph_returns_422(self, client_with_app):
+        """POST /tasks/{id}/execute with cyclic deps should return 422."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="exec-invalid@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+
+        # Create pipeline in DB
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Test exec", project_dir="/proj",
+                status="planned", user_id=user_id,
+            ))
+            await session.commit()
+
+        # Store a pending graph (mocked daemon)
+        mock_daemon = MagicMock()
+        from forge.core.models import TaskDefinition, TaskGraph, Complexity
+        original_graph = TaskGraph(tasks=[
+            TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
+        ])
+        app.state.pending_graphs[pid] = (original_graph, mock_daemon)
+
+        # Submit edited graph with cyclic dependencies
+        resp = await client.post(
+            f"/api/tasks/{pid}/execute",
+            json={
+                "tasks": [
+                    {"id": "t1", "title": "T1", "description": "D1", "files": ["a.py"],
+                     "depends_on": ["t2"], "complexity": "low"},
+                    {"id": "t2", "title": "T2", "description": "D2", "files": ["b.py"],
+                     "depends_on": ["t1"], "complexity": "medium"},
+                ]
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert "Invalid task graph" in resp.json()["detail"]
+
+    async def test_execute_with_valid_edited_graph(self, client_with_app):
+        """POST /tasks/{id}/execute with valid edited tasks should return 202."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="exec-valid@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Test exec valid", project_dir="/proj",
+                status="planned", user_id=user_id,
+            ))
+            await session.commit()
+
+        # Store a pending graph with mocked daemon
+        mock_daemon = MagicMock()
+        mock_daemon.execute = AsyncMock()
+        from forge.core.models import TaskDefinition, TaskGraph, Complexity
+        original_graph = TaskGraph(tasks=[
+            TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
+        ])
+        app.state.pending_graphs[pid] = (original_graph, mock_daemon)
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/execute",
+            json={
+                "tasks": [
+                    {"id": "t1", "title": "Task One", "description": "Do A", "files": ["a.py"],
+                     "depends_on": [], "complexity": "low"},
+                    {"id": "t2", "title": "Task Two", "description": "Do B", "files": ["b.py"],
+                     "depends_on": ["t1"], "complexity": "high"},
+                ]
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "executing"
+        assert data["pipeline_id"] == pid
+
+    async def test_execute_without_edited_graph_uses_original(self, client_with_app):
+        """POST /tasks/{id}/execute without tasks field uses original plan."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="exec-orig@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Test no edit", project_dir="/proj",
+                status="planned", user_id=user_id,
+            ))
+            await session.commit()
+
+        mock_daemon = MagicMock()
+        mock_daemon.execute = AsyncMock()
+        from forge.core.models import TaskDefinition, TaskGraph, Complexity
+        original_graph = TaskGraph(tasks=[
+            TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
+        ])
+        app.state.pending_graphs[pid] = (original_graph, mock_daemon)
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/execute",
+            headers=headers,
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "executing"
+
+
+# ── Task diff endpoint tests ─────────────────────────────────────────
+
+
+class TestGetTaskDiff:
+    """Tests for GET /tasks/{pipeline_id}/tasks/{task_id}/diff."""
+
+    async def test_diff_requires_auth(self, client):
+        """GET /tasks/{pid}/tasks/{tid}/diff without auth returns 401."""
+        resp = await client.get("/api/tasks/some-pipe/tasks/some-task/diff")
+        assert resp.status_code == 401
+
+    async def test_diff_nonexistent_pipeline_returns_404(self, client):
+        """GET diff for unknown pipeline returns 404."""
+        token = await _register_and_get_token(client, email="diff-404@example.com")
+        resp = await client.get(
+            "/api/tasks/nonexistent/tasks/some-task/diff",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+    async def test_diff_wrong_task_state_returns_409(self, client_with_app):
+        """GET diff for a task not in awaiting_approval returns 409."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="diff-409@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Diff test", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="in_progress",
+                pipeline_id=pid,
+            ))
+            await session.commit()
+
+        resp = await client.get(
+            f"/api/tasks/{pid}/tasks/{tid}/diff",
+            headers=headers,
+        )
+        assert resp.status_code == 409
+
+    async def test_diff_missing_worktree_returns_410(self, client_with_app):
+        """GET diff when worktree doesn't exist returns 410."""
+        import json
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="diff-410@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Diff worktree", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+                approval_context=json.dumps({
+                    "worktree_path": "/nonexistent/path/worktree",
+                    "pipeline_branch": "forge/pipeline-abc",
+                }),
+            ))
+            await session.commit()
+
+        resp = await client.get(
+            f"/api/tasks/{pid}/tasks/{tid}/diff",
+            headers=headers,
+        )
+        assert resp.status_code == 410
+
+    async def test_diff_returns_diff_and_stats(self, client_with_app):
+        """GET diff with valid worktree returns diff text and stats."""
+        import json
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="diff-ok@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+
+        # Use /tmp as a real existing directory
+        import tempfile
+        worktree_dir = tempfile.mkdtemp()
+
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Diff OK", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+                approval_context=json.dumps({
+                    "worktree_path": worktree_dir,
+                    "pipeline_branch": "main",
+                }),
+            ))
+            await session.commit()
+
+        # Mock _get_diff_vs_main to return a sample diff
+        mock_diff = "diff --git a/foo.py b/foo.py\n+added line\n-removed line\n"
+        with patch("forge.api.routes.tasks._get_diff_vs_main", return_value=mock_diff):
+            resp = await client.get(
+                f"/api/tasks/{pid}/tasks/{tid}/diff",
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["task_id"] == tid
+        assert "diff" in data
+        assert data["stats"]["files_changed"] == 1
+        assert data["stats"]["lines_added"] == 1
+        assert data["stats"]["lines_removed"] == 1
+
+        # Cleanup
+        import shutil
+        shutil.rmtree(worktree_dir, ignore_errors=True)
+
+
+# ── Task approve endpoint tests ──────────────────────────────────────
+
+
+class TestApproveTask:
+    """Tests for POST /tasks/{pipeline_id}/tasks/{task_id}/approve."""
+
+    async def test_approve_requires_auth(self, client):
+        """POST approve without auth should return 401."""
+        resp = await client.post("/api/tasks/some-pipe/tasks/some-task/approve")
+        assert resp.status_code == 401
+
+    async def test_approve_nonexistent_pipeline_returns_404(self, client):
+        """POST approve for unknown pipeline returns 404."""
+        token = await _register_and_get_token(client, email="approve-404@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/tasks/some-task/approve",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+    async def test_approve_wrong_state_returns_409(self, client_with_app):
+        """POST approve for a task not in awaiting_approval returns 409."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="approve-409@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Approve test", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="done",
+                pipeline_id=pid,
+            ))
+            await session.commit()
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/approve",
+            headers=headers,
+        )
+        assert resp.status_code == 409
+
+    async def test_approve_success_returns_202(self, client_with_app):
+        """POST approve for task in awaiting_approval returns 202 and merging."""
+        import json
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="approve-ok@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Approve OK", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+                approval_context=json.dumps({
+                    "worktree_path": "/tmp/wt",
+                    "pipeline_branch": "forge/pipeline-abc",
+                }),
+            ))
+            await session.commit()
+
+        # Set up ws_manager mock
+        app.state.ws_manager = AsyncMock()
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/approve",
+            headers=headers,
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "merging"
+        assert data["task_id"] == tid
+
+        # Verify task state was updated
+        task = await db.get_task(tid)
+        assert task.state == "merging"
+
+
+# ── Task reject endpoint tests ───────────────────────────────────────
+
+
+class TestRejectTask:
+    """Tests for POST /tasks/{pipeline_id}/tasks/{task_id}/reject."""
+
+    async def test_reject_requires_auth(self, client):
+        """POST reject without auth should return 401."""
+        resp = await client.post(
+            "/api/tasks/some-pipe/tasks/some-task/reject",
+            json={},
+        )
+        assert resp.status_code == 401
+
+    async def test_reject_nonexistent_pipeline_returns_404(self, client):
+        """POST reject for unknown pipeline returns 404."""
+        token = await _register_and_get_token(client, email="reject-404@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/tasks/some-task/reject",
+            json={},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+    async def test_reject_wrong_state_returns_409(self, client_with_app):
+        """POST reject for a task not in awaiting_approval returns 409."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="reject-409@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Reject test", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="in_progress",
+                pipeline_id=pid,
+            ))
+            await session.commit()
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/reject",
+            json={"reason": "Bad code"},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+
+    async def test_reject_success_resets_task(self, client_with_app):
+        """POST reject for awaiting_approval task resets to todo."""
+        import json
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="reject-ok@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Reject OK", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+                approval_context=json.dumps({
+                    "worktree_path": "/tmp/wt",
+                    "pipeline_branch": "forge/pipeline-abc",
+                }),
+            ))
+            await session.commit()
+
+        # Set up ws_manager mock
+        app.state.ws_manager = AsyncMock()
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/reject",
+            json={"reason": "Token expiry not handled"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "retrying"
+        assert data["task_id"] == tid
+
+        # Verify task state was reset
+        task = await db.get_task(tid)
+        assert task.state == "todo"
+        assert task.retry_count == 1
+        assert task.review_feedback == "Token expiry not handled"
+
+    async def test_reject_without_reason_uses_default(self, client_with_app):
+        """POST reject without a reason uses 'Rejected by user' default."""
+        import json
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="reject-noreason@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Reject no reason", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+                approval_context=json.dumps({
+                    "worktree_path": "/tmp/wt",
+                    "pipeline_branch": "forge/pipeline-abc",
+                }),
+            ))
+            await session.commit()
+
+        app.state.ws_manager = AsyncMock()
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/reject",
+            json={},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+        task = await db.get_task(tid)
+        assert task.review_feedback == "Rejected by user"
+
+
+# ── Pause endpoint tests ─────────────────────────────────────────────
+
+
+class TestPausePipeline:
+    """Tests for POST /tasks/{pipeline_id}/pause."""
+
+    async def test_pause_requires_auth(self, client):
+        """POST /tasks/{id}/pause without auth should return 401."""
+        resp = await client.post("/api/tasks/some-id/pause")
+        assert resp.status_code == 401
+
+    async def test_pause_nonexistent_returns_404(self, client):
+        """POST /tasks/{id}/pause for unknown pipeline should return 404."""
+        token = await _register_and_get_token(client, email="pause-404@example.com")
+        resp = await client.post(
+            "/api/tasks/nonexistent/pause",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 404
+
+    async def test_pause_non_running_returns_409(self, client_with_app):
+        """POST /tasks/{id}/pause on a completed pipeline returns 409."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="pause-409@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Pause test", project_dir="/proj",
+                status="complete", user_id=user_id,
+            ))
+            await session.commit()
+
+        resp = await client.post(f"/api/tasks/{pid}/pause", headers=headers)
+        assert resp.status_code == 409
+
+    async def test_pause_executing_pipeline(self, client_with_app):
+        """POST /tasks/{id}/pause on executing pipeline returns paused."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="pause-ok@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Pause exec", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            await session.commit()
+
+        app.state.ws_manager = AsyncMock()
+
+        resp = await client.post(f"/api/tasks/{pid}/pause", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "paused"
+
+        # Verify DB state
+        pipeline = await db.get_pipeline(pid)
+        assert pipeline.status == "paused"
+        assert pipeline.paused is True
+
+    async def test_pause_planned_pipeline(self, client_with_app):
+        """POST /tasks/{id}/pause on planned pipeline also works."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="pause-plan@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Pause planned", project_dir="/proj",
+                status="planned", user_id=user_id,
+            ))
+            await session.commit()
+
+        app.state.ws_manager = AsyncMock()
+
+        resp = await client.post(f"/api/tasks/{pid}/pause", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "paused"
+
+
+# ── Resume from paused endpoint tests ────────────────────────────────
+
+
+class TestResumePausedPipeline:
+    """Tests for POST /tasks/{pipeline_id}/resume with paused state."""
+
+    async def test_resume_paused_pipeline(self, client_with_app):
+        """POST /tasks/{id}/resume on paused pipeline returns executing."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="resume-paused@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Resume paused", project_dir="/proj",
+                status="paused", user_id=user_id,
+                paused=True,
+            ))
+            await session.commit()
+
+        app.state.ws_manager = AsyncMock()
+
+        resp = await client.post(f"/api/tasks/{pid}/resume", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "executing"
+
+        # Verify DB state
+        pipeline = await db.get_pipeline(pid)
+        assert pipeline.status == "executing"
+        assert pipeline.paused is False
+
+    async def test_pause_then_resume_roundtrip(self, client_with_app):
+        """Pause then resume a pipeline end-to-end."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="roundtrip@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Roundtrip", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            await session.commit()
+
+        app.state.ws_manager = AsyncMock()
+
+        # Pause
+        resp = await client.post(f"/api/tasks/{pid}/pause", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "paused"
+
+        # Verify paused
+        pipeline = await db.get_pipeline(pid)
+        assert pipeline.paused is True
+
+        # Resume
+        resp = await client.post(f"/api/tasks/{pid}/resume", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "executing"
+
+        # Verify resumed
+        pipeline = await db.get_pipeline(pid)
+        assert pipeline.paused is False
+        assert pipeline.status == "executing"
+
+
+# ── Require approval passthrough tests ───────────────────────────────
+
+
+class TestRequireApprovalPassthrough:
+    """Tests for require_approval in POST /tasks."""
+
+    async def test_create_task_with_require_approval_true(self, client_with_app):
+        """POST /tasks with require_approval=true should store it on the pipeline."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="approval-true@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Feature with approval",
+                "project_path": "/proj",
+                "require_approval": True,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert pipeline.require_approval is True
+
+    async def test_create_task_without_require_approval(self, client_with_app):
+        """POST /tasks without require_approval defaults to False."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="approval-default@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Feature without approval",
+                "project_path": "/proj",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert pipeline.require_approval is False
+
+    async def test_create_task_with_require_approval_false(self, client_with_app):
+        """POST /tasks with require_approval=false explicitly."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="approval-false@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Feature no approval",
+                "project_path": "/proj",
+                "require_approval": False,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        pipeline_id = resp.json()["pipeline_id"]
+
+        db = app.state.db
+        pipeline = await db.get_pipeline(pipeline_id)
+        assert pipeline.require_approval is False
+
+
+# ── Diff stats parsing tests ─────────────────────────────────────────
+
+
+class TestParseDiffStats:
+    """Tests for _parse_diff_stats helper."""
+
+    def test_parse_empty_diff(self):
+        from forge.api.routes.tasks import _parse_diff_stats
+        stats = _parse_diff_stats("")
+        assert stats == {"files_changed": 0, "lines_added": 0, "lines_removed": 0}
+
+    def test_parse_single_file_diff(self):
+        from forge.api.routes.tasks import _parse_diff_stats
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,3 +1,5 @@\n"
+            " unchanged\n"
+            "+added line 1\n"
+            "+added line 2\n"
+            "-removed line\n"
+        )
+        stats = _parse_diff_stats(diff)
+        assert stats["files_changed"] == 1
+        assert stats["lines_added"] == 2
+        assert stats["lines_removed"] == 1
+
+    def test_parse_multi_file_diff(self):
+        from forge.api.routes.tasks import _parse_diff_stats
+        diff = (
+            "diff --git a/a.py b/a.py\n"
+            "+line\n"
+            "diff --git a/b.py b/b.py\n"
+            "-old\n"
+            "+new\n"
+        )
+        stats = _parse_diff_stats(diff)
+        assert stats["files_changed"] == 2
+        assert stats["lines_added"] == 2
+        assert stats["lines_removed"] == 1
+
+
+# ── IDOR tests for new endpoints ─────────────────────────────────────
+
+
+class TestNewEndpointIDOR:
+    """IDOR protection for approval, pause, and diff endpoints."""
+
+    async def test_diff_idor_protection(self, client_with_app):
+        """GET diff for another user's pipeline returns 404."""
+        import json
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+
+        # User A creates pipeline
+        token_a = await _register_and_get_token(client, email="idor-diff-a@example.com")
+        payload_a = decode_token(token_a, secret="test-secret-for-stats")
+        user_id_a = payload_a["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="IDOR diff", project_dir="/proj",
+                status="executing", user_id=user_id_a,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+                approval_context=json.dumps({"worktree_path": "/tmp/wt", "pipeline_branch": "main"}),
+            ))
+            await session.commit()
+
+        # User B tries to access
+        token_b = await _register_and_get_token(client, email="idor-diff-b@example.com")
+        resp = await client.get(
+            f"/api/tasks/{pid}/tasks/{tid}/diff",
+            headers=_auth_header(token_b),
+        )
+        assert resp.status_code == 404
+
+    async def test_approve_idor_protection(self, client_with_app):
+        """POST approve for another user's pipeline returns 404."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+
+        token_a = await _register_and_get_token(client, email="idor-approve-a@example.com")
+        payload_a = decode_token(token_a, secret="test-secret-for-stats")
+        user_id_a = payload_a["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = f"{pid[:8]}-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="IDOR approve", project_dir="/proj",
+                status="executing", user_id=user_id_a,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=["a.py"],
+                depends_on=[], complexity="low", state="awaiting_approval",
+                pipeline_id=pid,
+            ))
+            await session.commit()
+
+        token_b = await _register_and_get_token(client, email="idor-approve-b@example.com")
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/approve",
+            headers=_auth_header(token_b),
+        )
+        assert resp.status_code == 404
+
+    async def test_pause_idor_protection(self, client_with_app):
+        """POST pause for another user's pipeline returns 404."""
+        import uuid
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+
+        token_a = await _register_and_get_token(client, email="idor-pause-a@example.com")
+        payload_a = decode_token(token_a, secret="test-secret-for-stats")
+        user_id_a = payload_a["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="IDOR pause", project_dir="/proj",
+                status="executing", user_id=user_id_a,
+            ))
+            await session.commit()
+
+        token_b = await _register_and_get_token(client, email="idor-pause-b@example.com")
+        resp = await client.post(
+            f"/api/tasks/{pid}/pause",
+            headers=_auth_header(token_b),
+        )
+        assert resp.status_code == 404

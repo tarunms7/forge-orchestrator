@@ -1,6 +1,7 @@
 """ExecutorMixin — decomposed _execute_task extracted from ForgeDaemon."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -170,6 +171,34 @@ class ExecutorMixin:
         if not passed:
             await self._handle_retry(db, task_id, worktree_mgr, review_feedback=feedback, pipeline_id=pid)
             return
+
+        # ── Approval gate ─────────────────────────────────────────────
+        require_approval = (
+            getattr(pipeline, "require_approval", False)
+            or getattr(self._settings, "require_approval", False)
+        )
+        if require_approval:
+            await db.update_task_state(task_id, TaskState.AWAITING_APPROVAL.value)
+            await self._emit("task:state_changed", {
+                "task_id": task_id, "state": "awaiting_approval",
+            }, db=db, pipeline_id=pid)
+            # Send diff preview (first 200 lines) via WebSocket
+            diff_preview = "\n".join(diff.splitlines()[:200])
+            await self._emit("task:awaiting_approval", {
+                "task_id": task_id,
+                "diff_preview": diff_preview,
+            }, db=db, pipeline_id=pid)
+            # Store approval context so the approve endpoint can resume the merge
+            await db.set_task_approval_context(task_id, json.dumps({
+                "worktree_path": worktree_path,
+                "agent_model": agent_model,
+                "pipeline_branch": pipeline_branch,
+            }))
+            # Do NOT proceed to merge — await human approval.
+            # The /approve endpoint triggers the merge. Agent is released by
+            # _cleanup_and_release in the caller.
+            return
+
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"

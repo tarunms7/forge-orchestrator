@@ -313,11 +313,28 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """Loop until all tasks are DONE or ERROR."""
         prefix = pipeline_id[:8] if pipeline_id else None
         while True:
+            # Check pause flag — don't dispatch new tasks while paused
+            if pipeline_id:
+                pipeline_rec = await db.get_pipeline(pipeline_id)
+                if pipeline_rec and getattr(pipeline_rec, "paused", False):
+                    # Don't dispatch new tasks. Already-running tasks continue.
+                    await asyncio.sleep(self._settings.scheduler_poll_interval)
+                    continue
+
             tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
             _print_status_table(tasks)
 
-            all_done = all(t.state in (TaskState.DONE.value, TaskState.ERROR.value) for t in tasks)
-            if all_done:
+            # AWAITING_APPROVAL counts as "parked" — not blocking the loop
+            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value)
+            all_parked = all(t.state in parked_states for t in tasks)
+            if all_parked:
+                # If any tasks are still awaiting approval, sleep and poll
+                # rather than exiting — approvals/rejections create new work
+                has_awaiting = any(t.state == TaskState.AWAITING_APPROVAL.value for t in tasks)
+                if has_awaiting:
+                    await asyncio.sleep(self._settings.scheduler_poll_interval)
+                    continue
+                # All tasks are truly terminal (done/error)
                 done_count = sum(1 for t in tasks if t.state == TaskState.DONE.value)
                 error_count = sum(1 for t in tasks if t.state == TaskState.ERROR.value)
                 console.print(f"\n[bold green]Complete: {done_count} done, {error_count} errors[/bold green]")
@@ -337,6 +354,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             if not dispatch_plan:
                 if not any(t.state == TaskState.IN_PROGRESS.value for t in tasks):
+                    # If tasks are awaiting approval, keep polling
+                    if any(t.state == TaskState.AWAITING_APPROVAL.value for t in tasks):
+                        await asyncio.sleep(self._settings.scheduler_poll_interval)
+                        continue
                     console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
                     break
                 await asyncio.sleep(self._settings.scheduler_poll_interval)

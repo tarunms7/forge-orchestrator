@@ -816,6 +816,8 @@ body {
   100% { transform: translateX(100%); }
 }
 .task-card.in-review::before { background: var(--amber); opacity: 1; }
+.task-card.awaiting-approval::before { background: var(--amber); opacity: 1; }
+.task-card.awaiting-approval { border-color: rgba(245,158,11,0.25); }
 .task-card.error-card::before { background: var(--red); opacity: 1; }
 .task-card:hover { border-color: var(--bg-surface-4); }
 .task-card.pending { opacity: 0.6; }
@@ -870,6 +872,7 @@ body {
 .state-badge.pending { background: var(--bg-surface-3); color: var(--text-tertiary); }
 .state-badge.error { background: var(--red-dim); color: var(--red); }
 .state-badge.retrying { background: var(--amber-dim); color: var(--amber); }
+.state-badge.awaiting-approval { background: var(--amber-dim); color: var(--amber); }
 
 .task-card-title {
   font-size: 13px;
