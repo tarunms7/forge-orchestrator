@@ -191,7 +191,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Emit pipeline cost estimate
         if pipeline_id and graph.tasks:
             estimated = await estimate_pipeline_cost(
-                db, pipeline_id, len(graph.tasks), self._settings, strategy,
+                len(graph.tasks), self._settings, strategy,
             )
             await self._emit("pipeline:cost_estimate", {
                 "estimated_cost_usd": estimated,

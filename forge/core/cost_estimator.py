@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from forge.config.settings import ForgeSettings
-    from forge.storage.db import Database
 
 
 # Average tokens per session (heuristic)
@@ -47,8 +46,6 @@ def _estimate_session_cost(family: str, settings: "ForgeSettings") -> float:
 
 
 async def estimate_pipeline_cost(
-    db: "Database",
-    pipeline_id: str,
     task_count: int,
     settings: "ForgeSettings",
     strategy: str = "auto",

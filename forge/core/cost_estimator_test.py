@@ -1,7 +1,5 @@
 """Tests for pipeline cost estimation."""
 
-from unittest.mock import AsyncMock
-
 from forge.config.settings import ForgeSettings
 from forge.core.cost_estimator import (
     _model_family,
@@ -59,34 +57,29 @@ class TestEstimateSessionCost:
 
 class TestEstimatePipelineCost:
     async def test_returns_positive_value(self):
-        db = AsyncMock()
         settings = ForgeSettings()
-        cost = await estimate_pipeline_cost(db, "pipe-1", 3, settings, "auto")
+        cost = await estimate_pipeline_cost(3, settings, "auto")
         assert cost > 0
 
     async def test_scales_with_task_count(self):
-        db = AsyncMock()
         settings = ForgeSettings()
-        cost_3 = await estimate_pipeline_cost(db, "pipe-1", 3, settings, "auto")
-        cost_6 = await estimate_pipeline_cost(db, "pipe-1", 6, settings, "auto")
+        cost_3 = await estimate_pipeline_cost(3, settings, "auto")
+        cost_6 = await estimate_pipeline_cost(6, settings, "auto")
         assert cost_6 > cost_3
 
     async def test_fast_strategy_cheaper_than_quality(self):
-        db = AsyncMock()
         settings = ForgeSettings()
-        fast = await estimate_pipeline_cost(db, "pipe-1", 5, settings, "fast")
-        quality = await estimate_pipeline_cost(db, "pipe-1", 5, settings, "quality")
+        fast = await estimate_pipeline_cost(5, settings, "fast")
+        quality = await estimate_pipeline_cost(5, settings, "quality")
         assert fast < quality
 
     async def test_single_task_pipeline(self):
-        db = AsyncMock()
         settings = ForgeSettings()
-        cost = await estimate_pipeline_cost(db, "pipe-1", 1, settings, "auto")
+        cost = await estimate_pipeline_cost(1, settings, "auto")
         assert cost > 0
 
     async def test_zero_tasks(self):
-        db = AsyncMock()
         settings = ForgeSettings()
-        cost = await estimate_pipeline_cost(db, "pipe-1", 0, settings, "auto")
+        cost = await estimate_pipeline_cost(0, settings, "auto")
         # Only planner cost with 0 tasks
         assert cost > 0
