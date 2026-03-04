@@ -1816,7 +1816,6 @@ class TestNewEndpointIDOR:
 
     async def test_approve_idor_protection(self, client_with_app):
         """POST approve for another user's pipeline returns 404."""
-        import json
         import uuid
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
