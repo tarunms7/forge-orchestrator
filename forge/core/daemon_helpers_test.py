@@ -1,6 +1,5 @@
 """Tests for daemon_helpers — git diff utilities and context helpers."""
 
-import os
 
 from unittest.mock import MagicMock, call, patch
 

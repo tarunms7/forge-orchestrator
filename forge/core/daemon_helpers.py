@@ -435,7 +435,7 @@ def _extract_implementation_summary(
         )
         if verify.returncode == 0:
             result = subprocess.run(
-                ["git", "log", f"--format=%s", f"{pipeline_branch}..HEAD"],
+                ["git", "log", "--format=%s", f"{pipeline_branch}..HEAD"],
                 cwd=worktree_path,
                 capture_output=True,
                 text=True,
