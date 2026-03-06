@@ -132,21 +132,25 @@ export default function TemplatePicker({
       try {
         const data = await apiGet("/templates", token!);
         if (cancelled) return;
-        const mapped: PipelineTemplate[] = (
-          data as { name: string; description: string; category: string }[]
-        ).map((t) => ({
-          id: `user-${t.name.toLowerCase().replace(/\s+/g, "-")}`,
+        // Backend returns { builtin: [...], user: [...] }
+        const response = data as {
+          builtin?: PipelineTemplate[];
+          user?: PipelineTemplate[];
+        };
+        const mapped: PipelineTemplate[] = (response.user ?? []).map((t) => ({
+          id: t.id,
           name: t.name,
           description: t.description,
-          icon: "📄",
-          model_strategy: "auto" as const,
-          review_config: {
+          icon: t.icon || "📄",
+          model_strategy: t.model_strategy || ("auto" as const),
+          review_config: t.review_config || {
             skip_l2: false,
             extra_review_pass: false,
             custom_review_focus: "",
           },
           is_builtin: false,
-          category: t.category,
+          build_cmd: t.build_cmd,
+          test_cmd: t.test_cmd,
         }));
         setUserTemplates(mapped);
       } catch {
