@@ -1,94 +1,95 @@
-"""Service for managing user-owned pipeline templates backed by the database."""
+"""Service for saving and loading task templates as JSON files."""
 
 from __future__ import annotations
 
 import json
+import os
+import re
+from pathlib import Path
 
 
 class TemplateService:
-    """Manage pipeline templates stored in the database.
+    """Manage task templates stored as individual JSON files.
 
     Args:
-        db: A Database instance used for template persistence.
+        templates_dir: Directory where template JSON files are stored.
+            Created automatically if it does not exist.
     """
 
-    def __init__(self, db) -> None:
-        self._db = db
+    def __init__(self, templates_dir: str | None = None) -> None:
+        if templates_dir is None:
+            templates_dir = os.path.join(os.path.expanduser("~"), ".forge", "templates")
+        self._dir = Path(templates_dir)
 
-    async def save(self, user_id: str, name: str, config: dict) -> dict:
-        """Create a new user template.
+    def _ensure_dir(self) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
 
-        Returns a dict with the template's id, user_id, name, and config.
+    @staticmethod
+    def _slugify(name: str) -> str:
+        """Convert a template name to a safe filename slug."""
+        slug = name.lower().strip()
+        slug = re.sub(r"[^a-z0-9]+", "-", slug)
+        slug = slug.strip("-")
+        return slug or "template"
+
+    def _path_for(self, name: str) -> Path:
+        return self._dir / f"{self._slugify(name)}.json"
+
+    def save(self, name: str, description: str, category: str) -> dict:
+        """Save a template to a JSON file.
+
+        If a template with the same name already exists, it is overwritten.
+
+        Returns the saved template dict.
         """
-        config_json = json.dumps(config)
-        row = await self._db.create_user_template(user_id, name, config_json)
-        return {
-            "id": row.id,
-            "user_id": row.user_id,
-            "name": row.name,
-            "config": json.loads(row.config_json),
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        }
+        self._ensure_dir()
+        template = {"name": name, "description": description, "category": category}
+        path = self._path_for(name)
+        path.write_text(json.dumps(template, indent=2))
+        return template
 
-    async def list_all(self, user_id: str | None = None) -> list[dict]:
-        """List templates. If user_id is provided, returns only that user's templates."""
-        if user_id is None:
-            return []
-        rows = await self._db.list_user_templates(user_id)
-        return [
-            {
-                "id": row.id,
-                "user_id": row.user_id,
-                "name": row.name,
-                "config": json.loads(row.config_json),
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-            }
-            for row in rows
-        ]
+    def list_all(self) -> list[dict]:
+        """List all saved templates.
 
-    async def get(self, template_id: str) -> dict | None:
-        """Get a single template by ID.
+        Returns a list of dicts, each containing name, description, and category.
+        """
+        self._ensure_dir()
+        templates: list[dict] = []
+        for file in sorted(self._dir.glob("*.json")):
+            try:
+                data = json.loads(file.read_text())
+                templates.append(
+                    {
+                        "name": data["name"],
+                        "description": data["description"],
+                        "category": data["category"],
+                    }
+                )
+            except (json.JSONDecodeError, KeyError):
+                continue
+        return templates
+
+    def get(self, name: str) -> dict | None:
+        """Get a single template by name.
 
         Returns the template dict, or None if not found.
         """
-        row = await self._db.get_user_template(template_id)
-        if row is None:
+        path = self._path_for(name)
+        if not path.exists():
             return None
-        return {
-            "id": row.id,
-            "user_id": row.user_id,
-            "name": row.name,
-            "config": json.loads(row.config_json),
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        }
-
-    async def update(self, template_id: str, updates: dict) -> dict | None:
-        """Update a template by ID.
-
-        The updates dict may contain 'name' and/or 'config' keys.
-        Returns the updated template dict, or None if not found.
-        """
-        name = updates.get("name")
-        config = updates.get("config")
-        config_json = json.dumps(config) if config is not None else None
-        row = await self._db.update_user_template(template_id, name=name, config_json=config_json)
-        if row is None:
+        try:
+            data = json.loads(path.read_text())
+            return {"name": data["name"], "description": data["description"], "category": data["category"]}
+        except (json.JSONDecodeError, KeyError):
             return None
-        return {
-            "id": row.id,
-            "user_id": row.user_id,
-            "name": row.name,
-            "config": json.loads(row.config_json),
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-        }
 
-    async def delete(self, template_id: str) -> bool:
-        """Delete a template by ID.
+    def delete(self, name: str) -> bool:
+        """Delete a template by name.
 
-        Returns True if deleted, False if not found.
+        Returns True if deleted, False if the template did not exist.
         """
-        return await self._db.delete_user_template(template_id)
+        path = self._path_for(name)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
