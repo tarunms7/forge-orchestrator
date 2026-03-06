@@ -70,6 +70,8 @@ class TaskStatusResponse(BaseModel):
     planner_cost_usd: float = 0.0
     budget_limit_usd: float = 0.0
     estimated_cost_usd: float = 0.0
+    github_issue_url: str | None = None
+    github_issue_number: int | None = None
 
 
 class TaskListItem(BaseModel):

@@ -79,6 +79,8 @@ export interface PipelineState {
   pipelineCost: number;
   estimatedCostUsd: number;
   budgetLimitUsd: number;
+  githubIssueUrl: string | null;
+  githubIssueNumber: number | null;
 
   /* Plan editing state */
   editedTasks: EditableTask[] | null;
@@ -100,6 +102,8 @@ export interface PipelineState {
     total_cost_usd?: number;
     estimated_cost_usd?: number;
     budget_limit_usd?: number;
+    github_issue_url?: string | null;
+    github_issue_number?: number | null;
   }) => void;
   handleEvent: (event: {
     event: string;
@@ -166,6 +170,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   pipelineCost: 0,
   estimatedCostUsd: 0,
   budgetLimitUsd: 0,
+  githubIssueUrl: null,
+  githubIssueNumber: null,
   editedTasks: null,
   planValidation: { valid: true, errors: [] },
   ...INITIAL_FOLLOWUP,
@@ -297,6 +303,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       pipelineCost: (data.total_cost_usd as number) || 0,
       estimatedCostUsd: (data.estimated_cost_usd as number) || 0,
       budgetLimitUsd: (data.budget_limit_usd as number) || 0,
+      githubIssueUrl: (data.github_issue_url as string) ?? null,
+      githubIssueNumber: (data.github_issue_number as number) ?? null,
     });
   },
   reset: () =>
@@ -313,6 +321,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       pipelineCost: 0,
       estimatedCostUsd: 0,
       budgetLimitUsd: 0,
+      githubIssueUrl: null,
+      githubIssueNumber: null,
       editedTasks: null,
       planValidation: { valid: true, errors: [] },
       ...INITIAL_FOLLOWUP,

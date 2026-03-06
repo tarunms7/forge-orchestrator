@@ -16,8 +16,6 @@ def create_app(
     *,
     db_url: str | None = None,
     jwt_secret: str | None = None,
-    # Kept for backward compat — ignored, uses db_url for everything
-    forge_db_url: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -25,7 +23,6 @@ def create_app(
         db_url: Async database URL (e.g. ``sqlite+aiosqlite:///forge.db``).
             Single DB for auth + pipelines + tasks.
         jwt_secret: Secret key used for JWT token signing.
-        forge_db_url: **Deprecated** — ignored. All data uses ``db_url``.
     """
     if jwt_secret is None:
         jwt_secret = os.environ.get("FORGE_JWT_SECRET", "")

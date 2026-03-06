@@ -21,9 +21,9 @@ const STATE_CLASS: Record<TaskState["state"], { label: string; cardClass: string
 };
 
 const GATE_LABELS: Record<string, string> = {
-  Build: "Build",
+  Gate0_Build: "Build",
   L1: "Lint",
-  Test: "Test",
+  Gate1_5_Test: "Test",
   L2: "Review",
 };
 

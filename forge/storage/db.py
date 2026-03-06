@@ -348,6 +348,17 @@ class Database:
                 row.total_cost_usd = (row.total_cost_usd or 0) + cost
                 await session.commit()
 
+    async def set_pipeline_planner_cost(self, pipeline_id: str, cost: float) -> None:
+        """Set the planner cost for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.planner_cost_usd = cost
+                await session.commit()
+
     async def get_pipeline_cost(self, pipeline_id: str) -> float:
         """Return the current total cost for a pipeline."""
         async with self._session_factory() as session:
