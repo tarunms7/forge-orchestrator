@@ -129,22 +129,3 @@ export async function resumePipeline(pipelineId: string, token: string) {
   return apiPost(`/tasks/${pipelineId}/resume`, {}, token);
 }
 
-/* ── Task Approval Helpers ───────────────────────────────────────── */
-
-export async function approveTask(pipelineId: string, taskId: string, token: string) {
-  return apiPost(`/tasks/${pipelineId}/tasks/${taskId}/approve`, {}, token);
-}
-
-export async function rejectTask(
-  pipelineId: string,
-  taskId: string,
-  reason: string | null,
-  token: string,
-) {
-  return apiPost(`/tasks/${pipelineId}/tasks/${taskId}/reject`, { reason }, token);
-}
-
-
-export async function getTaskDiff(pipelineId: string, taskId: string, token: string) {
-  return apiGet(`/tasks/${pipelineId}/tasks/${taskId}/diff`, token);
-}

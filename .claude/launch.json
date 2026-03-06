@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "web-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/mtarun/Desktop/SideHustles/claude-does/web"],
+      "port": 3000
+    },
+    {
       "name": "design-preview",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["serve", "/Users/mtarun/Desktop/SideHustles/claude-does/design", "-l", "8888", "--no-clipboard"],

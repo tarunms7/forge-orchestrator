@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import uuid
 
@@ -105,7 +106,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
-        import shutil
         errors = []
 
         # Valid git repo?
@@ -187,6 +187,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             sdk_result = planner_llm._last_sdk_result
             if sdk_result.cost_usd > 0:
                 await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
+                await db.set_pipeline_planner_cost(pipeline_id, sdk_result.cost_usd)
                 total_cost = await db.get_pipeline_cost(pipeline_id)
                 await self._emit("pipeline:cost_update", {
                     "planner_cost_usd": sdk_result.cost_usd,

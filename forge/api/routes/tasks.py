@@ -26,6 +26,7 @@ from forge.api.models.schemas import (
 )
 from forge.api.security.jwt import decode_token
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
+from forge.core.daemon_helpers import _get_diff_vs_main
 from forge.core.validator import validate_task_graph
 
 logger = logging.getLogger(__name__)
@@ -79,19 +80,6 @@ async def _set_pipeline_require_approval(forge_db, pipeline_id: str, value: bool
         if row:
             row.require_approval = value
             await session.commit()
-
-
-def _get_diff_vs_main(worktree_path: str, base_ref: str) -> str:
-    """Get the git diff of a worktree against a base reference."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", base_ref, "HEAD"],
-            cwd=worktree_path,
-            capture_output=True, text=True, timeout=30,
-        )
-        return result.stdout if result.returncode == 0 else ""
-    except Exception:
-        return ""
 
 
 def _parse_diff_stats(diff_text: str) -> dict:
@@ -1324,6 +1312,8 @@ async def get_task_status(
             planner_cost_usd=pipeline.planner_cost_usd,
             budget_limit_usd=pipeline.budget_limit_usd,
             estimated_cost_usd=pipeline.estimated_cost_usd,
+            github_issue_url=getattr(pipeline, "github_issue_url", None),
+            github_issue_number=getattr(pipeline, "github_issue_number", None),
         )
 
     # Fallback: in-memory
