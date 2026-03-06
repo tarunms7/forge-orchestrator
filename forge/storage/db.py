@@ -128,6 +128,33 @@ class PipelineRow(Base):
     require_approval: Mapped[bool] = mapped_column(default=False)
     github_issue_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     github_issue_number: Mapped[int | None] = mapped_column(default=None)
+    template_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    template_config_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+
+
+class UserTemplateRow(Base):
+    """User-owned custom pipeline template stored in the DB."""
+
+    __tablename__ = "user_templates"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
 
 class PipelineEventRow(Base):
@@ -142,7 +169,7 @@ class PipelineEventRow(Base):
 
 
 # ── All model classes (used by _add_missing_columns) ──────────────────
-_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, PipelineEventRow)
+_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow)
 
 
 class Database:
@@ -682,6 +709,80 @@ class Database:
             row = result.scalar_one_or_none()
             if row:
                 row.paused = paused
+                await session.commit()
+
+    # ── User templates ─────────────────────────────────────────────
+
+    async def create_user_template(
+        self, user_id: str, name: str, config_json: str,
+    ) -> UserTemplateRow:
+        """Create a new user-owned pipeline template."""
+        async with self._session_factory() as session:
+            row = UserTemplateRow(
+                user_id=user_id,
+                name=name,
+                config_json=config_json,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def list_user_templates(self, user_id: str) -> list[UserTemplateRow]:
+        """List all templates owned by a user."""
+        async with self._session_factory() as session:
+            stmt = (
+                select(UserTemplateRow)
+                .where(UserTemplateRow.user_id == user_id)
+                .order_by(UserTemplateRow.created_at.desc())
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def get_user_template(self, template_id: str) -> UserTemplateRow | None:
+        """Get a single user template by ID."""
+        async with self._session_factory() as session:
+            return await session.get(UserTemplateRow, template_id)
+
+    async def update_user_template(
+        self, template_id: str, name: str | None = None, config_json: str | None = None,
+    ) -> UserTemplateRow | None:
+        """Update a user template. Returns None if not found."""
+        async with self._session_factory() as session:
+            row = await session.get(UserTemplateRow, template_id)
+            if row is None:
+                return None
+            if name is not None:
+                row.name = name
+            if config_json is not None:
+                row.config_json = config_json
+            row.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def delete_user_template(self, template_id: str) -> bool:
+        """Delete a user template. Returns True if deleted, False if not found."""
+        async with self._session_factory() as session:
+            row = await session.get(UserTemplateRow, template_id)
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def set_pipeline_template_config(
+        self, pipeline_id: str, template_id: str, config_json: str,
+    ) -> None:
+        """Associate a template with a pipeline and store the resolved config."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.template_id = template_id
+                row.template_config_json = config_json
                 await session.commit()
 
     # ── Pipeline events ──────────────────────────────────────────────
