@@ -18,6 +18,7 @@ interface Settings {
 }
 
 interface PipelineTemplate {
+  id?: string;
   name: string;
   description: string;
   category: string;
@@ -492,14 +493,15 @@ export default function SettingsPage() {
     useState<PipelineTemplate | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [templateSaving, setTemplateSaving] = useState(false);
-  const [deletingTemplate, setDeletingTemplate] = useState<string | null>(null);
+  const [deletingTemplate, setDeletingTemplate] = useState<PipelineTemplate | null>(null);
   const [templateError, setTemplateError] = useState<string | null>(null);
 
   const fetchTemplates = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await apiGet("/templates", token);
-      setTemplates(Array.isArray(data) ? data : []);
+      const data = await apiGet("/templates?category=custom", token);
+      const all = Array.isArray(data) ? data : [];
+      setTemplates(all.filter((t: PipelineTemplate) => t.category === "custom"));
     } catch {
       // Templates endpoint might not be available — fail silently
     }
@@ -577,11 +579,12 @@ export default function SettingsPage() {
 
   const handleUpdateTemplate = async (template: PipelineTemplate) => {
     if (!token) return;
+    const identifier = template.id || template.name;
     setTemplateSaving(true);
     setTemplateError(null);
     try {
       await apiPut(
-        `/templates/${encodeURIComponent(template.name)}`,
+        `/templates/${encodeURIComponent(identifier)}`,
         template as unknown as Record<string, unknown>,
         token,
       );
@@ -596,12 +599,13 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDeleteTemplate = async (name: string) => {
+  const handleDeleteTemplate = async (template: PipelineTemplate) => {
     if (!token) return;
+    const identifier = template.id || template.name;
     setTemplateSaving(true);
     setTemplateError(null);
     try {
-      await apiDelete(`/templates/${encodeURIComponent(name)}`, token);
+      await apiDelete(`/templates/${encodeURIComponent(identifier)}`, token);
       setDeletingTemplate(null);
       await fetchTemplates();
     } catch (err) {
@@ -767,8 +771,9 @@ export default function SettingsPage() {
           )}
 
           {templates.map((t) => (
-            <div key={t.name}>
-              {editingTemplate?.name === t.name ? (
+            <div key={t.id || t.name}>
+              {(editingTemplate?.id && editingTemplate.id === t.id) ||
+              (!editingTemplate?.id && editingTemplate?.name === t.name) ? (
                 <TemplateForm
                   initial={editingTemplate}
                   onSave={handleUpdateTemplate}
@@ -836,7 +841,7 @@ export default function SettingsPage() {
                         color: "var(--red, #ef4444)",
                         borderColor: "rgba(239,68,68,0.3)",
                       }}
-                      onClick={() => setDeletingTemplate(t.name)}
+                      onClick={() => setDeletingTemplate(t)}
                     >
                       Delete
                     </button>
@@ -1220,7 +1225,7 @@ export default function SettingsPage() {
       {/* Delete confirmation dialog */}
       {deletingTemplate && (
         <DeleteConfirmDialog
-          templateName={deletingTemplate}
+          templateName={deletingTemplate.name}
           onConfirm={() => handleDeleteTemplate(deletingTemplate)}
           onCancel={() => setDeletingTemplate(null)}
           deleting={templateSaving}
