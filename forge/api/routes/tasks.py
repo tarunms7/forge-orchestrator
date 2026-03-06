@@ -27,7 +27,9 @@ from forge.api.models.schemas import (
 from forge.api.security.jwt import decode_token
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.daemon_helpers import _get_diff_vs_main
+from forge.core.templates import get_template, get_quality_preset, BUILTIN_TEMPLATES, template_to_dict
 from forge.core.validator import validate_task_graph
+from forge.storage.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,77 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
     return _sanitize_pr_title(description)
 
 
+# ── Template/preset resolution ────────────────────────────────────────
+
+
+async def _resolve_pipeline_config(body: CreateTaskRequest, db: Database | None) -> dict:
+    """Merge template, quality preset, and explicit overrides into a config dict.
+
+    Resolution order (later wins):
+    1. Default config (Feature template)
+    2. Template (built-in or user-owned from DB)
+    3. Quality preset overlay
+    4. Explicit form overrides from the request body
+    """
+    # 1. Start with Feature template as default
+    default_tmpl = BUILTIN_TEMPLATES["feature"]
+    config = template_to_dict(default_tmpl)
+
+    # 2. If template_id specified, load and use as base
+    if body.template_id:
+        builtin = get_template(body.template_id)
+        if builtin is not None:
+            config = template_to_dict(builtin)
+        elif db is not None:
+            row = await db.get_user_template(body.template_id)
+            if row is not None:
+                user_config = json.loads(row.config_json) if row.config_json else {}
+                # Merge user template fields into config
+                config.update({
+                    "id": row.id,
+                    "name": row.name,
+                    "is_builtin": False,
+                    "user_id": row.user_id,
+                })
+                for key in (
+                    "description", "icon", "model_strategy",
+                    "planner_prompt_modifier", "agent_prompt_modifier",
+                    "review_config", "build_cmd", "test_cmd",
+                    "max_tasks", "default_complexity",
+                ):
+                    if key in user_config:
+                        config[key] = user_config[key]
+            else:
+                raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' not found")
+
+    # 3. Overlay quality preset if specified
+    if body.quality_preset:
+        preset = get_quality_preset(body.quality_preset)
+        if preset is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown quality preset '{body.quality_preset}'. Valid: fast, balanced, thorough",
+            )
+        if "model_strategy" in preset:
+            config["model_strategy"] = preset["model_strategy"]
+        if "review_config" in preset:
+            config["review_config"] = preset["review_config"]
+        if "require_approval" in preset:
+            config["require_approval"] = preset["require_approval"]
+
+    # 4. Apply explicit form overrides (body fields that are set)
+    if body.build_cmd is not None:
+        config["build_cmd"] = body.build_cmd
+    if body.test_cmd is not None:
+        config["test_cmd"] = body.test_cmd
+    if body.model_strategy != "auto":
+        config["model_strategy"] = body.model_strategy
+    if body.require_approval is not None:
+        config["require_approval"] = body.require_approval
+
+    return config
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 
 
@@ -224,34 +297,47 @@ async def create_task(
                 description += f"- {path}\n"
 
     if forge_db is not None:
+        # Resolve template + preset + overrides into a merged config
+        resolved_config = await _resolve_pipeline_config(body, forge_db)
+        resolved_model_strategy = resolved_config.get("model_strategy", body.model_strategy)
+        resolved_build_cmd = resolved_config.get("build_cmd", body.build_cmd)
+        resolved_test_cmd = resolved_config.get("test_cmd", body.test_cmd)
+
         await forge_db.create_pipeline(
             id=pipeline_id,
             description=description,
             project_dir=body.project_path,
-            model_strategy=body.model_strategy,
+            model_strategy=resolved_model_strategy,
             user_id=user_id,
             branch_name=body.branch_name,
-            build_cmd=body.build_cmd,
-            test_cmd=body.test_cmd,
+            build_cmd=resolved_build_cmd,
+            test_cmd=resolved_test_cmd,
             budget_limit_usd=body.budget_limit_usd,
         )
 
-        # Resolve require_approval: per-pipeline field > env var > default False
-        # Set after creation since create_pipeline may not accept the kwarg yet.
+        # Store resolved template config on the pipeline
+        template_id = body.template_id or resolved_config.get("id", "feature")
+        await forge_db.set_pipeline_template_config(
+            pipeline_id, template_id, json.dumps(resolved_config),
+        )
+
+        # Resolve require_approval: resolved config > per-pipeline field > env var > default False
         from forge.config.settings import ForgeSettings
         _settings = ForgeSettings()
-        _require_approval = (
-            body.require_approval
-            if body.require_approval is not None
-            else _settings.require_approval
-        )
+        _require_approval = resolved_config.get("require_approval")
+        if _require_approval is None:
+            _require_approval = (
+                body.require_approval
+                if body.require_approval is not None
+                else _settings.require_approval
+            )
         if _require_approval:
             await _set_pipeline_require_approval(forge_db, pipeline_id, True)
 
         # Start planning in background if daemon factory is available
         daemon_factory = getattr(request.app.state, "daemon_factory", None)
         if daemon_factory:
-            daemon, emitter = daemon_factory(body.project_path, body.model_strategy)
+            daemon, emitter = daemon_factory(body.project_path, resolved_model_strategy)
             ws_manager = request.app.state.ws_manager
             _bridge_events(emitter, ws_manager, pipeline_id)
 
