@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiGet, apiPut } from "@/lib/api";
+import { useEffect, useState, useCallback } from "react";
+import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useNotifications } from "@/hooks/useNotifications";
 
@@ -16,6 +16,36 @@ interface Settings {
   agent_model_high: string;
   reviewer_model: string;
 }
+
+interface PipelineTemplate {
+  name: string;
+  description: string;
+  category: string;
+  icon?: string;
+  model_strategy?: string;
+  build_command?: string;
+  test_command?: string;
+  planner_instructions?: string;
+  agent_instructions?: string;
+  review_focus?: string;
+  skip_llm_review?: boolean;
+  extra_review_pass?: boolean;
+}
+
+const EMPTY_TEMPLATE: PipelineTemplate = {
+  name: "",
+  description: "",
+  category: "custom",
+  icon: "",
+  model_strategy: "auto",
+  build_command: "",
+  test_command: "",
+  planner_instructions: "",
+  agent_instructions: "",
+  review_focus: "",
+  skip_llm_review: false,
+  extra_review_pass: false,
+};
 
 const DEFAULT_SETTINGS: Settings = {
   max_agents: 4,
@@ -63,6 +93,389 @@ function ModelSelect({
   );
 }
 
+/* ── Template Form (create / edit) ────────────────────────────────── */
+
+function TemplateForm({
+  initial,
+  onSave,
+  onCancel,
+  saving,
+}: {
+  initial: PipelineTemplate;
+  onSave: (t: PipelineTemplate) => void;
+  onCancel: () => void;
+  saving: boolean;
+}) {
+  const [form, setForm] = useState<PipelineTemplate>({ ...initial });
+
+  const set = (field: keyof PipelineTemplate, value: string | boolean) =>
+    setForm((f) => ({ ...f, [field]: value }));
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)",
+        background: "var(--bg-surface-2)",
+        padding: "20px",
+        marginTop: "8px",
+      }}
+    >
+      {/* Name + Icon row */}
+      <div style={{ display: "flex", gap: "12px", marginBottom: "14px" }}>
+        <div style={{ flex: 1 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: "12px",
+              color: "var(--text-secondary)",
+              marginBottom: "4px",
+            }}
+          >
+            Name
+          </label>
+          <input
+            className="text-input"
+            value={form.name}
+            onChange={(e) => set("name", e.target.value)}
+            placeholder="My Template"
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div style={{ width: "80px" }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: "12px",
+              color: "var(--text-secondary)",
+              marginBottom: "4px",
+            }}
+          >
+            Icon
+          </label>
+          <input
+            className="text-input"
+            value={form.icon || ""}
+            onChange={(e) => set("icon", e.target.value)}
+            placeholder="📋"
+            style={{ width: "100%", textAlign: "center" }}
+          />
+        </div>
+      </div>
+
+      {/* Description */}
+      <div style={{ marginBottom: "14px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "12px",
+            color: "var(--text-secondary)",
+            marginBottom: "4px",
+          }}
+        >
+          Description
+        </label>
+        <textarea
+          className="text-input"
+          value={form.description}
+          onChange={(e) => set("description", e.target.value)}
+          placeholder="Describe what this template does..."
+          rows={2}
+          style={{ width: "100%", resize: "vertical" }}
+        />
+      </div>
+
+      {/* Model Strategy */}
+      <div style={{ marginBottom: "14px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "12px",
+            color: "var(--text-secondary)",
+            marginBottom: "4px",
+          }}
+        >
+          Model Strategy
+        </label>
+        <select
+          className="settings-select"
+          value={form.model_strategy || "auto"}
+          onChange={(e) => set("model_strategy", e.target.value)}
+        >
+          {STRATEGY_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Build + Test commands */}
+      <div style={{ display: "flex", gap: "12px", marginBottom: "14px" }}>
+        <div style={{ flex: 1 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: "12px",
+              color: "var(--text-secondary)",
+              marginBottom: "4px",
+            }}
+          >
+            Build Command
+          </label>
+          <input
+            className="text-input mono"
+            value={form.build_command || ""}
+            onChange={(e) => set("build_command", e.target.value)}
+            placeholder="npm run build"
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: "12px",
+              color: "var(--text-secondary)",
+              marginBottom: "4px",
+            }}
+          >
+            Test Command
+          </label>
+          <input
+            className="text-input mono"
+            value={form.test_command || ""}
+            onChange={(e) => set("test_command", e.target.value)}
+            placeholder="pytest"
+            style={{ width: "100%" }}
+          />
+        </div>
+      </div>
+
+      {/* Planner Instructions */}
+      <div style={{ marginBottom: "14px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "12px",
+            color: "var(--text-secondary)",
+            marginBottom: "4px",
+          }}
+        >
+          Planner Instructions{" "}
+          <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>
+            Appended to planner prompt
+          </span>
+        </label>
+        <textarea
+          className="text-input mono"
+          value={form.planner_instructions || ""}
+          onChange={(e) => set("planner_instructions", e.target.value)}
+          placeholder="Additional instructions for the planner..."
+          rows={2}
+          style={{ width: "100%", resize: "vertical" }}
+        />
+      </div>
+
+      {/* Agent Instructions */}
+      <div style={{ marginBottom: "14px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "12px",
+            color: "var(--text-secondary)",
+            marginBottom: "4px",
+          }}
+        >
+          Agent Instructions{" "}
+          <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>
+            Appended to each agent prompt
+          </span>
+        </label>
+        <textarea
+          className="text-input mono"
+          value={form.agent_instructions || ""}
+          onChange={(e) => set("agent_instructions", e.target.value)}
+          placeholder="Additional instructions for agents..."
+          rows={2}
+          style={{ width: "100%", resize: "vertical" }}
+        />
+      </div>
+
+      {/* Review Focus */}
+      <div style={{ marginBottom: "14px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "12px",
+            color: "var(--text-secondary)",
+            marginBottom: "4px",
+          }}
+        >
+          Review Focus{" "}
+          <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>
+            Appended to reviewer prompt
+          </span>
+        </label>
+        <textarea
+          className="text-input mono"
+          value={form.review_focus || ""}
+          onChange={(e) => set("review_focus", e.target.value)}
+          placeholder="Focus areas for code review..."
+          rows={2}
+          style={{ width: "100%", resize: "vertical" }}
+        />
+      </div>
+
+      {/* Checkboxes */}
+      <div
+        style={{
+          display: "flex",
+          gap: "24px",
+          marginBottom: "18px",
+        }}
+      >
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "13px",
+            color: "var(--text-secondary)",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={form.skip_llm_review || false}
+            onChange={(e) => set("skip_llm_review", e.target.checked)}
+          />
+          Skip LLM Review
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontSize: "13px",
+            color: "var(--text-secondary)",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={form.extra_review_pass || false}
+            onChange={(e) => set("extra_review_pass", e.target.checked)}
+          />
+          Extra Review Pass
+        </label>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+        <button
+          className="btn-sm-outline"
+          onClick={onCancel}
+          disabled={saving}
+        >
+          Cancel
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={() => onSave(form)}
+          disabled={saving || !form.name.trim()}
+          style={{ padding: "8px 20px", fontSize: "13px" }}
+        >
+          {saving ? "Saving..." : "Save Template"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Delete Confirmation Dialog ───────────────────────────────────── */
+
+function DeleteConfirmDialog({
+  templateName,
+  onConfirm,
+  onCancel,
+  deleting,
+}: {
+  templateName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  deleting: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.5)",
+      }}
+      onClick={onCancel}
+    >
+      <div
+        style={{
+          background: "var(--bg-surface-1)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-md)",
+          padding: "24px",
+          maxWidth: "400px",
+          width: "90%",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3
+          style={{
+            fontSize: "15px",
+            fontWeight: 600,
+            color: "var(--text-primary)",
+            marginBottom: "8px",
+          }}
+        >
+          Delete Template
+        </h3>
+        <p
+          style={{
+            fontSize: "13px",
+            color: "var(--text-secondary)",
+            marginBottom: "20px",
+          }}
+        >
+          Are you sure you want to delete{" "}
+          <strong>&ldquo;{templateName}&rdquo;</strong>? This action cannot be
+          undone.
+        </p>
+        <div
+          style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}
+        >
+          <button
+            className="btn-sm-outline"
+            onClick={onCancel}
+            disabled={deleting}
+          >
+            Cancel
+          </button>
+          <button
+            className="btn-danger"
+            onClick={onConfirm}
+            disabled={deleting}
+          >
+            {deleting ? "Deleting..." : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Settings Page ───────────────────────────────────────────── */
+
 export default function SettingsPage() {
   const token = useAuthStore((s) => s.token);
   const { requestPermission } = useNotifications();
@@ -73,6 +486,25 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [cliStatus, setCliStatus] = useState<string>("checking");
 
+  // Template state
+  const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
+  const [editingTemplate, setEditingTemplate] =
+    useState<PipelineTemplate | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [deletingTemplate, setDeletingTemplate] = useState<string | null>(null);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  const fetchTemplates = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await apiGet("/templates", token);
+      setTemplates(Array.isArray(data) ? data : []);
+    } catch {
+      // Templates endpoint might not be available — fail silently
+    }
+  }, [token]);
+
   useEffect(() => {
     if (!token) return;
 
@@ -81,11 +513,13 @@ export default function SettingsPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
 
+    fetchTemplates();
+
     // Auto-check CLI status on load (health endpoint is at /health, not under /api)
     fetch("/health")
       .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
       .catch(() => setCliStatus("error"));
-  }, [token]);
+  }, [token, fetchTemplates]);
 
   const handleSave = async () => {
     if (!token) return;
@@ -116,6 +550,75 @@ export default function SettingsPage() {
     fetch("/health")
       .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
       .catch(() => setCliStatus("error"));
+  };
+
+  /* ── Template CRUD ────────────────────────────────────────────── */
+
+  const handleCreateTemplate = async (template: PipelineTemplate) => {
+    if (!token) return;
+    setTemplateSaving(true);
+    setTemplateError(null);
+    try {
+      await apiPost(
+        "/templates",
+        template as unknown as Record<string, unknown>,
+        token,
+      );
+      setShowCreateForm(false);
+      await fetchTemplates();
+    } catch (err) {
+      setTemplateError(
+        err instanceof Error ? err.message : "Failed to create template",
+      );
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleUpdateTemplate = async (template: PipelineTemplate) => {
+    if (!token) return;
+    setTemplateSaving(true);
+    setTemplateError(null);
+    try {
+      await apiPut(
+        `/templates/${encodeURIComponent(template.name)}`,
+        template as unknown as Record<string, unknown>,
+        token,
+      );
+      setEditingTemplate(null);
+      await fetchTemplates();
+    } catch (err) {
+      setTemplateError(
+        err instanceof Error ? err.message : "Failed to update template",
+      );
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (name: string) => {
+    if (!token) return;
+    setTemplateSaving(true);
+    setTemplateError(null);
+    try {
+      await apiDelete(`/templates/${encodeURIComponent(name)}`, token);
+      setDeletingTemplate(null);
+      await fetchTemplates();
+    } catch (err) {
+      setTemplateError(
+        err instanceof Error ? err.message : "Failed to delete template",
+      );
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const buildConfigSummary = (t: PipelineTemplate): string => {
+    const parts: string[] = [];
+    if (t.model_strategy) parts.push(`Strategy: ${t.model_strategy}`);
+    if (t.build_command) parts.push(`Build: ${t.build_command}`);
+    if (t.test_command) parts.push(`Test: ${t.test_command}`);
+    return parts.length > 0 ? parts.join(" | ") : "No config set";
   };
 
   if (loading) {
@@ -178,6 +681,214 @@ export default function SettingsPage() {
       )}
 
       <div className="settings-container">
+        {/* Pipeline Templates */}
+        <div className="settings-group">
+          <div className="settings-group-header">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect
+                x="2"
+                y="2"
+                width="5"
+                height="6"
+                rx="1"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                opacity="0.6"
+              />
+              <rect
+                x="9"
+                y="2"
+                width="5"
+                height="4"
+                rx="1"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                opacity="0.6"
+              />
+              <rect
+                x="2"
+                y="10"
+                width="5"
+                height="4"
+                rx="1"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                opacity="0.6"
+              />
+              <rect
+                x="9"
+                y="8"
+                width="5"
+                height="6"
+                rx="1"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                opacity="0.6"
+              />
+            </svg>
+            <span className="settings-group-title">Pipeline Templates</span>
+            <span className="settings-group-desc">
+              Your saved pipeline templates
+            </span>
+          </div>
+
+          {templateError && (
+            <div
+              style={{
+                margin: "0 0 8px 0",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid rgba(239,68,68,0.3)",
+                background: "var(--red-dim)",
+                padding: "10px 14px",
+                fontSize: "12px",
+                color: "#fca5a5",
+              }}
+            >
+              {templateError}
+            </div>
+          )}
+
+          {/* Template list */}
+          {templates.length === 0 && !showCreateForm && (
+            <div
+              style={{
+                padding: "20px 16px",
+                textAlign: "center",
+                fontSize: "13px",
+                color: "var(--text-dim)",
+              }}
+            >
+              No custom templates yet. Create one to get started.
+            </div>
+          )}
+
+          {templates.map((t) => (
+            <div key={t.name}>
+              {editingTemplate?.name === t.name ? (
+                <TemplateForm
+                  initial={editingTemplate}
+                  onSave={handleUpdateTemplate}
+                  onCancel={() => setEditingTemplate(null)}
+                  saving={templateSaving}
+                />
+              ) : (
+                <div className="setting-row" style={{ alignItems: "flex-start" }}>
+                  <div
+                    className="setting-label-group"
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    <div
+                      className="setting-label"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <span>{t.icon || "📋"}</span>
+                      <span style={{ fontWeight: 600 }}>{t.name}</span>
+                    </div>
+                    {t.description && (
+                      <div
+                        className="setting-hint"
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          maxWidth: "400px",
+                        }}
+                      >
+                        {t.description}
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        color: "var(--text-dim)",
+                        fontFamily: "var(--font-mono, monospace)",
+                        marginTop: "2px",
+                      }}
+                    >
+                      {buildConfigSummary(t)}
+                    </div>
+                  </div>
+                  <div
+                    className="setting-control"
+                    style={{
+                      display: "flex",
+                      gap: "6px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <button
+                      className="btn-sm-outline"
+                      onClick={() => setEditingTemplate({ ...t })}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn-sm-outline"
+                      style={{
+                        color: "var(--red, #ef4444)",
+                        borderColor: "rgba(239,68,68,0.3)",
+                      }}
+                      onClick={() => setDeletingTemplate(t.name)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Create form */}
+          {showCreateForm ? (
+            <TemplateForm
+              initial={EMPTY_TEMPLATE}
+              onSave={handleCreateTemplate}
+              onCancel={() => setShowCreateForm(false)}
+              saving={templateSaving}
+            />
+          ) : (
+            <div style={{ padding: "12px 0 4px" }}>
+              <button
+                className="btn-sm-outline"
+                onClick={() => {
+                  setShowCreateForm(true);
+                  setEditingTemplate(null);
+                  setTemplateError(null);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  style={{ opacity: 0.7 }}
+                >
+                  <path
+                    d="M7 2v10M2 7h10"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                Create New Template
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Pipeline Defaults */}
         <div className="settings-group">
           <div className="settings-group-header">
@@ -505,6 +1216,16 @@ export default function SettingsPage() {
           </span>
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      {deletingTemplate && (
+        <DeleteConfirmDialog
+          templateName={deletingTemplate}
+          onConfirm={() => handleDeleteTemplate(deletingTemplate)}
+          onCancel={() => setDeletingTemplate(null)}
+          deleting={templateSaving}
+        />
+      )}
     </div>
   );
 }
