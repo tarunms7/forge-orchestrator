@@ -89,15 +89,66 @@ class ReviewMixin:
 
     # -- main review pipeline ----------------------------------------------
 
+    async def _build_sibling_context(self, task, db, pipeline_id: str) -> str | None:
+        """Build a context section describing sibling tasks in the same pipeline.
+
+        Gives the reviewer awareness of the DAG so it doesn't fail reviews
+        for cross-task concerns that another task handles (e.g. route
+        registration in app.py when app.py belongs to a sibling task).
+        """
+        if not pipeline_id:
+            return None
+
+        all_tasks = await db.list_tasks_by_pipeline(pipeline_id)
+        if len(all_tasks) <= 1:
+            return None  # Solo task, no siblings
+
+        lines = [
+            "## Pipeline Task Context (DAG Awareness)",
+            "",
+            "This task is part of a multi-task pipeline. Other sibling tasks handle "
+            "different parts of the implementation. Do NOT fail this review for "
+            "missing functionality that belongs to another task's scope.",
+            "",
+        ]
+
+        for sibling in all_tasks:
+            if sibling.id == task.id:
+                continue
+            files_str = ", ".join((sibling.files or [])[:5])
+            if sibling.files and len(sibling.files) > 5:
+                files_str += f"... (+{len(sibling.files) - 5} more)"
+            if not files_str:
+                files_str = "(none)"
+            lines.append(
+                f"- **{sibling.id}** ({sibling.title}): "
+                f"files=[{files_str}], state={sibling.state}"
+            )
+
+        lines.append("")
+        lines.append(
+            "IMPORTANT: If the task spec implies something needs to happen in a file "
+            "NOT in this task's allowed scope (e.g., registering a route in app.py "
+            "when app.py belongs to another task), do NOT fail the review. That "
+            "work is handled by the sibling task that owns that file. Only review "
+            "code changes within this task's allowed files."
+        )
+
+        return "\n".join(lines)
+
     async def _run_review(
         self, task, worktree_path: str, diff: str, *, db, pipeline_id: str,
         pipeline_branch: str | None = None,
+        delta_diff: str | None = None,
     ) -> tuple[bool, str | None]:
         """Run the 3-gate review pipeline.
 
         Args:
             pipeline_branch: The pipeline branch ref used as the diff base
                 for ``_get_changed_files_vs_main`` in the lint gate.
+            delta_diff: On retry, the diff of only what the retry agent
+                changed (pre_retry_ref..HEAD). Helps the reviewer focus
+                on the fix rather than re-reading the full accumulated diff.
 
         Returns:
             (passed, feedback) — feedback is a string with failure details
@@ -159,6 +210,8 @@ class ReviewMixin:
             f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
         )
         reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
+        # Build sibling context so the reviewer knows about the DAG
+        sibling_context = await self._build_sibling_context(task, db, pipeline_id)
         gate2_result, review_cost_info = await gate2_llm_review(
             task.title, task.description, diff, worktree_path,
             model=reviewer_model,
@@ -166,6 +219,8 @@ class ReviewMixin:
             prior_diff=prior_diff,
             project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
             allowed_files=task.files,
+            delta_diff=delta_diff,
+            sibling_context=sibling_context,
         )
         # Track review cost
         if review_cost_info.cost_usd > 0:

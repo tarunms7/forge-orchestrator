@@ -15,6 +15,7 @@ from forge.core.daemon_helpers import (
     _build_retry_prompt,
     _extract_implementation_summary,
     _extract_text,
+    _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
     _load_conventions_md,
@@ -59,6 +60,16 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
         pipeline_branch = merge_worker._main
+        # Snapshot HEAD before retry agent runs so we can compute the
+        # delta diff (what the retry agent actually changed) for review.
+        pre_retry_ref = None
+        if task.retry_count > 0:
+            snap = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree_path, capture_output=True, text=True,
+            )
+            if snap.returncode == 0:
+                pre_retry_ref = snap.stdout.strip()
         ok = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid, pipeline_branch=pipeline_branch)
         if not ok:
             await db.release_agent(agent_id)
@@ -79,7 +90,11 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
-        await self._attempt_merge(db, merge_worker, worktree_mgr, task, task_id, worktree_path, agent_model, pid, pipeline_branch=pipeline_branch)
+        await self._attempt_merge(
+            db, merge_worker, worktree_mgr, task, task_id, worktree_path,
+            agent_model, pid, pipeline_branch=pipeline_branch,
+            pre_retry_ref=pre_retry_ref,
+        )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
     # -- merge-only fast path -------------------------------------------
@@ -128,6 +143,12 @@ class ExecutorMixin:
                 # agent's in-scope work remains.  The retry agent can patch
                 # the review issues on top instead of rewriting everything.
                 console.print(f"[yellow]{task_id}: reusing worktree for retry (in-scope changes preserved)[/yellow]")
+                # Rebase onto latest pipeline branch to pick up changes
+                # merged by sibling tasks since this worktree was created.
+                # This eliminates "ghost diffs" where the diff shows
+                # deletions of lines added by other tasks.
+                if base_ref:
+                    self._rebase_worktree(wt, base_ref, task_id)
                 return wt
             console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
         except Exception as exc:
@@ -135,6 +156,33 @@ class ExecutorMixin:
         await db.update_task_state(task_id, TaskState.ERROR.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
         return None
+
+    def _rebase_worktree(self, worktree_path: str, base_ref: str, task_id: str) -> None:
+        """Rebase the worktree branch onto the latest pipeline branch.
+
+        Best-effort: if the rebase conflicts, abort and continue with
+        the un-rebased worktree.  The merge step will handle conflicts
+        later.  This is preferable to failing the retry entirely.
+        """
+        result = subprocess.run(
+            ["git", "rebase", base_ref],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            console.print(f"[green]  {task_id}: worktree rebased onto {base_ref}[/green]")
+        else:
+            # Abort the failed rebase so the worktree is usable
+            subprocess.run(
+                ["git", "rebase", "--abort"],
+                cwd=worktree_path,
+                capture_output=True,
+            )
+            console.print(
+                f"[yellow]  {task_id}: rebase onto {base_ref} had conflicts — "
+                f"continuing with un-rebased worktree[/yellow]"
+            )
 
     # -- agent execution + streaming + cost -----------------------------
 
@@ -250,9 +298,21 @@ class ExecutorMixin:
         self, db, merge_worker, worktree_mgr, task,
         task_id: str, worktree_path: str, agent_model: str, pid: str,
         *, pipeline_branch: str | None = None,
+        pre_retry_ref: str | None = None,
     ) -> None:
         """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
         diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+        # Compute delta diff for retry reviews: shows ONLY what the retry
+        # agent changed, so the reviewer can focus on the fix rather than
+        # re-reading the entire accumulated diff.
+        delta_diff = None
+        if pre_retry_ref and task.retry_count > 0:
+            delta_result = subprocess.run(
+                ["git", "diff", pre_retry_ref, "HEAD"],
+                cwd=worktree_path, capture_output=True, text=True,
+            )
+            if delta_result.returncode == 0 and delta_result.stdout.strip():
+                delta_diff = delta_result.stdout
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
         # Resolve per-pipeline build/test commands for review gates
@@ -264,7 +324,10 @@ class ExecutorMixin:
         max_re_reviews = 2
         passed, feedback = False, None
         for re_review_attempt in range(max_re_reviews + 1):
-            passed, feedback = await self._run_review(task, worktree_path, diff, db=db, pipeline_id=pid, pipeline_branch=pipeline_branch)
+            passed, feedback = await self._run_review(
+                task, worktree_path, diff, db=db, pipeline_id=pid,
+                pipeline_branch=pipeline_branch, delta_diff=delta_diff,
+            )
             if passed:
                 break
             if feedback and "[RETRIABLE]" in feedback and re_review_attempt < max_re_reviews:
@@ -272,14 +335,26 @@ class ExecutorMixin:
                 continue
             break
         if not passed:
-            # Include the rejected diff so the retry agent knows exactly what it wrote
+            # Build focused retry feedback: reviewer feedback + changed files.
+            # The agent has the worktree and can read its own code — no need
+            # to dump the raw diff which wastes context on unchanged code.
             enriched_feedback = feedback or ""
-            if diff:
-                diff_snippet = diff[:8000]  # Cap at 8000 chars to save context
+            changed_files = _get_changed_files_vs_main(
+                worktree_path, base_ref=pipeline_branch,
+            )
+            if changed_files:
+                files_summary = "\n".join(f"  - {f}" for f in changed_files)
                 enriched_feedback = (
-                    f"=== YOUR REJECTED DIFF ===\n"
-                    f"```diff\n{diff_snippet}\n```\n\n"
-                    f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}"
+                    f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
+                    f"=== FILES YOU MODIFIED ===\n{files_summary}\n\n"
+                    "Your code is still in the worktree. Read the files above to "
+                    "understand what you wrote, then fix the specific issues the "
+                    "reviewer flagged."
+                )
+            else:
+                enriched_feedback = (
+                    f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
+                    "Your code is still in the worktree. Fix the specific issues above."
                 )
             # Store current diff so re-reviewer can compare on next attempt
             await db.set_task_prior_diff(task_id, diff[:10000])
