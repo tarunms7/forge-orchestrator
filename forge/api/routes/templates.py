@@ -15,7 +15,7 @@ from forge.api.models.schemas import (
     UpdateUserTemplateRequest,
 )
 from forge.api.security.dependencies import get_current_user
-from forge.core.templates import BUILTIN_TEMPLATES, get_template, template_to_dict
+from forge.core.templates import BUILTIN_TEMPLATES, get_template
 
 logger = logging.getLogger(__name__)
 
