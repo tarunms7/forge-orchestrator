@@ -58,9 +58,10 @@ Rules:
 class ClaudePlannerLLM(PlannerLLM):
     """Concrete planner that calls Claude via claude-code-sdk."""
 
-    def __init__(self, model: str = "sonnet", cwd: str | None = None) -> None:
+    def __init__(self, model: str = "sonnet", cwd: str | None = None, system_prompt_modifier: str = "") -> None:
         self._model = model
         self._cwd = cwd
+        self._system_prompt_modifier = system_prompt_modifier
         self._last_sdk_result: SdkResult | None = None
 
     async def generate_plan(
@@ -69,8 +70,12 @@ class ClaudePlannerLLM(PlannerLLM):
     ) -> str:
         prompt = self._build_prompt(user_input, context, feedback)
 
+        system_prompt = PLANNER_SYSTEM_PROMPT
+        if self._system_prompt_modifier:
+            system_prompt += self._system_prompt_modifier
+
         options = ClaudeCodeOptions(
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             # Give the planner enough turns to read project files before
             # producing JSON.  Opus typically needs 3-5 turns to explore
             # the codebase, then 1 turn to output the TaskGraph.

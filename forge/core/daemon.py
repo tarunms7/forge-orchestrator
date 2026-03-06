@@ -164,7 +164,24 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         planner_model = select_model(strategy, "planner", "high")
         console.print(f"[dim]Strategy: {strategy} | Planner: {planner_model}[/dim]")
 
-        planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir)
+        # Load template config from pipeline for prompt modifiers
+        planner_prompt_modifier = ""
+        if pipeline_id:
+            pipeline_rec = await db.get_pipeline(pipeline_id)
+            template_config_json = getattr(pipeline_rec, "template_config_json", None) if pipeline_rec else None
+            if template_config_json:
+                try:
+                    self._template_config = json.loads(template_config_json)
+                    planner_prompt_modifier = self._template_config.get("planner_prompt_modifier", "")
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Failed to parse template_config_json for pipeline %s", pipeline_id)
+                    self._template_config = None
+            else:
+                self._template_config = None
+        else:
+            self._template_config = None
+
+        planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir, system_prompt_modifier=planner_prompt_modifier)
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
         async def _on_planner_msg(msg):

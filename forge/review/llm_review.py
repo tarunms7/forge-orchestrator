@@ -56,6 +56,7 @@ async def gate2_llm_review(
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
+    custom_review_focus: str = "",
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -90,8 +91,12 @@ async def gate2_llm_review(
         sibling_context=sibling_context,
     )
 
+    system_prompt = REVIEW_SYSTEM_PROMPT
+    if custom_review_focus:
+        system_prompt += custom_review_focus
+
     options = ClaudeCodeOptions(
-        system_prompt=REVIEW_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         # max_turns=2 gives the model one turn to respond + buffer for
         # rate_limit_event recovery.  The reviewer reads the diff from
         # the prompt — it doesn't need filesystem tools.  Restricting

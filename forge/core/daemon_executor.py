@@ -465,10 +465,18 @@ class ExecutorMixin:
 
     def _build_prompt(self, task) -> str:
         """Select the correct prompt template for new or retry runs."""
+        # Extract agent_prompt_modifier from template config if available
+        template_config = getattr(self, "_template_config", None)
+        agent_prompt_modifier = template_config.get("agent_prompt_modifier", "") if template_config else ""
+
         if task.retry_count > 0 and getattr(task, "review_feedback", None):
             console.print(f"[yellow]{getattr(task, 'id', '?')}: retry {task.retry_count} — including review feedback[/yellow]")
-            return _build_retry_prompt(task.title, task.description, task.files, task.review_feedback, task.retry_count)
-        return _build_agent_prompt(task.title, task.description, task.files)
+            return _build_retry_prompt(
+                task.title, task.description, task.files,
+                task.review_feedback, task.retry_count,
+                agent_prompt_modifier=agent_prompt_modifier,
+            )
+        return _build_agent_prompt(task.title, task.description, task.files, agent_prompt_modifier=agent_prompt_modifier)
 
     async def _stream_agent(self, runtime, agent_id: str, prompt: str, worktree_path: str, task, task_id: str, pid: str, db, agent_model: str):
         """Run agent with batched streaming callback."""

@@ -62,8 +62,8 @@ def _get_current_branch(repo_path: str) -> str:
     return sym_branch if sym_branch else "main"
 
 
-def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
-    return (
+def _build_agent_prompt(title: str, description: str, files: list[str], agent_prompt_modifier: str = "") -> str:
+    prompt = (
         f"Task: {title}\n\n"
         f"Description: {description}\n\n"
         f"Files you MUST ONLY modify (changes to other files will be auto-reverted): {', '.join(files)}\n\n"
@@ -77,18 +77,22 @@ def _build_agent_prompt(title: str, description: str, files: list[str]) -> str:
         "   - Bad: 'feat: Build a REST API with JWT auth, user registration, and integration tests'\n"
         "4. Make sure you actually commit — the system checks for committed changes"
     )
+    if agent_prompt_modifier:
+        prompt += agent_prompt_modifier
+    return prompt
 
 
 def _build_retry_prompt(
     title: str, description: str, files: list[str],
     review_feedback: str, retry_number: int,
+    agent_prompt_modifier: str = "",
 ) -> str:
     """Build a prompt for a retry that includes the review failure feedback.
 
     The agent gets the original task spec PLUS the reviewer's notes so it
     can fix the specific issues instead of starting from scratch.
     """
-    return (
+    prompt = (
         f"Task: {title}\n\n"
         f"Description: {description}\n\n"
         f"=== IMPORTANT: This is RETRY #{retry_number} ===\n\n"
@@ -114,6 +118,9 @@ def _build_retry_prompt(
         "   - Bad: 'fix: address review feedback'\n"
         "6. Make sure you actually commit — the system checks for committed changes"
     )
+    if agent_prompt_modifier:
+        prompt += agent_prompt_modifier
+    return prompt
 
 
 def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str:
