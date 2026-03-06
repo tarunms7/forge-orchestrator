@@ -243,7 +243,7 @@ class ReviewMixin:
         review_config = self._get_review_config()
 
         if review_config["skip_l2"]:
-            console.print(f"[yellow]  L2 skipped by template[/yellow]")
+            console.print("[yellow]  L2 skipped by template[/yellow]")
             await self._emit("task:review_update", {
                 "task_id": task.id, "gate": "L2", "passed": True,
                 "details": "Skipped by template configuration",
