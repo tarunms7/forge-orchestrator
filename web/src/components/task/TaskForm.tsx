@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Priority = "low" | "medium" | "high";
+export type QualityPreset = "fast" | "balanced" | "thorough";
 
 export interface ImageAttachment {
   file: File;
@@ -17,6 +18,8 @@ export interface TaskFormData {
   branchName: string;
   buildCmd: string;
   testCmd: string;
+  templateId: string;
+  qualityPreset: QualityPreset;
 }
 
 interface TaskFormProps {
@@ -34,6 +37,54 @@ const MAX_DESCRIPTION_LENGTH = 4000;
 const MAX_CONTEXT_LENGTH = 2000;
 const MAX_IMAGES = 5;
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+
+/* ── Quality Preset Definitions ────────────────────────────────────── */
+
+interface QualityPresetOption {
+  value: QualityPreset;
+  label: string;
+  icon: string;
+  bullets: string[];
+  costRange: string;
+}
+
+const QUALITY_PRESETS: QualityPresetOption[] = [
+  {
+    value: "fast",
+    label: "Fast",
+    icon: "⚡",
+    bullets: [
+      "Haiku/Sonnet agents",
+      "Basic review (skip L2)",
+      "Auto-approve merges",
+    ],
+    costRange: "$0.05 – $0.50",
+  },
+  {
+    value: "balanced",
+    label: "Balanced",
+    icon: "⚖️",
+    bullets: [
+      "Sonnet/Opus agents",
+      "Full review pipeline",
+      "Manual approval",
+    ],
+    costRange: "$0.50 – $3.00",
+  },
+  {
+    value: "thorough",
+    label: "Thorough",
+    icon: "🔍",
+    bullets: [
+      "Opus agents only",
+      "Extra review pass",
+      "Manual approval + L2",
+    ],
+    costRange: "$2.00 – $10.00",
+  },
+];
+
+/* ── Helpers ───────────────────────────────────────────────────────── */
 
 /**
  * Validate a git branch name.
@@ -56,6 +107,109 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/* ── Quality Preset Selector ───────────────────────────────────────── */
+
+function QualityPresetSelector({
+  selected,
+  onSelect,
+}: {
+  selected: QualityPreset;
+  onSelect: (preset: QualityPreset) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-text-secondary">
+        Quality Preset
+      </label>
+      <p className="mt-0.5 text-xs text-text-dim">
+        Controls agent model, review depth, and approval workflow.
+      </p>
+      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {QUALITY_PRESETS.map((preset) => {
+          const isSelected = selected === preset.value;
+
+          return (
+            <button
+              key={preset.value}
+              type="button"
+              onClick={() => onSelect(preset.value)}
+              className={`relative flex flex-col items-start gap-2 rounded-lg border p-4 text-left transition ${
+                isSelected
+                  ? "border-accent bg-surface-3/70"
+                  : "border-border-color bg-surface-1 hover:border-border-color/80 hover:bg-surface-3/50"
+              }`}
+              style={
+                isSelected
+                  ? {
+                      boxShadow: "0 0 12px rgba(var(--accent-rgb, 99, 102, 241), 0.15)",
+                    }
+                  : undefined
+              }
+            >
+              {/* Icon + Label */}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "20px", lineHeight: 1 }}>
+                  {preset.icon}
+                </span>
+                <span className="text-sm font-semibold text-text-primary">
+                  {preset.label}
+                </span>
+              </div>
+
+              {/* Bullet points */}
+              <ul
+                style={{
+                  listStyle: "none",
+                  margin: 0,
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "2px",
+                }}
+              >
+                {preset.bullets.map((bullet) => (
+                  <li
+                    key={bullet}
+                    className="text-xs text-text-tertiary"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: "4px",
+                        height: "4px",
+                        borderRadius: "50%",
+                        background: isSelected
+                          ? "var(--accent)"
+                          : "var(--text-dim)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {bullet}
+                  </li>
+                ))}
+              </ul>
+
+              {/* Cost estimate */}
+              <span
+                className="text-xs text-text-dim"
+                style={{ marginTop: "auto" }}
+              >
+                Est. {preset.costRange}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Main Form ─────────────────────────────────────────────────────── */
 
 export default function TaskForm({ value, onChange }: TaskFormProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -170,6 +324,12 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           Tell Forge what you want to build, fix, or change.
         </p>
       </div>
+
+      {/* Quality Preset Selector */}
+      <QualityPresetSelector
+        selected={value.qualityPreset}
+        onSelect={(preset) => onChange({ ...value, qualityPreset: preset })}
+      />
 
       {/* Description textarea */}
       <div>

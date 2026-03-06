@@ -7,7 +7,7 @@ import { useAuthStore } from "@/stores/authStore";
 import ProjectSelector, { ProjectConfig } from "@/components/task/ProjectSelector";
 import TaskForm, { TaskFormData, validateBranchName } from "@/components/task/TaskForm";
 import ExecutionTargetSelector, { ExecutionConfig } from "@/components/task/ExecutionTargetSelector";
-import TemplatePicker from "@/components/task/TemplatePicker";
+import TemplatePicker, { PipelineTemplate, BUILTIN_TEMPLATES } from "@/components/task/TemplatePicker";
 
 const STEPS = ["Project", "Task", "Execute"];
 
@@ -61,6 +61,13 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+/** Resolve display labels for the quality preset */
+const QUALITY_LABELS: Record<string, string> = {
+  fast: "Fast",
+  balanced: "Balanced",
+  thorough: "Thorough",
+};
+
 function ReviewSummary({
   project,
   task,
@@ -78,6 +85,10 @@ function ReviewSummary({
         ? project.githubUrl
         : project.projectName;
 
+  // Find the selected template name
+  const selectedTemplate =
+    BUILTIN_TEMPLATES.find((t) => t.id === task.templateId)?.name ?? task.templateId;
+
   return (
     <div style={{ borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--bg-surface-1)", padding: "20px" }}>
       <h3 style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-tertiary)", marginBottom: "16px" }}>
@@ -88,6 +99,16 @@ function ReviewSummary({
           <span style={{ color: "var(--text-tertiary)" }}>Project</span>
           <span style={{ color: "var(--text-primary)" }}>
             {sourceLabels[project.source]}: {projectDetail || "\u2014"}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+          <span style={{ color: "var(--text-tertiary)" }}>Template</span>
+          <span style={{ color: "var(--text-primary)" }}>{selectedTemplate}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
+          <span style={{ color: "var(--text-tertiary)" }}>Quality</span>
+          <span style={{ color: "var(--text-primary)" }}>
+            {QUALITY_LABELS[task.qualityPreset] ?? task.qualityPreset}
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "8px" }}>
@@ -174,8 +195,19 @@ function NewTaskPageInner() {
     branchName: "",
     buildCmd: "",
     testCmd: "",
+    templateId: "feature",
+    qualityPreset: "balanced",
   });
   const [execution, setExecution] = useState<ExecutionConfig>({ target: "local" });
+
+  function handleTemplateSelect(template: PipelineTemplate) {
+    setTask((prev) => ({
+      ...prev,
+      templateId: template.id,
+      buildCmd: template.build_cmd ?? prev.buildCmd,
+      testCmd: template.test_cmd ?? prev.testCmd,
+    }));
+  }
 
   function canAdvance(): boolean {
     if (step === 1) {
@@ -219,8 +251,23 @@ function NewTaskPageInner() {
         description: task.description,
         project_path: resolveProjectPath(),
         extra_dirs: [],
-        model_strategy: "auto",
+        model_strategy:
+          task.qualityPreset === "fast"
+            ? "fast"
+            : task.qualityPreset === "thorough"
+              ? "quality"
+              : "auto",
       };
+
+      // Include template_id if non-default
+      if (task.templateId !== "feature") {
+        body.template_id = task.templateId;
+      }
+
+      // Include quality_preset if non-default
+      if (task.qualityPreset !== "balanced") {
+        body.quality_preset = task.qualityPreset;
+      }
 
       if (task.additionalContext.trim()) {
         body.description = `${task.description}\n\n---\nContext: ${task.additionalContext}`;
@@ -279,7 +326,8 @@ function NewTaskPageInner() {
         {step === 2 && (
           <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
             <TemplatePicker
-              onSelect={(desc) => setTask((prev) => ({ ...prev, description: desc }))}
+              onSelect={handleTemplateSelect}
+              selectedId={task.templateId}
             />
             <div style={{ borderTop: "1px solid var(--border)", margin: "0" }} />
             <TaskForm value={task} onChange={setTask} />
