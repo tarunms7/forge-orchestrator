@@ -1,0 +1,176 @@
+"""Tests for llm_review — review prompt construction and verdict parsing."""
+
+import pytest
+
+from forge.review.llm_review import _build_review_prompt, _parse_review_result
+
+
+class TestBuildReviewPrompt:
+    """_build_review_prompt() constructs the correct prompt for the reviewer."""
+
+    def test_basic_prompt(self):
+        """Minimal prompt includes task spec and diff."""
+        prompt = _build_review_prompt("Add login", "Implement JWT login", "diff --git a/auth.py")
+        assert "Task: Add login" in prompt
+        assert "Description: Implement JWT login" in prompt
+        assert "diff --git a/auth.py" in prompt
+        assert "PASS or FAIL" in prompt
+
+    def test_includes_project_context(self):
+        """Project context appears before the task spec."""
+        prompt = _build_review_prompt(
+            "T", "D", "diff",
+            project_context="## Project Snapshot\nPython 3.12",
+        )
+        assert "## Project Snapshot" in prompt
+        # Context should come before the task
+        assert prompt.index("Project Snapshot") < prompt.index("Task: T")
+
+    def test_includes_sibling_context(self):
+        """Sibling context section appears in the prompt when provided."""
+        sibling_ctx = (
+            "## Pipeline Task Context (DAG Awareness)\n"
+            "- **task-1** (Add DB schema): files=[db.py], state=done"
+        )
+        prompt = _build_review_prompt(
+            "T", "D", "diff", sibling_context=sibling_ctx,
+        )
+        assert "Pipeline Task Context" in prompt
+        assert "task-1" in prompt
+        assert "Add DB schema" in prompt
+
+    def test_no_sibling_context_when_none(self):
+        """No sibling section when sibling_context is None."""
+        prompt = _build_review_prompt("T", "D", "diff", sibling_context=None)
+        assert "Pipeline Task Context" not in prompt
+
+    def test_includes_file_scope(self):
+        """File scope enforcement appears in the prompt."""
+        prompt = _build_review_prompt(
+            "T", "D", "diff", allowed_files=["src/auth.py", "src/models.py"],
+        )
+        assert "src/auth.py" in prompt
+        assert "src/models.py" in prompt
+        assert "OUT OF SCOPE" in prompt
+
+    def test_includes_prior_feedback_on_retry(self):
+        """Prior reviewer feedback appears for re-reviews."""
+        prompt = _build_review_prompt(
+            "T", "D", "diff",
+            prior_feedback="Missing error handling in line 42",
+        )
+        assert "PRIOR REVIEW CONTEXT" in prompt
+        assert "Missing error handling in line 42" in prompt
+        assert "PRIMARY job" in prompt
+
+    def test_includes_prior_diff_on_retry(self):
+        """Prior diff appears alongside prior feedback."""
+        prompt = _build_review_prompt(
+            "T", "D", "current diff",
+            prior_feedback="Bug in auth",
+            prior_diff="old diff content here",
+        )
+        assert "PRIOR DIFF" in prompt
+        assert "old diff content here" in prompt
+
+    def test_prior_diff_truncated_to_6000(self):
+        """Prior diff is capped at 6000 characters."""
+        long_diff = "x" * 10000
+        prompt = _build_review_prompt(
+            "T", "D", "diff",
+            prior_feedback="Issues",
+            prior_diff=long_diff,
+        )
+        # The truncated diff should be at most 6000 chars of 'x'
+        assert "x" * 6001 not in prompt
+
+    def test_includes_delta_diff(self):
+        """Delta diff section appears when provided."""
+        prompt = _build_review_prompt(
+            "T", "D", "full diff",
+            delta_diff="delta changes only",
+        )
+        assert "CHANGES SINCE LAST REVIEW (DELTA)" in prompt
+        assert "delta changes only" in prompt
+        assert "Focus your review on these delta changes" in prompt
+
+    def test_no_delta_when_none(self):
+        """No delta section when delta_diff is None."""
+        prompt = _build_review_prompt("T", "D", "diff", delta_diff=None)
+        assert "CHANGES SINCE LAST REVIEW" not in prompt
+
+    def test_delta_diff_truncated_to_6000(self):
+        """Delta diff is capped at 6000 characters."""
+        long_delta = "y" * 10000
+        prompt = _build_review_prompt("T", "D", "diff", delta_diff=long_delta)
+        assert "y" * 6001 not in prompt
+
+    def test_full_retry_prompt_ordering(self):
+        """On a full retry review, all sections appear in correct order."""
+        prompt = _build_review_prompt(
+            "Add webhook", "Create POST endpoint", "full diff here",
+            prior_feedback="Missing PR creation",
+            prior_diff="old diff",
+            allowed_files=["webhooks.py"],
+            delta_diff="small fix diff",
+            sibling_context="## Pipeline Task Context\n- task-3 owns app.py",
+        )
+        # Verify ordering: sibling context → task → scope → diff → prior → delta → verdict
+        assert prompt.index("Pipeline Task Context") < prompt.index("Task: Add webhook")
+        assert prompt.index("Task: Add webhook") < prompt.index("File scope")
+        assert prompt.index("File scope") < prompt.index("full diff here")
+        assert prompt.index("PRIOR REVIEW CONTEXT") < prompt.index("CHANGES SINCE LAST REVIEW")
+        assert prompt.index("CHANGES SINCE LAST REVIEW") < prompt.index("PASS or FAIL")
+
+
+class TestParseReviewResult:
+    """_parse_review_result() extracts PASS/FAIL verdicts from reviewer text."""
+
+    def test_starts_with_pass(self):
+        result = _parse_review_result("PASS: looks good")
+        assert result.passed is True
+        assert result.gate == "gate2_llm_review"
+
+    def test_starts_with_fail(self):
+        result = _parse_review_result("FAIL: missing error handling")
+        assert result.passed is False
+
+    def test_line_starts_with_pass(self):
+        """Verdict on a line after analysis text."""
+        result = _parse_review_result("Analysis:\nThe code looks fine.\nPASS: all good")
+        assert result.passed is True
+
+    def test_line_starts_with_fail(self):
+        result = _parse_review_result("Let me review...\nFAIL: bugs found")
+        assert result.passed is False
+
+    def test_pass_anywhere_in_text(self):
+        result = _parse_review_result("The verdict is PASS for this code")
+        assert result.passed is True
+
+    def test_fail_anywhere_in_text(self):
+        result = _parse_review_result("I would say this is a FAIL because of bugs")
+        assert result.passed is False
+
+    def test_empty_text(self):
+        result = _parse_review_result("")
+        assert result.passed is False
+        assert "Empty" in result.details
+
+    def test_unclear_response_treated_as_fail(self):
+        result = _parse_review_result("The code needs some work")
+        assert result.passed is False
+        assert "Unclear" in result.details
+
+    def test_case_insensitive(self):
+        result = _parse_review_result("pass: looks fine")
+        assert result.passed is True
+
+
+class TestDeadCodeRemoval:
+    """Verify that the dead get_diff function was removed."""
+
+    def test_get_diff_not_importable(self):
+        """get_diff should no longer exist in llm_review."""
+        with pytest.raises(ImportError):
+            from forge.review.llm_review import get_diff  # noqa: F401

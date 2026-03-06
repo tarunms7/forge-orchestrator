@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import subprocess
 from dataclasses import dataclass
 
 from claude_code_sdk import ClaudeCodeOptions
@@ -38,7 +37,11 @@ Be strict but fair. Check for:
 - Does the code actually satisfy the task specification?
 - Are there obvious bugs or logic errors?
 - Does the code follow basic quality standards (no dead code, reasonable naming)?
-- Are there any security concerns?"""
+- Are there any security concerns?
+- If a "Pipeline Task Context" section lists sibling tasks and their file scopes,
+  do NOT fail the review because the diff is missing integration code (e.g. route
+  registration in app.py) that belongs to a sibling task's scope. Only evaluate
+  code within this task's own allowed files."""
 
 
 async def gate2_llm_review(
@@ -51,6 +54,8 @@ async def gate2_llm_review(
     prior_diff: str | None = None,
     project_context: str = "",
     allowed_files: list[str] | None = None,
+    delta_diff: str | None = None,
+    sibling_context: str | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -78,7 +83,12 @@ async def gate2_llm_review(
             cost_info,
         )
 
-    prompt = _build_review_prompt(task_title, task_description, diff, prior_feedback, prior_diff=prior_diff, project_context=project_context, allowed_files=allowed_files)
+    prompt = _build_review_prompt(
+        task_title, task_description, diff, prior_feedback,
+        prior_diff=prior_diff, project_context=project_context,
+        allowed_files=allowed_files, delta_diff=delta_diff,
+        sibling_context=sibling_context,
+    )
 
     options = ClaudeCodeOptions(
         system_prompt=REVIEW_SYSTEM_PROMPT,
@@ -148,10 +158,14 @@ def _build_review_prompt(
     prior_diff: str | None = None,
     project_context: str = "",
     allowed_files: list[str] | None = None,
+    delta_diff: str | None = None,
+    sibling_context: str | None = None,
 ) -> str:
     parts = []
     if project_context:
         parts.append(f"{project_context}\n\n")
+    if sibling_context:
+        parts.append(f"{sibling_context}\n\n")
     parts += [
         f"Task: {title}\n",
         f"Description: {description}\n\n",
@@ -183,6 +197,16 @@ def _build_review_prompt(
             "2. Verify that the specific issues above were actually fixed\n"
             "3. Only flag NEW issues if they are genuine bugs or security concerns\n"
             "4. Do NOT invent new stylistic complaints — focus on the prior feedback\n\n"
+        )
+    if delta_diff:
+        delta_snippet = delta_diff[:6000]
+        parts.append(
+            "=== CHANGES SINCE LAST REVIEW (DELTA) ===\n"
+            "This shows ONLY what the developer changed in this retry attempt:\n"
+            f"```diff\n{delta_snippet}\n```\n\n"
+            "Focus your review on these delta changes. The full diff above shows "
+            "the complete current state for context, but the delta is what the "
+            "developer actually modified to address the prior feedback.\n\n"
         )
     parts.append("Review this code. Respond with PASS or FAIL.")
     return "".join(parts)
@@ -230,21 +254,3 @@ def _parse_review_result(text: str) -> GateResult:
         gate="gate2_llm_review",
         details=f"Unclear review response (treating as fail): {text[:200]}",
     )
-
-
-def get_diff(worktree_path: str) -> str:
-    """Get the git diff for changes in a worktree."""
-    result = subprocess.run(
-        ["git", "diff", "HEAD~1", "--", "."],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--", "."],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-    return result.stdout

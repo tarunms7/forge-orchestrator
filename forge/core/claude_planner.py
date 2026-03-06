@@ -43,6 +43,8 @@ The "conventions" object captures coding patterns observed in the existing codeb
 
 Rules:
 - Each task must own specific files. No two tasks may own the same file.
+- CROSS-TASK COUPLING: If task A creates a module (e.g. webhooks.py) but the integration point (e.g. registering the router in app.py) belongs to task B, you MUST handle this explicitly. Either: (1) Add the shared file to BOTH tasks' file lists so both can modify it, or (2) Make one task depend on the other and give the downstream task ownership of the integration file. NEVER leave a task unable to complete because its implementation requires modifying a file it doesn't own.
+- When a file needs modifications from multiple tasks (e.g. an __init__.py that imports from several new modules), assign that file to the LAST task in the dependency chain, or include it in all relevant tasks' file lists.
 - Use depends_on to express ordering (task-2 depends on task-1 if task-2 needs task-1's output).
 - complexity is one of: "low", "medium", "high"
 - Keep tasks focused: each task should do ONE thing well.
