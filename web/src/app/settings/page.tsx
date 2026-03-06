@@ -21,31 +21,33 @@ interface PipelineTemplate {
   id?: string;
   name: string;
   description: string;
-  category: string;
-  icon?: string;
-  model_strategy?: string;
-  build_command?: string;
-  test_command?: string;
-  planner_instructions?: string;
-  agent_instructions?: string;
-  review_focus?: string;
-  skip_llm_review?: boolean;
-  extra_review_pass?: boolean;
+  icon: string;
+  model_strategy: string;
+  build_cmd: string;
+  test_cmd: string;
+  planner_prompt_modifier: string;
+  agent_prompt_modifier: string;
+  review_config: {
+    skip_l2: boolean;
+    extra_review_pass: boolean;
+    custom_review_focus: string;
+  };
 }
 
 const EMPTY_TEMPLATE: PipelineTemplate = {
   name: "",
   description: "",
-  category: "custom",
   icon: "",
   model_strategy: "auto",
-  build_command: "",
-  test_command: "",
-  planner_instructions: "",
-  agent_instructions: "",
-  review_focus: "",
-  skip_llm_review: false,
-  extra_review_pass: false,
+  build_cmd: "",
+  test_cmd: "",
+  planner_prompt_modifier: "",
+  agent_prompt_modifier: "",
+  review_config: {
+    skip_l2: false,
+    extra_review_pass: false,
+    custom_review_focus: "",
+  },
 };
 
 const DEFAULT_SETTINGS: Settings = {
@@ -109,8 +111,11 @@ function TemplateForm({
 }) {
   const [form, setForm] = useState<PipelineTemplate>({ ...initial });
 
-  const set = (field: keyof PipelineTemplate, value: string | boolean) =>
+  const set = (field: keyof PipelineTemplate, value: unknown) =>
     setForm((f) => ({ ...f, [field]: value }));
+
+  const setReviewConfig = (field: keyof PipelineTemplate["review_config"], value: boolean | string) =>
+    setForm((f) => ({ ...f, review_config: { ...f.review_config, [field]: value } }));
 
   return (
     <div
@@ -226,8 +231,8 @@ function TemplateForm({
           </label>
           <input
             className="text-input mono"
-            value={form.build_command || ""}
-            onChange={(e) => set("build_command", e.target.value)}
+            value={form.build_cmd || ""}
+            onChange={(e) => set("build_cmd", e.target.value)}
             placeholder="npm run build"
             style={{ width: "100%" }}
           />
@@ -245,8 +250,8 @@ function TemplateForm({
           </label>
           <input
             className="text-input mono"
-            value={form.test_command || ""}
-            onChange={(e) => set("test_command", e.target.value)}
+            value={form.test_cmd || ""}
+            onChange={(e) => set("test_cmd", e.target.value)}
             placeholder="pytest"
             style={{ width: "100%" }}
           />
@@ -270,8 +275,8 @@ function TemplateForm({
         </label>
         <textarea
           className="text-input mono"
-          value={form.planner_instructions || ""}
-          onChange={(e) => set("planner_instructions", e.target.value)}
+          value={form.planner_prompt_modifier || ""}
+          onChange={(e) => set("planner_prompt_modifier", e.target.value)}
           placeholder="Additional instructions for the planner..."
           rows={2}
           style={{ width: "100%", resize: "vertical" }}
@@ -295,8 +300,8 @@ function TemplateForm({
         </label>
         <textarea
           className="text-input mono"
-          value={form.agent_instructions || ""}
-          onChange={(e) => set("agent_instructions", e.target.value)}
+          value={form.agent_prompt_modifier || ""}
+          onChange={(e) => set("agent_prompt_modifier", e.target.value)}
           placeholder="Additional instructions for agents..."
           rows={2}
           style={{ width: "100%", resize: "vertical" }}
@@ -320,8 +325,8 @@ function TemplateForm({
         </label>
         <textarea
           className="text-input mono"
-          value={form.review_focus || ""}
-          onChange={(e) => set("review_focus", e.target.value)}
+          value={form.review_config.custom_review_focus || ""}
+          onChange={(e) => setReviewConfig("custom_review_focus", e.target.value)}
           placeholder="Focus areas for code review..."
           rows={2}
           style={{ width: "100%", resize: "vertical" }}
@@ -348,8 +353,8 @@ function TemplateForm({
         >
           <input
             type="checkbox"
-            checked={form.skip_llm_review || false}
-            onChange={(e) => set("skip_llm_review", e.target.checked)}
+            checked={form.review_config.skip_l2 || false}
+            onChange={(e) => setReviewConfig("skip_l2", e.target.checked)}
           />
           Skip LLM Review
         </label>
@@ -365,8 +370,8 @@ function TemplateForm({
         >
           <input
             type="checkbox"
-            checked={form.extra_review_pass || false}
-            onChange={(e) => set("extra_review_pass", e.target.checked)}
+            checked={form.review_config.extra_review_pass || false}
+            onChange={(e) => setReviewConfig("extra_review_pass", e.target.checked)}
           />
           Extra Review Pass
         </label>
@@ -499,9 +504,13 @@ export default function SettingsPage() {
   const fetchTemplates = useCallback(async () => {
     if (!token) return;
     try {
-      const data = await apiGet("/templates?category=custom", token);
-      const all = Array.isArray(data) ? data : [];
-      setTemplates(all.filter((t: PipelineTemplate) => t.category === "custom"));
+      const data = await apiGet("/templates", token);
+      // Backend returns { builtin: [...], user: [...] }
+      const response = data as { builtin?: PipelineTemplate[]; user?: PipelineTemplate[] };
+      setTemplates((response.user ?? []).map((t) => ({
+        ...t,
+        review_config: t.review_config || { skip_l2: false, extra_review_pass: false, custom_review_focus: "" },
+      })));
     } catch {
       // Templates endpoint might not be available — fail silently
     }
@@ -578,13 +587,12 @@ export default function SettingsPage() {
   };
 
   const handleUpdateTemplate = async (template: PipelineTemplate) => {
-    if (!token) return;
-    const identifier = template.id || template.name;
+    if (!token || !template.id) return;
     setTemplateSaving(true);
     setTemplateError(null);
     try {
       await apiPut(
-        `/templates/${encodeURIComponent(identifier)}`,
+        `/templates/${encodeURIComponent(template.id)}`,
         template as unknown as Record<string, unknown>,
         token,
       );
@@ -600,12 +608,11 @@ export default function SettingsPage() {
   };
 
   const handleDeleteTemplate = async (template: PipelineTemplate) => {
-    if (!token) return;
-    const identifier = template.id || template.name;
+    if (!token || !template.id) return;
     setTemplateSaving(true);
     setTemplateError(null);
     try {
-      await apiDelete(`/templates/${encodeURIComponent(identifier)}`, token);
+      await apiDelete(`/templates/${encodeURIComponent(template.id)}`, token);
       setDeletingTemplate(null);
       await fetchTemplates();
     } catch (err) {
@@ -620,8 +627,8 @@ export default function SettingsPage() {
   const buildConfigSummary = (t: PipelineTemplate): string => {
     const parts: string[] = [];
     if (t.model_strategy) parts.push(`Strategy: ${t.model_strategy}`);
-    if (t.build_command) parts.push(`Build: ${t.build_command}`);
-    if (t.test_command) parts.push(`Test: ${t.test_command}`);
+    if (t.build_cmd) parts.push(`Build: ${t.build_cmd}`);
+    if (t.test_cmd) parts.push(`Test: ${t.test_cmd}`);
     return parts.length > 0 ? parts.join(" | ") : "No config set";
   };
 

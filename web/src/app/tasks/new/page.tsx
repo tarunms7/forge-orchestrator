@@ -204,6 +204,8 @@ function NewTaskPageInner() {
     setTask((prev) => ({
       ...prev,
       templateId: template.id,
+      // Pre-fill description if it's currently empty (don't overwrite user input)
+      description: prev.description.trim() ? prev.description : template.description,
       buildCmd: template.build_cmd ?? prev.buildCmd,
       testCmd: template.test_cmd ?? prev.testCmd,
     }));
