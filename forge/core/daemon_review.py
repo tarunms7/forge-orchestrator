@@ -28,14 +28,52 @@ class ReviewMixin:
         self._settings   — ForgeSettings
     """
 
+    # -- template review config --------------------------------------------
+
+    def _get_review_config(self) -> dict:
+        """Load review config from self._template_config.
+
+        Returns a dict with keys: skip_l2, extra_review_pass,
+        custom_review_focus.  All default to safe values when no
+        template config is set.
+        """
+        template_config = getattr(self, "_template_config", None)
+        if not template_config:
+            return {"skip_l2": False, "extra_review_pass": False, "custom_review_focus": ""}
+        review_raw = template_config.get("review_config", {})
+        if not isinstance(review_raw, dict):
+            return {"skip_l2": False, "extra_review_pass": False, "custom_review_focus": ""}
+        return {
+            "skip_l2": bool(review_raw.get("skip_l2", False)),
+            "extra_review_pass": bool(review_raw.get("extra_review_pass", False)),
+            "custom_review_focus": review_raw.get("custom_review_focus", "") or "",
+        }
+
     # -- command resolution ------------------------------------------------
 
     def _resolve_build_cmd(self) -> str | None:
-        """Return the build command: pipeline override → settings fallback."""
+        """Return the build command: template override → pipeline override → settings fallback.
+
+        If the template sets build_cmd to '' (empty string), the build gate
+        is explicitly skipped.
+        """
+        template_config = getattr(self, "_template_config", None)
+        if template_config and "build_cmd" in template_config:
+            # Empty string means "skip this gate"
+            val = template_config["build_cmd"]
+            return val if val else None
         return getattr(self, '_pipeline_build_cmd', None) or getattr(self._settings, 'build_cmd', None)
 
     def _resolve_test_cmd(self) -> str | None:
-        """Return the test command: pipeline override → settings fallback."""
+        """Return the test command: template override → pipeline override → settings fallback.
+
+        If the template sets test_cmd to '' (empty string), the test gate
+        is explicitly skipped.
+        """
+        template_config = getattr(self, "_template_config", None)
+        if template_config and "test_cmd" in template_config:
+            val = template_config["test_cmd"]
+            return val if val else None
         return getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
 
     # -- shell gate helpers ------------------------------------------------
@@ -201,51 +239,106 @@ class ReviewMixin:
             console.print("[green]  Gate 1.5 (test) passed[/green]")
 
         # L2: LLM review
-        # Pass prior feedback + prior diff so the reviewer focuses on
-        # verifying fixes instead of inventing new complaints on every retry.
-        prior_feedback = getattr(task, "review_feedback", None) if task.retry_count > 0 else None
-        prior_diff = getattr(task, "prior_diff", None) if task.retry_count > 0 else None
-        console.print(
-            f"[blue]  L2 (LLM): Code review for {task.id}"
-            f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
-        )
-        reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
-        # Build sibling context so the reviewer knows about the DAG
-        sibling_context = await self._build_sibling_context(task, db, pipeline_id)
-        gate2_result, review_cost_info = await gate2_llm_review(
-            task.title, task.description, diff, worktree_path,
-            model=reviewer_model,
-            prior_feedback=prior_feedback,
-            prior_diff=prior_diff,
-            project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
-            allowed_files=task.files,
-            delta_diff=delta_diff,
-            sibling_context=sibling_context,
-        )
-        # Track review cost
-        if review_cost_info.cost_usd > 0:
-            await db.add_task_review_cost(task.id, review_cost_info.cost_usd)
-            await db.add_pipeline_cost(pipeline_id, review_cost_info.cost_usd)
-            await self._emit("task:cost_update", {
-                "task_id": task.id,
-                "review_cost_usd": review_cost_info.cost_usd,
-                "input_tokens": review_cost_info.input_tokens,
-                "output_tokens": review_cost_info.output_tokens,
+        # Load review config from template
+        review_config = self._get_review_config()
+
+        if review_config["skip_l2"]:
+            console.print("[yellow]  L2 skipped by template[/yellow]")
+            await self._emit("task:review_update", {
+                "task_id": task.id, "gate": "L2", "passed": True,
+                "details": "Skipped by template configuration",
             }, db=db, pipeline_id=pipeline_id)
-            total_cost = await db.get_pipeline_cost(pipeline_id)
-            await self._emit("pipeline:cost_update", {
-                "total_cost_usd": total_cost,
+        else:
+            # Pass prior feedback + prior diff so the reviewer focuses on
+            # verifying fixes instead of inventing new complaints on every retry.
+            prior_feedback = getattr(task, "review_feedback", None) if task.retry_count > 0 else None
+            prior_diff = getattr(task, "prior_diff", None) if task.retry_count > 0 else None
+            console.print(
+                f"[blue]  L2 (LLM): Code review for {task.id}"
+                f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
+            )
+            reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
+            # Build sibling context so the reviewer knows about the DAG
+            sibling_context = await self._build_sibling_context(task, db, pipeline_id)
+            custom_review_focus = review_config["custom_review_focus"]
+            gate2_result, review_cost_info = await gate2_llm_review(
+                task.title, task.description, diff, worktree_path,
+                model=reviewer_model,
+                prior_feedback=prior_feedback,
+                prior_diff=prior_diff,
+                project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
+                allowed_files=task.files,
+                delta_diff=delta_diff,
+                sibling_context=sibling_context,
+                custom_review_focus=custom_review_focus,
+            )
+            # Track review cost
+            if review_cost_info.cost_usd > 0:
+                await db.add_task_review_cost(task.id, review_cost_info.cost_usd)
+                await db.add_pipeline_cost(pipeline_id, review_cost_info.cost_usd)
+                await self._emit("task:cost_update", {
+                    "task_id": task.id,
+                    "review_cost_usd": review_cost_info.cost_usd,
+                    "input_tokens": review_cost_info.input_tokens,
+                    "output_tokens": review_cost_info.output_tokens,
+                }, db=db, pipeline_id=pipeline_id)
+                total_cost = await db.get_pipeline_cost(pipeline_id)
+                await self._emit("pipeline:cost_update", {
+                    "total_cost_usd": total_cost,
+                }, db=db, pipeline_id=pipeline_id)
+            await self._emit("task:review_update", {
+                "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
+                "details": gate2_result.details,
             }, db=db, pipeline_id=pipeline_id)
-        await self._emit("task:review_update", {
-            "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
-            "details": gate2_result.details,
-        }, db=db, pipeline_id=pipeline_id)
-        if not gate2_result.passed:
-            console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
-            prefix = "[RETRIABLE] " if gate2_result.retriable else ""
-            feedback_parts.append(f"{prefix}L2 (LLM code review) FAILED:\n{gate2_result.details}")
-            return False, "\n\n".join(feedback_parts)
-        console.print("[green]  L2 passed[/green]")
+            if not gate2_result.passed:
+                console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
+                prefix = "[RETRIABLE] " if gate2_result.retriable else ""
+                feedback_parts.append(f"{prefix}L2 (LLM code review) FAILED:\n{gate2_result.details}")
+                return False, "\n\n".join(feedback_parts)
+            console.print("[green]  L2 passed[/green]")
+
+            # Extra review pass: run L2 a second time if configured
+            if review_config["extra_review_pass"]:
+                console.print(f"[blue]  L2 (extra pass): Second review for {task.id}...[/blue]")
+                extra_focus = custom_review_focus
+                if extra_focus:
+                    extra_focus += "\n\n"
+                extra_focus += (
+                    "This is a SECOND REVIEW PASS. A previous reviewer already "
+                    "approved. Catch anything they missed."
+                )
+                gate2_extra, extra_cost_info = await gate2_llm_review(
+                    task.title, task.description, diff, worktree_path,
+                    model=reviewer_model,
+                    project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
+                    allowed_files=task.files,
+                    sibling_context=sibling_context,
+                    custom_review_focus=extra_focus,
+                )
+                # Track extra review cost
+                if extra_cost_info.cost_usd > 0:
+                    await db.add_task_review_cost(task.id, extra_cost_info.cost_usd)
+                    await db.add_pipeline_cost(pipeline_id, extra_cost_info.cost_usd)
+                    await self._emit("task:cost_update", {
+                        "task_id": task.id,
+                        "review_cost_usd": extra_cost_info.cost_usd,
+                        "input_tokens": extra_cost_info.input_tokens,
+                        "output_tokens": extra_cost_info.output_tokens,
+                    }, db=db, pipeline_id=pipeline_id)
+                    total_cost = await db.get_pipeline_cost(pipeline_id)
+                    await self._emit("pipeline:cost_update", {
+                        "total_cost_usd": total_cost,
+                    }, db=db, pipeline_id=pipeline_id)
+                await self._emit("task:review_update", {
+                    "task_id": task.id, "gate": "L2_extra", "passed": gate2_extra.passed,
+                    "details": gate2_extra.details,
+                }, db=db, pipeline_id=pipeline_id)
+                if not gate2_extra.passed:
+                    console.print(f"[red]  L2 (extra pass) failed: {gate2_extra.details}[/red]")
+                    prefix = "[RETRIABLE] " if gate2_extra.retriable else ""
+                    feedback_parts.append(f"{prefix}L2 extra pass FAILED:\n{gate2_extra.details}")
+                    return False, "\n\n".join(feedback_parts)
+                console.print("[green]  L2 (extra pass) passed[/green]")
 
         # Gate 3: skip for now — merge check is handled by merge_worker
         console.print("[green]  Gate 3 (merge readiness): auto-pass[/green]")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,8 @@ class CreateTaskRequest(BaseModel):
     test_cmd: str | None = Field(default=None, description="Shell command to run tests after agent work")
     budget_limit_usd: float = Field(default=0.0, description="Maximum USD budget for this pipeline. 0 means unlimited.")
     require_approval: bool | None = None
+    template_id: str | None = Field(default=None, description="Pipeline template ID (built-in or user-created)")
+    quality_preset: str | None = Field(default=None, description="Quality preset: fast, balanced, or thorough")
 
 
 class RestartPipelineRequest(BaseModel):
@@ -81,3 +84,73 @@ class TaskListItem(BaseModel):
     description: str
     project_path: str
     phase: str
+
+
+# ── Template schemas ──────────────────────────────────────────────────
+
+
+class ReviewConfigSchema(BaseModel):
+    """Review pipeline overrides for a template."""
+
+    skip_l2: bool = False
+    extra_review_pass: bool = False
+    custom_review_focus: str = ""
+
+
+class CreateUserTemplateRequest(BaseModel):
+    """Request body for creating a user-owned pipeline template."""
+
+    name: str
+    description: str
+    icon: str
+    model_strategy: str = "auto"
+    planner_prompt_modifier: str = ""
+    agent_prompt_modifier: str = ""
+    review_config: ReviewConfigSchema = Field(default_factory=ReviewConfigSchema)
+    build_cmd: str | None = None
+    test_cmd: str | None = None
+    max_tasks: int | None = None
+    default_complexity: Literal["low", "medium", "high"] | None = None
+
+
+class UpdateUserTemplateRequest(BaseModel):
+    """Request body for updating a user-owned pipeline template. All fields optional."""
+
+    name: str | None = None
+    description: str | None = None
+    icon: str | None = None
+    model_strategy: str | None = None
+    planner_prompt_modifier: str | None = None
+    agent_prompt_modifier: str | None = None
+    review_config: ReviewConfigSchema | None = None
+    build_cmd: str | None = None
+    test_cmd: str | None = None
+    max_tasks: int | None = None
+    default_complexity: Literal["low", "medium", "high"] | None = None
+
+
+class TemplateResponse(BaseModel):
+    """Response model for a single pipeline template."""
+
+    id: str
+    name: str
+    description: str
+    icon: str
+    model_strategy: str = "auto"
+    planner_prompt_modifier: str = ""
+    agent_prompt_modifier: str = ""
+    review_config: ReviewConfigSchema = Field(default_factory=ReviewConfigSchema)
+    build_cmd: str | None = None
+    test_cmd: str | None = None
+    max_tasks: int | None = None
+    default_complexity: str | None = None
+    is_builtin: bool = True
+    user_id: str | None = None
+    created_at: datetime | None = None
+
+
+class TemplateListResponse(BaseModel):
+    """Response model for listing all templates."""
+
+    builtin: list[TemplateResponse]
+    user: list[TemplateResponse]
