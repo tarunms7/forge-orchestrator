@@ -539,7 +539,7 @@ async def execute_pipeline(
     async def _run_execute():
         try:
             # Generate contracts before execution (same as CLI flow)
-            await daemon.generate_contracts(graph, forge_db, pipeline_id)
+            daemon._contracts = await daemon.generate_contracts(graph, forge_db, pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "executing")
             await daemon.execute(graph, forge_db, pipeline_id=pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "complete")
