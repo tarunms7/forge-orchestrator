@@ -68,7 +68,7 @@ export interface FollowUpResult {
 
 export interface PipelineState {
   pipelineId: string | null;
-  phase: "idle" | "planning" | "planned" | "executing" | "reviewing" | "paused" | "complete" | "cancelled" | "error";
+  phase: "idle" | "planning" | "planned" | "contracts" | "executing" | "reviewing" | "paused" | "complete" | "cancelled" | "error";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
   timeline: TimelineEntry[];

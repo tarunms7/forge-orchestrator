@@ -56,7 +56,7 @@ def _valid_contract_json() -> str:
         "type_contracts": [{
             "name": "Template",
             "description": "A template",
-            "fields": [
+            "field_specs": [
                 {"name": "id", "type": "string", "required": True},
             ],
             "used_by_tasks": ["task-1", "task-2"],
@@ -146,7 +146,7 @@ class TestParseAndValidate:
             "api_contracts": [],
             "type_contracts": [{
                 "name": "Foo",
-                "fields": [{"name": "x", "type": "string"}],
+                "field_specs": [{"name": "x", "type": "string"}],
                 "used_by_tasks": ["task-99"],
             }],
         })

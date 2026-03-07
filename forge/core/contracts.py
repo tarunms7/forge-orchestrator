@@ -25,7 +25,7 @@ class TypeContract(BaseModel):
     """Contract for a shared data structure used across tasks."""
     name: str                   # e.g., "PipelineTemplate", "ReviewConfig"
     description: str = ""
-    fields: list[FieldSpec]
+    field_specs: list[FieldSpec]
     used_by_tasks: list[str]    # task IDs that reference this type
 
 
@@ -143,7 +143,7 @@ class TaskContracts(BaseModel):
             for t in self.types:
                 parts.append(f"**{t.name}**: {t.description}")
                 parts.append("```")
-                for f in t.fields:
+                for f in t.field_specs:
                     req = "" if f.required else " (optional)"
                     parts.append(f"  {f.name}: {f.type}{req}  // {f.description}" if f.description else f"  {f.name}: {f.type}{req}")
                 parts.append("```")

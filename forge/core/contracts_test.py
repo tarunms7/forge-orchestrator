@@ -35,7 +35,7 @@ def _sample_type_contract(used_by=None) -> TypeContract:
     return TypeContract(
         name="Template",
         description="A pipeline template",
-        fields=[
+        field_specs=[
             FieldSpec(name="id", type="string", description="Unique ID"),
             FieldSpec(name="name", type="string"),
             FieldSpec(name="icon", type="string", required=False),

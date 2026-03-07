@@ -60,7 +60,7 @@ Output ONLY valid JSON matching this schema:
     {
       "name": "PipelineTemplate",
       "description": "A pipeline configuration template",
-      "fields": [
+      "field_specs": [
         { "name": "id", "type": "string", "required": true, "description": "Unique identifier (UUID for user, slug for built-in)" },
         { "name": "name", "type": "string", "required": true, "description": "" }
       ],

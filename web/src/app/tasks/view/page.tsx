@@ -738,13 +738,11 @@ function TaskExecutionPageInner() {
                 ? "Cancelled"
                 : isPaused
                   ? "Paused"
-                  : phase === "contracts"
-                    ? "Generating contracts..."
-                    : phase === "executing"
-                      ? "Executing"
-                      : phase === "reviewing"
-                        ? "Reviewing"
-                        : "Complete"}
+                  : phase === "executing"
+                    ? "Executing"
+                    : phase === "reviewing"
+                      ? "Reviewing"
+                      : "Complete"}
             </span>
             <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>
               {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks
