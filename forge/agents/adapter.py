@@ -25,12 +25,15 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 
 {conventions_block}
 
+{contracts_block}
+
 {dependency_context}
 
 {file_scope_block}
 
 Rules:
 - You MUST ONLY modify files listed in the File Scope section above. Changes to other files are automatically reverted by the system.
+- If Interface Contracts are provided above, you MUST implement them EXACTLY as specified. Do NOT rename fields, change types, or alter response shapes.
 - Follow existing code style and patterns — see the conventions section above
 - Write tests for any new functionality
 - Commit your changes with a SHORT conventional commit message (max 72 chars) — use feat/fix/refactor/test/docs/chore prefix and describe WHAT changed, not the task title
@@ -155,6 +158,7 @@ class AgentAdapter(ABC):
         conventions_json: str | None = None,
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
+        contracts_block: str = "",
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -169,6 +173,7 @@ class ClaudeAdapter(AgentAdapter):
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
         allowed_files: list[str] | None = None,
+        contracts_block: str = "",
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -195,6 +200,7 @@ class ClaudeAdapter(AgentAdapter):
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
             conventions_block=conventions_block,
+            contracts_block=contracts_block,
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
         )
@@ -220,6 +226,7 @@ class ClaudeAdapter(AgentAdapter):
         conventions_json: str | None = None,
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
+        contracts_block: str = "",
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -228,6 +235,7 @@ class ClaudeAdapter(AgentAdapter):
             conventions_md=conventions_md,
             completed_deps=completed_deps,
             allowed_files=allowed_files,
+            contracts_block=contracts_block,
         )
 
         try:

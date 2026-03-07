@@ -519,6 +519,23 @@ class ExecutorMixin:
                         "files_changed": dep_task.files or [],
                     })
 
+        # Load contracts for this task
+        contracts_block = ""
+        contract_set = getattr(self, "_contracts", None)
+        if contract_set is None and pid:
+            # Load from DB if not in memory (e.g., web flow, resume)
+            contracts_json = await db.get_pipeline_contracts(pid)
+            if contracts_json:
+                from forge.core.contracts import ContractSet as CS
+                try:
+                    contract_set = CS.model_validate_json(contracts_json)
+                except Exception:
+                    logger.warning("Failed to parse contracts_json for pipeline %s", pid)
+
+        if contract_set:
+            task_contracts = contract_set.contracts_for_task(task_id)
+            contracts_block = task_contracts.format_for_agent()
+
         result = await runtime.run_task(
             agent_id, prompt, worktree_path, task.files,
             allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
@@ -526,6 +543,7 @@ class ExecutorMixin:
             conventions_json=conventions_json,
             conventions_md=conventions_md,
             completed_deps=completed_deps if completed_deps else None,
+            contracts_block=contracts_block,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)

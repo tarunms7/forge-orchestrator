@@ -39,6 +39,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         conventions_json=None,
         conventions_md=None,
         completed_deps=None,
+        contracts_block="",
     )
 
 
@@ -176,4 +177,5 @@ async def test_runtime_passes_all_new_params_together():
         conventions_json=conventions_json,
         conventions_md=conventions_md,
         completed_deps=deps,
+        contracts_block="",
     )
