@@ -154,3 +154,46 @@ class TemplateListResponse(BaseModel):
 
     builtin: list[TemplateResponse]
     user: list[TemplateResponse]
+
+
+# ── Contract schemas ─────────────────────────────────────────────────
+
+
+class FieldSpecResponse(BaseModel):
+    """A single field specification in a contract."""
+
+    name: str
+    type: str
+    required: bool
+    description: str
+
+
+class ApiContractResponse(BaseModel):
+    """A single API endpoint contract."""
+
+    id: str
+    method: str
+    path: str
+    description: str
+    request_body: list[FieldSpecResponse] | None
+    response_body: list[FieldSpecResponse]
+    response_example: str
+    auth_required: bool
+    producer_task_id: str
+    consumer_task_ids: list[str]
+
+
+class TypeContractResponse(BaseModel):
+    """A shared data structure contract."""
+
+    name: str
+    description: str
+    field_specs: list[FieldSpecResponse]
+    used_by_tasks: list[str]
+
+
+class ContractSetResponse(BaseModel):
+    """Response model for GET /api/tasks/{pipeline_id}/contracts."""
+
+    api_contracts: list[ApiContractResponse]
+    type_contracts: list[TypeContractResponse]

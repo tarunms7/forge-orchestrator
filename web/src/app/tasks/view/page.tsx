@@ -18,6 +18,7 @@ import TaskDetailPanel from "@/components/task/TaskDetailPanel";
 import FollowUpPanel from "@/components/task/FollowUpPanel";
 import EditablePlanPanel from "@/components/task/EditablePlanPanel";
 import ApprovalPanel from "@/components/task/ApprovalPanel";
+import ContractsPanel from "@/components/task/ContractsPanel";
 import { CopyButton } from "@/components/CopyButton";
 import { pausePipeline, resumePipeline } from "@/lib/api";
 
@@ -811,6 +812,11 @@ function TaskExecutionPageInner() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Contracts Panel — shown during phases where contracts may exist */}
+      {(phase === "executing" || phase === "reviewing" || phase === "complete" || phase === "paused" || phase === "error") && token && (
+        <ContractsPanel pipelineId={pipelineId} token={token} />
       )}
 
       {/* Pause / Resume / Cancel / Restart Buttons */}

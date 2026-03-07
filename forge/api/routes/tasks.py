@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from forge.api.models.schemas import (
+    ContractSetResponse,
     CreateTaskRequest,
     ExecuteRequest,
     PipelineResponse,
@@ -1304,26 +1305,36 @@ async def retry_task(
     return {"status": "retrying", "task_id": task_id}
 
 
-@router.get("/{pipeline_id}/contracts")
+@router.get("/{pipeline_id}/contracts", response_model=ContractSetResponse)
 async def get_pipeline_contracts(
     pipeline_id: str,
     request: Request,
     user_id: str = Depends(get_current_user),
-):
+) -> ContractSetResponse:
     """Get the generated contracts for a pipeline."""
+    empty = ContractSetResponse(api_contracts=[], type_contracts=[])
+
     forge_db = _get_forge_db(request)
     if forge_db is None:
-        return {"api_contracts": [], "type_contracts": []}
+        return empty
+
     pipeline = await forge_db.get_pipeline(pipeline_id)
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(status_code=404, detail="Pipeline not found")
+
     contracts_json = await forge_db.get_pipeline_contracts(pipeline_id)
     if not contracts_json:
-        return {"api_contracts": [], "type_contracts": []}
+        return empty
+
     try:
-        return json.loads(contracts_json)
+        data = json.loads(contracts_json)
     except (json.JSONDecodeError, TypeError):
-        return {"api_contracts": [], "type_contracts": []}
+        return empty
+
+    return ContractSetResponse(
+        api_contracts=data.get("api_contracts", []),
+        type_contracts=data.get("type_contracts", []),
+    )
 
 
 @router.get("/{pipeline_id}", response_model=TaskStatusResponse)

@@ -129,3 +129,7 @@ export async function resumePipeline(pipelineId: string, token: string) {
   return apiPost(`/tasks/${pipelineId}/resume`, {}, token);
 }
 
+export async function fetchContracts(pipelineId: string, token: string) {
+  return apiGet(`/tasks/${pipelineId}/contracts`, token);
+}
+
