@@ -286,22 +286,55 @@ class ClaudeAdapter(AgentAdapter):
 
 
 def _get_changed_files(worktree_path: str) -> list[str]:
-    """Get list of files changed in the worktree vs its base."""
-    result = subprocess.run(
+    """Get list of files changed in the worktree vs its base.
+
+    Detects both uncommitted changes (working tree / staged) AND committed
+    changes made by the agent.  Claude Code commits its work, so after an
+    agent finishes all changes are typically committed — we need to diff
+    against the branch point to find them.
+    """
+    files: set[str] = set()
+
+    # 1. Uncommitted changes (working tree vs HEAD)
+    unstaged = subprocess.run(
         ["git", "diff", "--name-only", "HEAD"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
+        cwd=worktree_path, capture_output=True, text=True,
     )
+    # 2. Staged but uncommitted changes (index vs HEAD)
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
+        cwd=worktree_path, capture_output=True, text=True,
     )
-    files = set()
-    for output in (result.stdout, staged.stdout):
+    for output in (unstaged.stdout, staged.stdout):
         for line in output.strip().split("\n"):
             if line.strip():
                 files.add(line.strip())
+
+    # 3. Committed changes — agent's commits vs the branch point.
+    #    Use the same rev-list heuristic as _get_diff_stats: count how many
+    #    commits exist locally that aren't on any remote, then diff against
+    #    HEAD~N to capture the agent's own files.
+    count_result = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
+        cwd=worktree_path, capture_output=True, text=True,
+    )
+    try:
+        commit_count = max(int(count_result.stdout.strip()), 1)
+    except (ValueError, AttributeError):
+        commit_count = 1
+
+    base_ref = f"HEAD~{commit_count}"
+    verify = subprocess.run(
+        ["git", "rev-parse", "--verify", base_ref],
+        cwd=worktree_path, capture_output=True, text=True,
+    )
+    if verify.returncode == 0:
+        committed = subprocess.run(
+            ["git", "diff", "--name-only", base_ref, "HEAD"],
+            cwd=worktree_path, capture_output=True, text=True,
+        )
+        for line in committed.stdout.strip().split("\n"):
+            if line.strip():
+                files.add(line.strip())
+
     return sorted(files)

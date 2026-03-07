@@ -256,7 +256,10 @@ export default function TaskDetailPanel({
                       case "task:state_changed": return `State \u2192 ${p.state}`;
                       case "task:review_update": return `${p.gate} ${p.passed ? "\u2713 passed" : "\u2717 failed"}`;
                       case "task:merge_result": return p.success ? "Merged successfully" : `Merge failed: ${p.error || "unknown"}`;
-                      case "task:cost_update": return `Cost: $${(p.cost_usd as number)?.toFixed(4)}`;
+                      case "task:cost_update": {
+                        const cost = (p.agent_cost_usd as number) ?? (p.review_cost_usd as number);
+                        return cost != null ? `Cost: $${cost.toFixed(4)}` : "Cost update";
+                      }
                       case "task:files_changed": return `${(p.files as string[])?.length || 0} files changed`;
                       default: return ev.type.split(":")[1] || ev.type;
                     }
