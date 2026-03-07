@@ -10,6 +10,7 @@ def validate_task_graph(graph: TaskGraph) -> None:
     _check_dependency_refs(graph)
     _check_cycles(graph)
     _check_file_conflicts(graph)
+    _check_integration_hints(graph)
 
 
 def _check_duplicate_ids(graph: TaskGraph) -> None:
@@ -66,3 +67,23 @@ def _check_file_conflicts(graph: TaskGraph) -> None:
                     task_b=task.id,
                 )
             file_owners[file_path] = task.id
+
+
+def _check_integration_hints(graph: TaskGraph) -> None:
+    """Validate integration hints reference existing task IDs (optional check)."""
+    if not graph.integration_hints:
+        return
+    valid_ids = {t.id for t in graph.tasks}
+    for hint in graph.integration_hints:
+        if not isinstance(hint, dict):
+            continue
+        producer = hint.get("producer_task_id")
+        if producer and producer not in valid_ids:
+            raise ValidationError(
+                f"Integration hint references unknown producer task: '{producer}'"
+            )
+        for consumer in hint.get("consumer_task_ids", []):
+            if consumer not in valid_ids:
+                raise ValidationError(
+                    f"Integration hint references unknown consumer task: '{consumer}'"
+                )

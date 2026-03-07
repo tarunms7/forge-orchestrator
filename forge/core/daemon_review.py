@@ -261,6 +261,22 @@ class ReviewMixin:
             # Build sibling context so the reviewer knows about the DAG
             sibling_context = await self._build_sibling_context(task, db, pipeline_id)
             custom_review_focus = review_config["custom_review_focus"]
+            # Inject contract compliance into review focus
+            if pipeline_id:
+                contracts_json = await db.get_pipeline_contracts(pipeline_id)
+                if contracts_json:
+                    from forge.core.contracts import ContractSet as CS
+                    try:
+                        contract_set = CS.model_validate_json(contracts_json)
+                        task_contracts = contract_set.contracts_for_task(task.id)
+                        contract_review = task_contracts.format_for_reviewer()
+                        if contract_review:
+                            if custom_review_focus:
+                                custom_review_focus = f"{custom_review_focus}\n\n{contract_review}"
+                            else:
+                                custom_review_focus = contract_review
+                    except Exception:
+                        logger.warning("Failed to parse contracts for review of task %s", task.id)
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title, task.description, diff, worktree_path,
                 model=reviewer_model,

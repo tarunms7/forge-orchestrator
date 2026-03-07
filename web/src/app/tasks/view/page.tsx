@@ -620,11 +620,11 @@ function TaskExecutionPageInner() {
   // Determine if we should show the plan panel (always, once tasks exist)
   const hasTasks = taskList.length > 0;
   // Show agent cards during execution/review/complete/cancelled/paused phases
-  const showAgentCards = phase !== "idle" && phase !== "planning" && phase !== "planned" && hasTasks;
+  const showAgentCards = phase !== "idle" && phase !== "planning" && phase !== "planned" && phase !== "contracts" && hasTasks;
   const isCancelled = phase === "cancelled";
   const isPaused = phase === "paused";
   // Phases where cancel button is shown
-  const showCancelButton = phase === "idle" || phase === "planning" || phase === "planned" || phase === "executing" || phase === "reviewing" || phase === "paused";
+  const showCancelButton = phase === "idle" || phase === "planning" || phase === "planned" || phase === "contracts" || phase === "executing" || phase === "reviewing" || phase === "paused";
   // Phases where restart button is shown
   const showRestartButton = isCancelled || (phase === "complete" && taskList.some(t => t.state === "error"));
   // Tasks awaiting approval
@@ -738,11 +738,13 @@ function TaskExecutionPageInner() {
                 ? "Cancelled"
                 : isPaused
                   ? "Paused"
-                  : phase === "executing"
-                    ? "Executing"
-                    : phase === "reviewing"
-                      ? "Reviewing"
-                      : "Complete"}
+                  : phase === "contracts"
+                    ? "Generating contracts..."
+                    : phase === "executing"
+                      ? "Executing"
+                      : phase === "reviewing"
+                        ? "Reviewing"
+                        : "Complete"}
             </span>
             <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>
               {taskList.filter(t => t.state === "done").length}/{taskList.length} tasks

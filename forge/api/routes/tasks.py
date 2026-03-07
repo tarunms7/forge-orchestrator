@@ -538,6 +538,8 @@ async def execute_pipeline(
 
     async def _run_execute():
         try:
+            # Generate contracts before execution (same as CLI flow)
+            daemon._contracts = await daemon.generate_contracts(graph, forge_db, pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "executing")
             await daemon.execute(graph, forge_db, pipeline_id=pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "complete")
@@ -1300,6 +1302,28 @@ async def retry_task(
             asyncio.create_task(_run_retry())
 
     return {"status": "retrying", "task_id": task_id}
+
+
+@router.get("/{pipeline_id}/contracts")
+async def get_pipeline_contracts(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Get the generated contracts for a pipeline."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        return {"api_contracts": [], "type_contracts": []}
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    contracts_json = await forge_db.get_pipeline_contracts(pipeline_id)
+    if not contracts_json:
+        return {"api_contracts": [], "type_contracts": []}
+    try:
+        return json.loads(contracts_json)
+    except (json.JSONDecodeError, TypeError):
+        return {"api_contracts": [], "type_contracts": []}
 
 
 @router.get("/{pipeline_id}", response_model=TaskStatusResponse)

@@ -4,16 +4,19 @@
 _ROUTING_TABLE: dict[str, dict[str, dict[str, str]]] = {
     "auto": {
         "planner": {"low": "opus", "medium": "opus", "high": "opus"},
+        "contract_builder": {"low": "opus", "medium": "opus", "high": "opus"},
         "agent": {"low": "sonnet", "medium": "opus", "high": "opus"},
         "reviewer": {"low": "sonnet", "medium": "sonnet", "high": "sonnet"},
     },
     "fast": {
         "planner": {"low": "sonnet", "medium": "sonnet", "high": "sonnet"},
+        "contract_builder": {"low": "sonnet", "medium": "sonnet", "high": "sonnet"},
         "agent": {"low": "haiku", "medium": "haiku", "high": "haiku"},
         "reviewer": {"low": "haiku", "medium": "sonnet", "high": "sonnet"},
     },
     "quality": {
         "planner": {"low": "opus", "medium": "opus", "high": "opus"},
+        "contract_builder": {"low": "opus", "medium": "opus", "high": "opus"},
         "agent": {"low": "opus", "medium": "opus", "high": "opus"},
         "reviewer": {"low": "sonnet", "medium": "sonnet", "high": "sonnet"},
     },
@@ -25,7 +28,7 @@ def select_model(strategy: str, stage: str, complexity: str, overrides: dict | N
 
     Args:
         strategy: "auto", "fast", or "quality"
-        stage: "planner", "agent", or "reviewer"
+        stage: "planner", "contract_builder", "agent", or "reviewer"
         complexity: "low", "medium", or "high"
         overrides: Optional dict of model overrides from user settings.
             Keys like ``planner_model``, ``reviewer_model``,
@@ -35,8 +38,12 @@ def select_model(strategy: str, stage: str, complexity: str, overrides: dict | N
         Model name string: "opus", "sonnet", or "haiku"
     """
     if overrides:
-        # Check for direct override
-        key = f"{stage}_model" if stage in ("planner", "reviewer") else f"agent_model_{complexity}"
+        # Check for direct override — planner/reviewer/contract_builder use {stage}_model,
+        # agent uses agent_model_{complexity}
+        if stage in ("planner", "reviewer", "contract_builder"):
+            key = f"{stage}_model"
+        else:
+            key = f"agent_model_{complexity}"
         override_val = overrides.get(key)
         if override_val:
             return override_val

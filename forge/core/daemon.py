@@ -19,6 +19,8 @@ from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.cost_estimator import estimate_pipeline_cost
 from forge.core.engine import _row_to_record
 from forge.core.events import EventEmitter
+from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
+from forge.core.contracts import ContractSet, IntegrationHint
 from forge.core.model_router import select_model
 from forge.core.models import TaskGraph, TaskState
 from forge.core.monitor import ResourceMonitor
@@ -237,6 +239,83 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await self._events.emit("pipeline:plan_ready", plan_data)
         return graph
 
+    async def generate_contracts(
+        self,
+        graph: TaskGraph,
+        db: Database,
+        pipeline_id: str,
+    ) -> ContractSet:
+        """Generate interface contracts from planner integration hints.
+
+        Runs between plan() and execute(). Skips if no integration hints exist.
+        """
+        raw_hints = graph.integration_hints or []
+        if not raw_hints:
+            logger.info("No integration hints — skipping contract generation")
+            return ContractSet()
+
+        hints = [IntegrationHint.model_validate(h) for h in raw_hints]
+
+        await self._emit(
+            "pipeline:phase_changed",
+            {"phase": "contracts"},
+            db=db,
+            pipeline_id=pipeline_id,
+        )
+
+        contract_model = select_model(self._strategy, "contract_builder", "high")
+        builder_llm = ContractBuilderLLM(model=contract_model, cwd=self._project_dir)
+        builder = ContractBuilder(builder_llm)
+
+        async def _on_contract_msg(msg):
+            text = _extract_text(msg)
+            if text:
+                await self._emit(
+                    "contracts:output",
+                    {"line": text},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
+
+        context = self._snapshot.format_for_planner() if self._snapshot else ""
+        try:
+            contract_set = await builder.build(
+                graph, hints, project_context=context, on_message=_on_contract_msg,
+            )
+        except Exception as exc:
+            logger.warning("Contract builder failed unexpectedly: %s — proceeding without contracts", exc)
+            return ContractSet()
+
+        # Track cost
+        if builder_llm._last_sdk_result:
+            sdk_result = builder_llm._last_sdk_result
+            if sdk_result.cost_usd > 0:
+                await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
+
+        # Persist contracts
+        if contract_set.has_contracts():
+            await db.set_pipeline_contracts(
+                pipeline_id, contract_set.model_dump_json(),
+            )
+            console.print(
+                f"[green]Contracts: {len(contract_set.api_contracts)} API, "
+                f"{len(contract_set.type_contracts)} types[/green]"
+            )
+        else:
+            console.print("[yellow]Contract generation produced no contracts[/yellow]")
+
+        await self._emit(
+            "pipeline:contracts_ready",
+            {
+                "api_count": len(contract_set.api_contracts),
+                "type_count": len(contract_set.type_contracts),
+            },
+            db=db,
+            pipeline_id=pipeline_id,
+        )
+
+        return contract_set
+
     async def execute(self, graph: TaskGraph, db: Database, pipeline_id: str | None = None, *, resume: bool = False) -> None:
         """Execute a previously approved TaskGraph.
 
@@ -259,6 +338,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 for t in graph.tasks:
                     t.depends_on = [id_map.get(d, d) for d in t.depends_on]
                     t.id = id_map[t.id]
+
+                # Remap contract task IDs to match the prefixed runtime IDs
+                contract_set = getattr(self, "_contracts", None)
+                if contract_set and contract_set.has_contracts():
+                    self._contracts = contract_set.remap_task_ids(id_map)
+                    await db.set_pipeline_contracts(
+                        pid, self._contracts.model_dump_json(),
+                    )
 
             for task_def in graph.tasks:
                 await db.create_task(
@@ -329,6 +416,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 budget_limit_usd=self._settings.budget_limit_usd,
             )
             graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
+            # Contract generation phase
+            self._contracts = await self.generate_contracts(graph, db, self._pipeline_id)
             try:
                 await check_budget(db, self._pipeline_id, self._settings)
             except BudgetExceededError as exc:

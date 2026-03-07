@@ -130,6 +130,8 @@ class PipelineRow(Base):
     github_issue_number: Mapped[int | None] = mapped_column(default=None)
     template_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     template_config_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Contract Builder output (JSON blob)
+    contracts_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
 
 class UserTemplateRow(Base):
@@ -566,6 +568,22 @@ class Database:
             if row:
                 row.branch_name = branch_name
                 await session.commit()
+
+    async def set_pipeline_contracts(self, pipeline_id: str, contracts_json: str) -> None:
+        """Store the ContractSet JSON for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.contracts_json = contracts_json
+                await session.commit()
+
+    async def get_pipeline_contracts(self, pipeline_id: str) -> str | None:
+        """Get the ContractSet JSON for a pipeline."""
+        pipeline = await self.get_pipeline(pipeline_id)
+        return getattr(pipeline, "contracts_json", None) if pipeline else None
 
     async def list_pipelines(self, user_id: str | None = None) -> list[PipelineRow]:
         async with self._session_factory() as session:

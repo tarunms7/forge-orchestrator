@@ -37,6 +37,8 @@ class TaskDefinition(BaseModel):
     files: list[str]
     depends_on: list[str] = Field(default_factory=list)
     complexity: Complexity = Complexity.MEDIUM
+    # Integration hints from planner (optional for backward compat)
+    integration_hints: list[dict] | None = None
 
     @field_validator("files")
     @classmethod
@@ -51,6 +53,8 @@ class TaskGraph(BaseModel):
 
     tasks: list[TaskDefinition] = Field(min_length=1)
     conventions: dict | None = None
+    # Cross-task integration hints (collected from all tasks)
+    integration_hints: list[dict] | None = None
 
 
 class TaskRecord(BaseModel):

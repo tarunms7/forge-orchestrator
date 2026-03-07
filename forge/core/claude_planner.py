@@ -36,6 +36,15 @@ Given a user request and project context, produce a TaskGraph as valid JSON with
       "depends_on": [],
       "complexity": "low"
     }
+  ],
+  "integration_hints": [
+    {
+      "producer_task_id": "task-1",
+      "consumer_task_ids": ["task-3", "task-4"],
+      "interface_type": "api_endpoint",
+      "description": "REST API for template CRUD",
+      "endpoint_hints": ["GET /api/templates", "POST /api/templates"]
+    }
   ]
 }
 
@@ -52,6 +61,14 @@ Rules:
 - MINIMIZE dependencies. Only add depends_on when a task genuinely needs another task's output files. Independent tasks should have empty depends_on so they run in parallel.
 - Never make test tasks depend on implementation tasks — tests should be self-contained with mocks.
 - If the user request mentions attached images (file paths), you MUST read them first with the Read tool before planning. Include the image paths in relevant task descriptions so agents can also read them.
+- INTEGRATION HINTS: When tasks have cross-task interfaces (one task produces an API/type/event that another task consumes), add an "integration_hints" array. Each hint identifies:
+  - producer_task_id: The task that CREATES the interface (e.g., backend API)
+  - consumer_task_ids: Tasks that CONSUME it (e.g., frontend components)
+  - interface_type: one of "api_endpoint", "shared_type", "event", "file_import"
+  - description: What the interface is for
+  - endpoint_hints: (for api_endpoint only) List of endpoints like "GET /api/foo"
+- If there are NO cross-task interfaces (all tasks are independent), omit integration_hints entirely.
+- IMPORTANT: Integration hints enable PARALLEL execution. When you add integration hints, the system can generate contracts so both producer and consumer tasks run simultaneously. Without hints, consumer tasks must wait for producer tasks. PREFER adding hints over adding depends_on for API integration tasks.
 - Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object."""
 
 
@@ -138,7 +155,7 @@ class ClaudePlannerLLM(PlannerLLM):
 def _extract_json(text: str) -> str:
     """Extract JSON from response, stripping markdown fences if present."""
     text = text.strip()
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if match:
         return match.group(1)
     start = text.find("{")
