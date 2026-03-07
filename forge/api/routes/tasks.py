@@ -1388,7 +1388,7 @@ async def get_task_status(
                 elif ev.event_type == "task:merge_result":
                     te["mergeResult"] = ev.payload
                 elif ev.event_type == "task:cost_update":
-                    te["cost_usd"] = (te["cost_usd"] or 0) + (ev.payload.get("cost_usd", 0))
+                    te["cost_usd"] = (te["cost_usd"] or 0) + (ev.payload.get("agent_cost_usd") or ev.payload.get("review_cost_usd") or 0)
                 elif ev.event_type == "task:files_changed":
                     te["files_changed"] = ev.payload.get("files", [])
                 elif ev.event_type == "task:state_changed":
@@ -1413,11 +1413,12 @@ async def get_task_status(
             # Use live DB state if available (more accurate than last event)
             if tid in task_state_map:
                 enriched["state"] = task_state_map[tid]
-            # Include per-task cost fields from TaskRow
+            # Include per-task cost fields from TaskRow (authoritative source)
             if tid in task_row_map:
                 row = task_row_map[tid]
                 enriched["agent_cost_usd"] = row.agent_cost_usd
                 enriched["review_cost_usd"] = row.review_cost_usd
+                enriched["cost_usd"] = (row.agent_cost_usd or 0) + (row.review_cost_usd or 0)
                 enriched["input_tokens"] = row.input_tokens
                 enriched["output_tokens"] = row.output_tokens
             enriched_tasks.append(enriched)

@@ -80,10 +80,32 @@ export default function PlannerCard() {
   // Deduplicate lines — the SDK emits the same content as both
   // AssistantMessage (streaming) and ResultMessage (final), which
   // causes identical JSON to appear twice in the output.
-  const plannerOutput = rawPlannerOutput.filter((line, i, arr) => {
+  const deduped = rawPlannerOutput.filter((line, i, arr) => {
     const trimmed = line.trim();
     return arr.findIndex((l) => l.trim() === trimmed) === i;
   });
+
+  // Strip JSON code blocks from planner output — the raw task graph
+  // JSON is noisy and the user already sees it as the structured plan panel.
+  const plannerOutput: string[] = [];
+  let inJsonFence = false;
+  for (const line of deduped) {
+    const trimmed = line.trim();
+    if (/^```json\b/.test(trimmed)) {
+      inJsonFence = true;
+      continue;
+    }
+    if (inJsonFence && trimmed === "```") {
+      inJsonFence = false;
+      continue;
+    }
+    if (inJsonFence) continue;
+    // Also skip standalone lines that are just a JSON fence marker
+    if (trimmed === "```") continue;
+    // Skip lines that are pure JSON objects (starts with { and is valid-ish JSON)
+    if (trimmed.startsWith("{") && trimmed.length > 100) continue;
+    plannerOutput.push(line);
+  }
   const lineCount = plannerOutput.length;
 
   // Auto-scroll during active planning
@@ -93,6 +115,8 @@ export default function PlannerCard() {
     }
   }, [plannerOutput, isActive]);
 
+  // Show the card when actively planning, OR when we have output to display
+  // (even after planning completes). Also show during contracts phase.
   if (phase !== "planning" && plannerOutput.length === 0) return null;
 
   return (
