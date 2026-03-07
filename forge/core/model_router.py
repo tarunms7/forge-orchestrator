@@ -38,8 +38,12 @@ def select_model(strategy: str, stage: str, complexity: str, overrides: dict | N
         Model name string: "opus", "sonnet", or "haiku"
     """
     if overrides:
-        # Check for direct override
-        key = f"{stage}_model" if stage in ("planner", "reviewer") else f"agent_model_{complexity}"
+        # Check for direct override — planner/reviewer/contract_builder use {stage}_model,
+        # agent uses agent_model_{complexity}
+        if stage in ("planner", "reviewer", "contract_builder"):
+            key = f"{stage}_model"
+        else:
+            key = f"agent_model_{complexity}"
         override_val = overrides.get(key)
         if override_val:
             return override_val

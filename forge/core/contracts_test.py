@@ -219,3 +219,47 @@ class TestIntegrationHint:
             description="Shared data type",
         )
         assert hint.endpoint_hints == []
+
+
+# -- remap_task_ids tests -------------------------------------------------
+
+
+class TestRemapTaskIds:
+    def test_remap_api_contracts(self):
+        cs = ContractSet(
+            api_contracts=[_sample_api_contract(producer="task-1", consumers=["task-2"])],
+            type_contracts=[_sample_type_contract(used_by=["task-1", "task-2"])],
+            integration_hints=[
+                IntegrationHint(
+                    producer_task_id="task-1",
+                    consumer_task_ids=["task-2"],
+                    interface_type=ContractType.API_ENDPOINT,
+                    description="Test",
+                ),
+            ],
+        )
+        id_map = {"task-1": "abc-task-1", "task-2": "abc-task-2"}
+        remapped = cs.remap_task_ids(id_map)
+
+        assert remapped.api_contracts[0].producer_task_id == "abc-task-1"
+        assert remapped.api_contracts[0].consumer_task_ids == ["abc-task-2"]
+        assert remapped.type_contracts[0].used_by_tasks == ["abc-task-1", "abc-task-2"]
+        assert remapped.integration_hints[0].producer_task_id == "abc-task-1"
+        assert remapped.integration_hints[0].consumer_task_ids == ["abc-task-2"]
+
+    def test_remap_preserves_unknown_ids(self):
+        """IDs not in the map are left unchanged."""
+        cs = ContractSet(
+            api_contracts=[_sample_api_contract(producer="task-1", consumers=["task-99"])],
+        )
+        id_map = {"task-1": "abc-task-1"}
+        remapped = cs.remap_task_ids(id_map)
+        assert remapped.api_contracts[0].consumer_task_ids == ["task-99"]
+
+    def test_remap_returns_new_instance(self):
+        cs = ContractSet(api_contracts=[_sample_api_contract()])
+        id_map = {"task-1": "abc-task-1"}
+        remapped = cs.remap_task_ids(id_map)
+        # Original should be unmodified
+        assert cs.api_contracts[0].producer_task_id == "task-1"
+        assert remapped.api_contracts[0].producer_task_id == "abc-task-1"

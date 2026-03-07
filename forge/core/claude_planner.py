@@ -155,7 +155,7 @@ class ClaudePlannerLLM(PlannerLLM):
 def _extract_json(text: str) -> str:
     """Extract JSON from response, stripping markdown fences if present."""
     text = text.strip()
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if match:
         return match.group(1)
     start = text.find("{")

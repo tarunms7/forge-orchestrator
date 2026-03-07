@@ -278,9 +278,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
 
         context = self._snapshot.format_for_planner() if self._snapshot else ""
-        contract_set = await builder.build(
-            graph, hints, project_context=context, on_message=_on_contract_msg,
-        )
+        try:
+            contract_set = await builder.build(
+                graph, hints, project_context=context, on_message=_on_contract_msg,
+            )
+        except Exception as exc:
+            logger.warning("Contract builder failed unexpectedly: %s — proceeding without contracts", exc)
+            return ContractSet()
 
         # Track cost
         if builder_llm._last_sdk_result:
@@ -334,6 +338,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 for t in graph.tasks:
                     t.depends_on = [id_map.get(d, d) for d in t.depends_on]
                     t.id = id_map[t.id]
+
+                # Remap contract task IDs to match the prefixed runtime IDs
+                contract_set = getattr(self, "_contracts", None)
+                if contract_set and contract_set.has_contracts():
+                    self._contracts = contract_set.remap_task_ids(id_map)
+                    await db.set_pipeline_contracts(
+                        pid, self._contracts.model_dump_json(),
+                    )
 
             for task_def in graph.tasks:
                 await db.create_task(

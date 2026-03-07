@@ -90,9 +90,10 @@ class ContractBuilderLLM:
         hints: list[IntegrationHint],
         project_context: str = "",
         on_message: Callable | None = None,
+        feedback: str | None = None,
     ) -> str:
         """Generate a ContractSet JSON string from integration hints."""
-        prompt = self._build_prompt(graph, hints, project_context)
+        prompt = self._build_prompt(graph, hints, project_context, feedback=feedback)
 
         options = ClaudeCodeOptions(
             system_prompt=CONTRACT_BUILDER_SYSTEM_PROMPT,
@@ -121,6 +122,7 @@ class ContractBuilderLLM:
         graph: TaskGraph,
         hints: list[IntegrationHint],
         project_context: str,
+        feedback: str | None = None,
     ) -> str:
         parts: list[str] = []
 
@@ -148,6 +150,13 @@ class ContractBuilderLLM:
         if project_context:
             parts.append(f"\n## Project Context\n{project_context}")
 
+        if feedback:
+            parts.append(
+                f"\n## Previous Attempt Failed\n"
+                f"Your previous response had this validation error:\n{feedback}\n"
+                f"Fix the issue and try again."
+            )
+
         parts.append(
             "\nGenerate precise contracts for ALL integration hints above. "
             "Read existing code if needed to align with project patterns. "
@@ -172,15 +181,18 @@ class ContractBuilder:
         on_message: Callable | None = None,
     ) -> ContractSet:
         """Generate and validate a ContractSet."""
+        last_error: str | None = None
         for attempt in range(self._max_retries):
             logger.info("Contract generation attempt %d/%d", attempt + 1, self._max_retries)
             raw = await self._llm.generate_contracts(
                 graph, hints, project_context, on_message,
+                feedback=last_error,
             )
             contract_set, error = self._parse_and_validate(raw, graph)
             if contract_set is not None:
                 logger.info("Contract generation succeeded on attempt %d", attempt + 1)
                 return contract_set
+            last_error = error
             logger.warning("Attempt %d validation failed: %s", attempt + 1, error)
 
         # If all retries fail, return empty ContractSet (graceful degradation)
@@ -224,7 +236,8 @@ class ContractBuilder:
 def _extract_json(text: str) -> str:
     """Extract JSON from response, stripping markdown fences if present."""
     text = text.strip()
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    # Use greedy .* so nested braces aren't truncated
+    match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if match:
         return match.group(1)
     start = text.find("{")

@@ -204,3 +204,52 @@ async def test_build_retry_on_invalid_then_succeed():
 
     assert result.has_contracts()
     assert mock.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_passes_feedback_on_retry():
+    """Validation error from first attempt should be passed as feedback to second."""
+    llm = ContractBuilderLLM()
+    builder = ContractBuilder(llm, max_retries=3)
+    graph = _sample_graph()
+    hints = _sample_hints()
+
+    with patch.object(llm, "generate_contracts", new_callable=AsyncMock) as mock:
+        mock.side_effect = ["{invalid json", _valid_contract_json()]
+        await builder.build(graph, hints)
+
+    # First call: no feedback
+    first_call_kwargs = mock.call_args_list[0][1]
+    assert first_call_kwargs.get("feedback") is None
+
+    # Second call: should have feedback with the validation error
+    second_call_kwargs = mock.call_args_list[1][1]
+    assert second_call_kwargs.get("feedback") is not None
+    assert "Invalid JSON" in second_call_kwargs["feedback"]
+
+
+@pytest.mark.asyncio
+async def test_build_no_hints_skip():
+    """Empty hints list should return empty ContractSet immediately."""
+    llm = ContractBuilderLLM()
+    builder = ContractBuilder(llm, max_retries=2)
+    graph = _sample_graph()
+
+    # build() is called but with empty hints — ContractBuilder doesn't skip,
+    # that's the daemon's job. However, LLM should still be called.
+    # Test the daemon skip logic via generate_contracts instead.
+    # Here we just verify builder works with empty hints.
+    with patch.object(llm, "generate_contracts", new_callable=AsyncMock) as mock:
+        mock.return_value = '{"api_contracts": [], "type_contracts": []}'
+        result = await builder.build(graph, [])
+
+    assert not result.has_contracts()
+
+
+class TestExtractJsonNestedBraces:
+    def test_nested_json_in_fence(self):
+        """Greedy regex should capture the full JSON with nested braces."""
+        nested = '{"outer": {"inner": {"deep": "value"}}}'
+        text = f'```json\n{nested}\n```'
+        result = _extract_json(text)
+        assert result == nested

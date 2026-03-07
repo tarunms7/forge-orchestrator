@@ -82,6 +82,41 @@ class ContractSet(BaseModel):
         """Whether any contracts exist (used to decide if phase should run)."""
         return bool(self.api_contracts or self.type_contracts)
 
+    def remap_task_ids(self, id_map: dict[str, str]) -> "ContractSet":
+        """Return a new ContractSet with task IDs remapped via *id_map*.
+
+        Used after the execute() ID-prefix step so contracts reference the
+        same prefixed IDs that agents and reviewers use at runtime.
+        """
+        new_apis = []
+        for api in self.api_contracts:
+            new_apis.append(api.model_copy(update={
+                "producer_task_id": id_map.get(api.producer_task_id, api.producer_task_id),
+                "consumer_task_ids": [
+                    id_map.get(cid, cid) for cid in api.consumer_task_ids
+                ],
+            }))
+        new_types = []
+        for tc in self.type_contracts:
+            new_types.append(tc.model_copy(update={
+                "used_by_tasks": [
+                    id_map.get(tid, tid) for tid in tc.used_by_tasks
+                ],
+            }))
+        new_hints = []
+        for hint in self.integration_hints:
+            new_hints.append(hint.model_copy(update={
+                "producer_task_id": id_map.get(hint.producer_task_id, hint.producer_task_id),
+                "consumer_task_ids": [
+                    id_map.get(cid, cid) for cid in hint.consumer_task_ids
+                ],
+            }))
+        return ContractSet(
+            api_contracts=new_apis,
+            type_contracts=new_types,
+            integration_hints=new_hints,
+        )
+
 
 class TaskContracts(BaseModel):
     """Contracts relevant to a single task. Injected into agent prompt."""
