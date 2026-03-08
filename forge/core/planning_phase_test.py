@@ -8,7 +8,6 @@ phase_changed:planned event to transition the UI out of 'planning'.
 Bug 2: ForgeSettings().max_retries defaults to 3, but should be 5.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
