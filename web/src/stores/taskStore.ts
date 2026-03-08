@@ -389,7 +389,6 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
           }));
           return {
             tasks: newTasks,
-            phase: "planned",
             timeline: newTimeline,
             editedTasks: editable,
             planValidation: validateTaskGraph(editable),
