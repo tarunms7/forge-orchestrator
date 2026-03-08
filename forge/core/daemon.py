@@ -237,13 +237,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await self._emit("pipeline:plan_ready", plan_data, db=db, pipeline_id=pipeline_id)
             else:
                 await self._events.emit("pipeline:plan_ready", plan_data)
-
-            # Explicitly transition phase to 'planned' AFTER plan_ready
-            # so the frontend receives task data before the phase changes.
-            if pipeline_id:
-                await self._emit("pipeline:phase_changed", {"phase": "planned"}, db=db, pipeline_id=pipeline_id)
-            else:
-                await self._events.emit("pipeline:phase_changed", {"phase": "planned"})
         return graph
 
     async def generate_contracts(

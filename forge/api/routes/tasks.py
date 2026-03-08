@@ -388,10 +388,6 @@ async def create_task(
                     )
                     # Update DB status so REST hydration returns correct phase
                     await forge_db.update_pipeline_status(pipeline_id, "planned")
-                    # Broadcast phase transition so frontend updates pipeline phase
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:phase_changed", "phase": "planned",
-                    })
                     # Store graph for later execution (lock protects concurrent access)
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
                     if lock:
