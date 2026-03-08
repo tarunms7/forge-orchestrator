@@ -8,14 +8,12 @@ Verifies that:
 - plan_ready event data includes tasks but NOT a phase field
 """
 
-import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.config.settings import ForgeSettings
 from forge.core.daemon import ForgeDaemon
 from forge.core.events import EventEmitter
-from forge.core.models import TaskGraph, TaskRecord
+from forge.core.models import TaskGraph
 from forge.merge.worktree import WorktreeManager
 from forge.storage.db import Database
 
