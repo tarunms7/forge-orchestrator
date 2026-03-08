@@ -1,11 +1,13 @@
-"""Tests for planning-phase bugs.
+"""Regression tests for planning-phase and settings bugs.
 
-Bug 1: daemon.plan() emits pipeline:phase_changed with phase='planning' at the
-start and pipeline:plan_ready at the end, but NEVER emits
-pipeline:phase_changed with phase='planned'. The frontend relies on a
-phase_changed:planned event to transition the UI out of 'planning'.
+Bug 1 (planning phase auto-set): daemon.plan() must emit
+pipeline:phase_changed with phase='planned' AFTER pipeline:plan_ready.
+The frontend relies on a phase_changed:planned event to transition
+the UI out of 'planning'. Without the fix, plan() only emitted
+phase_changed:'planning' at the start and plan_ready at the end.
 
-Bug 2: ForgeSettings().max_retries defaults to 3, but should be 5.
+Bug 2 (max_retries default): ForgeSettings().max_retries must default
+to 5, not 3. The previous default of 3 was too low for flaky LLM calls.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -87,11 +89,11 @@ def daemon(event_emitter):
 async def test_plan_emits_phase_changed_planned_after_plan_ready(
     daemon, mock_db, captured_events
 ):
-    """daemon.plan() should emit pipeline:phase_changed with phase='planned'
+    """daemon.plan() must emit pipeline:phase_changed with phase='planned'
     AFTER emitting pipeline:plan_ready.
 
-    Currently FAILS because plan() only emits phase_changed:'planning' at the
-    start and plan_ready at the end — it never emits phase_changed:'planned'.
+    Regression: without the fix, plan() only emitted phase_changed:'planning'
+    at the start and plan_ready at the end — never phase_changed:'planned'.
     """
     pipeline_id = "pipe-001"
 
@@ -144,10 +146,11 @@ async def test_plan_emits_phase_changed_planned_after_plan_ready(
 async def test_plan_emits_phase_changed_planned_without_pipeline_id(
     daemon, captured_events
 ):
-    """Even without a pipeline_id, plan() should emit phase_changed:'planned'
+    """Even without a pipeline_id, plan() must emit phase_changed:'planned'
     on the EventEmitter after plan_ready.
 
-    Currently FAILS for the same reason as the above test.
+    Regression: same bug as the with-pipeline_id case — plan() never emitted
+    phase_changed:'planned' when called without a pipeline_id.
     """
     mock_planner_llm = MagicMock()
     mock_planner_llm._last_sdk_result = None
@@ -184,9 +187,9 @@ async def test_plan_emits_phase_changed_planned_without_pipeline_id(
 # ---------------------------------------------------------------------------
 
 def test_max_retries_default_is_five():
-    """ForgeSettings().max_retries should default to 5.
+    """ForgeSettings().max_retries must default to 5.
 
-    Currently FAILS because the default is 3 (settings.py line 18).
+    Regression: the previous default was 3, too low for flaky LLM calls.
     """
     s = ForgeSettings()
     assert s.max_retries == 5, (
