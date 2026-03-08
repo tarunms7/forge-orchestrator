@@ -809,9 +809,11 @@ async def approve_task(
             # branch is fast-forwarded to include this task's changes,
             # making the diff zero.
             from forge.merge.worker import MergeWorker
+            from forge.core.daemon_helpers import _get_diff_stats
             project_dir = pipeline.project_dir
-            diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
-            stats = _parse_diff_stats(diff)
+            # Use _get_diff_stats (camelCase keys: linesAdded/linesRemoved)
+            # to match the frontend's TaskState.mergeResult interface.
+            stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
 
             # Perform the actual merge via MergeWorker
             merge_worker = MergeWorker(project_dir, main_branch=pipeline_branch)
@@ -820,13 +822,21 @@ async def approve_task(
 
             if merge_result.success:
                 await forge_db.update_task_state(task_id, "done")
+                merge_event = {
+                    "type": "task:merge_result",
+                    "task_id": task_id,
+                    "success": True,
+                    **stats,
+                }
+                # Persist event to DB so page refresh can reconstruct stats
+                await forge_db.log_event(
+                    pipeline_id=pipeline_id,
+                    task_id=task_id,
+                    event_type="task:merge_result",
+                    payload=merge_event,
+                )
                 if ws_manager:
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "task:merge_result",
-                        "task_id": task_id,
-                        "success": True,
-                        **stats,
-                    })
+                    await ws_manager.broadcast(pipeline_id, merge_event)
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "task:state_changed",
                         "task_id": task_id,
@@ -835,13 +845,20 @@ async def approve_task(
             else:
                 logger.error("Merge failed for task %s: %s", task_id, merge_result.error)
                 await forge_db.update_task_state(task_id, "error")
+                fail_event = {
+                    "type": "task:merge_result",
+                    "task_id": task_id,
+                    "success": False,
+                    "error": merge_result.error,
+                }
+                await forge_db.log_event(
+                    pipeline_id=pipeline_id,
+                    task_id=task_id,
+                    event_type="task:merge_result",
+                    payload=fail_event,
+                )
                 if ws_manager:
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "task:merge_result",
-                        "task_id": task_id,
-                        "success": False,
-                        "error": merge_result.error,
-                    })
+                    await ws_manager.broadcast(pipeline_id, fail_event)
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "task:state_changed",
                         "task_id": task_id,
