@@ -364,10 +364,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         worktree_mgr = WorktreeManager(self._project_dir, f"{self._project_dir}/.forge/worktrees")
         adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
-        base_branch = _get_current_branch(self._project_dir)
 
         # Determine pipeline branch name: use user-supplied name, or auto-generate from description
         pipeline_record = await db.get_pipeline(pid)
+
+        # On resume/retry, use the stored base branch from the original run.
+        # Re-detecting via _get_current_branch would pick up whatever the user
+        # has checked out NOW, which may be different from the original base.
+        if resume:
+            base_branch = getattr(pipeline_record, "base_branch", None) or _get_current_branch(self._project_dir)
+        else:
+            base_branch = _get_current_branch(self._project_dir)
         custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
         if custom_branch and custom_branch.strip():
             pipeline_branch = custom_branch.strip()
@@ -377,14 +384,30 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Persist the final computed branch name so the PR creation endpoint can use it
         await db.set_pipeline_branch_name(pid, pipeline_branch)
 
-        # Isolated pipeline branch — code reaches main only through a PR
-        subprocess.run(
-            ["git", "branch", "-f", pipeline_branch, base_branch],
-            cwd=self._project_dir, check=True, capture_output=True,
-        )
+        # Isolated pipeline branch — code reaches main only through a PR.
+        # On resume/retry the branch already exists and may contain merged
+        # task changes — force-resetting it would DESTROY that work.
+        if not resume:
+            subprocess.run(
+                ["git", "branch", "-f", pipeline_branch, base_branch],
+                cwd=self._project_dir, check=True, capture_output=True,
+            )
+            await db.set_pipeline_base_branch(pid, base_branch)
+        else:
+            # Verify the branch still exists (safety check)
+            branch_check = subprocess.run(
+                ["git", "rev-parse", "--verify", pipeline_branch],
+                cwd=self._project_dir, capture_output=True, text=True,
+            )
+            if branch_check.returncode != 0:
+                # Branch was deleted — recreate it from base
+                console.print(f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]")
+                subprocess.run(
+                    ["git", "branch", "-f", pipeline_branch, base_branch],
+                    cwd=self._project_dir, check=True, capture_output=True,
+                )
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
-        await db.set_pipeline_base_branch(pid, base_branch)
 
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
 
