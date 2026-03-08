@@ -77,11 +77,6 @@ async def test_plan_emits_events_in_correct_order():
 
     emitter = EventEmitter()
 
-    async def _capture(event_type: str):
-        async def _handler(data):
-            emitted_events.append((event_type, data))
-        return _handler
-
     # Register handlers for all relevant events
     for evt in ("pipeline:phase_changed", "planner:output", "pipeline:plan_ready",
                 "pipeline:cost_update", "pipeline:cost_estimate"):
@@ -185,14 +180,14 @@ async def test_emit_plan_ready_false_skips_plan_ready_but_emits_planned():
     # phase_changed:planning should still be emitted
     assert emitted_events[0] == ("pipeline:phase_changed", {"phase": "planning"})
 
-    # phase_changed:planned should NOT be emitted either (it's inside the emit_plan_ready block)
+    # phase_changed:planned should STILL be emitted even when emit_plan_ready=False
     planned_events = [
         data for evt, data in emitted_events
         if evt == "pipeline:phase_changed" and data.get("phase") == "planned"
     ]
-    assert len(planned_events) == 0, (
-        "phase_changed:planned should NOT be emitted when emit_plan_ready=False "
-        "(both plan_ready and planned are guarded by the emit_plan_ready flag)"
+    assert len(planned_events) == 1, (
+        "phase_changed:planned should STILL be emitted when emit_plan_ready=False — "
+        "only plan_ready is guarded by the emit_plan_ready flag"
     )
 
 
