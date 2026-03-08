@@ -801,17 +801,21 @@ async def approve_task(
                 await forge_db.update_task_state(task_id, "error")
                 return
 
-            # Perform the actual merge via MergeWorker
+            # Compute diff stats BEFORE merge — after merge the pipeline
+            # branch is fast-forwarded to include this task's changes,
+            # making the diff zero.
             from forge.merge.worker import MergeWorker
             project_dir = pipeline.project_dir
+            diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+            stats = _parse_diff_stats(diff)
+
+            # Perform the actual merge via MergeWorker
             merge_worker = MergeWorker(project_dir, main_branch=pipeline_branch)
             branch = f"forge/{task_id}"
             merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
 
             if merge_result.success:
                 await forge_db.update_task_state(task_id, "done")
-                diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
-                stats = _parse_diff_stats(diff)
                 if ws_manager:
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "task:merge_result",
