@@ -52,13 +52,11 @@ export default function CompletionSummary({
   const githubIssueUrl = useTaskStore((s) => s.githubIssueUrl);
   const githubIssueNumber = useTaskStore((s) => s.githubIssueNumber);
   const followUpStatus = useTaskStore((s) => s.followUpStatus);
-  const worktreesCleaned = useTaskStore((s) => s.worktreesCleaned);
 
   // Local fallback for manual PR creation (if auto-PR fails)
   const [manualPrLoading, setManualPrLoading] = useState(false);
   const [manualPrError, setManualPrError] = useState<string | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [cleanupDone, setCleanupDone] = useState(false);
 
   const taskList = Object.values(tasks);
   const totalTasks = taskList.length;
@@ -112,8 +110,6 @@ export default function CompletionSummary({
     setCleanupLoading(true);
     try {
       await apiPost(`/tasks/${pipelineId}/cleanup`, {}, token);
-      setCleanupDone(true);
-      useTaskStore.setState({ worktreesCleaned: true });
     } catch (err) {
       console.warn("Cleanup failed:", err);
     } finally {
@@ -367,52 +363,30 @@ export default function CompletionSummary({
           Have follow-up questions?
         </button>
 
-        {/* Cleanup worktrees button — hidden if already cleaned (auto or manual) */}
-        {!worktreesCleaned && !cleanupDone && (
-          <button
-            type="button"
-            onClick={handleCleanup}
-            disabled={cleanupLoading}
-            className="btn btn-ghost"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 16px",
-              fontSize: 13,
-              fontWeight: 500,
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius-md)",
-              cursor: cleanupLoading ? "default" : "pointer",
-              opacity: cleanupLoading ? 0.7 : 1,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            {cleanupLoading ? "Cleaning..." : "Clean Up Worktrees"}
-          </button>
-        )}
-        {(worktreesCleaned || cleanupDone) && (
-          <span
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              fontWeight: 500,
-              color: "var(--green)",
-              padding: "4px 10px",
-              borderRadius: "var(--radius-sm)",
-              background: "rgba(52,211,153,0.1)",
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            Worktrees cleaned
-          </span>
-        )}
+        {/* Cleanup worktrees — always visible so user can trigger anytime */}
+        <button
+          type="button"
+          onClick={handleCleanup}
+          disabled={cleanupLoading}
+          className="btn btn-ghost"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 16px",
+            fontSize: 13,
+            fontWeight: 500,
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+            cursor: cleanupLoading ? "default" : "pointer",
+            opacity: cleanupLoading ? 0.7 : 1,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          {cleanupLoading ? "Cleaning..." : "Clean Up Worktrees"}
+        </button>
 
         {followUpLabel && (
           <span
