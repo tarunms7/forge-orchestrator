@@ -81,6 +81,7 @@ export interface PipelineState {
   budgetLimitUsd: number;
   githubIssueUrl: string | null;
   githubIssueNumber: number | null;
+  worktreesCleaned: boolean;
 
   /* Plan editing state */
   editedTasks: EditableTask[] | null;
@@ -174,6 +175,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   budgetLimitUsd: 0,
   githubIssueUrl: null,
   githubIssueNumber: null,
+  worktreesCleaned: false,
   editedTasks: null,
   planValidation: { valid: true, errors: [] },
   ...INITIAL_FOLLOWUP,
@@ -345,6 +347,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       budgetLimitUsd: 0,
       githubIssueUrl: null,
       githubIssueNumber: null,
+      worktreesCleaned: false,
       editedTasks: null,
       planValidation: { valid: true, errors: [] },
       ...INITIAL_FOLLOWUP,
@@ -663,6 +666,9 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
 
         case "pipeline:pr_failed":
           return { prLoading: false, prError: data.error as string, timeline: newTimeline };
+
+        case "pipeline:worktrees_cleaned":
+          return { worktreesCleaned: true, timeline: newTimeline };
 
         case "planner:output":
           return {
