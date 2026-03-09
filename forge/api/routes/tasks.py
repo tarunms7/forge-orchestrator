@@ -610,20 +610,6 @@ async def execute_pipeline(
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "pipeline:pr_failed", "error": str(pr_exc),
                     })
-
-            # Clean up worktrees after pipeline completes (regardless of PR outcome)
-            try:
-                cleaned = await _cleanup_all_pipeline_worktrees(
-                    forge_db, pipeline_id, pipeline.project_dir,
-                )
-                if cleaned:
-                    logger.info("Cleaned %d worktree(s) for pipeline %s", cleaned, pipeline_id)
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:worktrees_cleaned",
-                        "cleaned": cleaned,
-                    })
-            except Exception as clean_exc:
-                logger.warning("Worktree cleanup failed for %s: %s", pipeline_id, clean_exc)
         except Exception as exc:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
