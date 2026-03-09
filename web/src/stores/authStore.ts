@@ -16,7 +16,8 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
 interface AuthState {
   token: string | null;
   userId: string | null;
-  setAuth: (token: string, userId: string) => void;
+  displayName: string | null;
+  setAuth: (token: string, userId: string, displayName?: string) => void;
   logout: () => void;
   refreshToken: () => Promise<boolean>;
 }
@@ -26,9 +27,10 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()((set, get) => ({
   token: null,
   userId: null,
-  setAuth: (token, userId) => set({ token, userId }),
+  displayName: null,
+  setAuth: (token, userId, displayName) => set({ token, userId, displayName: displayName ?? null }),
   logout: () => {
-    set({ token: null, userId: null });
+    set({ token: null, userId: null, displayName: null });
     // Clear any legacy localStorage data from previous versions
     if (typeof window !== "undefined") {
       localStorage.removeItem("forge-auth");
@@ -55,7 +57,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const payload = decodeJwtPayload(data.access_token);
       const current = get();
       const userId = (payload?.sub as string | undefined) ?? current.userId;
-      set({ token: data.access_token, userId });
+      const displayName = (payload?.dn as string | undefined) ?? current.displayName;
+      set({ token: data.access_token, userId, displayName });
       return true;
     } catch {
       return false;

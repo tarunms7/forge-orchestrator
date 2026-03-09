@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuthStore } from "@/stores/authStore";
 const NAV_ITEMS = [
   {
     label: "Dashboard",
@@ -42,6 +43,8 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const displayName = useAuthStore((s) => s.displayName);
+  const initial = displayName?.charAt(0)?.toUpperCase() ?? "U";
 
   return (
     <aside className="sidebar">
@@ -102,8 +105,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Footer */}
       <div className="sidebar-footer">
         <div className="user-pill">
-          <div className="user-avatar">T</div>
-          <span className="user-name">Tarun M.</span>
+          <div className="user-avatar">{initial}</div>
+          <span className="user-name">{displayName ?? "User"}</span>
         </div>
       </div>
     </aside>
