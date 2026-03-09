@@ -1,8 +1,6 @@
 """Tests for ForgeDaemon._auto_detect_commands()."""
 
 import json
-import os
-from unittest.mock import mock_open, patch
 
 import pytest
 
