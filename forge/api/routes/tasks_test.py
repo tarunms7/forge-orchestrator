@@ -1181,9 +1181,11 @@ class TestGetTaskDiff:
             ))
             await session.commit()
 
-        # Mock _get_diff_vs_main to return a sample diff
+        # Mock _get_diff_vs_main and _get_diff_stats for the temp worktree
         mock_diff = "diff --git a/foo.py b/foo.py\n+added line\n-removed line\n"
-        with patch("forge.api.routes.tasks._get_diff_vs_main", return_value=mock_diff):
+        mock_stats = {"filesChanged": 1, "linesAdded": 1, "linesRemoved": 1}
+        with patch("forge.api.routes.tasks._get_diff_vs_main", return_value=mock_diff), \
+             patch("forge.api.routes.tasks._get_diff_stats", return_value=mock_stats):
             resp = await client.get(
                 f"/api/tasks/{pid}/tasks/{tid}/diff",
                 headers=headers,
@@ -1192,9 +1194,9 @@ class TestGetTaskDiff:
         data = resp.json()
         assert data["task_id"] == tid
         assert "diff" in data
-        assert data["stats"]["files_changed"] == 1
-        assert data["stats"]["lines_added"] == 1
-        assert data["stats"]["lines_removed"] == 1
+        assert data["stats"]["filesChanged"] == 1
+        assert data["stats"]["linesAdded"] == 1
+        assert data["stats"]["linesRemoved"] == 1
 
         # Cleanup
         import shutil

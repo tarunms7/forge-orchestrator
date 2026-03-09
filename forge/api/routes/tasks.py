@@ -39,6 +39,41 @@ router = APIRouter(tags=["tasks"])
 security = HTTPBearer(auto_error=False)
 
 
+# ---------------------------------------------------------------------------
+# Worktree cleanup helpers
+# ---------------------------------------------------------------------------
+
+def _cleanup_worktree(project_dir: str, task_id: str) -> bool:
+    """Remove a single task's worktree + branch. Returns True if cleaned."""
+    from forge.merge.worktree import WorktreeManager
+
+    worktrees_dir = os.path.join(project_dir, ".forge", "worktrees")
+    try:
+        wt_mgr = WorktreeManager(project_dir, worktrees_dir)
+        wt_mgr.remove(task_id)
+        return True
+    except Exception as exc:
+        logger.debug("Worktree cleanup failed for %s: %s", task_id, exc)
+        return False
+
+
+async def _cleanup_all_pipeline_worktrees(
+    forge_db, pipeline_id: str, project_dir: str,
+) -> int:
+    """Remove worktrees for all tasks in a pipeline. Returns count cleaned."""
+    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+    cleaned = 0
+    for task in tasks:
+        if _cleanup_worktree(project_dir, task.id):
+            cleaned += 1
+    # Prune stale git worktree admin files
+    subprocess.run(
+        ["git", "worktree", "prune"],
+        cwd=project_dir, capture_output=True,
+    )
+    return cleaned
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -575,6 +610,20 @@ async def execute_pipeline(
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "pipeline:pr_failed", "error": str(pr_exc),
                     })
+
+            # Clean up worktrees after pipeline completes (regardless of PR outcome)
+            try:
+                cleaned = await _cleanup_all_pipeline_worktrees(
+                    forge_db, pipeline_id, pipeline.project_dir,
+                )
+                if cleaned:
+                    logger.info("Cleaned %d worktree(s) for pipeline %s", cleaned, pipeline_id)
+                    await ws_manager.broadcast(pipeline_id, {
+                        "type": "pipeline:worktrees_cleaned",
+                        "cleaned": cleaned,
+                    })
+            except Exception as clean_exc:
+                logger.warning("Worktree cleanup failed for %s: %s", pipeline_id, clean_exc)
         except Exception as exc:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
@@ -867,9 +916,14 @@ async def approve_task(
 
             # Clear approval context after merge completes
             await forge_db.clear_task_approval_context(task_id)
+
+            # Clean up worktree (success or failure — it's no longer useful)
+            _cleanup_worktree(project_dir, task_id)
         except Exception as exc:
             logger.exception("Merge failed for approved task %s: %s", task_id, exc)
             await forge_db.update_task_state(task_id, "error")
+            # Still try to clean up the worktree on error
+            _cleanup_worktree(pipeline.project_dir, task_id)
 
     asyncio.create_task(_do_merge())
 
@@ -915,6 +969,47 @@ async def reject_task(
         })
 
     return {"status": "retrying", "task_id": task_id}
+
+
+@router.post("/{pipeline_id}/cleanup")
+async def cleanup_pipeline_worktrees(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Remove leftover worktrees and orphaned branches for a pipeline."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    project_dir = pipeline.project_dir
+    cleaned = await _cleanup_all_pipeline_worktrees(forge_db, pipeline_id, project_dir)
+
+    # Also delete orphaned forge/* branches belonging to this pipeline's tasks
+    tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+    task_ids = {t.id for t in tasks}
+    branches_deleted = 0
+    for tid in task_ids:
+        branch = f"forge/{tid}"
+        result = subprocess.run(
+            ["git", "branch", "-D", branch],
+            cwd=project_dir, capture_output=True,
+        )
+        if result.returncode == 0:
+            branches_deleted += 1
+
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager and cleaned > 0:
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "pipeline:worktrees_cleaned",
+            "cleaned": cleaned,
+        })
+
+    return {"cleaned": cleaned, "branches_deleted": branches_deleted}
 
 
 # ── Pause / Resume endpoints ────────────────────────────────────────
@@ -1145,17 +1240,11 @@ async def restart_pipeline(
     clean_worktrees = body.clean_worktrees if body else True
     if clean_worktrees:
         try:
-            from forge.merge.worktree import WorktreeManager
-            wt_manager = WorktreeManager(project_dir)
-            tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
-            for task in tasks:
-                if task.worktree_path:
-                    try:
-                        wt_manager.remove(task.worktree_path)
-                    except Exception:
-                        logger.debug("Failed to clean worktree %s", task.worktree_path)
-        except ImportError:
-            logger.debug("WorktreeManager not available for worktree cleanup")
+            cleaned = await _cleanup_all_pipeline_worktrees(
+                forge_db, pipeline_id, project_dir,
+            )
+            if cleaned:
+                logger.info("Restart: cleaned %d worktree(s) for %s", cleaned, pipeline_id)
         except Exception:
             logger.debug("Worktree cleanup skipped: %s", pipeline_id)
 
