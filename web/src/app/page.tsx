@@ -43,6 +43,7 @@ const phaseToStatus: Record<string, string> = {
 
 export default function DashboardPage() {
   const token = useAuthStore((s) => s.token);
+  const displayName = useAuthStore((s) => s.displayName);
   const router = useRouter();
   const [stats, setStats] = useState<DashboardStats>({
     total_runs: 0,
@@ -81,7 +82,7 @@ export default function DashboardPage() {
     <div className="page-content">
       {/* Welcome */}
       <div className="welcome-section">
-        <h1 className="welcome-title">Welcome back, Tarun</h1>
+        <h1 className="welcome-title">Welcome back{displayName ? `, ${displayName.split(" ")[0]}` : ""}</h1>
         <p className="welcome-subtitle">
           Here&apos;s what&apos;s happening with your pipelines
         </p>

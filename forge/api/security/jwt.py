@@ -15,6 +15,7 @@ def create_access_token(
     *,
     subject: str,
     secret: str,
+    display_name: str | None = None,
     expires_delta_seconds: int = DEFAULT_ACCESS_TTL,
 ) -> str:
     """Create a signed JWT access token.
@@ -22,16 +23,19 @@ def create_access_token(
     Args:
         subject: The ``sub`` claim (typically a user ID).
         secret: HMAC signing key.
+        display_name: Optional display name stored as ``dn`` claim.
         expires_delta_seconds: Seconds until expiry. May be negative for
             testing expired tokens.
     """
     now = time.time()
-    payload = {
+    payload: dict = {
         "sub": subject,
         "type": "access",
         "iat": int(now),
         "exp": int(now) + expires_delta_seconds,
     }
+    if display_name:
+        payload["dn"] = display_name
     return jwt.encode(payload, secret, algorithm=ALGORITHM)
 
 
@@ -39,6 +43,7 @@ def create_refresh_token(
     *,
     subject: str,
     secret: str,
+    display_name: str | None = None,
     expires_delta_seconds: int = DEFAULT_REFRESH_TTL,
 ) -> str:
     """Create a signed JWT refresh token.
@@ -46,15 +51,18 @@ def create_refresh_token(
     Args:
         subject: The ``sub`` claim (typically a user ID).
         secret: HMAC signing key.
+        display_name: Optional display name stored as ``dn`` claim.
         expires_delta_seconds: Seconds until expiry.
     """
     now = time.time()
-    payload = {
+    payload: dict = {
         "sub": subject,
         "type": "refresh",
         "iat": int(now),
         "exp": int(now) + expires_delta_seconds,
     }
+    if display_name:
+        payload["dn"] = display_name
     return jwt.encode(payload, secret, algorithm=ALGORITHM)
 
 

@@ -27,7 +27,7 @@ export default function RegisterPage() {
         password,
         display_name: displayName,
       });
-      setAuth(data.access_token, data.user_id);
+      setAuth(data.access_token, data.user?.id, data.user?.display_name);
       router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");

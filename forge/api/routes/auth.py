@@ -52,8 +52,8 @@ def _set_refresh_cookie(response: JSONResponse, refresh_token: str) -> None:
 
 def _build_auth_response(user, jwt_secret: str, *, status_code: int = 200) -> JSONResponse:
     """Build a JSONResponse with access_token in body, refresh_token in cookie."""
-    access = create_access_token(subject=user.id, secret=jwt_secret)
-    refresh = create_refresh_token(subject=user.id, secret=jwt_secret)
+    access = create_access_token(subject=user.id, secret=jwt_secret, display_name=user.display_name)
+    refresh = create_refresh_token(subject=user.id, secret=jwt_secret, display_name=user.display_name)
     body = {
         "access_token": access,
         "user": {
@@ -119,7 +119,8 @@ async def refresh(request: Request) -> dict:
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
         new_access = create_access_token(
-            subject=payload["sub"], secret=request.app.state.jwt_secret
+            subject=payload["sub"], secret=request.app.state.jwt_secret,
+            display_name=payload.get("dn"),
         )
         return {"access_token": new_access}
     except HTTPException:

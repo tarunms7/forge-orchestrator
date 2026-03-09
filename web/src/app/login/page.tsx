@@ -22,7 +22,7 @@ export default function LoginPage() {
 
     try {
       const data = await apiPost("/auth/login", { email, password });
-      setAuth(data.access_token, data.user_id);
+      setAuth(data.access_token, data.user?.id, data.user?.display_name);
       router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
