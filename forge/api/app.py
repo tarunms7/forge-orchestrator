@@ -24,16 +24,21 @@ def create_app(
             Single DB for auth + pipelines + tasks.
         jwt_secret: Secret key used for JWT token signing.
     """
+    from forge.config.settings import ForgeSettings as _AuthSettings
+
+    _auth_settings = _AuthSettings()
+    auth_disabled = _auth_settings.auth_disabled
+
     if jwt_secret is None:
         jwt_secret = os.environ.get("FORGE_JWT_SECRET", "")
         if not jwt_secret:
             import secrets
 
             jwt_secret = secrets.token_urlsafe(32)
-            logging.getLogger(__name__).warning(
-                "No FORGE_JWT_SECRET set — using random secret (tokens won't survive restarts). "
-                "Set FORGE_JWT_SECRET env var for production: "
-                "python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            # Auto-enable single-user mode when no JWT secret is configured
+            auth_disabled = True
+            logging.getLogger(__name__).info(
+                "Single-user mode (set FORGE_JWT_SECRET to enable auth)"
             )
 
     # ── Single unified database ─────────────────────────────────────
@@ -53,6 +58,7 @@ def create_app(
 
     # Store on app.state
     app.state.jwt_secret = jwt_secret
+    app.state.auth_disabled = auth_disabled
     app.state.db = db
     # Backward compat aliases — routes that use _get_forge_db still work
     app.state.forge_db = db
