@@ -38,9 +38,15 @@ def create_app(
             # Auto-enable single-user mode unless user explicitly set FORGE_AUTH_DISABLED=false
             if os.environ.get("FORGE_AUTH_DISABLED", "").lower() != "false":
                 auth_disabled = True
-            logging.getLogger(__name__).info(
-                "Single-user mode (set FORGE_JWT_SECRET to enable auth)"
-            )
+                logging.getLogger(__name__).info(
+                    "Single-user mode (set FORGE_JWT_SECRET to enable auth)"
+                )
+            else:
+                logging.getLogger(__name__).warning(
+                    "No FORGE_JWT_SECRET set — using random secret (tokens won't survive restarts). "
+                    "Set FORGE_JWT_SECRET env var for production: "
+                    "python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+                )
 
     # ── Single unified database ─────────────────────────────────────
     from forge.storage.db import Database
