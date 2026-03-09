@@ -106,8 +106,53 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             payload=data,
         )
 
+    def _auto_detect_commands(self, project_dir: str) -> None:
+        """Auto-detect build_cmd and test_cmd from project config files.
+
+        Only sets values that are ``None`` — an empty string means the user
+        explicitly wants to skip, so it is never overridden.
+        """
+        # --- build_cmd ---
+        if self._settings.build_cmd is None:
+            pkg_json = os.path.join(project_dir, "package.json")
+            if os.path.exists(pkg_json):
+                try:
+                    with open(pkg_json, encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    if data.get("scripts", {}).get("build"):
+                        self._settings.build_cmd = "npm run build"
+                        logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        # --- test_cmd ---
+        if self._settings.test_cmd is None:
+            pyproject = os.path.join(project_dir, "pyproject.toml")
+            if os.path.exists(pyproject):
+                try:
+                    with open(pyproject, encoding="utf-8") as fh:
+                        content = fh.read()
+                    if "[tool.pytest]" in content or "[tool.pytest.ini_options]" in content:
+                        self._settings.test_cmd = "python -m pytest"
+                        logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
+                except OSError:
+                    pass
+
+        if self._settings.test_cmd is None:
+            makefile = os.path.join(project_dir, "Makefile")
+            if os.path.exists(makefile):
+                try:
+                    with open(makefile, encoding="utf-8") as fh:
+                        content = fh.read()
+                    if re.search(r"^test[:\s]", content, re.MULTILINE):
+                        self._settings.test_cmd = "make test"
+                        logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
+                except OSError:
+                    pass
+
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
+        self._auto_detect_commands(project_dir)
         errors = []
 
         # Valid git repo?
