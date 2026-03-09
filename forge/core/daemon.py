@@ -117,7 +117,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             pkg_json = os.path.join(project_dir, "package.json")
             if os.path.exists(pkg_json):
                 try:
-                    with open(pkg_json, "r") as fh:
+                    with open(pkg_json, encoding="utf-8") as fh:
                         data = json.load(fh)
                     if data.get("scripts", {}).get("build"):
                         self._settings.build_cmd = "npm run build"
@@ -130,7 +130,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             pyproject = os.path.join(project_dir, "pyproject.toml")
             if os.path.exists(pyproject):
                 try:
-                    with open(pyproject, "r") as fh:
+                    with open(pyproject, encoding="utf-8") as fh:
                         content = fh.read()
                     if "[tool.pytest]" in content or "[tool.pytest.ini_options]" in content:
                         self._settings.test_cmd = "python -m pytest"
@@ -142,7 +142,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             makefile = os.path.join(project_dir, "Makefile")
             if os.path.exists(makefile):
                 try:
-                    with open(makefile, "r") as fh:
+                    with open(makefile, encoding="utf-8") as fh:
                         content = fh.read()
                     if re.search(r"^test[:\s]", content, re.MULTILINE):
                         self._settings.test_cmd = "make test"
