@@ -507,9 +507,7 @@ function TaskExecutionPageInner() {
     setHydrationError(null);
     apiGet(`/tasks/${pipelineId}`, token)
       .then((data) => {
-        if (data.tasks?.length > 0 || data.phase !== "planning") {
-          hydrateFromRest(data);
-        }
+        hydrateFromRest(data);
       })
       .catch((err) => {
         setHydrationError(err.message || "Failed to load pipeline");
