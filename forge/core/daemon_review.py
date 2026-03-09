@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 import logging
@@ -363,9 +364,14 @@ class ReviewMixin:
     async def _gate1(self, worktree_path: str, *, pipeline_branch: str | None = None) -> GateResult:
         """Gate 1: Lint check on the worktree. Simple and fast."""
 
-        # Only run ruff on changed files vs main
+        # Only run ruff on changed files vs main.
+        # Filter out deleted files — they appear in `git diff --name-only`
+        # but no longer exist on disk, causing ruff E902 errors.
         changed = _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
-        py_files = [f for f in changed if f.endswith(".py")]
+        py_files = [
+            f for f in changed
+            if f.endswith(".py") and os.path.isfile(os.path.join(worktree_path, f))
+        ]
 
         if not py_files:
             return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
