@@ -56,8 +56,10 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
 
     forge_dir = os.path.join(project_dir, ".forge")
     if not os.path.isdir(forge_dir):
-        click.echo("Forge not initialized. Run 'forge init' first.")
-        raise SystemExit(1)
+        os.makedirs(forge_dir, exist_ok=True)
+        _write_if_missing(os.path.join(forge_dir, "build-log.md"), "# Forge Build Log\n")
+        _write_if_missing(os.path.join(forge_dir, "decisions.md"), "# Architectural Decisions\n")
+        _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
 
     from forge.config.settings import ForgeSettings
     from forge.core.daemon import ForgeDaemon
@@ -93,8 +95,9 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
 )
 def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, build_frontend: bool):
     """Start the Forge web server."""
-    if build_frontend:
-        _build_frontend()
+    import signal
+    import subprocess
+    import threading
 
     # Resolve DB path relative to repo root (not CWD) so `forge serve`
     # always uses the same database regardless of where it's invoked from.
@@ -105,24 +108,40 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
 
     import uvicorn
     from forge.api.app import create_app
+
     app = create_app(db_url=db_url, jwt_secret=jwt_secret)
-    click.echo(f"Forge UI: http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port)
 
-
-def _build_frontend():
-    """Build the Next.js frontend if web/ directory exists.
-
-    Always rebuilds to avoid serving stale bundles after branch switches
-    or code changes. The Next.js build is fast (~5s) on incremental runs.
-    """
-    import subprocess
-    web_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web")
-    web_dir = os.path.normpath(web_dir)
-    if not os.path.isdir(web_dir):
+    if not build_frontend:
+        click.echo(f"Forge UI: http://{host}:{port}")
+        uvicorn.run(app, host=host, port=port)
         return
-    click.echo("Building frontend...")
-    subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
+
+    web_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "web"))
+
+    # Auto-install dependencies if needed
+    if not os.path.isdir(os.path.join(web_dir, "node_modules")):
+        click.echo("Installing frontend dependencies...")
+        subprocess.run(["npm", "install"], cwd=web_dir, check=True)
+
+    # Start uvicorn in a background thread
+    server_thread = threading.Thread(
+        target=uvicorn.run, args=(app,), kwargs={"host": host, "port": port}, daemon=True
+    )
+    server_thread.start()
+
+    # Spawn Next.js dev server
+    frontend_proc = subprocess.Popen(["npm", "run", "dev"], cwd=web_dir)
+
+    click.echo(f"Forge UI at http://localhost:3000 (API at http://localhost:{port})")
+
+    # Handle Ctrl+C: kill frontend, then exit cleanly
+    def _shutdown(signum, frame):
+        frontend_proc.kill()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+
+    frontend_proc.wait()
 
 
 # ── Register sub-commands from other modules ─────────────────────────
@@ -133,6 +152,10 @@ cli.add_command(logs)
 from forge.cli.clean import clean  # noqa: E402
 
 cli.add_command(clean)
+
+from forge.cli.doctor import doctor  # noqa: E402
+
+cli.add_command(doctor)
 
 
 def _write_if_missing(path: str, content: str) -> None:
