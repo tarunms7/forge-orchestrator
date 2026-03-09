@@ -40,6 +40,14 @@ class TestAutoDetectBuildCmd:
 
         assert daemon._settings.build_cmd is None
 
+    def test_malformed_package_json(self, daemon, tmp_path):
+        """Malformed package.json → build_cmd stays None (no crash)."""
+        (tmp_path / "package.json").write_text("{invalid json")
+
+        daemon._auto_detect_commands(str(tmp_path))
+
+        assert daemon._settings.build_cmd is None
+
     def test_build_cmd_empty_string_not_overridden(self, tmp_path):
         """build_cmd='' (user wants to skip) must NOT be overridden."""
         settings = ForgeSettings(build_cmd="")
