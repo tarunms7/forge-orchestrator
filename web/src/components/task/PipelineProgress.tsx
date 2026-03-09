@@ -65,8 +65,11 @@ export default function PipelineProgress({
       <div className="progress-steps">
         {STEPS.map((step, i) => {
           const stepIndex = PHASE_ORDER[step.key];
-          const isCompleted = stepIndex < currentIndex;
-          const isActive = stepIndex === currentIndex;
+          // The final "Done" step should show a checkmark (completed)
+          // when the phase is "complete", not a spinner (active).
+          const isFinalComplete = step.key === "complete" && phase === "complete";
+          const isCompleted = stepIndex < currentIndex || isFinalComplete;
+          const isActive = stepIndex === currentIndex && !isFinalComplete;
           // "paused" maps to the Execute step (index 2)
           const isPausedStep = isPaused && step.key === "executing";
 

@@ -118,6 +118,8 @@ export interface PipelineState {
   addEditedTask: (task: EditableTask) => void;
   reorderEditedTasks: (fromIndex: number, toIndex: number) => void;
   resetEdits: () => void;
+  /** Merge editedTasks values (complexity, title, files, etc.) into the main tasks store. */
+  applyEditedTasks: () => void;
 
   /* Follow-up actions */
   setFollowUpStatus: (status: PipelineState["followUpStatus"]) => void;
@@ -221,6 +223,26 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
 
   resetEdits: () =>
     set({ editedTasks: null, planValidation: { valid: true, errors: [] } }),
+
+  applyEditedTasks: () =>
+    set((state) => {
+      if (!state.editedTasks) return {};
+      const updated = { ...state.tasks };
+      for (const et of state.editedTasks) {
+        const existing = updated[et.id];
+        if (existing) {
+          updated[et.id] = {
+            ...existing,
+            title: et.title,
+            description: et.description,
+            targetFiles: et.files,
+            dependsOn: et.depends_on,
+            complexity: et.complexity,
+          };
+        }
+      }
+      return { tasks: updated };
+    }),
 
   /* Follow-up actions */
   setFollowUpStatus: (status) => set({ followUpStatus: status }),

@@ -27,7 +27,7 @@ from forge.api.models.schemas import (
 )
 from forge.api.security.jwt import decode_token
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
-from forge.core.daemon_helpers import _get_diff_vs_main
+from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
 from forge.core.templates import get_template, get_quality_preset, BUILTIN_TEMPLATES, template_to_dict
 from forge.core.validator import validate_task_graph
 from forge.storage.db import Database
@@ -754,7 +754,7 @@ async def get_task_diff(
         raise HTTPException(status_code=410, detail="Worktree no longer exists")
 
     diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
-    stats = _parse_diff_stats(diff)
+    stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
 
     return {"task_id": task_id, "diff": diff, "stats": stats}
 
@@ -1605,11 +1605,15 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         f"pipeline `{pipeline_id[:8]}`*"
     )
 
+    # Generate a proper PR title via LLM (with heuristic fallback)
+    pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
+    pr_title = f"forge: {pr_title_body}"
+
     pr_result = subprocess.run(
         ["gh", "pr", "create",
          "--base", base_branch,
          "--head", branch_name,
-         "--title", f"forge: {pipeline.description[:60]}",
+         "--title", pr_title,
          "--body", pr_body],
         cwd=project_dir, capture_output=True, text=True,
     )
