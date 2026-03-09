@@ -59,12 +59,12 @@ git clone https://github.com/tarunms7/forge-orchestrator.git
 cd forge-orchestrator && python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# Prerequisites: Python 3.12+, Git 2.20+, Claude CLI (claude login), gh CLI
+# Check prerequisites
+forge doctor
 
-# Run in your project
+# Run in your project — no init required, Forge auto-creates .forge/ on first run
 cd your-project
-forge init
-forge run "Add input validation to all API endpoints with proper error messages"
+forge run "Add input validation to all API endpoints"
 ```
 
 ---
@@ -148,9 +148,10 @@ Contracts degrade gracefully — if generation fails, agents proceed without the
 Forge includes a real-time web UI for monitoring and controlling pipelines:
 
 ```bash
-export FORGE_JWT_SECRET="your-secret-key"
-forge serve   # Backend :8000 + Frontend :3000
+forge serve   # Backend :8000 + Frontend :3000 (single-user mode by default)
 ```
+
+> Set `FORGE_JWT_SECRET` to enable multi-user JWT authentication. Without it, Forge runs in single-user mode with no login required.
 
 - **Live pipeline progress** via WebSocket with streaming agent output
 - **Interactive plan editing** — drag-and-drop reordering, add/remove tasks, edit dependencies
@@ -188,18 +189,20 @@ FORGE_PLANNER_MODEL=opus FORGE_CONTRACT_BUILDER_MODEL=sonnet forge run "..."
 
 ## Configuration
 
-All settings use the `FORGE_` env prefix or `forge/config/settings.py`:
+All settings use the `FORGE_` env prefix. See [`.env.example`](.env.example) for all available settings with descriptions.
+
+Build and test commands (`FORGE_BUILD_CMD`, `FORGE_TEST_CMD`) are **auto-detected** from your project when unset — Forge looks for `package.json`, `Makefile`, `pyproject.toml`, etc. and picks the right command automatically.
 
 | Setting | Default | Description |
 |---|---|---|
 | `FORGE_MAX_AGENTS` | 4 | Max concurrent agent sessions |
 | `FORGE_AGENT_TIMEOUT_SECONDS` | 600 | Per-task timeout (10 min) |
-| `FORGE_MAX_RETRIES` | 3 | Retries per task on failure |
-| `FORGE_BUILD_CMD` | *(none)* | Shell command to run as build gate (e.g. `npm run build`) |
-| `FORGE_TEST_CMD` | *(none)* | Shell command to run as test gate (e.g. `pytest`) |
+| `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
+| `FORGE_BUILD_CMD` | *(auto-detected)* | Build command (e.g. `npm run build`) |
+| `FORGE_TEST_CMD` | *(auto-detected)* | Test command (e.g. `pytest`) |
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap — hard stop when exceeded |
 | `FORGE_REQUIRE_APPROVAL` | false | Require human approval before merging each task |
-| `FORGE_MODEL_STRATEGY` | balanced | Model routing strategy (`cost-optimized`, `balanced`, `quality-first`) |
+| `FORGE_MODEL_STRATEGY` | auto | Model routing strategy (`auto`, `fast`, `quality`) |
 | `FORGE_CPU_THRESHOLD` | 80.0 | Max CPU % before backpressure |
 | `FORGE_MEMORY_THRESHOLD_PCT` | 10.0 | Min available memory % |
 | `FORGE_DISK_THRESHOLD_GB` | 5.0 | Min free disk space |
@@ -304,6 +307,8 @@ cd web && npx tsc --noEmit
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude login`)
 - Git 2.20+ (worktree support)
 - `gh` CLI (for auto-PR creation)
+
+Run `forge doctor` to verify your setup.
 
 ---
 
