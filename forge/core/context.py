@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass
