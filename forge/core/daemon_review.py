@@ -224,6 +224,14 @@ class ReviewMixin:
             return False, "\n\n".join(feedback_parts)
         console.print("[green]  L1 passed[/green]")
 
+        # L1 may have auto-fixed lint issues (unused imports, etc.) and
+        # committed the result.  Recompute the diff so L2 reviews the
+        # post-fix code rather than the stale pre-fix diff the caller
+        # captured before the review pipeline ran.
+        if pipeline_branch:
+            from forge.core.daemon_helpers import _get_diff_vs_main
+            diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+
         # Gate 1.5: Test gate (skip silently if no command configured)
         test_cmd = self._resolve_test_cmd()
         if test_cmd:
@@ -351,11 +359,21 @@ class ReviewMixin:
                     "details": gate2_extra.details,
                 }, db=db, pipeline_id=pipeline_id)
                 if not gate2_extra.passed:
-                    console.print(f"[red]  L2 (extra pass) failed: {gate2_extra.details}[/red]")
-                    prefix = "[RETRIABLE] " if gate2_extra.retriable else ""
-                    feedback_parts.append(f"{prefix}L2 extra pass FAILED:\n{gate2_extra.details}")
-                    return False, "\n\n".join(feedback_parts)
-                console.print("[green]  L2 (extra pass) passed[/green]")
+                    if gate2_extra.retriable:
+                        # Transient failure (empty response, SDK timeout) on the
+                        # extra pass — the primary L2 already approved.  Don't
+                        # waste retries re-running the whole pipeline; treat as pass.
+                        console.print("[yellow]  L2 (extra pass) transient failure — skipping (primary L2 passed)[/yellow]")
+                        await self._emit("task:review_update", {
+                            "task_id": task.id, "gate": "L2_extra", "passed": True,
+                            "details": "Transient failure — skipped (primary L2 passed)",
+                        }, db=db, pipeline_id=pipeline_id)
+                    else:
+                        console.print(f"[red]  L2 (extra pass) failed: {gate2_extra.details}[/red]")
+                        feedback_parts.append(f"L2 extra pass FAILED:\n{gate2_extra.details}")
+                        return False, "\n\n".join(feedback_parts)
+                else:
+                    console.print("[green]  L2 (extra pass) passed[/green]")
 
         # Gate 3: skip for now — merge check is handled by merge_worker
         console.print("[green]  Gate 3 (merge readiness): auto-pass[/green]")

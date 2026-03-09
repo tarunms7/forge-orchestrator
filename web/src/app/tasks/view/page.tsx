@@ -468,6 +468,7 @@ function TaskExecutionPageInner() {
   const storeRestartPipeline = useTaskStore((s) => s.restartPipeline);
   const editedTasks = useTaskStore((s) => s.editedTasks);
   const planValidation = useTaskStore((s) => s.planValidation);
+  const applyEditedTasks = useTaskStore((s) => s.applyEditedTasks);
 
   const [executing, setExecuting] = useState(false);
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -549,6 +550,9 @@ function TaskExecutionPageInner() {
     if (editedTasks && !planValidation.valid) return;
     setExecuting(true);
     try {
+      // Sync edited values (complexity, title, files) into the main tasks
+      // store so they display correctly during execution.
+      if (editedTasks) applyEditedTasks();
       const body = editedTasks ? { tasks: editedTasks } : {};
       await apiPost(`/tasks/${pipelineId}/execute`, body, token);
     } catch {
