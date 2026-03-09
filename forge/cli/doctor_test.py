@@ -21,11 +21,6 @@ def runner():
     return CliRunner()
 
 
-def _invoke(runner, env_patch=None):
-    """Invoke the doctor command standalone (not via cli group)."""
-    return runner.invoke(doctor, catch_exceptions=False)
-
-
 # ── Python check ──────────────────────────────────────────────────────
 
 
