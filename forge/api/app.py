@@ -35,8 +35,9 @@ def create_app(
             import secrets
 
             jwt_secret = secrets.token_urlsafe(32)
-            # Auto-enable single-user mode when no JWT secret is configured
-            auth_disabled = True
+            # Auto-enable single-user mode unless user explicitly set FORGE_AUTH_DISABLED=false
+            if os.environ.get("FORGE_AUTH_DISABLED", "").lower() != "false":
+                auth_disabled = True
             logging.getLogger(__name__).info(
                 "Single-user mode (set FORGE_JWT_SECRET to enable auth)"
             )

@@ -87,3 +87,21 @@ async def test_explicit_auth_disabled_env(monkeypatch):
         resp = await client.get("/api/templates")
 
     assert resp.status_code == 200
+
+
+async def test_explicit_auth_disabled_false_keeps_auth_enabled(monkeypatch):
+    """FORGE_AUTH_DISABLED=false + no FORGE_JWT_SECRET should keep auth enabled."""
+    monkeypatch.delenv("FORGE_JWT_SECRET", raising=False)
+    monkeypatch.setenv("FORGE_AUTH_DISABLED", "false")
+
+    from forge.api.app import create_app
+
+    app = create_app()
+    # Even though secret was auto-generated, explicit false keeps auth on
+    assert app.state.auth_disabled is False
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/templates")
+
+    assert resp.status_code == 401
