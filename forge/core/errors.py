@@ -1,5 +1,7 @@
 """Forge error hierarchy. Every error carries context: what failed, why, what to do."""
 
+from __future__ import annotations
+
 
 class ForgeError(Exception):
     """Base error for all Forge operations."""
@@ -76,3 +78,11 @@ class MergeConflictError(MergeError):
         super().__init__(
             f"Merge conflicts in: {', '.join(conflicting_files)}"
         )
+
+
+class SdkCallError(ForgeError):
+    """SDK call failed (rate limit, network, auth) — distinct from validation failures."""
+
+    def __init__(self, message: str, original_error: Exception | None = None) -> None:
+        self.original_error = original_error
+        super().__init__(message)

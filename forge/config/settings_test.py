@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from forge.config.settings import ForgeSettings
 
 
@@ -31,3 +34,39 @@ def test_allowed_dirs_override():
 def test_postgres_url():
     s = ForgeSettings(db_url="postgresql+asyncpg://localhost/forge")
     assert "postgresql" in s.db_url
+
+
+def test_negative_budget_raises():
+    with pytest.raises(ValidationError, match="budget_limit_usd must be >= 0"):
+        ForgeSettings(budget_limit_usd=-1.0)
+
+
+def test_zero_cost_rate_raises():
+    with pytest.raises(ValidationError, match="Cost rates must be > 0"):
+        ForgeSettings(cost_rate_sonnet_input=0.0)
+
+
+def test_cpu_threshold_negative_raises():
+    with pytest.raises(ValidationError, match="cpu_threshold must be between 0 and 100"):
+        ForgeSettings(cpu_threshold=-1.0)
+
+
+def test_cpu_threshold_over_100_raises():
+    with pytest.raises(ValidationError, match="cpu_threshold must be between 0 and 100"):
+        ForgeSettings(cpu_threshold=200.0)
+
+
+def test_max_agents_zero_raises():
+    with pytest.raises(ValidationError, match="max_agents must be >= 1"):
+        ForgeSettings(max_agents=0)
+
+
+def test_agent_timeout_too_low_raises():
+    with pytest.raises(ValidationError, match="agent_timeout_seconds must be >= 30"):
+        ForgeSettings(agent_timeout_seconds=10)
+
+
+def test_new_settings_defaults():
+    s = ForgeSettings()
+    assert s.pipeline_timeout_seconds == 3600
+    assert s.contracts_required is False

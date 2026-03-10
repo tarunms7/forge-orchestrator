@@ -24,6 +24,7 @@ class EventEmitter:
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[Callable]] = defaultdict(list)
+        self._failed_count: int = 0
 
     def on(self, event: str, handler: Callable) -> None:
         """Register an async handler for *event*."""
@@ -35,4 +36,9 @@ class EventEmitter:
             try:
                 await handler(data)
             except Exception:
+                self._failed_count += 1
                 logger.exception("Error in handler for event %r", event)
+
+    def failed_count(self) -> int:
+        """Return the number of handler invocations that raised exceptions."""
+        return self._failed_count
