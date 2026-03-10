@@ -33,8 +33,10 @@ def format_task_line(task: dict, *, selected: bool) -> str:
     icon = STATE_ICONS.get(state, "?")
     color = STATE_COLORS.get(state, "#8b949e")
     title = task.get("title", "Untitled")
-    indicator = "► " if selected else "  "
-    return f"{indicator}[{color}]{icon}[/] {title}"
+    if selected:
+        return f"[bold on #1f2937] [{color}]{icon}[/on #1f2937] {title} [/]"
+    else:
+        return f" [{color}]{icon}[/] [#c9d1d9]{title}[/]"
 
 
 class TaskList(Widget):
