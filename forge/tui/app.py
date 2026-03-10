@@ -75,7 +75,7 @@ class ForgeApp(App):
     def _on_state_change(self, field: str) -> None:
         """Refresh current screen and auto-capture screenshots."""
         try:
-            self.call_from_thread(self.screen.refresh)
+            self.screen.refresh()
         except Exception:
             pass
         # Auto-capture at key moments
