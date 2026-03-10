@@ -19,7 +19,9 @@ def test_format_task_line_todo():
 def test_format_task_line_selected():
     task = {"id": "t1", "title": "Setup database", "state": "todo", "complexity": "low"}
     line = format_task_line(task, selected=True)
-    assert "►" in line
+    assert "Setup database" in line
+    assert "1f2937" in line  # highlight background color
+    assert "►" not in line  # no more arrow indicator
 
 
 def test_format_task_line_done():

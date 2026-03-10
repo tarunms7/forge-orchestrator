@@ -24,6 +24,25 @@ class PipelineScreen(Screen):
     #split-pane {
         height: 1fr;
     }
+    TaskList {
+        width: 1fr;
+        min-width: 30;
+        max-width: 45;
+        border-right: tall #30363d;
+        padding: 1 1;
+    }
+    AgentOutput {
+        width: 3fr;
+        padding: 1 1;
+        border-left: tall #30363d;
+    }
+    PipelineProgress {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        background: #161b22;
+        border-top: tall #30363d;
+    }
     """
 
     BINDINGS = [
@@ -49,8 +68,12 @@ class PipelineScreen(Screen):
         self._refresh_all()
 
     def _on_state_change(self, field: str) -> None:
-        if field in ("tasks", "agent_output", "cost", "phase"):
+        if field in ("tasks", "agent_output", "cost", "phase", "elapsed"):
             self._refresh_all()
+        if field == "error":
+            error = self._state.error
+            if error:
+                self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
 
     def _refresh_all(self) -> None:
         state = self._state

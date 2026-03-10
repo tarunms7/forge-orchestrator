@@ -11,6 +11,29 @@ from textual.message import Message
 from forge.tui.widgets.logo import ForgeLogo
 
 
+_PIPELINE_STATUS_ICONS = {
+    "complete": ("\u2714", "#3fb950"),
+    "executing": ("\u25cf", "#f0883e"),
+    "planned": ("\u25c9", "#a371f7"),
+    "planning": ("\u25cc", "#58a6ff"),
+    "error": ("\u2716", "#f85149"),
+}
+
+
+def format_recent_pipelines(pipelines: list[dict]) -> str:
+    if not pipelines:
+        return "[#8b949e]No recent pipelines[/]"
+    lines = []
+    for p in pipelines:
+        status = p.get("status", "unknown")
+        icon, color = _PIPELINE_STATUS_ICONS.get(status, ("?", "#8b949e"))
+        desc = p.get("description", "Untitled")[:50]
+        cost = p.get("cost", 0.0)
+        date = p.get("created_at", "")[:10]
+        lines.append(f"  [{color}]{icon}[/] {desc}  [#8b949e]{date} \u00b7 ${cost:.2f}[/]")
+    return "\n".join(lines)
+
+
 class HomeScreen(Screen):
     """Landing screen with logo and task input."""
 
@@ -47,13 +70,20 @@ class HomeScreen(Screen):
             self.task = task
             super().__init__()
 
+    def __init__(self, recent_pipelines: list[dict] | None = None) -> None:
+        super().__init__()
+        self._recent_pipelines = recent_pipelines or []
+
     def compose(self) -> ComposeResult:
         with Center():
             with Vertical(id="home-container"):
                 yield ForgeLogo()
                 yield Input(placeholder="What should I build?", id="prompt-input")
                 yield Static("Recent pipelines", id="recent-label")
-                yield Static("[#8b949e]No recent pipelines[/]", id="recent-list")
+                yield Static(
+                    format_recent_pipelines(self._recent_pipelines),
+                    id="recent-list",
+                )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         task = event.value.strip()
