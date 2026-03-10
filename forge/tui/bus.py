@@ -32,6 +32,7 @@ TUI_EVENT_TYPES = [
     "pipeline:pr_created",
     "pipeline:pr_failed",
     "pipeline:worktrees_cleaned",
+    "pipeline:preflight_failed",
     "pipeline:error",
     "task:state_changed",
     "task:agent_output",
@@ -42,6 +43,10 @@ TUI_EVENT_TYPES = [
     "task:awaiting_approval",
     "planner:output",
     "contracts:output",
+    "followup:task_started",
+    "followup:task_completed",
+    "followup:task_error",
+    "followup:agent_output",
 ]
 
 
