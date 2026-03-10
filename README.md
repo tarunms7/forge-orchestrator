@@ -11,7 +11,7 @@
 
 Forge is a multi-agent orchestration engine that takes a natural-language task, decomposes it into a parallel task graph, **generates cross-task interface contracts**, dispatches isolated Claude agents to write the code, reviews every change through a multi-gate pipeline, and merges everything into a clean PR — automatically.
 
-[Quick Start](#-quick-start) &#8226; [How It Works](#-how-it-works) &#8226; [Contract Builder](#-contract-builder) &#8226; [Web Dashboard](#-web-dashboard) &#8226; [Configuration](#%EF%B8%8F-configuration)
+[Install](#-install) &#8226; [Quick Start](#-quick-start) &#8226; [How It Works](#-how-it-works) &#8226; [Contract Builder](#-contract-builder) &#8226; [Web Dashboard](#-web-dashboard) &#8226; [Configuration](#%EF%B8%8F-configuration)
 
 </div>
 
@@ -51,17 +51,37 @@ Writing code with an AI assistant is powerful — but you're still the bottlenec
 
 ---
 
+## Install
+
+### One-command install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
+```
+
+This detects your OS, installs missing dependencies (Python 3.12+, Node 18+), creates a virtualenv at `~/.forge/venv`, builds the frontend, and adds `forge` to your PATH. Safe to re-run — the installer is idempotent.
+
+### Manual install
+
+```bash
+git clone https://github.com/tarunms7/forge-orchestrator.git
+cd forge-orchestrator
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+cd web && npm install && npm run build && cd ..
+```
+
+After either method, verify your setup:
+
+```bash
+forge doctor
+```
+
+---
+
 ## Quick Start
 
 ```bash
-# Clone & install
-git clone https://github.com/tarunms7/forge-orchestrator.git
-cd forge-orchestrator && python -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# Check prerequisites
-forge doctor
-
 # Run in your project — no init required, Forge auto-creates .forge/ on first run
 cd your-project
 forge run "Add input validation to all API endpoints"
@@ -304,11 +324,12 @@ cd web && npx tsc --noEmit
 ## Requirements
 
 - Python 3.12+
+- Node.js 18+ (for web dashboard)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude login`)
 - Git 2.20+ (worktree support)
 - `gh` CLI (for auto-PR creation)
 
-Run `forge doctor` to verify your setup.
+The [one-command installer](#-install) handles all of these automatically. Or run `forge doctor` to verify your setup manually.
 
 ---
 
