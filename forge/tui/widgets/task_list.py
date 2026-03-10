@@ -34,7 +34,7 @@ def format_task_line(task: dict, *, selected: bool) -> str:
     color = STATE_COLORS.get(state, "#8b949e")
     title = task.get("title", "Untitled")
     if selected:
-        return f"[bold on #1f2937] [{color}]{icon}[/on #1f2937] {title} [/]"
+        return f"[bold on #1f2937] [{color}]{icon} [#c9d1d9]{title} [/]"
     else:
         return f" [{color}]{icon}[/] [#c9d1d9]{title}[/]"
 

@@ -82,8 +82,8 @@ class PlanApprovalScreen(Screen):
     """
 
     BINDINGS = [
-        Binding("enter", "approve", "Approve & Execute", show=True),
-        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "approve", "Approve & Execute", show=True, priority=True),
+        Binding("escape", "cancel", "Cancel", show=True, priority=True),
     ]
 
     class PlanApproved(Message):

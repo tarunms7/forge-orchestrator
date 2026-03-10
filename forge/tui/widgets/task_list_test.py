@@ -34,3 +34,15 @@ def test_format_task_line_error():
     task = {"id": "t1", "title": "Setup database", "state": "error", "complexity": "low"}
     line = format_task_line(task, selected=False)
     assert STATE_ICONS["error"] in line
+
+
+def test_format_task_line_selected_renders_without_markup_error():
+    """Selected line markup must be valid Rich markup (no mismatched tags)."""
+    from rich.console import Console
+    from io import StringIO
+
+    task = {"id": "t1", "title": "Setup database", "state": "in_progress", "complexity": "low"}
+    line = format_task_line(task, selected=True)
+    console = Console(file=StringIO(), force_terminal=True)
+    # This will raise MarkupError if tags are broken
+    console.print(line)
