@@ -2,11 +2,13 @@
 
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 
 import click
 from rich.console import Console
+from rich.table import Table
 
 
 def _check_python() -> tuple[str, str, str]:
@@ -32,6 +34,21 @@ def _parse_git_version(raw: str) -> tuple[int, ...]:
                     break
             if len(nums) >= 2:
                 return tuple(nums)
+    return (0,)
+
+
+def _parse_node_version(raw: str) -> tuple[int, ...]:
+    """Extract version tuple from 'vX.Y.Z' node --version output."""
+    text = raw.strip().lstrip("v")
+    parts = text.split(".")
+    nums: list[int] = []
+    for p in parts:
+        if p.isdigit():
+            nums.append(int(p))
+        else:
+            break
+    if nums:
+        return tuple(nums)
     return (0,)
 
 
@@ -76,6 +93,33 @@ def _check_gh() -> tuple[str, str, str]:
     return "ok", "GitHub CLI (gh)", "installed"
 
 
+def _check_node_version() -> tuple[str, str, str]:
+    """Check Node.js >= 18 via subprocess, parsing semver from 'node --version'."""
+    if not shutil.which("node"):
+        return "warn", "Node.js version", "not installed — Web UI won't work"
+    try:
+        result = subprocess.run(
+            ["node", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return "warn", "Node.js version", "could not determine version"
+        raw = result.stdout.strip()
+        if not raw.startswith("v"):
+            return "warn", "Node.js version", "could not determine version"
+        version_tuple = _parse_node_version(raw)
+        version_str = ".".join(str(v) for v in version_tuple)
+        if len(version_tuple) >= 1 and version_tuple[0] >= 18:
+            return "ok", "Node.js version", version_str
+        return "fail", "Node.js version", f"{version_str} (requires >= 18)"
+    except FileNotFoundError:
+        return "warn", "Node.js version", "not installed — Web UI won't work"
+    except subprocess.TimeoutExpired:
+        return "fail", "Node.js version", "timed out"
+
+
 def _check_node_npm() -> tuple[str, str, str]:
     """Check node and npm availability."""
     node = shutil.which("node")
@@ -109,6 +153,29 @@ def _check_disk_space() -> tuple[str, str, str]:
         return "fail", "Disk space", f"could not check ({exc})"
 
 
+def _check_db_connectivity() -> tuple[str, str, str]:
+    """Check database stack (aiosqlite + sqlalchemy async) with in-memory SQLite.
+
+    Uses synchronous sqlite3 to avoid event-loop side-effects in test envs.
+    """
+    try:
+        import aiosqlite  # noqa: F401 — verify importable
+        from sqlalchemy.ext.asyncio import create_async_engine  # noqa: F401
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            row = conn.execute("SELECT 1").fetchone()
+            if row and row[0] == 1:
+                return "ok", "Database", "aiosqlite + sqlalchemy OK"
+            return "fail", "Database", f"unexpected result: {row}"
+        finally:
+            conn.close()
+    except ImportError as exc:
+        return "fail", "Database", f"missing dependency: {exc}"
+    except Exception as exc:
+        return "fail", "Database", f"connection failed: {exc}"
+
+
 _STATUS_ICONS = {
     "ok": "[green]✓[/green]",
     "warn": "[yellow]⚠[/yellow]",
@@ -133,19 +200,27 @@ def doctor() -> None:
         _check_git(),
         _check_claude_cli(),
         _check_gh(),
+        _check_node_version(),
         _check_node_npm(),
         _check_jwt_secret(),
         _check_disk_space(),
+        _check_db_connectivity(),
     ]
+
+    table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
+    table.add_column("Status", width=3, justify="center")
+    table.add_column("Check", min_width=20)
+    table.add_column("Detail")
 
     has_failures = False
     for status, label, detail in checks:
         icon = _STATUS_ICONS[status]
         color = _STATUS_COLORS[status]
-        console.print(f"  {icon}  [{color}]{label}[/{color}]: {detail}")
+        table.add_row(icon, f"[{color}]{label}[/{color}]", detail)
         if status == "fail":
             has_failures = True
 
+    console.print(table)
     console.print()
     if has_failures:
         console.print("[red]Some checks failed. Please fix the issues above.[/red]")
