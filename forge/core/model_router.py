@@ -1,5 +1,9 @@
 """Model routing by task complexity and pipeline stage."""
 
+import logging
+
+logger = logging.getLogger("forge.model_router")
+
 # Strategy -> Stage -> Complexity -> Model
 _ROUTING_TABLE: dict[str, dict[str, dict[str, str]]] = {
     "auto": {
@@ -48,6 +52,19 @@ def select_model(strategy: str, stage: str, complexity: str, overrides: dict | N
         if override_val:
             return override_val
 
-    table = _ROUTING_TABLE.get(strategy, _ROUTING_TABLE["auto"])
-    stage_map = table.get(stage, table["agent"])
-    return stage_map.get(complexity, "sonnet")
+    table = _ROUTING_TABLE.get(strategy)
+    if table is None:
+        logger.warning("Unknown model_strategy '%s', falling back to 'auto'", strategy)
+        table = _ROUTING_TABLE["auto"]
+
+    stage_map = table.get(stage)
+    if stage_map is None:
+        logger.warning("Unknown stage '%s' for strategy '%s', falling back to 'agent'", stage, strategy)
+        stage_map = table["agent"]
+
+    model = stage_map.get(complexity)
+    if model is None:
+        logger.warning("Unknown complexity '%s' for stage '%s', falling back to 'sonnet'", complexity, stage)
+        model = "sonnet"
+
+    return model

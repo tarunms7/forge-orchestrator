@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 
 from claude_code_sdk import ClaudeCodeOptions
@@ -248,10 +249,12 @@ def _parse_review_result(text: str) -> GateResult:
         if line_upper.startswith("FAIL"):
             return GateResult(passed=False, gate="gate2_llm_review", details=text)
 
-    # 3. Fallback: verdict appears anywhere (e.g. "Verdict: PASS")
-    if "PASS" in upper and "FAIL" not in upper:
+    # 3. Fallback: PASS/FAIL at the start of any line (stricter than "anywhere")
+    pass_match = re.search(r"^PASS\b", upper, re.MULTILINE)
+    fail_match = re.search(r"^FAIL\b", upper, re.MULTILINE)
+    if pass_match and not fail_match:
         return GateResult(passed=True, gate="gate2_llm_review", details=text)
-    if "FAIL" in upper and "PASS" not in upper:
+    if fail_match and not pass_match:
         return GateResult(passed=False, gate="gate2_llm_review", details=text)
 
     return GateResult(

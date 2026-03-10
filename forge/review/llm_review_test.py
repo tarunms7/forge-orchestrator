@@ -144,13 +144,17 @@ class TestParseReviewResult:
         result = _parse_review_result("Let me review...\nFAIL: bugs found")
         assert result.passed is False
 
-    def test_pass_anywhere_in_text(self):
+    def test_pass_mid_sentence_no_longer_matches(self):
+        """PASS mid-sentence no longer matches with stricter regex (must be at line start)."""
         result = _parse_review_result("The verdict is PASS for this code")
-        assert result.passed is True
+        assert result.passed is False
+        assert "Unclear" in result.details
 
-    def test_fail_anywhere_in_text(self):
+    def test_fail_mid_sentence_no_longer_matches(self):
+        """FAIL mid-sentence no longer matches with stricter regex (must be at line start)."""
         result = _parse_review_result("I would say this is a FAIL because of bugs")
         assert result.passed is False
+        assert "Unclear" in result.details
 
     def test_empty_text(self):
         result = _parse_review_result("")
@@ -165,6 +169,28 @@ class TestParseReviewResult:
     def test_case_insensitive(self):
         result = _parse_review_result("pass: looks fine")
         assert result.passed is True
+
+    def test_pass_mid_sentence_not_matched(self):
+        """'PASS' embedded mid-sentence should NOT match as PASS (falls through to fail-safe)."""
+        result = _parse_review_result("The data would PASS through the function")
+        assert result.passed is False
+        assert "Unclear" in result.details
+
+    def test_pass_at_start_of_line_with_colon(self):
+        """'PASS: looks good' should PASS."""
+        result = _parse_review_result("PASS: looks good")
+        assert result.passed is True
+
+    def test_pass_at_start_of_second_line(self):
+        """PASS at start of second line should PASS."""
+        result = _parse_review_result("After analysis\nPASS")
+        assert result.passed is True
+
+    def test_both_pass_and_fail_ambiguous(self):
+        """Ambiguous: both PASS and FAIL present — caught as FAIL (starts with FAIL)."""
+        result = _parse_review_result("FAIL: critical bug\nBut PASS case exists")
+        # Stage 1 catches "FAIL" at the start of the text, so this is FAIL.
+        assert result.passed is False
 
 
 class TestDeadCodeRemoval:

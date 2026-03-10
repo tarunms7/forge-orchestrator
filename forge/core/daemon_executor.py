@@ -535,6 +535,11 @@ class ExecutorMixin:
                     contract_set = CS.model_validate_json(contracts_json)
                 except Exception:
                     logger.warning("Failed to parse contracts_json for pipeline %s", pid)
+                    await self._emit("task:review_update", {
+                        "task_id": task_id, "gate": "contract_loading",
+                        "passed": True,
+                        "details": "Contract loading failed — executing without contract compliance checks",
+                    }, db=db, pipeline_id=pid)
 
         if contract_set:
             task_contracts = contract_set.contracts_for_task(task_id)
