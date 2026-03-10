@@ -410,6 +410,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         pid, self._contracts.model_dump_json(),
                     )
 
+                # Re-emit plan_ready with prefixed IDs so TUI/subscribers
+                # have the correct task keys for state_changed events
+                await self._emit("pipeline:plan_ready", {"tasks": [
+                    {"id": t.id, "title": t.title, "description": t.description,
+                     "files": t.files, "depends_on": t.depends_on,
+                     "complexity": t.complexity.value}
+                    for t in graph.tasks
+                ]}, db=db, pipeline_id=pid)
+
             for task_def in graph.tasks:
                 await db.create_task(
                     id=task_def.id, title=task_def.title, description=task_def.description,
