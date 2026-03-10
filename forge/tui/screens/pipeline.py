@@ -69,6 +69,10 @@ class PipelineScreen(Screen):
     def _on_state_change(self, field: str) -> None:
         if field in ("tasks", "agent_output", "cost", "phase"):
             self._refresh_all()
+        if field == "error":
+            error = self._state.error
+            if error:
+                self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
 
     def _refresh_all(self) -> None:
         state = self._state
