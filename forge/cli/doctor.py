@@ -1,8 +1,8 @@
 """Forge CLI doctor command. Checks environment health and prints diagnostics."""
 
-import asyncio
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 
@@ -153,28 +153,26 @@ def _check_disk_space() -> tuple[str, str, str]:
         return "fail", "Disk space", f"could not check ({exc})"
 
 
-async def _async_db_check() -> tuple[str, str, str]:
-    """Run an async SELECT 1 via aiosqlite + sqlalchemy to verify DB stack."""
-    import aiosqlite  # noqa: F401 — verify importable
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
+def _check_db_connectivity() -> tuple[str, str, str]:
+    """Check database stack (aiosqlite + sqlalchemy async) with in-memory SQLite.
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    Verifies that aiosqlite and sqlalchemy async are importable, then runs a
+    synchronous SELECT 1 via sqlite3 to confirm the DB engine works. This
+    avoids event-loop side-effects that ``asyncio.run`` would cause in test
+    environments.
+    """
     try:
-        async with engine.connect() as conn:
-            result = await conn.execute(text("SELECT 1"))
-            row = result.scalar()
-            if row == 1:
+        import aiosqlite  # noqa: F401 — verify importable
+        from sqlalchemy.ext.asyncio import create_async_engine  # noqa: F401
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            row = conn.execute("SELECT 1").fetchone()
+            if row and row[0] == 1:
                 return "ok", "Database", "aiosqlite + sqlalchemy OK"
             return "fail", "Database", f"unexpected result: {row}"
-    finally:
-        await engine.dispose()
-
-
-def _check_db_connectivity() -> tuple[str, str, str]:
-    """Check database stack (aiosqlite + sqlalchemy async) with in-memory SQLite."""
-    try:
-        return asyncio.run(_async_db_check())
+        finally:
+            conn.close()
     except ImportError as exc:
         return "fail", "Database", f"missing dependency: {exc}"
     except Exception as exc:
