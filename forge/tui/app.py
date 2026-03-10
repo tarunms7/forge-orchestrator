@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
 
 from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
@@ -64,14 +64,12 @@ class ForgeApp(App):
         self._source: EmbeddedSource | None = None
         self._daemon = None
         self._daemon_task: asyncio.Task | None = None
-        self._start_time: float | None = None
+        self._pipeline_start_time: float | None = None
         self._elapsed_timer = None
 
-    def compose(self) -> ComposeResult:
-        yield HomeScreen()
-
     def on_mount(self) -> None:
-        """Wire state changes to screen refresh."""
+        """Push initial screen and wire state changes."""
+        self.push_screen(HomeScreen())
         self._state.on_change(self._on_state_change)
 
     def _on_state_change(self, field: str) -> None:
@@ -129,7 +127,7 @@ class ForgeApp(App):
             event_emitter=emitter,
         )
 
-        self._start_time = asyncio.get_event_loop().time()
+        self._pipeline_start_time = asyncio.get_event_loop().time()
         self._elapsed_timer = self.set_interval(1.0, self._tick_elapsed)
 
         self._daemon_task = asyncio.create_task(self._run_daemon(task))
@@ -150,8 +148,8 @@ class ForgeApp(App):
             logger.error("Daemon crashed: %s", task.exception())
 
     def _tick_elapsed(self) -> None:
-        if self._start_time:
-            self._state.elapsed_seconds = asyncio.get_event_loop().time() - self._start_time
+        if self._pipeline_start_time:
+            self._state.elapsed_seconds = asyncio.get_event_loop().time() - self._pipeline_start_time
 
     def action_switch_home(self) -> None:
         while len(self.screen_stack) > 1:
