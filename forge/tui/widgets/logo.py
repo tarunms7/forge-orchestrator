@@ -4,11 +4,12 @@ from textual.widgets import Static
 
 
 FORGE_LOGO = """\
-[#f0883e]  ╭╮[/]
-[#f0883e] ╔██╗╮[/]   [bold #58a6ff]F O R G E[/]
-[#f0883e] ╔████╗[/]
-[#f0883e]  ╔█╗[/]    [#8b949e]multi-agent orchestration[/]
-[#f0883e]   ╗[/]\
+[#f0883e]    /\\
+   /  \\
+  / ** \\[/]   [bold #58a6ff]F O R G E[/]
+[#f0883e]  \\ ** /[/]
+[#f0883e]   \\  /[/]   [#8b949e]multi-agent orchestration[/]
+[#f0883e]    \\/[/]\
 """
 
 
@@ -18,7 +19,7 @@ class ForgeLogo(Static):
     DEFAULT_CSS = """
     ForgeLogo {
         width: auto;
-        height: 5;
+        height: 6;
         content-align: center middle;
         text-align: center;
         padding: 1 0;
