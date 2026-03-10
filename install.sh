@@ -119,10 +119,15 @@ install_python() {
     esac
 }
 
+python_version_ok() {
+    [ "$PY_MAJOR" -gt "$REQUIRED_PYTHON_MAJOR" ] || \
+    { [ "$PY_MAJOR" -eq "$REQUIRED_PYTHON_MAJOR" ] && [ "$PY_MINOR" -ge "$REQUIRED_PYTHON_MINOR" ]; }
+}
+
 PYTHON_OK=false
 if command -v python3 >/dev/null 2>&1; then
     if parse_python_version; then
-        if [ "$PY_MAJOR" -ge "$REQUIRED_PYTHON_MAJOR" ] && [ "$PY_MINOR" -ge "$REQUIRED_PYTHON_MINOR" ]; then
+        if python_version_ok; then
             PYTHON_OK=true
             success "Python ${PY_MAJOR}.${PY_MINOR} found"
         else
@@ -140,7 +145,7 @@ if [ "$PYTHON_OK" = false ]; then
         install_python
         # Re-check after install
         if command -v python3 >/dev/null 2>&1 && parse_python_version; then
-            if [ "$PY_MAJOR" -ge "$REQUIRED_PYTHON_MAJOR" ] && [ "$PY_MINOR" -ge "$REQUIRED_PYTHON_MINOR" ]; then
+            if python_version_ok; then
                 success "Python ${PY_MAJOR}.${PY_MINOR} installed successfully"
             else
                 error "Installation succeeded but version ${PY_MAJOR}.${PY_MINOR} < ${REQUIRED_PYTHON_MAJOR}.${REQUIRED_PYTHON_MINOR}"
