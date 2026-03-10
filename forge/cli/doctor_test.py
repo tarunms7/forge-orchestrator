@@ -8,7 +8,19 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+import forge.cli.doctor as _doctor_mod
 from forge.cli.doctor import doctor
+
+# Feature flags — new checks added by task-1 may not be present yet
+_HAS_NODE_VERSION = hasattr(_doctor_mod, "_check_node_version")
+_HAS_DB_CHECK = hasattr(_doctor_mod, "_check_db_connectivity")
+
+_skip_no_node_version = pytest.mark.skipif(
+    not _HAS_NODE_VERSION, reason="requires _check_node_version (task-1)",
+)
+_skip_no_db_check = pytest.mark.skipif(
+    not _HAS_DB_CHECK, reason="requires _check_db_connectivity (task-1)",
+)
 
 
 DiskUsage = namedtuple("DiskUsage", ["total", "used", "free"])
@@ -370,3 +382,132 @@ def test_disk_fail_causes_nonzero_exit(runner):
     ):
         result = runner.invoke(doctor)
     assert result.exit_code != 0
+
+
+# ── Node version check (task-1) ─────────────────────────────────────
+
+
+@_skip_no_node_version
+def test_node_version_18_passes():
+    """Node v18.17.0 satisfies >= 18 requirement."""
+    from forge.cli.doctor import _check_node_version
+
+    node_v18 = subprocess.CompletedProcess(
+        args=["node", "--version"], returncode=0,
+        stdout="v18.17.0\n", stderr="",
+    )
+    with (
+        patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
+        patch("forge.cli.doctor.subprocess.run", return_value=node_v18),
+    ):
+        status, label, detail = _check_node_version()
+    assert status == "ok"
+    assert "18.17.0" in detail
+
+
+@_skip_no_node_version
+def test_node_version_22_passes():
+    """Node v22.1.0 satisfies >= 18 requirement."""
+    from forge.cli.doctor import _check_node_version
+
+    node_v22 = subprocess.CompletedProcess(
+        args=["node", "--version"], returncode=0,
+        stdout="v22.1.0\n", stderr="",
+    )
+    with (
+        patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
+        patch("forge.cli.doctor.subprocess.run", return_value=node_v22),
+    ):
+        status, label, detail = _check_node_version()
+    assert status == "ok"
+    assert "22.1.0" in detail
+
+
+@_skip_no_node_version
+def test_node_version_16_fails():
+    """Node v16.20.0 fails >= 18 requirement."""
+    from forge.cli.doctor import _check_node_version
+
+    node_v16 = subprocess.CompletedProcess(
+        args=["node", "--version"], returncode=0,
+        stdout="v16.20.0\n", stderr="",
+    )
+    with (
+        patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
+        patch("forge.cli.doctor.subprocess.run", return_value=node_v16),
+    ):
+        status, label, detail = _check_node_version()
+    assert status == "fail"
+    assert "16.20.0" in detail
+    assert "requires" in detail
+
+
+@_skip_no_node_version
+def test_node_version_not_installed():
+    """Node not on PATH fails version check."""
+    from forge.cli.doctor import _check_node_version
+
+    with patch("forge.cli.doctor.shutil.which", return_value=None):
+        status, label, detail = _check_node_version()
+    assert status == "warn"
+    assert "not installed" in detail
+
+
+@_skip_no_node_version
+def test_node_version_timeout():
+    """Node --version timing out fails check."""
+    from forge.cli.doctor import _check_node_version
+
+    with (
+        patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
+        patch("forge.cli.doctor.subprocess.run",
+              side_effect=subprocess.TimeoutExpired(cmd="node", timeout=10)),
+    ):
+        status, label, detail = _check_node_version()
+    assert status == "fail"
+    assert "timed out" in detail
+
+
+# ── Database connectivity check (task-1) ─────────────────────────────
+
+
+@_skip_no_db_check
+def test_db_connectivity_ok():
+    """Successful DB connectivity check returns ok."""
+    from forge.cli.doctor import _check_db_connectivity
+
+    with patch(
+        "forge.cli.doctor.asyncio.run",
+        return_value=("ok", "Database", "aiosqlite + sqlalchemy OK"),
+    ):
+        status, label, detail = _check_db_connectivity()
+    assert status == "ok"
+    assert "OK" in detail
+
+
+@_skip_no_db_check
+def test_db_connectivity_import_error():
+    """Missing aiosqlite dependency fails DB check."""
+    from forge.cli.doctor import _check_db_connectivity
+
+    with patch(
+        "forge.cli.doctor.asyncio.run",
+        side_effect=ImportError("No module named 'aiosqlite'"),
+    ):
+        status, label, detail = _check_db_connectivity()
+    assert status == "fail"
+    assert "missing dependency" in detail
+
+
+@_skip_no_db_check
+def test_db_connectivity_connection_failure():
+    """DB connection failure returns fail."""
+    from forge.cli.doctor import _check_db_connectivity
+
+    with patch(
+        "forge.cli.doctor.asyncio.run",
+        side_effect=RuntimeError("connection refused"),
+    ):
+        status, label, detail = _check_db_connectivity()
+    assert status == "fail"
+    assert "connection failed" in detail
