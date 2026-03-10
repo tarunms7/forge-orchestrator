@@ -97,3 +97,17 @@ class TestDispatchPlan:
         agents = [_agent("w1", state=AgentState.WORKING)]
         plan = Scheduler.dispatch_plan(tasks, agents, max_agents=4)
         assert plan == []
+
+
+class TestDependsOnNoneSafety:
+    def test_none_depends_on_is_ready(self):
+        """A task with depends_on=None should be treated as having no dependencies."""
+        # Use model_construct to bypass pydantic validation, simulating
+        # data arriving with None (e.g. from a dict with missing key).
+        task = TaskRecord.model_construct(
+            id="x", title="Task x", description="Desc",
+            files=["x.py"], depends_on=None,
+            complexity=Complexity.LOW, state=TaskState.TODO,
+        )
+        ready = Scheduler.ready_tasks([task])
+        assert [t.id for t in ready] == ["x"]

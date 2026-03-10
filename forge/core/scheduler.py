@@ -13,7 +13,7 @@ class Scheduler:
         return [
             t for t in tasks
             if t.state == TaskState.TODO
-            and all(dep in done_ids for dep in t.depends_on)
+            and all(dep in done_ids for dep in (t.depends_on or []))
         ]
 
     @staticmethod

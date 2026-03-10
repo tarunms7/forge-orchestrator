@@ -63,3 +63,27 @@ def test_create_duplicate_raises(manager):
 def test_remove_nonexistent_raises(manager):
     with pytest.raises(ValueError, match="does not exist"):
         manager.remove("ghost")
+
+
+def test_create_cleans_up_directory_on_failure(manager, git_repo):
+    """When 'git worktree add' fails, any leftover directory is removed."""
+    task_id = "task-fail"
+    expected_path = manager._task_path(task_id)
+
+    original_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        # Let rev-parse succeed (has_commits check), but simulate a partial
+        # worktree creation: create the directory then raise.
+        if "worktree" in cmd:
+            os.makedirs(expected_path, exist_ok=True)
+            raise subprocess.CalledProcessError(128, cmd)
+        return original_run(cmd, **kwargs)
+
+    from unittest.mock import patch
+    with patch("forge.merge.worktree.subprocess.run", side_effect=fake_run):
+        with pytest.raises(subprocess.CalledProcessError):
+            manager.create(task_id)
+
+    # Directory should be cleaned up
+    assert not os.path.isdir(expected_path)

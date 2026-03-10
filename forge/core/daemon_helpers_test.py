@@ -1,7 +1,11 @@
 """Tests for daemon_helpers — git diff utilities and context helpers."""
 
+import logging
+import subprocess
 
 from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 from forge.core.daemon_helpers import (
     _extract_implementation_summary,
@@ -9,6 +13,7 @@ from forge.core.daemon_helpers import (
     _get_diff_stats,
     _get_diff_vs_main,
     _load_conventions_md,
+    _run_git,
 )
 
 
@@ -347,3 +352,42 @@ class TestExtractImplementationSummary:
             )
 
         assert len(result) <= 300
+
+
+class TestRunGit:
+    """_run_git() wraps subprocess with logging and error handling."""
+
+    def test_success_returns_result(self):
+        """On exit 0, returns the CompletedProcess without raising."""
+        proc = _make_proc("abc123\n", returncode=0)
+        with patch("forge.core.daemon_helpers.subprocess.run", return_value=proc) as mock_run:
+            result = _run_git(["rev-parse", "HEAD"], cwd="/repo")
+
+        assert result is proc
+        mock_run.assert_called_once_with(
+            ["git", "rev-parse", "HEAD"],
+            cwd="/repo",
+            capture_output=True,
+            text=True,
+        )
+
+    def test_check_true_raises_on_failure(self):
+        """With check=True (default), non-zero exit raises CalledProcessError."""
+        proc = _make_proc("", returncode=128)
+        proc.stderr = "fatal: not a git repository"
+        with patch("forge.core.daemon_helpers.subprocess.run", return_value=proc):
+            with pytest.raises(subprocess.CalledProcessError) as exc_info:
+                _run_git(["rev-parse", "HEAD"], cwd="/bad")
+
+        assert exc_info.value.returncode == 128
+
+    def test_check_false_returns_result_on_failure(self, caplog):
+        """With check=False, non-zero exit returns result and logs warning."""
+        proc = _make_proc("", returncode=1)
+        proc.stderr = "error: something went wrong"
+        with patch("forge.core.daemon_helpers.subprocess.run", return_value=proc):
+            with caplog.at_level(logging.WARNING, logger="forge"):
+                result = _run_git(["status"], cwd="/repo", check=False)
+
+        assert result is proc
+        assert "returned 1" in caplog.text
