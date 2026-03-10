@@ -8,6 +8,8 @@ The bus itself is source-agnostic. Widgets subscribe to event types
 and receive data dicts.
 """
 
+import asyncio
+import json
 import logging
 from collections import defaultdict
 from collections.abc import Callable
@@ -100,6 +102,74 @@ class EmbeddedSource:
                 handlers.remove(handler)
         self._bridge_handlers.clear()
         self._connected = False
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+
+class ClientSource:
+    """Receives events from a running Forge server over WebSocket.
+
+    Used in client mode when a Forge server is already running.
+    Message format from server: {"type": "event_type", ...payload}
+    """
+
+    def __init__(self, ws_url: str, bus: EventBus, *, token: str) -> None:
+        self._ws_url = ws_url
+        self._bus = bus
+        self._token = token
+        self._connected = False
+        self._authenticated = False
+        self._task: asyncio.Task | None = None
+
+    async def connect(self) -> None:
+        """Start WebSocket connection in background."""
+        self._task = asyncio.create_task(self._listen())
+
+    async def disconnect(self) -> None:
+        """Close WebSocket connection."""
+        if self._task:
+            self._task.cancel()
+            self._task = None
+        self._connected = False
+        self._authenticated = False
+
+    async def _listen(self) -> None:
+        """WebSocket listen loop."""
+        try:
+            import websockets
+            async with websockets.connect(self._ws_url) as ws:
+                self._connected = True
+                await ws.send(json.dumps({"token": self._token}))
+                async for message in ws:
+                    await self._handle_message(message)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("WebSocket error: %s", e)
+            await self._bus.emit("pipeline:error", {"error": f"WebSocket disconnected: {e}"})
+        finally:
+            self._connected = False
+
+    async def _handle_message(self, raw: str) -> None:
+        """Parse and route a WebSocket message."""
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON from WebSocket: %s", raw[:100])
+            return
+
+        msg_type = msg.pop("type", None)
+        if not msg_type:
+            return
+
+        if msg_type == "auth_ok":
+            self._authenticated = True
+            logger.info("WebSocket authenticated as %s", msg.get("user_id"))
+            return
+
+        await self._bus.emit(msg_type, msg)
 
     @property
     def connected(self) -> bool:

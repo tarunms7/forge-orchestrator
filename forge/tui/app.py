@@ -75,11 +75,27 @@ class ForgeApp(App):
         self._state.on_change(self._on_state_change)
 
     def _on_state_change(self, field: str) -> None:
-        """Refresh current screen when state changes."""
+        """Refresh current screen and auto-capture screenshots."""
         try:
             self.call_from_thread(self.screen.refresh)
         except Exception:
             pass
+        # Auto-capture at key moments
+        if field == "phase":
+            phase = self._state.phase
+            if phase in ("planning", "executing", "complete"):
+                self._auto_screenshot(phase)
+
+    def _auto_screenshot(self, label: str) -> None:
+        """Automatically save a screenshot for README."""
+        path = os.path.join(self._project_dir, "screenshots")
+        os.makedirs(path, exist_ok=True)
+        filename = os.path.join(path, f"forge-{label}.svg")
+        try:
+            self.save_screenshot(filename)
+            logger.info("Auto-screenshot: %s", filename)
+        except Exception:
+            logger.debug("Auto-screenshot failed for %s", label)
 
     async def on_home_screen_task_submitted(self, event: HomeScreen.TaskSubmitted) -> None:
         """User submitted a task from HomeScreen."""
