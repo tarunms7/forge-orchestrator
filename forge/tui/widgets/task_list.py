@@ -60,9 +60,11 @@ class TaskList(Widget):
         super().__init__()
         self._tasks: list[dict] = []
         self._selected_index: int = 0
+        self._phase: str = ""
 
-    def update_tasks(self, tasks: list[dict], selected_id: str | None = None) -> None:
+    def update_tasks(self, tasks: list[dict], selected_id: str | None = None, *, phase: str = "") -> None:
         self._tasks = tasks
+        self._phase = phase
         if selected_id:
             for i, t in enumerate(tasks):
                 if t["id"] == selected_id:
@@ -79,6 +81,8 @@ class TaskList(Widget):
 
     def render(self) -> str:
         if not self._tasks:
+            if self._phase == "planning":
+                return "[#a371f7]⚙ Planning...[/]\n\n[#8b949e]Analyzing codebase and\ndecomposing into tasks[/]"
             return "[#8b949e]No tasks yet[/]"
         lines = []
         for i, task in enumerate(self._tasks):

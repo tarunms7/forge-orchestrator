@@ -69,3 +69,19 @@ async def test_pipeline_error_no_notification_when_none():
             state._notify("error")
             await pilot.pause()
             mock_notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_shows_planner_output_during_planning():
+    """Planner output streams into AgentOutput during planning phase."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Reading forge/core/daemon.py..."})
+        state.apply_event("planner:output", {"line": "Analyzing task dependencies..."})
+        await pilot.pause()
+        agent_output = app.screen.query_one("AgentOutput")
+        assert agent_output._task_id == "planner"
+        assert len(agent_output._lines) == 2
+        assert "Reading forge/core/daemon.py..." in agent_output._lines[0]

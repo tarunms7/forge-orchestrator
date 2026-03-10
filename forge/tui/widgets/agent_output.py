@@ -10,6 +10,8 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 def format_header(task_id: str | None, title: str | None, state: str | None) -> str:
     if not task_id:
         return "[#8b949e]No task selected[/]"
+    if task_id == "planner":
+        return "[bold #a371f7]⚙ Planner[/] [#8b949e]exploring codebase & building task graph...[/]"
     state_label = f" [{state}]" if state else ""
     return f"[bold #58a6ff]{task_id}[/]: {title or 'Untitled'} [#8b949e]{state_label}[/]"
 

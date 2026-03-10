@@ -68,7 +68,7 @@ class PipelineScreen(Screen):
         self._refresh_all()
 
     def _on_state_change(self, field: str) -> None:
-        if field in ("tasks", "agent_output", "cost", "phase", "elapsed"):
+        if field in ("tasks", "agent_output", "cost", "phase", "elapsed", "planner_output"):
             self._refresh_all()
         if field == "error":
             error = self._state.error
@@ -83,13 +83,15 @@ class PipelineScreen(Screen):
         dag = self.query_one(DagOverlay)
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
-        task_list.update_tasks(ordered_tasks, state.selected_task_id)
+        task_list.update_tasks(ordered_tasks, state.selected_task_id, phase=state.phase)
 
         tid = state.selected_task_id
         if tid and tid in state.tasks:
             task = state.tasks[tid]
             lines = state.agent_output.get(tid, [])
             agent_output.update_output(tid, task.get("title"), task.get("state"), lines)
+        elif state.phase == "planning" and state.planner_output:
+            agent_output.update_output("planner", "Planning", "planning", state.planner_output)
         else:
             agent_output.update_output(None, None, None, [])
 

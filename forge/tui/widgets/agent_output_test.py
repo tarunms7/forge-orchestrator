@@ -35,3 +35,9 @@ def test_format_output_with_lines():
     result = format_output(lines)
     assert "Creating auth/jwt.py..." in result
     assert "Done." in result
+
+
+def test_format_header_planner():
+    header = format_header("planner", "Planning", "planning")
+    assert "Planner" in header
+    assert "exploring" in header
