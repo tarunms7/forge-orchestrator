@@ -10,7 +10,7 @@ import logging
 
 from rich.console import Console
 
-from forge.core.daemon_helpers import _get_changed_files_vs_main
+from forge.core.daemon_helpers import _get_changed_files_vs_main, _run_git
 from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
@@ -422,23 +422,16 @@ class ReviewMixin:
             text=True,
         )
         # Commit any auto-fixes so they're included in the diff
-        subprocess.run(
-            ["git", "add", "-A"],
-            cwd=worktree_path,
-            capture_output=True,
-        )
+        _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
         # Only commit if there are staged changes
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
+        staged = _run_git(
+            ["diff", "--cached", "--name-only"],
+            cwd=worktree_path, check=False, description="check staged lint fixes",
         )
         if staged.stdout.strip():
-            subprocess.run(
-                ["git", "commit", "-m", "fix: auto-fix lint issues (ruff)"],
-                cwd=worktree_path,
-                capture_output=True,
+            _run_git(
+                ["commit", "-m", "fix: auto-fix lint issues (ruff)"],
+                cwd=worktree_path, check=False, description="commit lint fixes",
             )
 
         # Use sys.executable so we get the same Python (and venv) as forge itself

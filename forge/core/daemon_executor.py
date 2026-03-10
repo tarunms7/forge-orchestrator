@@ -20,6 +20,7 @@ from forge.core.daemon_helpers import (
     _get_diff_vs_main,
     _load_conventions_md,
     _resolve_ref,
+    _run_git,
 )
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
@@ -64,9 +65,9 @@ class ExecutorMixin:
         # delta diff (what the retry agent actually changed) for review.
         pre_retry_ref = None
         if task.retry_count > 0:
-            snap = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=worktree_path, capture_output=True, text=True,
+            snap = _run_git(
+                ["rev-parse", "HEAD"], cwd=worktree_path,
+                check=False, description="snapshot pre-retry ref",
             )
             if snap.returncode == 0:
                 pre_retry_ref = snap.stdout.strip()
@@ -165,20 +166,17 @@ class ExecutorMixin:
         the un-rebased worktree.  The merge step will handle conflicts
         later.  This is preferable to failing the retry entirely.
         """
-        result = subprocess.run(
-            ["git", "rebase", base_ref],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
+        result = _run_git(
+            ["rebase", base_ref], cwd=worktree_path,
+            check=False, description="rebase worktree",
         )
         if result.returncode == 0:
             console.print(f"[green]  {task_id}: worktree rebased onto {base_ref}[/green]")
         else:
             # Abort the failed rebase so the worktree is usable
-            subprocess.run(
-                ["git", "rebase", "--abort"],
-                cwd=worktree_path,
-                capture_output=True,
+            _run_git(
+                ["rebase", "--abort"], cwd=worktree_path,
+                check=False, description="abort rebase",
             )
             console.print(
                 f"[yellow]  {task_id}: rebase onto {base_ref} had conflicts — "
@@ -245,9 +243,9 @@ class ExecutorMixin:
             return True  # No file list = no enforcement (safety valve)
 
         # Get all files changed by the agent vs pipeline branch
-        result = subprocess.run(
-            ["git", "diff", "--name-only", pipeline_branch, "HEAD"],
-            cwd=worktree_path, capture_output=True, text=True,
+        result = _run_git(
+            ["diff", "--name-only", pipeline_branch, "HEAD"],
+            cwd=worktree_path, check=False, description="scope diff",
         )
         changed = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
         out_of_scope = [f for f in changed if f not in allowed]
@@ -263,33 +261,33 @@ class ExecutorMixin:
 
         for file in out_of_scope:
             # Restore file to pipeline branch state (works for modified/deleted)
-            restore = subprocess.run(
-                ["git", "checkout", pipeline_branch, "--", file],
-                cwd=worktree_path, capture_output=True,
+            restore = _run_git(
+                ["checkout", pipeline_branch, "--", file],
+                cwd=worktree_path, check=False, description="restore out-of-scope",
             )
             if restore.returncode != 0:
                 # File was newly created (doesn't exist in base) — remove it
-                subprocess.run(
-                    ["git", "rm", "-f", file],
-                    cwd=worktree_path, capture_output=True,
+                _run_git(
+                    ["rm", "-f", file],
+                    cwd=worktree_path, check=False, description="rm out-of-scope",
                 )
 
         # Stage and commit the reverts
-        subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True)
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=worktree_path, capture_output=True, text=True,
+        _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts")
+        staged = _run_git(
+            ["diff", "--cached", "--name-only"],
+            cwd=worktree_path, check=False, description="check staged",
         )
         if staged.stdout.strip():
-            subprocess.run(
-                ["git", "commit", "-m", "chore: revert out-of-scope file changes"],
-                cwd=worktree_path, capture_output=True,
+            _run_git(
+                ["commit", "-m", "chore: revert out-of-scope file changes"],
+                cwd=worktree_path, check=False, description="commit scope reverts",
             )
 
         # Check if any in-scope changes remain
-        remaining = subprocess.run(
-            ["git", "diff", "--name-only", pipeline_branch, "HEAD"],
-            cwd=worktree_path, capture_output=True, text=True,
+        remaining = _run_git(
+            ["diff", "--name-only", pipeline_branch, "HEAD"],
+            cwd=worktree_path, check=False, description="check remaining",
         )
         return bool(remaining.stdout.strip())
 
@@ -308,9 +306,9 @@ class ExecutorMixin:
         # re-reading the entire accumulated diff.
         delta_diff = None
         if pre_retry_ref and task.retry_count > 0:
-            delta_result = subprocess.run(
-                ["git", "diff", pre_retry_ref, "HEAD"],
-                cwd=worktree_path, capture_output=True, text=True,
+            delta_result = _run_git(
+                ["diff", pre_retry_ref, "HEAD"],
+                cwd=worktree_path, check=False, description="delta diff",
             )
             if delta_result.returncode == 0 and delta_result.stdout.strip():
                 delta_diff = delta_result.stdout

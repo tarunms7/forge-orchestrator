@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-import subprocess
+import logging
 from dataclasses import dataclass, field
+
+from forge.core.daemon_helpers import _run_git
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -99,19 +103,14 @@ class MergeWorker:
 
     def _rebase(self, branch: str, worktree_path: str | None = None) -> None:
         if worktree_path:
-            # Rebase from within the worktree (branch is already checked out)
-            result = subprocess.run(
-                ["git", "rebase", self._main],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
+            result = _run_git(
+                ["rebase", self._main], cwd=worktree_path,
+                check=False, description="rebase in worktree",
             )
         else:
-            result = subprocess.run(
-                ["git", "rebase", self._main, branch],
-                cwd=self._repo,
-                capture_output=True,
-                text=True,
+            result = _run_git(
+                ["rebase", self._main, branch], cwd=self._repo,
+                check=False, description="rebase branch",
             )
         if result.returncode != 0:
             conflicts = self._find_conflicts(worktree_path)
@@ -119,11 +118,7 @@ class MergeWorker:
 
     def _abort_rebase(self, worktree_path: str | None = None) -> None:
         cwd = worktree_path or self._repo
-        subprocess.run(
-            ["git", "rebase", "--abort"],
-            cwd=cwd,
-            capture_output=True,
-        )
+        _run_git(["rebase", "--abort"], cwd=cwd, check=False, description="abort rebase")
 
     def _fast_forward(self, branch: str) -> None:
         """Advance the merge-target branch ref to the task branch tip.
@@ -132,26 +127,20 @@ class MergeWorker:
         user's working directory is never mutated.  This only works for
         fast-forward merges — which is guaranteed after a successful rebase.
         """
-        task_sha = subprocess.run(
-            ["git", "rev-parse", branch],
-            cwd=self._repo,
-            capture_output=True,
-            text=True,
-            check=True,
+        task_sha = _run_git(
+            ["rev-parse", branch], cwd=self._repo,
+            check=True, description="resolve branch SHA",
         ).stdout.strip()
-        subprocess.run(
-            ["git", "update-ref", f"refs/heads/{self._main}", task_sha],
-            cwd=self._repo,
-            check=True,
-            capture_output=True,
+        _run_git(
+            ["update-ref", f"refs/heads/{self._main}", task_sha],
+            cwd=self._repo, check=True, description="fast-forward merge target",
         )
 
     def _find_conflicts(self, worktree_path: str | None = None) -> list[str]:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=U"],
+        result = _run_git(
+            ["diff", "--name-only", "--diff-filter=U"],
             cwd=worktree_path or self._repo,
-            capture_output=True,
-            text=True,
+            check=False, description="find conflict files",
         )
         return [f for f in result.stdout.strip().split("\n") if f]
 
