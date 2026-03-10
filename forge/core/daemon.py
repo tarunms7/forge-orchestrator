@@ -95,6 +95,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._events = event_emitter or EventEmitter()
         self._strategy = self._settings.model_strategy
         self._snapshot: ProjectSnapshot | None = None
+        self._merge_lock = asyncio.Lock()
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""
@@ -514,7 +515,23 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
         prefix = pipeline_id[:8] if pipeline_id else None
+        start_time = asyncio.get_event_loop().time()
+        timeout = self._settings.pipeline_timeout_seconds
         while True:
+            # Watchdog: check elapsed time
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if timeout > 0 and elapsed > timeout:
+                logger.error("Pipeline timeout exceeded (%ds > %ds)", int(elapsed), timeout)
+                all_tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
+                for t in all_tasks:
+                    if t.state not in (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value):
+                        await db.update_task_state(t.id, TaskState.ERROR.value)
+                        await self._emit("task:state_changed", {
+                            "task_id": t.id, "state": "error",
+                            "error": "Pipeline timeout exceeded",
+                        }, db=db, pipeline_id=pipeline_id or "")
+                break
+
             # Check pause flag — don't dispatch new tasks while paused
             if pipeline_id:
                 pipeline_rec = await db.get_pipeline(pipeline_id)
@@ -569,7 +586,27 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await db.assign_task(task_id, agent_id)
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
 
-            await asyncio.gather(*[
+            results = await asyncio.gather(*[
                 self._execute_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id, pipeline_id=pipeline_id)
                 for task_id, agent_id in dispatch_plan
-            ])
+            ], return_exceptions=True)
+
+            # Handle per-task exceptions that would otherwise crash the loop
+            for (task_id, agent_id), result in zip(dispatch_plan, results):
+                if isinstance(result, BaseException):
+                    logger.error("Task %s raised unhandled exception: %s", task_id, result, exc_info=result)
+                    try:
+                        await db.update_task_state(task_id, TaskState.ERROR.value)
+                        await self._emit("task:state_changed", {
+                            "task_id": task_id, "state": "error", "error": str(result),
+                        }, db=db, pipeline_id=pipeline_id or "")
+                    except Exception:
+                        logger.exception("Failed to mark crashed task %s as error", task_id)
+                    try:
+                        await db.release_agent(agent_id)
+                    except Exception:
+                        pass
+                    try:
+                        worktree_mgr.remove(task_id)
+                    except Exception:
+                        pass
