@@ -69,7 +69,8 @@ class TuiState:
                 "error": None,
             }
             self.task_order.append(tid)
-        if self.task_order and not self.selected_task_id:
+        if self.task_order:
+            # Always reset — IDs may change after daemon remaps them
             self.selected_task_id = self.task_order[0]
         self._notify("tasks")
 
