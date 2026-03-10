@@ -338,7 +338,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 graph, hints, project_context=context, on_message=_on_contract_msg,
             )
         except Exception as exc:
-            logger.warning("Contract builder failed unexpectedly: %s — proceeding without contracts", exc)
+            logger.error("Contract builder failed: %s", exc)
+            await self._emit(
+                "pipeline:contracts_failed",
+                {"error": str(exc)},
+                db=db,
+                pipeline_id=pipeline_id,
+            )
+            if self._settings.contracts_required:
+                raise RuntimeError(f"Contract generation failed (contracts_required=True): {exc}") from exc
             return ContractSet()
 
         # Track cost

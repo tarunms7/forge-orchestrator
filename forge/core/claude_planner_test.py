@@ -1,8 +1,10 @@
 """Tests for ClaudePlannerLLM prompt building and conventions injection."""
 
-
+import pytest
+from unittest.mock import AsyncMock, patch
 
 from forge.core.claude_planner import PLANNER_SYSTEM_PROMPT, ClaudePlannerLLM
+from forge.core.errors import SdkCallError
 
 
 class TestPlannerSystemPrompt:
@@ -98,3 +100,28 @@ class TestBuildPrompt:
         # Should not raise even if file doesn't exist
         prompt = planner._build_prompt("task", "", None)
         assert "Respond with ONLY the TaskGraph JSON." in prompt
+
+
+class TestGeneratePlanSdkError:
+    """Test that SDK exceptions are re-raised as SdkCallError."""
+
+    @pytest.mark.asyncio
+    async def test_sdk_exception_raises_sdk_call_error(self):
+        """When sdk_query raises, generate_plan should raise SdkCallError."""
+        planner = ClaudePlannerLLM(cwd="/nonexistent")
+        with patch("forge.core.claude_planner.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.side_effect = RuntimeError("rate limit exceeded")
+            with pytest.raises(SdkCallError, match="SDK call failed"):
+                await planner.generate_plan("build auth", "context", None)
+
+    @pytest.mark.asyncio
+    async def test_sdk_call_error_wraps_original(self):
+        """SdkCallError should chain the original exception."""
+        planner = ClaudePlannerLLM(cwd="/nonexistent")
+        original = ConnectionError("network down")
+        with patch("forge.core.claude_planner.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.side_effect = original
+            with pytest.raises(SdkCallError) as exc_info:
+                await planner.generate_plan("build auth", "context", None)
+            assert exc_info.value.original_error is original
+            assert exc_info.value.__cause__ is original

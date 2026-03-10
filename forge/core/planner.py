@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from pydantic import ValidationError as PydanticValidationError
 
-from forge.core.errors import ValidationError
+from forge.core.errors import SdkCallError, ValidationError
 from forge.core.models import TaskGraph
 from forge.core.validator import validate_task_graph
 
@@ -34,7 +34,12 @@ class Planner:
 
         for attempt in range(self._max_retries):
             logger.info("Planning attempt %d/%d", attempt + 1, self._max_retries)
-            raw = await self._llm.generate_plan(user_input, context, feedback, on_message=on_message)
+            try:
+                raw = await self._llm.generate_plan(user_input, context, feedback, on_message=on_message)
+            except SdkCallError as e:
+                logger.warning("Attempt %d/%d SDK error: %s", attempt + 1, self._max_retries, e)
+                feedback = f"Previous attempt hit SDK error: {e}. Retrying."
+                continue
             logger.info(
                 "Attempt %d raw response (%d chars): %s",
                 attempt + 1, len(raw), raw[:500] if raw else "<empty>",
