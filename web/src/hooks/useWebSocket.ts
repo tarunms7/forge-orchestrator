@@ -73,6 +73,7 @@ export function useWebSocket(
         // Auth failure (close code 4001) — skip further retries with stale token
         if (event.code === 4001) {
           setStatus("disconnected");
+          useAuthStore.getState().logout();
           return;
         }
 
