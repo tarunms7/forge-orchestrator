@@ -810,14 +810,12 @@ async def approve_task(
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
-    task = await forge_db.get_task(task_id)
-    if task is None or task.pipeline_id != pipeline_id:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.state != "awaiting_approval":
+    try:
+        task = await forge_db.approve_task_atomically(task_id, pipeline_id)
+    except ValueError:
         raise HTTPException(status_code=409, detail="Task is not awaiting approval")
-
-    # Update task state to merging
-    await forge_db.update_task_state(task_id, "merging")
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
 
     # Broadcast state change
     ws_manager = getattr(request.app.state, "ws_manager", None)

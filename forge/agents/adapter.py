@@ -271,6 +271,7 @@ class ClaudeAdapter(AgentAdapter):
                 files_changed=files_changed,
                 summary=result_text,
                 error=result_text,
+                cost_usd=cost_usd,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
             )

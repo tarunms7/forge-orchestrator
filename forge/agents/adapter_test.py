@@ -316,3 +316,30 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
     assert "**Testing**" in system_prompt
     assert "## Completed Dependencies" in system_prompt
     assert "Setup" in system_prompt
+
+
+async def test_claude_adapter_error_includes_cost():
+    """ClaudeAdapter.run() should include cost_usd in error AgentResult."""
+    mock_result = AsyncMock()
+    mock_result.result_text = "Something went wrong"
+    mock_result.cost_usd = 0.07
+    mock_result.is_error = True
+    mock_result.input_tokens = 500
+    mock_result.output_tokens = 200
+
+    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_result
+        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
+            adapter = ClaudeAdapter()
+            result = await adapter.run(
+                task_prompt="test",
+                worktree_path="/tmp/test",
+                allowed_files=["a.py"],
+                timeout_seconds=60,
+            )
+
+    assert result.success is False
+    assert result.error == "Something went wrong"
+    assert result.cost_usd == 0.07
+    assert result.input_tokens == 500
+    assert result.output_tokens == 200

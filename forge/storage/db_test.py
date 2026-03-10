@@ -428,3 +428,109 @@ async def test_cancel_pipeline_hard_skips_error_tasks(db: Database):
 
     t = await db.get_task("te1")
     assert t.state == "error"
+
+
+# ── approve_task_atomically tests ────────────────────────────────────
+
+
+async def test_approve_task_atomically_success(db: Database):
+    """approve_task_atomically transitions awaiting_approval -> merging."""
+    await db.create_pipeline(
+        id="pipe-ap", description="Approve test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.create_task(
+        id="t-ap", title="T", description="D", files=["a.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-ap",
+    )
+    await db.update_task_state("t-ap", "awaiting_approval")
+
+    task = await db.approve_task_atomically("t-ap", "pipe-ap")
+    assert task is not None
+    assert task.state == "merging"
+
+    # Verify persisted
+    fetched = await db.get_task("t-ap")
+    assert fetched.state == "merging"
+
+
+async def test_approve_task_atomically_wrong_state_raises(db: Database):
+    """approve_task_atomically raises ValueError if task not awaiting_approval."""
+    await db.create_pipeline(
+        id="pipe-ap2", description="Approve test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.create_task(
+        id="t-ap2", title="T", description="D", files=["a.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-ap2",
+    )
+    await db.update_task_state("t-ap2", "done")
+
+    with pytest.raises(ValueError, match="not 'awaiting_approval'"):
+        await db.approve_task_atomically("t-ap2", "pipe-ap2")
+
+
+async def test_approve_task_atomically_not_found_returns_none(db: Database):
+    """approve_task_atomically returns None for nonexistent task."""
+    result = await db.approve_task_atomically("nonexistent", "pipe-x")
+    assert result is None
+
+
+async def test_approve_task_atomically_wrong_pipeline_returns_none(db: Database):
+    """approve_task_atomically returns None if pipeline_id doesn't match."""
+    await db.create_pipeline(
+        id="pipe-ap3", description="Test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.create_task(
+        id="t-ap3", title="T", description="D", files=["a.py"],
+        depends_on=[], complexity="low", pipeline_id="pipe-ap3",
+    )
+    await db.update_task_state("t-ap3", "awaiting_approval")
+
+    result = await db.approve_task_atomically("t-ap3", "wrong-pipeline")
+    assert result is None
+
+
+# ── atomic cost accumulation tests ───────────────────────────────────
+
+
+async def test_add_task_agent_cost_accumulates(db: Database):
+    """add_task_agent_cost should atomically accumulate cost and tokens."""
+    await db.create_task(
+        id="t-ac", title="T", description="D", files=[], depends_on=[], complexity="low",
+    )
+    await db.add_task_agent_cost("t-ac", 0.10, 100, 50)
+    await db.add_task_agent_cost("t-ac", 0.05, 200, 100)
+
+    task = await db.get_task("t-ac")
+    assert abs(task.agent_cost_usd - 0.15) < 0.001
+    assert abs(task.cost_usd - 0.15) < 0.001
+    assert task.input_tokens == 300
+    assert task.output_tokens == 150
+
+
+async def test_add_task_review_cost_accumulates(db: Database):
+    """add_task_review_cost should atomically accumulate review cost."""
+    await db.create_task(
+        id="t-rc", title="T", description="D", files=[], depends_on=[], complexity="low",
+    )
+    await db.add_task_review_cost("t-rc", 0.02)
+    await db.add_task_review_cost("t-rc", 0.03)
+
+    task = await db.get_task("t-rc")
+    assert abs(task.review_cost_usd - 0.05) < 0.001
+    assert abs(task.cost_usd - 0.05) < 0.001
+
+
+async def test_add_pipeline_cost_accumulates(db: Database):
+    """add_pipeline_cost should atomically accumulate pipeline total cost."""
+    await db.create_pipeline(
+        id="pipe-cost", description="Cost test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    await db.add_pipeline_cost("pipe-cost", 0.10)
+    await db.add_pipeline_cost("pipe-cost", 0.25)
+
+    cost = await db.get_pipeline_cost("pipe-cost")
+    assert abs(cost - 0.35) < 0.001

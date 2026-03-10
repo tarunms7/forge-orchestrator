@@ -4,12 +4,15 @@ Single Database class for ALL Forge data: auth (users, audit logs),
 pipelines, tasks, and agents.
 """
 
+from __future__ import annotations
+
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 import bcrypt
-from sqlalchemy import DateTime, String, Text, JSON, func, select
+from sqlalchemy import DateTime, String, Text, JSON, func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -39,7 +42,7 @@ class UserRow(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-    settings_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    settings_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 class AuditLogRow(Base):
@@ -54,13 +57,13 @@ class AuditLogRow(Base):
     )
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
-    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
 
 
 # ── Pipeline models ───────────────────────────────────────────────────
@@ -76,21 +79,21 @@ class TaskRow(Base):
     depends_on: Mapped[list] = mapped_column(JSON)
     complexity: Mapped[str] = mapped_column(String)
     state: Mapped[str] = mapped_column(String, default="todo")
-    assigned_agent: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    assigned_agent: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     retry_count: Mapped[int] = mapped_column(default=0)
-    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    retry_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    worktree_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    pipeline_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    review_feedback: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    retry_reason: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     cost_usd: Mapped[float] = mapped_column(default=0.0)
     agent_cost_usd: Mapped[float] = mapped_column(default=0.0)
     review_cost_usd: Mapped[float] = mapped_column(default=0.0)
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
-    approval_context: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    prior_diff: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    implementation_summary: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    approval_context: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    prior_diff: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    implementation_summary: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -98,7 +101,7 @@ class AgentRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     state: Mapped[str] = mapped_column(String, default="idle")
-    current_task: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    current_task: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 class PipelineRow(Base):
@@ -109,29 +112,29 @@ class PipelineRow(Base):
     project_dir: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="planning")
     model_strategy: Mapped[str] = mapped_column(String, default="auto")
-    task_graph_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    user_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    created_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    base_branch: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    cancelled_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    build_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    test_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    task_graph_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    created_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    completed_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    pr_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    base_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    cancelled_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    build_cmd: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    test_cmd: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     planner_cost_usd: Mapped[float] = mapped_column(default=0.0)
     total_cost_usd: Mapped[float] = mapped_column(default=0.0)
     budget_limit_usd: Mapped[float] = mapped_column(default=0.0)
     estimated_cost_usd: Mapped[float] = mapped_column(default=0.0)
     paused: Mapped[bool] = mapped_column(default=False)
-    conventions_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    conventions_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     require_approval: Mapped[bool] = mapped_column(default=False)
-    github_issue_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    github_issue_number: Mapped[int | None] = mapped_column(default=None)
-    template_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    template_config_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    github_issue_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    github_issue_number: Mapped[Optional[int]] = mapped_column(default=None)
+    template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    template_config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     # Contract Builder output (JSON blob)
-    contracts_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    contracts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
 
 
 class UserTemplateRow(Base):
@@ -164,7 +167,7 @@ class PipelineEventRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    task_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(timezone.utc).isoformat())
@@ -339,43 +342,52 @@ class Database:
 
     async def add_task_cost(self, task_id: str, cost: float) -> None:
         async with self._session_factory() as session:
-            task = await session.get(TaskRow, task_id)
-            if task:
-                task.cost_usd = (task.cost_usd or 0) + cost
-                await session.commit()
+            await session.execute(
+                text("UPDATE tasks SET cost_usd = COALESCE(cost_usd, 0) + :cost WHERE id = :tid"),
+                {"cost": cost, "tid": task_id},
+            )
+            await session.commit()
 
     async def add_task_agent_cost(
         self, task_id: str, cost: float, input_tokens: int, output_tokens: int,
     ) -> None:
         """Record agent execution cost and token usage for a task."""
         async with self._session_factory() as session:
-            task = await session.get(TaskRow, task_id)
-            if task:
-                task.agent_cost_usd = (task.agent_cost_usd or 0) + cost
-                task.cost_usd = (task.cost_usd or 0) + cost
-                task.input_tokens = (task.input_tokens or 0) + input_tokens
-                task.output_tokens = (task.output_tokens or 0) + output_tokens
-                await session.commit()
+            await session.execute(
+                text(
+                    "UPDATE tasks SET "
+                    "agent_cost_usd = COALESCE(agent_cost_usd, 0) + :cost, "
+                    "cost_usd = COALESCE(cost_usd, 0) + :cost, "
+                    "input_tokens = COALESCE(input_tokens, 0) + :inp, "
+                    "output_tokens = COALESCE(output_tokens, 0) + :outp "
+                    "WHERE id = :tid"
+                ),
+                {"cost": cost, "inp": input_tokens, "outp": output_tokens, "tid": task_id},
+            )
+            await session.commit()
 
     async def add_task_review_cost(self, task_id: str, cost: float) -> None:
         """Record review cost for a task."""
         async with self._session_factory() as session:
-            task = await session.get(TaskRow, task_id)
-            if task:
-                task.review_cost_usd = (task.review_cost_usd or 0) + cost
-                task.cost_usd = (task.cost_usd or 0) + cost
-                await session.commit()
+            await session.execute(
+                text(
+                    "UPDATE tasks SET "
+                    "review_cost_usd = COALESCE(review_cost_usd, 0) + :cost, "
+                    "cost_usd = COALESCE(cost_usd, 0) + :cost "
+                    "WHERE id = :tid"
+                ),
+                {"cost": cost, "tid": task_id},
+            )
+            await session.commit()
 
     async def add_pipeline_cost(self, pipeline_id: str, cost: float) -> None:
         """Add cost to the pipeline total."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            await session.execute(
+                text("UPDATE pipelines SET total_cost_usd = COALESCE(total_cost_usd, 0) + :delta WHERE id = :pid"),
+                {"delta": cost, "pid": pipeline_id},
             )
-            row = result.scalar_one_or_none()
-            if row:
-                row.total_cost_usd = (row.total_cost_usd or 0) + cost
-                await session.commit()
+            await session.commit()
 
     async def set_pipeline_planner_cost(self, pipeline_id: str, cost: float) -> None:
         """Set the planner cost for a pipeline."""
@@ -690,6 +702,23 @@ class Database:
             if task:
                 task.approval_context = None
                 await session.commit()
+
+    async def approve_task_atomically(self, task_id: str, pipeline_id: str):
+        """Atomically check state=awaiting_approval and transition to merging.
+
+        Returns the task row if successful, None if task not found.
+        Raises ValueError if task is not in awaiting_approval state.
+        """
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task is None or task.pipeline_id != pipeline_id:
+                return None
+            if task.state != "awaiting_approval":
+                raise ValueError(f"Task {task_id} in state '{task.state}', not 'awaiting_approval'")
+            task.state = "merging"
+            await session.commit()
+            await session.refresh(task)
+            return task
 
     async def set_task_prior_diff(self, task_id: str, diff: str) -> None:
         """Store the rejected diff so the re-reviewer can compare on retry."""
