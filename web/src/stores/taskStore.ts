@@ -259,9 +259,9 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
     const pid = get().pipelineId;
     if (!pid) return;
     set({ followUpStatus: "submitting" });
-    set((state) => ({ followUpQuestions: [...state.followUpQuestions, questions] }));
     try {
       await apiSubmitFollowUp(pid, questions, token);
+      set((state) => ({ followUpQuestions: [...state.followUpQuestions, questions] }));
       // Status will transition to "executing" via WebSocket followup:started event
     } catch (err) {
       set({ followUpStatus: "idle" });

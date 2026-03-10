@@ -1,8 +1,11 @@
 """Resource monitor. Tracks CPU, memory, disk and gates agent dispatch."""
 
+import logging
 from dataclasses import dataclass
 
 import psutil
+
+logger = logging.getLogger("forge.monitor")
 
 
 @dataclass(frozen=True)
@@ -28,13 +31,21 @@ class ResourceMonitor:
         self._disk_threshold_gb = disk_threshold_gb
 
     def take_snapshot(self) -> ResourceSnapshot:
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        return ResourceSnapshot(
-            cpu_percent=psutil.cpu_percent(interval=0.1),
-            memory_available_pct=mem.available / mem.total * 100,
-            disk_free_gb=disk.free / (1024 ** 3),
-        )
+        try:
+            mem = psutil.virtual_memory()
+            disk = psutil.disk_usage("/")
+            return ResourceSnapshot(
+                cpu_percent=psutil.cpu_percent(interval=0.1),
+                memory_available_pct=mem.available / mem.total * 100,
+                disk_free_gb=disk.free / (1024 ** 3),
+            )
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Resource snapshot failed: %s — returning safe defaults", exc)
+            return ResourceSnapshot(
+                cpu_percent=0.0,
+                memory_available_pct=100.0,
+                disk_free_gb=100.0,
+            )
 
     def can_dispatch(self, snapshot: ResourceSnapshot) -> bool:
         return len(self.blocked_reasons(snapshot)) == 0

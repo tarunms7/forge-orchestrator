@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from claude_code_sdk import ClaudeCodeOptions
 
+from forge.core.errors import SdkCallError
 from forge.core.planner import PlannerLLM
 from forge.core.sdk_helpers import SdkResult, sdk_query
 
@@ -112,10 +113,8 @@ class ClaudePlannerLLM(PlannerLLM):
         try:
             result = await sdk_query(prompt=prompt, options=options, on_message=on_message)
         except Exception as e:
-            # SDK failures (rate limits, timeouts, etc.) should be retried
-            # by the Planner's retry loop, not crash the pipeline.
             logger.warning("SDK call failed during planning: %s", e)
-            return ""  # Empty string → triggers Planner's validation retry
+            raise SdkCallError(f"SDK call failed: {e}", original_error=e) from e
 
         self._last_sdk_result = result
         logger.info("SDK result type: %s", type(result).__name__ if result else "None")

@@ -10,7 +10,7 @@ import logging
 
 from rich.console import Console
 
-from forge.core.daemon_helpers import _get_changed_files_vs_main
+from forge.core.daemon_helpers import _get_changed_files_vs_main, _run_git
 from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
@@ -210,6 +210,12 @@ class ReviewMixin:
                 feedback_parts.append(f"Gate 0 (build) FAILED:\n{build_result.details}")
                 return False, "\n\n".join(feedback_parts)
             console.print("[green]  Gate 0 (build) passed[/green]")
+        else:
+            console.print("[dim]  Gate 0 (build): skipped — no build command configured[/dim]")
+            await self._emit("task:review_update", {
+                "task_id": task.id, "gate": "gate0_build", "passed": True,
+                "skipped": True, "details": "No build command configured",
+            }, db=db, pipeline_id=pipeline_id)
 
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
@@ -246,6 +252,12 @@ class ReviewMixin:
                 feedback_parts.append(f"Gate 1.5 (test) FAILED:\n{test_result.details}")
                 return False, "\n\n".join(feedback_parts)
             console.print("[green]  Gate 1.5 (test) passed[/green]")
+        else:
+            console.print("[dim]  Gate 1.5 (test): skipped — no test command configured[/dim]")
+            await self._emit("task:review_update", {
+                "task_id": task.id, "gate": "gate1_5_test", "passed": True,
+                "skipped": True, "details": "No test command configured",
+            }, db=db, pipeline_id=pipeline_id)
 
         # L2: LLM review
         # Load review config from template
@@ -286,6 +298,11 @@ class ReviewMixin:
                                 custom_review_focus = contract_review
                     except Exception:
                         logger.warning("Failed to parse contracts for review of task %s", task.id)
+                        await self._emit("task:review_update", {
+                            "task_id": task.id, "gate": "contract_loading",
+                            "passed": True,
+                            "details": "Contract loading failed — reviewing without contract compliance checks",
+                        }, db=db, pipeline_id=pipeline_id)
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title, task.description, diff, worktree_path,
                 model=reviewer_model,
@@ -366,6 +383,7 @@ class ReviewMixin:
                         console.print("[yellow]  L2 (extra pass) transient failure — skipping (primary L2 passed)[/yellow]")
                         await self._emit("task:review_update", {
                             "task_id": task.id, "gate": "L2_extra", "passed": True,
+                            "skipped": True,
                             "details": "Transient failure — skipped (primary L2 passed)",
                         }, db=db, pipeline_id=pipeline_id)
                     else:
@@ -376,7 +394,7 @@ class ReviewMixin:
                     console.print("[green]  L2 (extra pass) passed[/green]")
 
         # Gate 3: skip for now — merge check is handled by merge_worker
-        console.print("[green]  Gate 3 (merge readiness): auto-pass[/green]")
+        console.print("[dim]  Gate 3 (merge readiness): deferred to merge step[/dim]")
         return True, None
 
     async def _gate1(self, worktree_path: str, *, pipeline_branch: str | None = None) -> GateResult:
@@ -404,23 +422,16 @@ class ReviewMixin:
             text=True,
         )
         # Commit any auto-fixes so they're included in the diff
-        subprocess.run(
-            ["git", "add", "-A"],
-            cwd=worktree_path,
-            capture_output=True,
-        )
+        _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
         # Only commit if there are staged changes
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
+        staged = _run_git(
+            ["diff", "--cached", "--name-only"],
+            cwd=worktree_path, check=False, description="check staged lint fixes",
         )
         if staged.stdout.strip():
-            subprocess.run(
-                ["git", "commit", "-m", "fix: auto-fix lint issues (ruff)"],
-                cwd=worktree_path,
-                capture_output=True,
+            _run_git(
+                ["commit", "-m", "fix: auto-fix lint issues (ruff)"],
+                cwd=worktree_path, check=False, description="commit lint fixes",
             )
 
         # Use sys.executable so we get the same Python (and venv) as forge itself

@@ -2,7 +2,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock
 
-from forge.core.errors import ValidationError
+from forge.core.errors import SdkCallError, ValidationError
 from forge.core.models import TaskGraph
 from forge.core.planner import Planner, PlannerLLM
 
@@ -86,6 +86,32 @@ async def test_plan_retries_on_cyclic_graph(mock_llm):
 
 async def test_plan_fails_after_max_retries(mock_llm):
     mock_llm.generate_plan.return_value = '{"tasks": []}'
+    planner = Planner(llm=mock_llm, max_retries=2)
+    with pytest.raises(ValidationError, match="retries"):
+        await planner.plan("Build something")
+    assert mock_llm.generate_plan.call_count == 2
+
+
+async def test_plan_retries_on_sdk_call_error(mock_llm):
+    """When generate_plan raises SdkCallError, planner retries with SDK error feedback."""
+    mock_llm.generate_plan.side_effect = [
+        SdkCallError("SDK call failed: rate limit", original_error=RuntimeError("rate limit")),
+        VALID_GRAPH_JSON,
+    ]
+    planner = Planner(llm=mock_llm, max_retries=3)
+    graph = await planner.plan("Build something")
+    assert len(graph.tasks) == 2
+    assert mock_llm.generate_plan.call_count == 2
+    # Second call should include SDK error feedback
+    second_call_feedback = mock_llm.generate_plan.call_args_list[1][0][2]
+    assert "SDK error" in second_call_feedback
+
+
+async def test_plan_exhausts_retries_on_repeated_sdk_errors(mock_llm):
+    """When all attempts raise SdkCallError, planner raises ValidationError after exhausting retries."""
+    mock_llm.generate_plan.side_effect = SdkCallError(
+        "SDK call failed: timeout", original_error=TimeoutError("timeout")
+    )
     planner = Planner(llm=mock_llm, max_retries=2)
     with pytest.raises(ValidationError, match="retries"):
         await planner.plan("Build something")

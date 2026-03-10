@@ -1877,3 +1877,86 @@ class TestNewEndpointIDOR:
             headers=_auth_header(token_b),
         )
         assert resp.status_code == 404
+
+
+# ── Task 23: Background task crash logging ──────────────────────────
+
+
+class TestBackgroundTaskDoneCallback:
+    """Verify that background merge tasks log exceptions via done_callback."""
+
+    async def test_done_callback_logs_on_exception(self):
+        """_on_done callback should call logger.error when the task raises."""
+        import asyncio
+        from unittest.mock import patch
+
+        async def _failing_task():
+            raise RuntimeError("merge exploded")
+
+        pipeline_id = "pipe-123"
+        task_id = "task-456"
+
+        def _on_done(t: asyncio.Task) -> None:
+            if not t.cancelled() and t.exception():
+                from forge.api.routes.tasks import logger as tasks_logger
+
+                tasks_logger.error(
+                    "Background merge for %s/%s failed: %s",
+                    pipeline_id,
+                    task_id,
+                    t.exception(),
+                    exc_info=t.exception(),
+                )
+
+        with patch("forge.api.routes.tasks.logger") as mock_logger:
+            bg_task = asyncio.create_task(_failing_task())
+            bg_task.add_done_callback(_on_done)
+            try:
+                await bg_task
+            except RuntimeError:
+                pass
+            mock_logger.error.assert_called_once()
+            call_args = mock_logger.error.call_args
+            assert "Background merge" in call_args[0][0]
+            assert pipeline_id in call_args[0][1]
+            assert task_id in call_args[0][2]
+
+    async def test_done_callback_silent_on_success(self):
+        """_on_done callback should NOT log when the task succeeds."""
+        import asyncio
+
+        async def _ok_task():
+            return "done"
+
+        logged = []
+
+        def _on_done(t: asyncio.Task) -> None:
+            if not t.cancelled() and t.exception():
+                logged.append(True)
+
+        bg_task = asyncio.create_task(_ok_task())
+        bg_task.add_done_callback(_on_done)
+        await bg_task
+        assert logged == []
+
+    async def test_done_callback_silent_on_cancel(self):
+        """_on_done callback should NOT log when the task is cancelled."""
+        import asyncio
+
+        async def _slow_task():
+            await asyncio.sleep(999)
+
+        logged = []
+
+        def _on_done(t: asyncio.Task) -> None:
+            if not t.cancelled() and t.exception():
+                logged.append(True)
+
+        bg_task = asyncio.create_task(_slow_task())
+        bg_task.add_done_callback(_on_done)
+        bg_task.cancel()
+        try:
+            await bg_task
+        except asyncio.CancelledError:
+            pass
+        assert logged == []

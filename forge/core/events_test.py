@@ -1,5 +1,6 @@
 """Tests for EventEmitter."""
 
+import pytest
 from unittest.mock import AsyncMock
 
 
@@ -86,3 +87,19 @@ class TestEventEmitter:
         await emitter.emit("event", "data")
 
         assert handler.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_count_increments_on_handler_error():
+    from forge.core.events import EventEmitter
+
+    emitter = EventEmitter()
+
+    async def bad_handler(data):
+        raise RuntimeError("boom")
+
+    emitter.on("test", bad_handler)
+    await emitter.emit("test", {})
+    assert emitter.failed_count() == 1
+    await emitter.emit("test", {})
+    assert emitter.failed_count() == 2

@@ -9,6 +9,7 @@ from forge.core.errors import (
     AgentTimeoutError,
     MergeError,
     MergeConflictError,
+    SdkCallError,
 )
 
 
@@ -57,3 +58,10 @@ def test_merge_conflict_carries_files():
     err = MergeConflictError(conflicting_files=["a.py", "b.py"])
     assert isinstance(err, MergeError)
     assert err.conflicting_files == ["a.py", "b.py"]
+
+
+def test_sdk_call_error_preserves_original():
+    orig = RuntimeError("rate limit")
+    err = SdkCallError("SDK failed", original_error=orig)
+    assert err.original_error is orig
+    assert "SDK failed" in str(err)

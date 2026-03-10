@@ -1,5 +1,7 @@
 """Tests for model routing by complexity and pipeline stage."""
 
+import logging
+
 from forge.core.model_router import select_model
 
 
@@ -74,3 +76,35 @@ class TestSelectModelOverrides:
         """Empty overrides dict should fall through to routing table."""
         result = select_model("auto", "planner", "high", overrides={})
         assert result == "opus"
+
+
+class TestSelectModelFallbackLogging:
+    """Verify warning logs on unknown strategy/stage/complexity."""
+
+    def test_unknown_strategy_logs_warning(self, caplog):
+        """Unknown strategy should log a warning and fall back to 'auto'."""
+        with caplog.at_level(logging.WARNING, logger="forge.model_router"):
+            result = select_model("nonexistent", "agent", "medium")
+        assert result == "opus"  # auto/agent/medium = opus
+        assert "Unknown model_strategy 'nonexistent'" in caplog.text
+
+    def test_unknown_stage_logs_warning(self, caplog):
+        """Unknown stage should log a warning and fall back to 'agent'."""
+        with caplog.at_level(logging.WARNING, logger="forge.model_router"):
+            result = select_model("auto", "nonexistent_stage", "low")
+        assert result == "sonnet"  # auto/agent/low = sonnet
+        assert "Unknown stage 'nonexistent_stage'" in caplog.text
+
+    def test_unknown_complexity_logs_warning(self, caplog):
+        """Unknown complexity should log a warning and fall back to 'sonnet'."""
+        with caplog.at_level(logging.WARNING, logger="forge.model_router"):
+            result = select_model("auto", "agent", "extreme")
+        assert result == "sonnet"
+        assert "Unknown complexity 'extreme'" in caplog.text
+
+    def test_known_values_no_warnings(self, caplog):
+        """Known values should not produce any warnings."""
+        with caplog.at_level(logging.WARNING, logger="forge.model_router"):
+            result = select_model("auto", "agent", "medium")
+        assert result == "opus"
+        assert caplog.text == ""

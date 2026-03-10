@@ -514,3 +514,39 @@ def _print_status_table(tasks) -> None:
         )
 
     console.print(table)
+
+
+def _run_git(
+    args: list[str],
+    cwd: str,
+    *,
+    check: bool = True,
+    description: str = "",
+) -> subprocess.CompletedProcess:
+    """Run a git command with consistent logging and error handling.
+
+    Args:
+        args: Git arguments (e.g. ["rev-parse", "HEAD"]).
+        cwd: Working directory.
+        check: If True (default), raise on non-zero exit. If False, log
+            a warning and return the result.
+        description: Human-readable description for log messages.
+    """
+    cmd = ["git"] + args
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    desc = description or " ".join(args[:3])
+    if result.returncode != 0:
+        if check:
+            logger.error(
+                "git %s failed (exit %d) in %s: %s",
+                desc, result.returncode, cwd, result.stderr.strip(),
+            )
+            raise subprocess.CalledProcessError(
+                result.returncode, cmd, result.stdout, result.stderr,
+            )
+        else:
+            logger.warning(
+                "git %s returned %d in %s: %s",
+                desc, result.returncode, cwd, result.stderr.strip(),
+            )
+    return result

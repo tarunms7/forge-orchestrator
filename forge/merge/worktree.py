@@ -1,6 +1,7 @@
 """Git worktree lifecycle management. One worktree per task for isolation."""
 
 import os
+import shutil
 import subprocess
 
 
@@ -53,7 +54,12 @@ class WorktreeManager:
         else:
             cmd = ["git", "worktree", "add", "--orphan", "-b", branch, path]
 
-        subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True)
+        try:
+            subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True)
+        except subprocess.CalledProcessError:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            raise
         return path
 
     def remove(self, task_id: str) -> None:
