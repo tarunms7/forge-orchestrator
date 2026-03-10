@@ -6,15 +6,25 @@ from textual.widget import Widget
 
 
 def format_progress(done: int, total: int, cost_usd: float, elapsed_seconds: float, phase: str, *, bar_width: int = 30) -> str:
+    minutes = int(elapsed_seconds) // 60
+    seconds = int(elapsed_seconds) % 60
+    time_str = f"{minutes}:{seconds:02d}"
+
+    if phase == "planning":
+        return f"[#58a6ff]◌ Planning...[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
+    if phase == "planned":
+        return f"[#a371f7]◉ Plan ready — review required[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
+    if phase == "complete":
+        return f"[#3fb950]✔ Complete[/] │ {done}/{total} tasks │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
+    if phase == "error":
+        return f"[#f85149]✖ Error[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
     if total == 0:
-        return f"[#8b949e]{phase}[/]"
+        return f"[#8b949e]{phase}[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
+
     pct = done / total
     filled = int(pct * bar_width)
     empty = bar_width - filled
     bar = f"[#3fb950]{'█' * filled}[/][#21262d]{'░' * empty}[/]"
-    minutes = int(elapsed_seconds) // 60
-    seconds = int(elapsed_seconds) % 60
-    time_str = f"{minutes}:{seconds:02d}"
     return f"{bar} {pct:.0%} │ {done}/{total} tasks │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
 
 
