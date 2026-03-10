@@ -13,6 +13,7 @@ from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
 from forge.tui.state import TuiState
 from forge.tui.screens.home import HomeScreen
 from forge.tui.screens.pipeline import PipelineScreen
+from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
 
@@ -132,12 +133,17 @@ class ForgeApp(App):
         """User submitted a task from HomeScreen."""
         task = event.task
         logger.info("Task submitted: %s", task)
+        self._state.phase = "planning"
+        self._state._notify("phase")
         pipeline_screen = PipelineScreen(self._state)
         self.push_screen(pipeline_screen)
-        await self._start_pipeline(task)
+        # CRITICAL: Use create_task, NOT await — planning is a long LLM call
+        # that would block the Textual event loop and freeze the UI.
+        asyncio.create_task(self._run_plan(task))
 
-    async def _start_pipeline(self, task: str) -> None:
-        """Launch the daemon and start executing the task."""
+    async def _run_plan(self, task: str) -> None:
+        """Run planning phase only, then show plan for approval."""
+        import uuid
         from forge.core.events import EventEmitter
         from forge.core.daemon import ForgeDaemon
         from forge.config.settings import ForgeSettings
@@ -148,7 +154,6 @@ class ForgeApp(App):
         self._source = EmbeddedSource(emitter, self._bus)
         self._source.connect()
 
-        # Wire bus events to state
         for evt_type in TUI_EVENT_TYPES:
             async def _handler(data, _type=evt_type):
                 self._state.apply_event(_type, data)
@@ -160,18 +165,70 @@ class ForgeApp(App):
             event_emitter=emitter,
         )
 
+        self._pipeline_id = str(uuid.uuid4())
+        await self._db.create_pipeline(
+            id=self._pipeline_id,
+            description=task[:200],
+            project_dir=self._project_dir,
+            model_strategy=settings.model_strategy,
+            budget_limit_usd=settings.budget_limit_usd,
+        )
+
         self._pipeline_start_time = asyncio.get_event_loop().time()
         self._elapsed_timer = self.set_interval(1.0, self._tick_elapsed)
 
-        self._daemon_task = asyncio.create_task(self._run_daemon(task))
-        self._daemon_task.add_done_callback(self._on_daemon_done)
-
-    async def _run_daemon(self, task: str) -> None:
-        """Run the daemon pipeline."""
         try:
-            await self._daemon.run(task)
+            self._graph = await self._daemon.plan(
+                task, self._db, pipeline_id=self._pipeline_id,
+            )
+            plan_tasks = [
+                {"id": t.id, "title": t.title, "description": t.description,
+                 "files": t.files, "depends_on": t.depends_on,
+                 "complexity": t.complexity.value}
+                for t in self._graph.tasks
+            ]
+            self.push_screen(PlanApprovalScreen(plan_tasks))
         except Exception as e:
-            logger.error("Daemon failed: %s", e, exc_info=True)
+            logger.error("Planning failed: %s", e, exc_info=True)
+            self._state.apply_event("pipeline:error", {"error": str(e)})
+
+    async def on_plan_approval_screen_plan_approved(self, event) -> None:
+        """User approved the plan — start execution."""
+        self.pop_screen()  # Remove PlanApprovalScreen, back to PipelineScreen
+        try:
+            self._daemon._contracts = await self._daemon.generate_contracts(
+                self._graph, self._db, self._pipeline_id,
+            )
+            self._daemon_task = asyncio.create_task(self._run_execute())
+            self._daemon_task.add_done_callback(self._on_daemon_done)
+        except Exception as e:
+            logger.error("Contract generation failed: %s", e, exc_info=True)
+            self._state.apply_event("pipeline:error", {"error": str(e)})
+
+    async def on_plan_approval_screen_plan_cancelled(self, event) -> None:
+        """User cancelled the plan — clean up resources."""
+        self.pop_screen()  # Remove PlanApprovalScreen
+        if self._elapsed_timer:
+            self._elapsed_timer.stop()
+        if self._source:
+            self._source.disconnect()
+        if self._db and self._pipeline_id:
+            try:
+                await self._db.update_pipeline_status(self._pipeline_id, "cancelled")
+            except Exception:
+                logger.debug("Failed to update cancelled pipeline status", exc_info=True)
+        self._daemon = None
+        self._graph = None
+        self.notify("Plan cancelled.", severity="warning")
+
+    async def _run_execute(self) -> None:
+        """Execute the approved plan."""
+        try:
+            await self._daemon.execute(
+                self._graph, self._db, pipeline_id=self._pipeline_id,
+            )
+        except Exception as e:
+            logger.error("Execution failed: %s", e, exc_info=True)
             self._state.apply_event("pipeline:error", {"error": str(e)})
 
     def _on_daemon_done(self, task: asyncio.Task) -> None:
