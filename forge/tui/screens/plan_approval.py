@@ -45,7 +45,8 @@ def format_plan_summary(tasks: list[dict], estimated_cost: float = 0.0) -> str:
         c = t.get("complexity", "medium")
         complexities[c] = complexities.get(c, 0) + 1
 
-    parts = [f"[bold]{count} tasks[/]"]
+    task_word = "task" if count == 1 else "tasks"
+    parts = [f"[bold]{count} {task_word}[/]"]
     for level, n in complexities.items():
         if n > 0:
             color = _COMPLEXITY_COLORS.get(level, "#8b949e")

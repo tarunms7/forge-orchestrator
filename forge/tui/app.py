@@ -133,8 +133,7 @@ class ForgeApp(App):
         """User submitted a task from HomeScreen."""
         task = event.task
         logger.info("Task submitted: %s", task)
-        self._state.phase = "planning"
-        self._state._notify("phase")
+        self._state.apply_event("pipeline:phase_changed", {"phase": "planning"})
         pipeline_screen = PipelineScreen(self._state)
         self.push_screen(pipeline_screen)
         # CRITICAL: Use create_task, NOT await — planning is a long LLM call
@@ -166,6 +165,9 @@ class ForgeApp(App):
         )
 
         self._pipeline_id = str(uuid.uuid4())
+        if not self._db:
+            self._state.apply_event("pipeline:error", {"error": "Database not initialized"})
+            return
         await self._db.create_pipeline(
             id=self._pipeline_id,
             description=task[:200],
@@ -206,8 +208,9 @@ class ForgeApp(App):
             self._state.apply_event("pipeline:error", {"error": str(e)})
 
     async def on_plan_approval_screen_plan_cancelled(self, event) -> None:
-        """User cancelled the plan — clean up resources."""
+        """User cancelled the plan — clean up and return to HomeScreen."""
         self.pop_screen()  # Remove PlanApprovalScreen
+        self.pop_screen()  # Remove PipelineScreen, back to HomeScreen
         if self._elapsed_timer:
             self._elapsed_timer.stop()
         if self._source:
@@ -240,6 +243,7 @@ class ForgeApp(App):
     def _tick_elapsed(self) -> None:
         if self._pipeline_start_time:
             self._state.elapsed_seconds = asyncio.get_event_loop().time() - self._pipeline_start_time
+            self._state._notify("elapsed")
 
     def action_switch_home(self) -> None:
         while len(self.screen_stack) > 1:

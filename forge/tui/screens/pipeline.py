@@ -34,6 +34,7 @@ class PipelineScreen(Screen):
     AgentOutput {
         width: 3fr;
         padding: 1 1;
+        border-left: tall #30363d;
     }
     PipelineProgress {
         dock: bottom;
@@ -67,7 +68,7 @@ class PipelineScreen(Screen):
         self._refresh_all()
 
     def _on_state_change(self, field: str) -> None:
-        if field in ("tasks", "agent_output", "cost", "phase"):
+        if field in ("tasks", "agent_output", "cost", "phase", "elapsed"):
             self._refresh_all()
         if field == "error":
             error = self._state.error

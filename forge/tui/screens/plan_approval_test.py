@@ -41,4 +41,5 @@ def test_format_plan_summary():
 def test_format_plan_summary_no_cost():
     tasks = [{"id": "t1", "title": "A", "complexity": "low"}]
     result = format_plan_summary(tasks)
-    assert "1 tasks" in result
+    assert "1 task" in result
+    assert "1 tasks" not in result  # singular, not plural
