@@ -215,3 +215,35 @@ async def test_refresh_cookie_path_is_root(client):
     assert "path=/" in set_cookie.lower().replace(" ", "")
     # Ensure it's not path=/auth
     assert "path=/auth" not in set_cookie.lower().replace(" ", "")
+
+
+# ── Task 25: Refresh token expiry safety check ──────────────────────
+
+
+async def test_refresh_with_expired_token_returns_401(client):
+    """POST /auth/refresh with an expired refresh token should return 401."""
+    from forge.api.security.jwt import create_refresh_token
+
+    # Create a refresh token that expired 1 hour ago
+    expired_token = create_refresh_token(
+        subject="some-user-id",
+        secret="test-secret-for-routes",
+        expires_delta_seconds=-3600,
+    )
+    client.cookies.set("refresh_token", expired_token)
+    resp = await client.post("/api/auth/refresh")
+    assert resp.status_code == 401
+
+
+async def test_refresh_with_access_token_type_returns_401(client):
+    """POST /auth/refresh with an access token (wrong type) should return 401."""
+    from forge.api.security.jwt import create_access_token
+
+    access_token = create_access_token(
+        subject="some-user-id",
+        secret="test-secret-for-routes",
+    )
+    client.cookies.set("refresh_token", access_token)
+    resp = await client.post("/api/auth/refresh")
+    assert resp.status_code == 401
+    assert "invalid token type" in resp.json()["detail"].lower()

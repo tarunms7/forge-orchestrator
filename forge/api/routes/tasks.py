@@ -909,7 +909,18 @@ async def approve_task(
             # Still try to clean up the worktree on error
             _cleanup_worktree(pipeline.project_dir, task_id)
 
-    asyncio.create_task(_do_merge())
+    def _on_done(t: asyncio.Task) -> None:
+        if not t.cancelled() and t.exception():
+            logger.error(
+                "Background merge for %s/%s failed: %s",
+                pipeline_id,
+                task_id,
+                t.exception(),
+                exc_info=t.exception(),
+            )
+
+    bg_task = asyncio.create_task(_do_merge())
+    bg_task.add_done_callback(_on_done)
 
     return {"status": "merging", "task_id": task_id}
 

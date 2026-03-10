@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from forge.api.routes.tasks import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["diff"])
 
@@ -15,22 +19,21 @@ async def get_pipeline_diff(
     request: Request,
     user_id: str = Depends(get_current_user),
 ) -> dict:
-    """Return combined diff text for a pipeline.
+    """Return combined diff text for a pipeline from DB events."""
+    db = getattr(request.app.state, "db", None) or getattr(
+        request.app.state, "forge_db", None
+    )
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
 
-    Returns placeholder diff content until real pipeline integration is wired.
-    """
-    if not hasattr(request.app.state, "pipelines"):
-        request.app.state.pipelines = {}
-
-    pipelines = request.app.state.pipelines
-    pipeline = pipelines.get(pipeline_id)
-
-    if pipeline is None:
+    pipeline = await db.get_pipeline(pipeline_id)
+    if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
-    if pipeline["user_id"] != user_id:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-
-    # Placeholder diff until real pipeline integration
-    diff_text = pipeline.get("diff", "")
-    return {"pipeline_id": pipeline_id, "diff": diff_text}
+    events = await db.list_events(pipeline_id, event_type="task:merge_result")
+    diff_parts = [
+        evt.payload.get("diff", "")
+        for evt in events
+        if evt.payload and evt.payload.get("success")
+    ]
+    return {"pipeline_id": pipeline_id, "diff": "\n".join(filter(None, diff_parts))}

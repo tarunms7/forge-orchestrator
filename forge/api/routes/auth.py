@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -118,6 +120,8 @@ async def refresh(request: Request) -> dict:
         payload = decode_token(refresh_token, secret=request.app.state.jwt_secret)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
+        if payload.get("exp", 0) < time.time():
+            raise HTTPException(status_code=401, detail="Refresh token expired")
         new_access = create_access_token(
             subject=payload["sub"], secret=request.app.state.jwt_secret,
             display_name=payload.get("dn"),

@@ -24,6 +24,25 @@ async def client():
     await app.state.db.close()
 
 
+@pytest.fixture
+async def client_with_app():
+    """Like `client`, but also yields the app for direct DB access."""
+    from forge.api.app import create_app
+
+    app = create_app(
+        db_url="sqlite+aiosqlite:///:memory:",
+        jwt_secret="test-secret-for-diff",
+    )
+
+    await app.state.db.initialize()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, app
+
+    await app.state.db.close()
+
+
 async def _register_and_get_token(
     client: AsyncClient,
     email: str = "diff-user@example.com",
@@ -63,20 +82,22 @@ class TestDiffEndpoint:
         )
         assert resp.status_code == 404
 
-    async def test_diff_returns_empty_for_pipeline_without_diff(self, client):
+    async def test_diff_returns_empty_for_pipeline_without_diff(self, client_with_app):
         """GET /tasks/{id}/diff for a pipeline with no diff returns empty string."""
-        token = await _register_and_get_token(client)
-
-        # Create a task first
-        create_resp = await client.post(
-            "/api/tasks",
-            json={
-                "description": "Test diff",
-                "project_path": "/tmp/project",
-            },
-            headers=_auth_header(token),
+        client, app = client_with_app
+        db = app.state.db
+        user_id, token = await _register_and_get_user_id_and_token(
+            client, email="diff-empty@example.com"
         )
-        pipeline_id = create_resp.json()["pipeline_id"]
+
+        # Create pipeline directly in DB (no background planning task)
+        pipeline_id = "test-pipe-empty"
+        await db.create_pipeline(
+            id=pipeline_id,
+            description="Test diff",
+            project_dir="/tmp/project",
+            user_id=user_id,
+        )
 
         # Get diff
         resp = await client.get(
@@ -92,16 +113,22 @@ class TestDiffEndpoint:
 class TestDiffIDOR:
     """IDOR protection: users cannot access other users' pipeline diffs."""
 
-    async def test_diff_as_different_user_returns_404(self, client):
+    async def test_diff_as_different_user_returns_404(self, client_with_app):
         """GET /tasks/{id}/diff for a pipeline owned by another user should return 404."""
-        # Register user A and create a task
-        token_a = await _register_and_get_token(client, email="diff-a@example.com")
-        create_resp = await client.post(
-            "/api/tasks",
-            json={"description": "User A diff task", "project_path": "/proj"},
-            headers=_auth_header(token_a),
+        client, app = client_with_app
+        db = app.state.db
+
+        # Register user A and create a pipeline directly in DB
+        user_id_a, token_a = await _register_and_get_user_id_and_token(
+            client, email="diff-a@example.com"
         )
-        pipeline_id = create_resp.json()["pipeline_id"]
+        pipeline_id = "test-pipe-idor"
+        await db.create_pipeline(
+            id=pipeline_id,
+            description="User A diff task",
+            project_dir="/proj",
+            user_id=user_id_a,
+        )
 
         # Register user B and try to access user A's diff
         token_b = await _register_and_get_token(client, email="diff-b@example.com")
@@ -110,3 +137,134 @@ class TestDiffIDOR:
             headers=_auth_header(token_b),
         )
         assert resp.status_code == 404
+
+
+async def _register_and_get_user_id_and_token(
+    client: AsyncClient,
+    email: str = "diff-db-user@example.com",
+    display_name: str = "Diff DB User",
+) -> tuple[str, str]:
+    """Helper: register a user and return (user_id, access_token)."""
+    resp = await client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": "securepass",
+            "display_name": display_name,
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    return data["user"]["id"], data["access_token"]
+
+
+class TestDiffFromDBEvents:
+    """Tests for the DB-backed diff aggregation from merge_result events."""
+
+    async def test_diff_aggregates_successful_merge_events(self, client_with_app):
+        """Diff endpoint should combine diff text from successful merge_result events."""
+        client, app = client_with_app
+        db = app.state.db
+        user_id, token = await _register_and_get_user_id_and_token(client)
+
+        # Create pipeline directly in DB (no background planning task)
+        pipeline_id = "test-pipe-agg"
+        await db.create_pipeline(
+            id=pipeline_id,
+            description="merge diff test",
+            project_dir="/tmp/proj",
+            user_id=user_id,
+        )
+
+        # Insert merge_result events directly into DB
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t1",
+            event_type="task:merge_result",
+            payload={"success": True, "diff": "diff --git a/file1\n+added line"},
+        )
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t2",
+            event_type="task:merge_result",
+            payload={"success": True, "diff": "diff --git a/file2\n+another line"},
+        )
+
+        resp = await client.get(
+            f"/api/tasks/{pipeline_id}/diff",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "diff --git a/file1" in data["diff"]
+        assert "diff --git a/file2" in data["diff"]
+
+    async def test_diff_ignores_failed_merge_events(self, client_with_app):
+        """Diff endpoint should skip events where success is False."""
+        client, app = client_with_app
+        db = app.state.db
+        user_id, token = await _register_and_get_user_id_and_token(
+            client, email="diff-fail@example.com"
+        )
+
+        pipeline_id = "test-pipe-fail"
+        await db.create_pipeline(
+            id=pipeline_id,
+            description="failed merge test",
+            project_dir="/tmp/proj",
+            user_id=user_id,
+        )
+
+        # One successful, one failed
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t1",
+            event_type="task:merge_result",
+            payload={"success": True, "diff": "good-diff"},
+        )
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t2",
+            event_type="task:merge_result",
+            payload={"success": False, "diff": "bad-diff"},
+        )
+
+        resp = await client.get(
+            f"/api/tasks/{pipeline_id}/diff",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "good-diff" in data["diff"]
+        assert "bad-diff" not in data["diff"]
+
+    async def test_diff_ignores_non_merge_events(self, client_with_app):
+        """Diff endpoint should only look at task:merge_result events."""
+        client, app = client_with_app
+        db = app.state.db
+        user_id, token = await _register_and_get_user_id_and_token(
+            client, email="diff-nonmerge@example.com"
+        )
+
+        pipeline_id = "test-pipe-nonmerge"
+        await db.create_pipeline(
+            id=pipeline_id,
+            description="non-merge test",
+            project_dir="/tmp/proj",
+            user_id=user_id,
+        )
+
+        # Add a non-merge event with a diff field
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t1",
+            event_type="task:state_changed",
+            payload={"diff": "should-not-appear", "success": True},
+        )
+
+        resp = await client.get(
+            f"/api/tasks/{pipeline_id}/diff",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["diff"] == ""
