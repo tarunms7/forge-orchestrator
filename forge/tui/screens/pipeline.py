@@ -24,6 +24,24 @@ class PipelineScreen(Screen):
     #split-pane {
         height: 1fr;
     }
+    TaskList {
+        width: 1fr;
+        min-width: 30;
+        max-width: 45;
+        border-right: tall #30363d;
+        padding: 1 1;
+    }
+    AgentOutput {
+        width: 3fr;
+        padding: 1 1;
+    }
+    PipelineProgress {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        background: #161b22;
+        border-top: tall #30363d;
+    }
     """
 
     BINDINGS = [

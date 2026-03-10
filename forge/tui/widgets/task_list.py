@@ -47,7 +47,6 @@ class TaskList(Widget):
         width: 1fr;
         min-width: 25;
         max-width: 40;
-        border-right: solid #30363d;
         padding: 0 1;
     }
     """
