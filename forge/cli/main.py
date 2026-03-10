@@ -1,5 +1,7 @@
 """Forge CLI. Entry point for all user interaction."""
 
+from __future__ import annotations
+
 import asyncio
 import os
 
@@ -76,6 +78,32 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
     except Exception as e:
         click.echo(f"Forge failed: {e}")
         raise SystemExit(1)
+
+
+@cli.command()
+@click.option("--project-dir", default=".", help="Project root directory")
+@click.option(
+    "--strategy",
+    default=None,
+    envvar="FORGE_MODEL_STRATEGY",
+    help="Model routing: auto, fast, quality",
+)
+def tui(project_dir: str, strategy: str | None) -> None:
+    """Launch the Forge terminal UI."""
+    project_dir = os.path.abspath(project_dir)
+    forge_dir = os.path.join(project_dir, ".forge")
+    if not os.path.isdir(forge_dir):
+        os.makedirs(forge_dir, exist_ok=True)
+
+    from forge.config.settings import ForgeSettings
+    from forge.tui.app import ForgeApp
+
+    settings = ForgeSettings()
+    if strategy:
+        settings.model_strategy = strategy
+
+    app = ForgeApp(project_dir=project_dir, settings=settings)
+    app.run()
 
 
 @cli.command()
