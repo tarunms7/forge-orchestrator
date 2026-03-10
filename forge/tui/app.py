@@ -66,10 +66,43 @@ class ForgeApp(App):
         self._daemon_task: asyncio.Task | None = None
         self._pipeline_start_time: float | None = None
         self._elapsed_timer = None
+        self._db_path = os.path.join(self._project_dir, ".forge", "forge.db")
+        self._db = None
+        self._graph = None
+        self._pipeline_id = None
 
-    def on_mount(self) -> None:
-        """Push initial screen and wire state changes."""
-        self.push_screen(HomeScreen())
+    async def _init_db(self):
+        """Initialize database connection."""
+        from forge.storage.db import Database
+        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+        self._db = Database(f"sqlite+aiosqlite:///{self._db_path}")
+        await self._db.initialize()
+
+    async def _load_recent_pipelines(self) -> list[dict]:
+        """Load recent pipelines from DB for HomeScreen."""
+        if not self._db:
+            return []
+        try:
+            pipelines = await self._db.list_pipelines()
+            return [
+                {
+                    "id": p.id,
+                    "description": p.description or "",
+                    "status": p.status or "unknown",
+                    "created_at": p.created_at or "",
+                    "cost": p.total_cost_usd or 0.0,
+                }
+                for p in pipelines[:10]
+            ]
+        except Exception:
+            logger.debug("Failed to load pipeline history", exc_info=True)
+            return []
+
+    async def on_mount(self) -> None:
+        """Initialize DB, push home screen, wire state changes."""
+        await self._init_db()
+        recent = await self._load_recent_pipelines()
+        self.push_screen(HomeScreen(recent_pipelines=recent))
         self._state.on_change(self._on_state_change)
 
     def _on_state_change(self, field: str) -> None:
