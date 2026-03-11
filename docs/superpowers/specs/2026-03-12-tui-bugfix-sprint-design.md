@@ -93,7 +93,12 @@ Add `_is_near_bottom()` helper and guard auto-scroll in `append_line`:
 
 ```python
 def _is_near_bottom(self) -> bool:
-    """Check if the scroll position is near the bottom (within 3 lines)."""
+    """Check if the scroll position is near the bottom.
+
+    Uses a threshold of 3 content-units (roughly 3 lines). Textual's
+    VerticalScroll exposes scroll_y and virtual_size in content units,
+    so the subtraction gives us the distance from the bottom edge.
+    """
     try:
         scroll = self.query_one("#agent-scroll", VerticalScroll)
         return scroll.scroll_y >= scroll.virtual_size.height - scroll.size.height - 3
@@ -170,18 +175,20 @@ def __init__(self, state: TuiState) -> None:
 
 ```python
 async def _load_task_diff(self, tid: str) -> str:
-    """Generate diff for a task's changed files from the pipeline branch."""
+    """Generate diff for a task from the pipeline branch.
+
+    Uses the full branch diff (main...branch) rather than scoping by
+    task.files, because the planner's file list represents *intended*
+    files, not *actually changed* files. The agent may modify different
+    files (e.g., create new test files not in the plan). Scoping by
+    intended files would silently hide real changes.
+    """
     if tid in self._diff_cache:
         return self._diff_cache[tid]
-    task = self._state.tasks.get(tid, {})
-    branch = getattr(self._state, "pipeline_branch", "") or ""
+    branch = self._state.pipeline_branch or ""
     if not branch:
         return "No pipeline branch available yet."
-    # Use task files to scope the diff; fall back to full branch diff
-    files = task.get("files", [])
     cmd = ["git", "diff", f"main...{branch}"]
-    if files:
-        cmd += ["--"] + files
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -198,6 +205,8 @@ async def _load_task_diff(self, tid: str) -> str:
     self._diff_cache[tid] = diff
     return diff
 ```
+
+> **Design note:** We use the full branch diff rather than per-task file scoping because `task.get("files", [])` comes from the planner's intended file list, not from git. The agent may modify different files than planned. Per-file scoping would hide real changes.
 
 In `_refresh_all()`, replace the synchronous diff fetch with an async task launch when the diff view is active:
 
@@ -217,8 +226,16 @@ if self._active_view == "diff":
 
 ```python
 async def _refresh_diff_async(self, tid: str) -> None:
-    """Fetch diff async and update the viewer."""
+    """Fetch diff async and update the viewer.
+
+    Guards against stale updates: if the user switched to a different task
+    while the diff was loading, discard the result instead of overwriting
+    the current view.
+    """
     diff = await self._load_task_diff(tid)
+    # Guard: only update if user is still viewing this task
+    if self._state.selected_task_id != tid:
+        return
     try:
         diff_viewer = self.query_one(DiffViewer)
         task = self._state.tasks.get(tid, {})
@@ -241,17 +258,42 @@ for tid in list(self._diff_cache):
 
 **File: `forge/tui/state.py`**
 
-Add `pipeline_branch` field to `TuiState`:
+Add `pipeline_branch` field to `TuiState.__init__`:
 
 ```python
 self.pipeline_branch: str = ""
 ```
 
-Populate it from the `pipeline:phase_changed` event when phase is `executing`, or from the pipeline DB record. The branch name is available in the `pipeline:plan_ready` or `pipeline:phase_changed` event data if the daemon includes it. If not available from events, it can be inferred from the pipeline record in the DB.
+**File: `forge/tui/app.py`**
+
+The branch name is NOT available in event payloads — the daemon's `pipeline:phase_changed` event only sends `{"phase": ...}`. However, `ForgeApp` already has `_get_pipeline_branch()` (line 295) and `_cached_pipeline_branch` (line 180) which fetches the branch from the DB.
+
+Populate `TuiState.pipeline_branch` from the app after the pipeline starts executing. In `_run_contracts_and_execute()` or after plan approval, resolve and set the branch:
+
+```python
+# In ForgeApp, after execution begins (e.g., in _run_contracts_and_execute or _run_execute):
+branch = await self._get_pipeline_branch()
+if branch:
+    self._cached_pipeline_branch = branch
+    self._state.pipeline_branch = branch
+    self._state._notify("pipeline_branch")
+```
+
+This reuses the existing `_get_pipeline_branch()` which reads from the DB (`pipeline.branch_name`) with a git fallback. No new DB queries needed.
 
 **File: `forge/tui/screens/review.py`**
 
-Apply the same on-demand diff pattern. Replace line 95:
+Apply the same on-demand diff pattern. Add cache state to `__init__`:
+
+```python
+def __init__(self, state: TuiState) -> None:
+    super().__init__()
+    self._state = state
+    self._diff_cache: dict[str, str] = {}    # NEW: task_id -> diff text
+    self._diff_loading: set[str] = set()      # NEW: task IDs with in-flight loads
+```
+
+Replace the diff fetch in `_refresh()` (line 95):
 
 ```python
 # Before:
@@ -262,6 +304,36 @@ diff = self._diff_cache.get(tid, "")
 if not diff and tid not in self._diff_loading:
     self._diff_loading.add(tid)
     asyncio.create_task(self._load_diff(tid))
+```
+
+Add the `_load_diff` method:
+
+```python
+async def _load_diff(self, tid: str) -> str:
+    """Load diff on-demand from git, same approach as PipelineScreen."""
+    branch = self._state.pipeline_branch or ""
+    if not branch:
+        diff = "No pipeline branch available yet."
+    else:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", f"main...{branch}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            diff = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
+        except Exception as e:
+            diff = f"Error: {e}"
+    self._diff_cache[tid] = diff
+    self._diff_loading.discard(tid)
+    # Guard: only update if user is still on this task
+    if self._state.selected_task_id != tid:
+        return
+    try:
+        self.query_one(DiffViewer).update_diff(tid, self._state.tasks.get(tid, {}).get("title", ""), diff)
+    except Exception:
+        pass
 ```
 
 ### Files Changed
@@ -323,6 +395,8 @@ def action_jump_task(self, index: int) -> None:
         self._refresh()
 ```
 
+> **Design note:** On PipelineScreen, 1-9 jumps to the Nth task in the *full* task list. On ReviewScreen, 1-9 jumps to the Nth task in the *reviewable* (in_review/awaiting_approval) subset. This is intentional — ReviewScreen only shows reviewable tasks, so the index should match what's visible.
+
 ### Files Changed
 
 | File | Changes |
@@ -351,10 +425,63 @@ BINDINGS = [
 ]
 
 def action_new_task(self) -> None:
-    """Pop all screens back to HomeScreen to start a new task."""
-    while len(self.app.screen_stack) > 1:
-        self.app.pop_screen()
+    """Return to HomeScreen for a new task, cleaning up pipeline state."""
+    self.app.action_reset_for_new_task()
 ```
+
+**File: `forge/tui/app.py`**
+
+Add a cleanup method that `action_new_task` delegates to. This resets all pipeline-related state so a fresh task can be submitted:
+
+```python
+def action_reset_for_new_task(self) -> None:
+    """Clean up current pipeline state and return to HomeScreen."""
+    # Stop the elapsed timer
+    if self._elapsed_timer:
+        self._elapsed_timer.stop()
+        self._elapsed_timer = None
+    # Disconnect event bus
+    if self._source:
+        self._source.disconnect()
+        self._source = None
+    # Reset pipeline tracking flags
+    self._final_approval_pushed = False
+    self._daemon = None
+    self._daemon_task = None
+    self._graph = None
+    self._pipeline_id = None
+    self._cached_pipeline_branch = ""
+    # Reset TuiState for new pipeline
+    self._state.reset()  # Clears tasks, outputs, phase etc.
+    # Pop all screens back to HomeScreen
+    while len(self.screen_stack) > 1:
+        self.pop_screen()
+```
+
+**File: `forge/tui/state.py`**
+
+Add a `reset()` method to `TuiState` that clears all pipeline-specific fields back to initial values:
+
+```python
+def reset(self) -> None:
+    """Reset all pipeline-specific state for a new task."""
+    self.phase = "idle"
+    self.tasks.clear()
+    self.task_order.clear()
+    self.selected_task_id = None
+    self.agent_output.clear()
+    self.review_output.clear()
+    self.planner_output.clear()
+    self.review_gates.clear()
+    self.streaming_task_ids.clear()
+    self.error = None
+    self.elapsed_seconds = 0.0
+    self.total_cost_usd = 0.0
+    self.pipeline_branch = ""
+    self.question_history.clear()
+```
+
+> **Why cleanup matters:** Without resetting these fields, the elapsed timer continues ticking on a phantom pipeline, `_final_approval_pushed = True` blocks subsequent final screens, and stale event callbacks reference dead widget trees.
 
 Update the hint text at line 109:
 
@@ -379,7 +506,21 @@ yield Static("\n[#8b949e]Enter: create PR  d: diff  r: re-run  n: new task  Esc:
 | File | Bug(s) | Description |
 |------|--------|-------------|
 | `forge/tui/widgets/agent_output.py` | 1 | `update_header()`, `_is_near_bottom()`, guarded scroll |
-| `forge/tui/screens/pipeline.py` | 1, 2 | Streaming guard in `_refresh_all`, final sync, on-demand diff with cache |
-| `forge/tui/screens/review.py` | 2, 3 | On-demand diff, number bindings with priority, escape, `action_jump_task()` |
-| `forge/tui/screens/final_approval.py` | 4 | `n` binding, `action_new_task()`, updated hint |
-| `forge/tui/state.py` | 2 | `pipeline_branch` field |
+| `forge/tui/screens/pipeline.py` | 1, 2 | Streaming guard in `_refresh_all`, final sync, on-demand diff with cache + stale guard |
+| `forge/tui/screens/review.py` | 2, 3 | On-demand diff with `_load_diff()`, number bindings with priority, escape, `action_jump_task()` |
+| `forge/tui/screens/final_approval.py` | 4 | `n` binding, delegates to `app.action_reset_for_new_task()`, updated hint |
+| `forge/tui/state.py` | 2, 4 | `pipeline_branch` field, `reset()` method |
+| `forge/tui/app.py` | 2, 4 | `action_reset_for_new_task()` cleanup, populate `pipeline_branch` from DB |
+
+---
+
+## Testing Strategy
+
+Each fix should include targeted tests:
+
+| Bug | Test |
+|-----|------|
+| 1 | Unit test `_is_near_bottom()` with mocked scroll geometry (at bottom → True, scrolled up → False). Integration test that `_refresh_all` calls `update_header` (not `update_output`) when `_agent_streaming_tasks` contains the selected task. |
+| 2 | Test that `_load_task_diff` calls `git diff main...{branch}` and caches the result. Test cache invalidation on task state change. Test stale guard in `_refresh_diff_async` (selected task changed). |
+| 3 | Test that pressing `1` on ReviewScreen calls `action_jump_task(1)` and does NOT bubble to app-level `action_switch_home()`. |
+| 4 | Test that `action_reset_for_new_task()` clears `_final_approval_pushed`, stops timer, disconnects source, and resets `TuiState`. |
