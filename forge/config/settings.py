@@ -63,6 +63,12 @@ class ForgeSettings(BaseSettings):
     # Polling
     scheduler_poll_interval: float = 0.3
 
+    # Human-in-the-loop settings
+    autonomy: str = "balanced"  # full | balanced | supervised
+    question_limit: int = 3  # max questions per task per execution cycle
+    question_timeout: int = 1800  # seconds before auto-decide (30 min)
+    auto_pr: bool = False  # skip final approval, auto-create PR
+
     # GitHub webhook integration
     github_webhook_secret: str = ""
     github_allowed_repos: list[str] = []

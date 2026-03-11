@@ -94,6 +94,9 @@ class TaskRow(Base):
     approval_context: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     prior_diff: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     implementation_summary: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    session_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    questions_asked: Mapped[int] = mapped_column(default=0)
+    questions_limit: Mapped[int] = mapped_column(default=3)
 
 
 class AgentRow(Base):
@@ -135,6 +138,8 @@ class PipelineRow(Base):
     template_config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     # Contract Builder output (JSON blob)
     contracts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    paused_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    paused_duration: Mapped[float] = mapped_column(default=0.0)
 
 
 class UserTemplateRow(Base):
@@ -173,8 +178,29 @@ class PipelineEventRow(Base):
     created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
 
+class TaskQuestionRow(Base):
+    """Agent question awaiting human answer."""
+
+    __tablename__ = "task_questions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+    )
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    suggestions: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    answered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    context: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    created_at: Mapped[str] = mapped_column(
+        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+    answered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+
+
 # ── All model classes (used by _add_missing_columns) ──────────────────
-_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow)
+_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow, TaskQuestionRow)
 
 
 class Database:
@@ -758,6 +784,28 @@ class Database:
                 row.paused = paused
                 await session.commit()
 
+    async def set_pipeline_paused_at(self, pipeline_id: str, paused_at: str | None) -> None:
+        """Set or clear the paused_at timestamp on a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.paused_at = paused_at
+                await session.commit()
+
+    async def add_pipeline_paused_duration(self, pipeline_id: str, elapsed_seconds: float) -> None:
+        """Add elapsed_seconds to the pipeline's paused_duration accumulator."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.paused_duration = (row.paused_duration or 0.0) + elapsed_seconds
+                await session.commit()
+
     # ── User templates ─────────────────────────────────────────────
 
     async def create_user_template(
@@ -859,4 +907,69 @@ class Database:
             if event_type is not None:
                 stmt = stmt.where(PipelineEventRow.event_type == event_type)
             result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    # ── Task questions ────────────────────────────────────────────────
+
+    async def create_task_question(
+        self,
+        *,
+        task_id: str,
+        pipeline_id: str,
+        question: str,
+        suggestions: list[str] | None = None,
+        context: dict | None = None,
+    ) -> TaskQuestionRow:
+        async with self._session_factory() as session:
+            row = TaskQuestionRow(
+                task_id=task_id,
+                pipeline_id=pipeline_id,
+                question=question,
+                suggestions=json.dumps(suggestions) if suggestions else None,
+                context=json.dumps(context) if context else None,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def answer_question(
+        self, question_id: str, answer: str, answered_by: str = "human",
+    ) -> None:
+        async with self._session_factory() as session:
+            row = await session.get(TaskQuestionRow, question_id)
+            if row:
+                row.answer = answer
+                row.answered_by = answered_by
+                row.answered_at = datetime.now(timezone.utc).isoformat()
+                await session.commit()
+
+    async def get_pending_questions(self, pipeline_id: str) -> list[TaskQuestionRow]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskQuestionRow)
+                .where(TaskQuestionRow.pipeline_id == pipeline_id)
+                .where(TaskQuestionRow.answer.is_(None))
+                .order_by(TaskQuestionRow.created_at)
+            )
+            return list(result.scalars().all())
+
+    async def get_task_questions(self, task_id: str) -> list[TaskQuestionRow]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskQuestionRow)
+                .where(TaskQuestionRow.task_id == task_id)
+                .order_by(TaskQuestionRow.created_at)
+            )
+            return list(result.scalars().all())
+
+    async def get_expired_questions(self, timeout_seconds: int) -> list[TaskQuestionRow]:
+        cutoff = datetime.now(timezone.utc).timestamp() - timeout_seconds
+        cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskQuestionRow)
+                .where(TaskQuestionRow.answer.is_(None))
+                .where(TaskQuestionRow.created_at < cutoff_iso)
+            )
             return list(result.scalars().all())

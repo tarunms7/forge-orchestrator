@@ -34,6 +34,11 @@ class TuiState:
         self.error: str | None = None
         self._pending_state_updates: dict[str, dict] = {}
 
+        self.pending_questions: dict[str, dict] = {}  # task_id → question data
+        self.review_gates: dict[str, dict[str, dict]] = {}  # task_id → gate_name → {status, details}
+        self.pr_url: str | None = None
+        self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
+
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
@@ -144,6 +149,82 @@ class TuiState:
         self.error = data.get("error", "Unknown error")
         self._notify("error")
 
+    def _on_task_question(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            self.tasks[task_id]["state"] = "awaiting_input"
+            self.pending_questions[task_id] = data.get("question", {})
+            self._notify("tasks")
+
+    def _on_task_answer(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id:
+            q = self.pending_questions.pop(task_id, None)
+            if q:
+                history = self.question_history.setdefault(task_id, [])
+                history.append({"question": q, "answer": data.get("answer")})
+            self._notify("tasks")
+
+    def _on_task_resumed(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            self.tasks[task_id]["state"] = "in_progress"
+            self._notify("tasks")
+
+    def _on_task_auto_decided(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id:
+            q = self.pending_questions.pop(task_id, None)
+            if q:
+                history = self.question_history.setdefault(task_id, [])
+                history.append({"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"})
+            self._notify("tasks")
+
+    def _on_review_gate_started(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        gate = data.get("gate")
+        if task_id and gate:
+            self.review_gates.setdefault(task_id, {})[gate] = {"status": "running"}
+            self._notify("tasks")
+
+    def _on_review_gate_passed(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        gate = data.get("gate")
+        if task_id and gate:
+            self.review_gates.setdefault(task_id, {})[gate] = {"status": "passed", "details": data.get("details")}
+            self._notify("tasks")
+
+    def _on_review_gate_failed(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        gate = data.get("gate")
+        if task_id and gate:
+            self.review_gates.setdefault(task_id, {})[gate] = {"status": "failed", "details": data.get("details")}
+            self._notify("tasks")
+
+    def _on_review_llm_feedback(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id:
+            gates = self.review_gates.setdefault(task_id, {})
+            gates["gate2_llm_review"] = {"status": "passed", "details": data.get("feedback")}
+            self._notify("tasks")
+
+    def _on_all_tasks_done(self, data: dict) -> None:
+        self.phase = "final_approval"
+        self._notify("phase")
+
+    def _on_pr_creating(self, data: dict) -> None:
+        self.phase = "pr_creating"
+        self._notify("phase")
+
+    def _on_pr_created(self, data: dict) -> None:
+        self.pr_url = data.get("pr_url")
+        self.phase = "pr_created"
+        self._notify("phase")
+
+    def _on_pr_failed(self, data: dict) -> None:
+        self.error = data.get("error", "PR creation failed")
+        self._notify("error")
+
     @property
     def done_count(self) -> int:
         return sum(1 for t in self.tasks.values() if t["state"] == "done")
@@ -178,4 +259,16 @@ class TuiState:
         "task:merge_result": _on_merge_result,
         "task:awaiting_approval": _on_awaiting_approval,
         "planner:output": _on_planner_output,
+        "task:question": _on_task_question,
+        "task:answer": _on_task_answer,
+        "task:resumed": _on_task_resumed,
+        "task:auto_decided": _on_task_auto_decided,
+        "review:gate_started": _on_review_gate_started,
+        "review:gate_passed": _on_review_gate_passed,
+        "review:gate_failed": _on_review_gate_failed,
+        "review:llm_feedback": _on_review_llm_feedback,
+        "pipeline:all_tasks_done": _on_all_tasks_done,
+        "pipeline:pr_creating": _on_pr_creating,
+        "pipeline:pr_created": _on_pr_created,
+        "pipeline:pr_failed": _on_pr_failed,
     }

@@ -24,6 +24,7 @@ class AgentRuntime:
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
+        resume: str | None = None,
     ) -> AgentResult:
         try:
             return await self._adapter.run(
@@ -39,6 +40,7 @@ class AgentRuntime:
                 conventions_md=conventions_md,
                 completed_deps=completed_deps,
                 contracts_block=contracts_block,
+                resume=resume,
             )
         except TimeoutError:
             return AgentResult(

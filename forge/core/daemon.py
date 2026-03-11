@@ -1,6 +1,7 @@
 """Forge daemon. Async orchestration loop: plan -> schedule -> dispatch -> review -> merge."""
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -530,6 +531,32 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         finally:
             await db.close()
 
+    async def _check_question_timeouts(self, db: Database, pipeline_id: str) -> None:
+        """Auto-answer expired questions so waiting tasks can resume."""
+        try:
+            expired = await db.get_expired_questions(self._settings.question_timeout)
+        except Exception:
+            logger.exception("Failed to query expired questions for pipeline %s", pipeline_id)
+            return
+        for q in expired:
+            if q.pipeline_id != pipeline_id:
+                continue
+            try:
+                await db.answer_question(q.id, "Proceed with your best judgment.", "timeout")
+                await self._emit(
+                    "task:auto_decided",
+                    {"task_id": q.task_id, "reason": "timeout", "question_id": q.id},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
+                logger.info(
+                    "Auto-answered timed-out question %s for task %s", q.id, q.task_id
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to auto-answer question %s for task %s", q.id, q.task_id
+                )
+
     async def _execution_loop(
         self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
         merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
@@ -538,6 +565,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         prefix = pipeline_id[:8] if pipeline_id else None
         start_time = asyncio.get_event_loop().time()
         timeout = self._settings.pipeline_timeout_seconds
+        # Pipeline pause tracking: timestamp (loop time) when all tasks went into awaiting_input
+        _all_paused_since: float | None = None
+        # Throttle question-timeout checks: only run every 30 seconds
+        _last_timeout_check: float = 0.0
         while True:
             # Watchdog: check elapsed time
             elapsed = asyncio.get_event_loop().time() - start_time
@@ -564,8 +595,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
             _print_status_table(tasks)
 
-            # AWAITING_APPROVAL counts as "parked" — not blocking the loop
-            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value)
+            # Periodic question-timeout checker (every 30 s)
+            if pipeline_id:
+                now = asyncio.get_event_loop().time()
+                if now - _last_timeout_check >= 30.0:
+                    _last_timeout_check = now
+                    await self._check_question_timeouts(db, pipeline_id)
+
+            # AWAITING_APPROVAL and CANCELLED count as "parked" — not blocking the loop
+            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value, TaskState.CANCELLED.value)
             all_parked = all(t.state in parked_states for t in tasks)
             if all_parked:
                 # If any tasks are still awaiting approval, sleep and poll
@@ -574,11 +612,63 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if has_awaiting:
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
-                # All tasks are truly terminal (done/error)
+                # All tasks are truly terminal (done/error/cancelled)
                 done_count = sum(1 for t in tasks if t.state == TaskState.DONE.value)
                 error_count = sum(1 for t in tasks if t.state == TaskState.ERROR.value)
+                cancelled_count = sum(1 for t in tasks if t.state == TaskState.CANCELLED.value)
+                total_count = len(tasks)
                 console.print(f"\n[bold green]Complete: {done_count} done, {error_count} errors[/bold green]")
+                if pipeline_id:
+                    # If we were tracking a pause window, close it out now
+                    if _all_paused_since is not None:
+                        paused_elapsed = asyncio.get_event_loop().time() - _all_paused_since
+                        _all_paused_since = None
+                        await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
+                        await db.set_pipeline_paused_at(pipeline_id, None)
+                    await self._emit("pipeline:all_tasks_done", {
+                        "summary": {
+                            "done": done_count,
+                            "error": error_count,
+                            "cancelled": cancelled_count,
+                            "total": total_count,
+                        },
+                    }, db=db, pipeline_id=pipeline_id)
                 break
+
+            # Pipeline pause tracking: detect when ALL non-terminal active tasks are awaiting_input
+            if pipeline_id:
+                non_terminal = [
+                    t for t in tasks
+                    if t.state not in (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
+                ]
+                all_awaiting_input = bool(non_terminal) and all(
+                    t.state == TaskState.AWAITING_INPUT.value for t in non_terminal
+                )
+                if all_awaiting_input:
+                    if _all_paused_since is None:
+                        # Transition into paused state
+                        _all_paused_since = asyncio.get_event_loop().time()
+                        paused_at_iso = datetime.now(timezone.utc).isoformat()
+                        await db.set_pipeline_paused_at(pipeline_id, paused_at_iso)
+                        await self._emit("pipeline:paused", {
+                            "reason": "awaiting_input",
+                            "task_count": len(non_terminal),
+                        }, db=db, pipeline_id=pipeline_id)
+                        logger.info(
+                            "Pipeline %s paused — all %d tasks are awaiting_input",
+                            pipeline_id, len(non_terminal),
+                        )
+                else:
+                    if _all_paused_since is not None:
+                        # Tasks have resumed; accumulate pause duration
+                        paused_elapsed = asyncio.get_event_loop().time() - _all_paused_since
+                        _all_paused_since = None
+                        await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
+                        await db.set_pipeline_paused_at(pipeline_id, None)
+                        logger.info(
+                            "Pipeline %s resumed after %.1fs pause",
+                            pipeline_id, paused_elapsed,
+                        )
 
             snapshot = monitor.take_snapshot()
             if not monitor.can_dispatch(snapshot):
@@ -594,8 +684,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             if not dispatch_plan:
                 if not any(t.state == TaskState.IN_PROGRESS.value for t in tasks):
-                    # If tasks are awaiting approval, keep polling
-                    if any(t.state == TaskState.AWAITING_APPROVAL.value for t in tasks):
+                    # If tasks are awaiting approval or awaiting input, keep polling
+                    if any(t.state in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value) for t in tasks):
                         await asyncio.sleep(self._settings.scheduler_poll_interval)
                         continue
                     console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
