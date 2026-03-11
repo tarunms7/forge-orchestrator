@@ -7,9 +7,30 @@ from textual.screen import Screen
 from textual.binding import Binding
 from textual.widgets import Input, Static, TextArea
 from textual.containers import Vertical, Center
+from textual.events import Key
 from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
+
+
+class PromptTextArea(TextArea):
+    """TextArea that emits Submitted on Ctrl+Enter instead of inserting a newline."""
+
+    class Submitted(Message):
+        """Fired when user presses Ctrl+Enter."""
+        def __init__(self, text: str) -> None:
+            self.text = text
+            super().__init__()
+
+    def _on_key(self, event: Key) -> None:
+        if event.key == "ctrl+j":
+            event.stop()
+            event.prevent_default()
+            text = self.text.strip()
+            if text:
+                self.post_message(self.Submitted(text))
+            return
+        super()._on_key(event)
 
 
 _PIPELINE_STATUS_ICONS = {
@@ -69,7 +90,6 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         ("escape", "app.quit", "Quit"),
-        Binding("ctrl+j", "submit_task", "Submit", show=True, priority=True),
     ]
 
     class TaskSubmitted(Message):
@@ -85,7 +105,7 @@ class HomeScreen(Screen):
         with Center():
             with Vertical(id="home-container"):
                 yield ForgeLogo()
-                yield TextArea(id="prompt-input")
+                yield PromptTextArea(id="prompt-input")
                 yield Static("[#8b949e]Ctrl+Enter to submit[/]", id="submit-hint")
                 yield Static("Recent pipelines", id="recent-label")
                 yield Static(
@@ -93,9 +113,7 @@ class HomeScreen(Screen):
                     id="recent-list",
                 )
 
-    def action_submit_task(self) -> None:
+    def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
         """Ctrl+Enter: submit the task prompt."""
-        textarea = self.query_one("#prompt-input", TextArea)
-        task = textarea.text.strip()
-        if task:
-            self.post_message(self.TaskSubmitted(task))
+        if event.text:
+            self.post_message(self.TaskSubmitted(event.text))

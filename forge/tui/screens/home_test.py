@@ -16,7 +16,7 @@ async def test_home_screen_mounts():
     app = HomeTestApp()
     async with app.run_test() as pilot:
         assert app.query_one("ForgeLogo") is not None
-        assert app.query_one("Input") is not None
+        assert app.query_one("PromptTextArea") is not None
 
 
 def test_format_recent_pipelines():
