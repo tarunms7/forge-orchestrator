@@ -19,12 +19,14 @@
 - In copy mode:
   - Lines display with `○` (unselected) / `●` (selected) markers
   - `j/k` moves cursor, `space` toggles line selection
-  - `Enter` copies selected lines to clipboard via `pyperclip`, exits mode
+  - `Enter` copies selected lines to clipboard, exits mode
   - `Esc` exits without copying
   - Status bar at bottom shows: `── COPY MODE ── j/k: move │ space: toggle │ Enter: copy │ Esc: cancel ──` and selected line count
 - `C` (shift+c) — instant copy of ALL currently visible output. No mode entry, immediate clipboard write.
-- Clipboard library: `pyperclip` (cross-platform, handles macOS pbcopy / Linux xclip / Windows clip)
-- **Clipboard failure handling:** If `pyperclip` fails (headless Linux, no xclip), show a persistent notification: "Clipboard unavailable — install xclip or xsel". Do not crash.
+- **Clipboard mechanism (no new dependencies):** A small helper function `copy_to_clipboard(text: str) -> bool` that tries two strategies in order:
+  1. **Subprocess with platform tools:** `pbcopy` on macOS, `xclip -selection clipboard` on Linux, `clip` on Windows. Uses `subprocess.Popen` with `stdin=PIPE`. This gives true system clipboard access.
+  2. **Textual built-in fallback:** `app.copy_to_clipboard(text)` which uses OSC 52 terminal escape sequences. Works in most modern terminals (iTerm2, kitty, alacritty, WezTerm) but not macOS Terminal.app.
+- **Clipboard failure handling:** If both strategies fail, show a persistent notification: "Clipboard unavailable — install xclip or xsel". Do not crash. The helper returns `False` on failure so the caller can show the notification.
 
 **Files:**
 - New: `forge/tui/widgets/copy_overlay.py` — CopyOverlay widget
@@ -285,11 +287,11 @@ Daemon → EventEmitter → EmbeddedSource → EventBus → TuiState → Widgets
 All 10 features plug into this existing pipeline. No new architectural patterns needed.
 
 **New dependencies:**
-- `pyperclip` — clipboard access (add to `pyproject.toml`)
+- None. Clipboard uses subprocess (`pbcopy`/`xclip`/`clip`) + Textual's built-in `copy_to_clipboard()` as fallback.
 
 **Testing:**
 - Co-located `*_test.py` files for all modified modules
-- Copy mode: test overlay mount/unmount, line selection, clipboard mock, pyperclip failure handling
+- Copy mode: test overlay mount/unmount, line selection, clipboard mock (mock subprocess.Popen), failure handling
 - Event handlers: test each new handler sets the correct field
 - Pipeline list: test navigation, selection, replay mode hydration via event replay
 - Error recovery: test retry/skip actions update task state, test binding guards (r/s only active on error tasks)
