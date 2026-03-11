@@ -94,7 +94,9 @@ def _extract_text(message) -> str | None:
                 parts.append(text)
         return "\n".join(parts) if parts else None
     if isinstance(message, ResultMessage):
-        return message.result if message.result else None
+        # ResultMessage.result is the final plan JSON — not human-readable.
+        # Don't stream it to the TUI; the plan is consumed by the planner's parser.
+        return None
     return None
 
 
@@ -133,7 +135,8 @@ def _extract_activity(message) -> str | None:
         return "\n".join(parts) if parts else None
 
     if isinstance(message, ResultMessage):
-        return message.result if message.result else None
+        # ResultMessage.result is the final plan JSON — not human-readable.
+        return None
     return None
 
 

@@ -41,6 +41,16 @@ class TuiState:
         self.review_output: dict[str, list[str]] = defaultdict(list)  # task_id → streaming LLM review lines
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
 
+        # Feature 2/3/5: contracts, cost, budget, preflight, followup
+        self.contracts_output: list[str] = []
+        self.contracts_ready: bool = False
+        self.contracts_failed: str | None = None
+        self.cost_estimate: dict | None = None
+        self.budget_exceeded: bool = False
+        self.preflight_error: str | None = None
+        self.followup_tasks: dict[str, dict] = {}
+        self.followup_output: dict[str, list[str]] = defaultdict(list)
+
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
@@ -226,6 +236,105 @@ class TuiState:
             gates["gate2_llm_review"] = {"status": "passed", "details": data.get("feedback")}
             self._notify("tasks")
 
+    def _on_cost_estimate(self, data: dict) -> None:
+        self.cost_estimate = data
+        self._notify("cost_estimate")
+
+    def _on_budget_exceeded(self, data: dict) -> None:
+        self.budget_exceeded = True
+        self._notify("budget_exceeded")
+
+    def _on_contracts_output(self, data: dict) -> None:
+        self.contracts_output.append(data.get("line", ""))
+        if len(self.contracts_output) > self._max_output_lines:
+            del self.contracts_output[: len(self.contracts_output) - self._max_output_lines]
+        self._notify("contracts_output")
+
+    def _on_contracts_ready(self, data: dict) -> None:
+        self.contracts_ready = True
+        self._notify("contracts_ready")
+
+    def _on_contracts_failed(self, data: dict) -> None:
+        self.contracts_failed = data.get("error", "Unknown")
+        self._notify("contracts_failed")
+
+    def _on_files_changed(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid and tid in self.tasks:
+            self.tasks[tid]["files_changed"] = data.get("files", [])
+            self._notify("tasks")
+
+    def _on_cancelled(self, data: dict) -> None:
+        self.phase = "cancelled"
+        self._notify("phase")
+
+    def _on_paused(self, data: dict) -> None:
+        self.phase = "paused"
+        self._notify("phase")
+
+    def _on_pipeline_resumed(self, data: dict) -> None:
+        self.phase = "executing"
+        self._notify("phase")
+
+    def _on_restarted(self, data: dict) -> None:
+        self.tasks.clear()
+        self.task_order.clear()
+        self.agent_output.clear()
+        self.planner_output.clear()
+        self.contracts_output.clear()
+        self.contracts_ready = False
+        self.contracts_failed = None
+        self.cost_estimate = None
+        self.budget_exceeded = False
+        self.preflight_error = None
+        self.followup_tasks.clear()
+        self.followup_output.clear()
+        self.error = None
+        self.total_cost_usd = 0.0
+        self.phase = "planning"
+        self._notify("phase")
+
+    def _on_worktrees_cleaned(self, data: dict) -> None:
+        logger.debug("Worktrees cleaned event received")
+
+    def _on_preflight_failed(self, data: dict) -> None:
+        self.preflight_error = data.get("error", "Unknown")
+        self._notify("preflight_error")
+
+    def _on_followup_started(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            self.followup_tasks[tid] = {"task_id": tid, "state": "started", "error": None}
+            self._notify("followup_tasks")
+
+    def _on_followup_completed(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid and tid in self.followup_tasks:
+            self.followup_tasks[tid]["state"] = "completed"
+            self._notify("followup_tasks")
+
+    def _on_followup_error(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid and tid in self.followup_tasks:
+            self.followup_tasks[tid]["state"] = "error"
+            self.followup_tasks[tid]["error"] = data.get("error")
+            self._notify("followup_tasks")
+
+    def _on_followup_output(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            self.followup_output[tid].append(data.get("line", ""))
+            self._notify("followup_output")
+
+    def _on_slot_acquired(self, data: dict) -> None:
+        logger.debug("Slot acquired event received")
+
+    def _on_slot_released(self, data: dict) -> None:
+        logger.debug("Slot released event received")
+
+    def _on_slot_queued(self, data: dict) -> None:
+        logger.debug("Slot queued event received")
+
     def _on_all_tasks_done(self, data: dict) -> None:
         self.phase = "final_approval"
         self._notify("phase")
@@ -290,4 +399,23 @@ class TuiState:
         "pipeline:pr_creating": _on_pr_creating,
         "pipeline:pr_created": _on_pr_created,
         "pipeline:pr_failed": _on_pr_failed,
+        "pipeline:cost_estimate": _on_cost_estimate,
+        "pipeline:budget_exceeded": _on_budget_exceeded,
+        "contracts:output": _on_contracts_output,
+        "pipeline:contracts_ready": _on_contracts_ready,
+        "pipeline:contracts_failed": _on_contracts_failed,
+        "task:files_changed": _on_files_changed,
+        "pipeline:cancelled": _on_cancelled,
+        "pipeline:paused": _on_paused,
+        "pipeline:resumed": _on_pipeline_resumed,
+        "pipeline:restarted": _on_restarted,
+        "pipeline:worktrees_cleaned": _on_worktrees_cleaned,
+        "pipeline:preflight_failed": _on_preflight_failed,
+        "followup:task_started": _on_followup_started,
+        "followup:task_completed": _on_followup_completed,
+        "followup:task_error": _on_followup_error,
+        "followup:agent_output": _on_followup_output,
+        "slot:acquired": _on_slot_acquired,
+        "slot:released": _on_slot_released,
+        "slot:queued": _on_slot_queued,
     }

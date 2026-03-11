@@ -502,6 +502,32 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         await self._emit("pipeline:phase_changed", {"phase": "complete"}, db=db, pipeline_id=pid)
 
+    async def retry_task(self, task_id: str, db: Database, pipeline_id: str) -> None:
+        """Reset a failed task to 'todo' and re-queue it for execution.
+
+        Clears the worktree if one exists, resets the task state in DB,
+        and emits a task:state_changed event so the TUI/subscribers update.
+        """
+        # Reset state in DB
+        await db.update_task_state(task_id, "todo")
+
+        # Clear worktree if it exists
+        try:
+            worktree_base = os.path.join(self._project_dir, ".forge", "worktrees")
+            worktree_mgr = WorktreeManager(self._project_dir, worktree_base)
+            worktree_mgr.remove(task_id)
+        except Exception:
+            logger.debug("No worktree to clean for task %s (or already removed)", task_id)
+
+        # Re-add to scheduler by emitting state change
+        await self._emit(
+            "task:state_changed",
+            {"task_id": task_id, "state": "todo"},
+            db=db,
+            pipeline_id=pipeline_id,
+        )
+        logger.info("Task %s reset to 'todo' for retry", task_id)
+
     async def run(self, user_input: str) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
         db_path = os.path.join(self._project_dir, ".forge", "forge.db")

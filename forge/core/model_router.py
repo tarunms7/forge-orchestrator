@@ -1,5 +1,7 @@
 """Model routing by task complexity and pipeline stage."""
 
+from __future__ import annotations
+
 import logging
 
 logger = logging.getLogger("forge.model_router")

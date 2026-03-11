@@ -5,11 +5,12 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Static, TextArea
 from textual.containers import Vertical, Center
 from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
+from forge.tui.widgets.pipeline_list import PipelineList
 
 
 class PromptTextArea(TextArea):
@@ -82,16 +83,16 @@ class HomeScreen(Screen):
         margin: 1 2 0 2;
         color: #8b949e;
     }
-    #recent-list {
+    PipelineList {
         margin: 0 2;
         height: auto;
         max-height: 10;
-        color: #8b949e;
     }
     """
 
     BINDINGS = [
         ("escape", "app.quit", "Quit"),
+        Binding("tab", "cycle_focus", "Switch focus", show=False),
     ]
 
     class TaskSubmitted(Message):
@@ -110,12 +111,22 @@ class HomeScreen(Screen):
                 yield PromptTextArea(id="prompt-input")
                 yield Static("[#8b949e]Ctrl+S to submit[/]", id="submit-hint")
                 yield Static("Recent pipelines", id="recent-label")
-                yield Static(
-                    format_recent_pipelines(self._recent_pipelines),
-                    id="recent-list",
-                )
+                yield PipelineList()
+
+    def on_mount(self) -> None:
+        pipeline_list = self.query_one(PipelineList)
+        pipeline_list.update_pipelines(self._recent_pipelines)
 
     def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
         """Ctrl+Enter: submit the task prompt."""
         if event.text:
             self.post_message(self.TaskSubmitted(event.text))
+
+    def action_cycle_focus(self) -> None:
+        """Tab: switch focus between PromptTextArea and PipelineList."""
+        prompt = self.query_one(PromptTextArea)
+        pipeline_list = self.query_one(PipelineList)
+        if prompt.has_focus:
+            pipeline_list.focus()
+        else:
+            prompt.focus()
