@@ -32,6 +32,7 @@ class TuiState:
         self.agent_output: dict[str, list[str]] = defaultdict(list)
         self.planner_output: list[str] = []
         self.error: str | None = None
+        self._pending_state_updates: dict[str, dict] = {}
 
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
@@ -72,15 +73,27 @@ class TuiState:
         if self.task_order:
             # Always reset — IDs may change after daemon remaps them
             self.selected_task_id = self.task_order[0]
+        # Apply any buffered state updates that arrived before plan_ready
+        for tid, update_data in self._pending_state_updates.items():
+            if tid in self.tasks:
+                self.tasks[tid]["state"] = update_data.get("state", self.tasks[tid]["state"])
+                if "error" in update_data:
+                    self.tasks[tid]["error"] = update_data["error"]
+        self._pending_state_updates.clear()
         self._notify("tasks")
 
     def _on_task_state_changed(self, data: dict) -> None:
         tid = data.get("task_id")
-        if tid and tid in self.tasks:
+        if not tid:
+            return
+        if tid in self.tasks:
             self.tasks[tid]["state"] = data.get("state", self.tasks[tid]["state"])
             if "error" in data:
                 self.tasks[tid]["error"] = data["error"]
             self._notify("tasks")
+        else:
+            # Buffer for when task is added via plan_ready
+            self._pending_state_updates[tid] = data
 
     def _on_agent_output(self, data: dict) -> None:
         tid = data.get("task_id", "")
@@ -93,6 +106,8 @@ class TuiState:
 
     def _on_planner_output(self, data: dict) -> None:
         self.planner_output.append(data.get("line", ""))
+        if len(self.planner_output) > self._max_output_lines:
+            del self.planner_output[: len(self.planner_output) - self._max_output_lines]
         self._notify("planner_output")
 
     def _on_cost_update(self, data: dict) -> None:

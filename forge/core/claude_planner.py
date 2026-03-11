@@ -97,7 +97,7 @@ class ClaudePlannerLLM(PlannerLLM):
             # Give the planner enough turns to read project files before
             # producing JSON.  Opus typically needs 3-5 turns to explore
             # the codebase, then 1 turn to output the TaskGraph.
-            max_turns=10,
+            max_turns=6,
             model=self._model,
             # Read-only tools: planner explores the codebase but must NOT
             # write files — its only output is the TaskGraph JSON in the

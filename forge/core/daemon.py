@@ -596,7 +596,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         continue
                     console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
                     break
-                await asyncio.sleep(self._settings.scheduler_poll_interval)
+                # Use shorter poll when tasks are actively running
+                poll = 0.1 if any(t.state == TaskState.IN_PROGRESS.value for t in tasks) else self._settings.scheduler_poll_interval
+                await asyncio.sleep(poll)
                 continue
 
             for task_id, agent_id in dispatch_plan:
