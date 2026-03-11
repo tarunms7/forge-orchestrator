@@ -175,7 +175,27 @@ class ForgeApp(App):
             }
             for t in tasks_list
         ]
-        self.push_screen(FinalApprovalScreen(stats=stats, tasks=task_summaries))
+        # Get pipeline branch for diff viewing — use state cached value or
+        # schedule async DB lookup (sync context, cannot await).
+        pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
+        self.push_screen(FinalApprovalScreen(
+            stats=stats, tasks=task_summaries, pipeline_branch=pipeline_branch,
+        ))
+        # If no cached branch, fetch async and update the screen
+        if not pipeline_branch:
+            asyncio.create_task(self._resolve_pipeline_branch())
+
+    async def _resolve_pipeline_branch(self) -> None:
+        """Fetch pipeline branch from DB and update the FinalApprovalScreen."""
+        branch = await self._get_pipeline_branch()
+        if branch:
+            self._cached_pipeline_branch = branch
+            try:
+                screen = self.screen
+                if isinstance(screen, FinalApprovalScreen):
+                    screen._pipeline_branch = branch
+            except Exception:
+                pass
 
     async def on_chat_thread_answer_submitted(self, event) -> None:
         """Write the user's answer to DB and update TUI state."""
@@ -257,7 +277,13 @@ class ForgeApp(App):
             )
             if pr_url:
                 self._state.apply_event("pipeline:pr_created", {"pr_url": pr_url})
-                self.notify(f"PR created: {pr_url}", severity="information")
+                # Show PR URL inline on the FinalApprovalScreen
+                try:
+                    screen = self.screen
+                    if isinstance(screen, FinalApprovalScreen):
+                        screen.show_pr_url(pr_url)
+                except Exception:
+                    self.notify(f"PR created: {pr_url}", severity="information")
             else:
                 self._state.apply_event("pipeline:pr_failed", {"error": "gh pr create failed"})
                 self.notify("PR creation failed: check logs.", severity="error")

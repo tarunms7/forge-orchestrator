@@ -1,4 +1,16 @@
-from forge.tui.screens.final_approval import format_summary_stats, format_task_table
+"""Tests for FinalApprovalScreen."""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch, MagicMock
+
+import pytest
+
+from forge.tui.screens.final_approval import (
+    format_summary_stats,
+    format_task_table,
+    FinalApprovalScreen,
+    DiffScreen,
+)
 
 
 def test_format_summary_stats():
@@ -15,3 +27,127 @@ def test_format_task_table():
     result = format_task_table(tasks)
     assert "JWT middleware" in result
     assert "14/14" in result
+
+
+def test_final_approval_screen_accepts_pipeline_branch():
+    screen = FinalApprovalScreen(
+        stats={"added": 10, "removed": 2, "files": 3, "elapsed": "1m", "cost": 0.1, "questions": 0},
+        tasks=[],
+        pipeline_branch="forge/test-branch",
+    )
+    assert screen._pipeline_branch == "forge/test-branch"
+
+
+def test_final_approval_screen_default_pipeline_branch():
+    screen = FinalApprovalScreen()
+    assert screen._pipeline_branch == ""
+
+
+def test_show_pr_url_updates_widget():
+    """show_pr_url should update the #pr-url Static widget."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    # Mock query_one to return a mock Static widget
+    mock_widget = MagicMock()
+    screen.query_one = MagicMock(return_value=mock_widget)
+
+    screen.show_pr_url("https://github.com/org/repo/pull/42")
+
+    screen.query_one.assert_called_once()
+    mock_widget.update.assert_called_once()
+    call_arg = mock_widget.update.call_args[0][0]
+    assert "https://github.com/org/repo/pull/42" in call_arg
+    assert "PR created" in call_arg
+
+
+def test_show_pr_url_handles_missing_widget():
+    """show_pr_url should not raise if widget is missing."""
+    screen = FinalApprovalScreen(stats={}, tasks=[])
+    screen.query_one = MagicMock(side_effect=Exception("no widget"))
+    # Should not raise
+    screen.show_pr_url("https://example.com/pull/1")
+
+
+def test_action_view_diff_no_branch_notifies():
+    """action_view_diff with no branch should notify a warning."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="")
+    screen.notify = MagicMock()
+    screen.action_view_diff()
+    screen.notify.assert_called_once()
+    assert "No pipeline branch" in screen.notify.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_load_and_show_diff_success():
+    """_load_and_show_diff should run git diff and push DiffScreen."""
+    screen = FinalApprovalScreen(
+        stats={}, tasks=[], pipeline_branch="forge/my-branch",
+    )
+    mock_app = MagicMock()
+    screen._app = mock_app
+    # Patch app property
+    type(screen).app = property(lambda self: mock_app)
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"+++ a/file.py\n+new line\n", b""))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await screen._load_and_show_diff()
+
+    mock_app.push_screen.assert_called_once()
+    pushed = mock_app.push_screen.call_args[0][0]
+    assert isinstance(pushed, DiffScreen)
+    assert "+new line" in pushed._diff_text
+
+
+@pytest.mark.asyncio
+async def test_load_and_show_diff_git_error():
+    """_load_and_show_diff should show error text if git fails."""
+    screen = FinalApprovalScreen(
+        stats={}, tasks=[], pipeline_branch="forge/bad-branch",
+    )
+    mock_app = MagicMock()
+    type(screen).app = property(lambda self: mock_app)
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 1
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"fatal: bad revision"))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await screen._load_and_show_diff()
+
+    pushed = mock_app.push_screen.call_args[0][0]
+    assert "git diff failed" in pushed._diff_text
+
+
+@pytest.mark.asyncio
+async def test_load_and_show_diff_exception():
+    """_load_and_show_diff should handle subprocess exceptions."""
+    screen = FinalApprovalScreen(
+        stats={}, tasks=[], pipeline_branch="forge/branch",
+    )
+    mock_app = MagicMock()
+    type(screen).app = property(lambda self: mock_app)
+
+    with patch("asyncio.create_subprocess_exec", side_effect=OSError("git not found")):
+        await screen._load_and_show_diff()
+
+    pushed = mock_app.push_screen.call_args[0][0]
+    assert "Error running git diff" in pushed._diff_text
+
+
+def test_diff_screen_stores_params():
+    """DiffScreen should store diff text and branch."""
+    ds = DiffScreen("diff content here", branch="feat/x")
+    assert ds._diff_text == "diff content here"
+    assert ds._branch == "feat/x"
+
+
+def test_action_view_diff_with_branch_creates_task():
+    """action_view_diff with a branch should schedule _load_and_show_diff."""
+    screen = FinalApprovalScreen(
+        stats={}, tasks=[], pipeline_branch="forge/branch",
+    )
+    with patch("asyncio.create_task") as mock_create_task:
+        screen.action_view_diff()
+        mock_create_task.assert_called_once()
