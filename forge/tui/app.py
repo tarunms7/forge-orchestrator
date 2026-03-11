@@ -460,6 +460,14 @@ class ForgeApp(App):
 
     async def _run_execute(self) -> None:
         """Execute the approved plan."""
+        # Resolve and cache the pipeline branch so diff views can use it
+        try:
+            branch = await self._get_pipeline_branch()
+            if branch:
+                self._cached_pipeline_branch = branch
+                self._state.pipeline_branch = branch
+        except Exception:
+            logger.debug("Could not resolve pipeline branch for state", exc_info=True)
         try:
             await self._daemon.execute(
                 self._graph, self._db, pipeline_id=self._pipeline_id,
@@ -478,6 +486,30 @@ class ForgeApp(App):
         if self._pipeline_start_time:
             self._state.elapsed_seconds = asyncio.get_event_loop().time() - self._pipeline_start_time
             self._state._notify("elapsed")
+
+    def action_reset_for_new_task(self) -> None:
+        """Clean up all pipeline state and return to HomeScreen for a fresh task."""
+        # Stop elapsed timer
+        if self._elapsed_timer:
+            self._elapsed_timer.stop()
+            self._elapsed_timer = None
+        # Disconnect event source
+        if self._source:
+            self._source.disconnect()
+            self._source = None
+        # Clear pipeline-specific flags
+        self._final_approval_pushed = False
+        self._daemon = None
+        self._daemon_task = None
+        self._graph = None
+        self._pipeline_id = None
+        self._cached_pipeline_branch = ""
+        self._pipeline_start_time = None
+        # Reset TUI state (tasks, output, costs, etc.)
+        self._state.reset()
+        # Pop all screens back to HomeScreen
+        while len(self.screen_stack) > 1:
+            self.pop_screen()
 
     def action_switch_home(self) -> None:
         while len(self.screen_stack) > 1:

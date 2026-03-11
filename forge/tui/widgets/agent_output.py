@@ -177,13 +177,25 @@ class AgentOutput(Widget):
         except Exception:
             pass  # Not yet composed
 
+    def _is_near_bottom(self) -> bool:
+        """Check if the scroll position is near the bottom.
+
+        Uses a threshold of 3 content-units (roughly 3 lines). Textual's
+        VerticalScroll exposes scroll_y and virtual_size in content units,
+        so the subtraction gives us the distance from the bottom edge.
+        """
+        try:
+            scroll = self.query_one("#agent-scroll", VerticalScroll)
+            return scroll.scroll_y >= scroll.virtual_size.height - scroll.size.height - 3
+        except Exception:
+            return True  # Default to auto-scroll if widget not ready
+
     def append_line(self, line: str) -> None:
         """Efficiently append a single line of streaming output.
 
         Appends to self._lines, updates only the #agent-content Static widget
-        (NOT the header), and auto-scrolls via call_after_refresh +
-        scroll_end(animate=False). Does NOT re-render the full output — only
-        the incremental addition. This is the hot-path method for streaming.
+        (NOT the header), and auto-scrolls only if user is near the bottom.
+        This is the hot-path method for streaming.
         """
         self._lines.append(line)
         try:
@@ -196,7 +208,8 @@ class AgentOutput(Widget):
                     typing_frame=self._typing_frame,
                 )
             )
-            self.call_after_refresh(self._scroll_to_end)
+            if self._is_near_bottom():
+                self.call_after_refresh(self._scroll_to_end)
         except Exception:
             pass  # Not yet composed
 
@@ -228,10 +241,27 @@ class AgentOutput(Widget):
             self.query_one("#agent-content", Static).update(
                 format_output(lines, self._spinner_frame)
             )
-            if lines:
+            if lines and self._is_near_bottom():
                 self.call_after_refresh(self._scroll_to_end)
         except Exception:
             pass  # Not yet composed
+
+    def update_header(
+        self,
+        task_id: str | None,
+        title: str | None,
+        state: str | None,
+    ) -> None:
+        """Update only the header line. Use during streaming to avoid replacing content."""
+        self._task_id = task_id
+        self._title = title
+        self._state = state
+        try:
+            self.query_one("#agent-header", Static).update(
+                format_header(task_id, title, state)
+            )
+        except Exception:
+            pass
 
     def _scroll_to_end(self) -> None:
         try:

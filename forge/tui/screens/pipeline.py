@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from textual.app import ComposeResult
@@ -253,6 +254,7 @@ class PipelineScreen(Screen):
         self._active_view: str = "output"
         self._agent_streaming_tasks: set[str] = set()  # tasks with active agent streaming
         self._review_streaming_tasks: set[str] = set()  # tasks with active review streaming
+        self._diff_cache: dict[str, str] = {}  # task_id -> diff text
         self._copy_overlay: CopyOverlay | None = None
 
     # ------------------------------------------------------------------
@@ -301,6 +303,13 @@ class PipelineScreen(Screen):
             return
         if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
                      "contracts_output"):
+            # Invalidate diff cache for tasks whose state changed (new merge → new diff)
+            if field == "tasks":
+                for cache_tid in list(self._diff_cache):
+                    if cache_tid in self._state.tasks:
+                        task_state = self._state.tasks[cache_tid].get("state")
+                        if task_state in ("in_progress", "in_review", "merging"):
+                            del self._diff_cache[cache_tid]
             # On task state changes, also update streaming lifecycle
             self._update_streaming_lifecycle()
             self._refresh_all()
@@ -387,7 +396,12 @@ class PipelineScreen(Screen):
             if tid in self._agent_streaming_tasks:
                 self._agent_streaming_tasks.discard(tid)
                 try:
-                    self.query_one(AgentOutput).set_streaming(False)
+                    ao = self.query_one(AgentOutput)
+                    ao.set_streaming(False)
+                    # Final sync: full refresh to pick up lines accumulated during guard
+                    lines = state.agent_output.get(tid, [])
+                    task = state.tasks.get(tid, {})
+                    ao.update_output(tid, task.get("title"), task.get("state"), lines)
                 except Exception:
                     pass
             if tid in self._review_streaming_tasks:
@@ -415,12 +429,14 @@ class PipelineScreen(Screen):
         # Show error detail view for errored tasks
         if tid and tid in state.tasks:
             task = state.tasks[tid]
+            lines = state.agent_output.get(tid, [])
             if task.get("state") == "error":
-                lines = state.agent_output.get(tid, [])
                 agent_output.render_error_detail(tid, task, lines)
+            elif tid in self._agent_streaming_tasks:
+                # Streaming active — only update header, not content/scroll
+                agent_output.update_header(tid, task.get("title"), task.get("state"))
             else:
                 agent_output.clear_error_detail()
-                lines = state.agent_output.get(tid, [])
                 agent_output.update_output(tid, task.get("title"), task.get("state"), lines)
 
                 # Auto-switch to chat view when the selected task is awaiting input
@@ -451,8 +467,17 @@ class PipelineScreen(Screen):
         review_gates = self.query_one(ReviewGates)
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            diff_text = task.get("diff", "")
-            diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
+            # On-demand diff: use cache or trigger async load when diff view is active
+            if self._active_view == "diff":
+                if tid in self._diff_cache:
+                    diff_viewer.update_diff(tid, task.get("title", ""), self._diff_cache[tid])
+                else:
+                    diff_viewer.update_diff(tid, task.get("title", ""), "Loading diff...")
+                    asyncio.create_task(self._refresh_diff_async(tid))
+            else:
+                # Not viewing diff — show cached if available, empty otherwise
+                diff_text = self._diff_cache.get(tid, "")
+                diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
             gates = state.review_gates.get(tid, {})
             review_gates.update_gates(gates)
             # Show streaming review output if available
@@ -469,6 +494,47 @@ class PipelineScreen(Screen):
         dag.update_tasks(ordered_tasks)
         phase_banner.update_phase(state.phase)
         decision_badge.update_count(len(state.pending_questions))
+
+    # ------------------------------------------------------------------
+    # On-demand diff loading
+    # ------------------------------------------------------------------
+
+    async def _load_task_diff(self, tid: str) -> str:
+        """Generate diff for a task from the pipeline branch."""
+        if tid in self._diff_cache:
+            return self._diff_cache[tid]
+        branch = self._state.pipeline_branch or ""
+        if not branch:
+            return "No pipeline branch available yet."
+        cmd = ["git", "diff", f"main...{branch}"]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode == 0:
+                diff = stdout.decode(errors="replace")
+            else:
+                diff = f"git diff failed: {stderr.decode(errors='replace')}"
+        except Exception as e:
+            diff = f"Error running git diff: {e}"
+        self._diff_cache[tid] = diff
+        return diff
+
+    async def _refresh_diff_async(self, tid: str) -> None:
+        """Fetch diff async and update the viewer."""
+        diff = await self._load_task_diff(tid)
+        # Guard: only update if user is still viewing this task
+        if self._state.selected_task_id != tid:
+            return
+        try:
+            diff_viewer = self.query_one(DiffViewer)
+            task = self._state.tasks.get(tid, {})
+            diff_viewer.update_diff(tid, task.get("title", ""), diff)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # View switching
