@@ -93,6 +93,14 @@ async def test_embedded_source_bridges_review_llm_output():
     assert received[0]["line"] == "Reviewing..."
 
 
+def test_tui_event_types_no_duplicates():
+    """TUI_EVENT_TYPES must not contain duplicate entries."""
+    from forge.tui.bus import TUI_EVENT_TYPES
+    assert len(TUI_EVENT_TYPES) == len(set(TUI_EVENT_TYPES)), (
+        f"Duplicates found: {[e for e in TUI_EVENT_TYPES if TUI_EVENT_TYPES.count(e) > 1]}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_embedded_source_disconnect():
     from forge.core.events import EventEmitter

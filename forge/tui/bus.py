@@ -55,8 +55,6 @@ TUI_EVENT_TYPES = [
     "task:auto_decided",
     "pipeline:all_tasks_done",
     "pipeline:pr_creating",
-    "pipeline:pr_created",
-    "pipeline:pr_failed",
     "review:gate_started",
     "review:gate_passed",
     "review:gate_failed",
