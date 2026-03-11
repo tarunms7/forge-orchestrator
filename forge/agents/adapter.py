@@ -15,6 +15,51 @@ from forge.core.sdk_helpers import sdk_query
 
 logger = logging.getLogger("forge.agents")
 
+
+def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
+    """Build the human interaction protocol section for agent system prompts."""
+    if autonomy == "full":
+        when_to_ask = "NEVER ask questions. Make your best judgment on all decisions."
+    elif autonomy == "supervised":
+        when_to_ask = (
+            "Ask when uncertain about ANY implementation choice.\n"
+            "This includes architecture, naming, patterns, and ambiguous requirements."
+        )
+    else:  # balanced
+        when_to_ask = (
+            "Ask ONLY for high-impact decisions:\n"
+            "- Architecture patterns (which auth strategy, which ORM)\n"
+            "- Ambiguous requirements (spec says X but codebase does Y)\n"
+            "- Destructive changes (deleting files, dropping columns)\n"
+            "Do NOT ask about: naming conventions, formatting, minor style choices."
+        )
+
+    return f"""## Human Interaction Protocol
+
+Autonomy level: {autonomy} | Questions remaining: {remaining}
+
+### When to ask:
+{when_to_ask}
+
+### How to ask:
+When you need human input, output this JSON block as your FINAL message, then STOP:
+
+FORGE_QUESTION:
+{{
+  "question": "Your specific question here",
+  "context": "What you found that led to this question",
+  "suggestions": ["Option A", "Option B"],
+  "impact": "high"
+}}
+
+### Rules:
+- You have {remaining} questions left. Use them wisely.
+- ALWAYS provide 2-3 concrete suggestions.
+- ALWAYS explain what you found that led to the question.
+- NEVER ask open-ended "what should I do?" questions.
+- If you hit 0 remaining, proceed with best judgment."""
+
+
 AGENT_SYSTEM_PROMPT_TEMPLATE = """You are a coding agent working on a specific task within the Forge orchestration system.
 
 Your working directory is {cwd}. Do NOT read, write, or execute anything outside this directory{extra_dirs_clause}.
@@ -30,6 +75,8 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 {dependency_context}
 
 {file_scope_block}
+
+{question_protocol}
 
 Rules:
 - You MUST ONLY modify files listed in the File Scope section above. Changes to other files are automatically reverted by the system.
@@ -174,6 +221,8 @@ class ClaudeAdapter(AgentAdapter):
         completed_deps: list[dict] | None = None,
         allowed_files: list[str] | None = None,
         contracts_block: str = "",
+        autonomy: str = "balanced",
+        questions_remaining: int = 3,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -196,6 +245,7 @@ class ClaudeAdapter(AgentAdapter):
             )
         else:
             file_scope_block = ""
+        question_protocol = _build_question_protocol(autonomy, questions_remaining)
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
@@ -203,6 +253,7 @@ class ClaudeAdapter(AgentAdapter):
             contracts_block=contracts_block,
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
+            question_protocol=question_protocol,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
