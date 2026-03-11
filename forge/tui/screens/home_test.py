@@ -27,7 +27,7 @@ class HomeTestApp(App):
 @pytest.mark.asyncio
 async def test_home_screen_mounts():
     app = HomeTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         assert app.screen.query_one("ForgeLogo") is not None
         assert app.screen.query_one("PromptTextArea") is not None
 
@@ -53,7 +53,7 @@ def test_format_recent_pipelines_empty():
 async def test_home_screen_has_pipeline_list():
     """HomeScreen should contain a PipelineList widget."""
     app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         pl = app.screen.query_one(PipelineList)
         assert pl is not None
 
@@ -62,7 +62,7 @@ async def test_home_screen_has_pipeline_list():
 async def test_home_screen_pipeline_list_populated():
     """PipelineList should be populated with recent pipelines."""
     app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         pl = app.screen.query_one(PipelineList)
         assert len(pl._pipelines) == 2
         assert pl._pipelines[0]["id"] == "abc"
@@ -89,7 +89,7 @@ async def test_home_screen_tab_switches_focus():
 async def test_pipeline_list_selected_posts_message():
     """Pressing Enter on PipelineList should post Selected message."""
     app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         pl = app.screen.query_one(PipelineList)
         pl.focus()
         messages = []

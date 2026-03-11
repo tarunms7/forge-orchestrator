@@ -282,7 +282,7 @@ async def test_retry_noop_when_not_error():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         screen = app.screen
         # Should not crash or emit anything
         screen.action_retry_task()
@@ -299,7 +299,7 @@ async def test_skip_noop_when_not_error():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         screen = app.screen
         screen.action_skip_task()
         app._bus.emit.assert_not_called()
@@ -314,7 +314,7 @@ async def test_retry_emits_when_error():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         screen = app.screen
         screen.action_retry_task()
         app._bus.emit.assert_called_once_with("task:retry", {"task_id": "t1"})
@@ -329,7 +329,7 @@ async def test_skip_emits_when_error():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         screen = app.screen
         screen.action_skip_task()
         app._bus.emit.assert_called_once_with("task:skip", {"task_id": "t1"})
@@ -347,7 +347,7 @@ async def test_read_only_mode_disables_retry():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state, read_only=True)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         screen = app.screen
         screen.action_retry_task()
         app._bus.emit.assert_not_called()
@@ -362,7 +362,7 @@ async def test_read_only_mode_disables_skip():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state, read_only=True)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         screen = app.screen
         screen.action_skip_task()
         app._bus.emit.assert_not_called()
@@ -375,7 +375,7 @@ async def test_read_only_shows_banner():
     state = TuiState()
     state._replay_date = "2026-03-10T12:00:00"
     app = PipelineTestApp(state=state, read_only=True)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         banner = app.screen.query_one(PhaseBanner)
         rendered = banner.render()
         assert "Viewing pipeline" in rendered
@@ -425,6 +425,6 @@ async def test_error_task_shows_error_detail():
     })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "Build failed"})
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test():
         agent_output = app.screen.query_one("AgentOutput")
         assert agent_output.is_error_mode
