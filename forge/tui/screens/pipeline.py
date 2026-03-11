@@ -39,10 +39,11 @@ _VIEW_NAMES = ("output", "chat", "diff", "review")
 
 
 class PhaseBanner(Widget):
-    """Top-of-left-panel coloured phase indicator."""
+    """Full-width centered phase indicator displayed above the split pane."""
 
     DEFAULT_CSS = """
     PhaseBanner {
+        width: 1fr;
         height: 3;
         content-align: center middle;
         text-align: center;
@@ -128,10 +129,12 @@ class ViewLabel(Widget):
 
 
 class PipelineScreen(Screen):
-    """Main pipeline execution screen with 2-panel layout.
+    """Main pipeline execution screen with full-width phase banner + 2-panel layout.
+
+    Phase banner (full width, centered):
+      - PhaseBanner
 
     Left panel (fixed ~35 cols):
-      - PhaseBanner
       - TaskList
       - DecisionBadge
 
@@ -146,6 +149,14 @@ class PipelineScreen(Screen):
     DEFAULT_CSS = """
     PipelineScreen {
         layout: vertical;
+    }
+    PipelineScreen > PhaseBanner {
+        width: 100%;
+        height: 3;
+        content-align: center middle;
+        text-align: center;
+        background: #0d1117;
+        border-bottom: tall #30363d;
     }
     #split-pane {
         height: 1fr;
@@ -225,9 +236,9 @@ class PipelineScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield DagOverlay()
+        yield PhaseBanner()
         with Horizontal(id="split-pane"):
             with Vertical(id="left-panel"):
-                yield PhaseBanner()
                 yield TaskList()
                 yield DecisionBadge()
             with Vertical(id="right-panel"):
