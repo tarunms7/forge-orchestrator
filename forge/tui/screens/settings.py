@@ -18,6 +18,7 @@ _DISPLAY_GROUPS = {
     "Budget": ["budget_limit_usd"],
     "Pipeline": ["pipeline_timeout_seconds", "require_approval", "contracts_required"],
     "Resources": ["cpu_threshold", "memory_threshold_pct", "disk_threshold_gb"],
+    "Autonomy": ["autonomy", "question_limit", "question_timeout", "auto_pr"],
 }
 
 
