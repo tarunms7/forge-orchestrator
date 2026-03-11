@@ -19,6 +19,7 @@ from forge.core.daemon_helpers import (
     _get_diff_stats,
     _get_diff_vs_main,
     _load_conventions_md,
+    _parse_forge_question,
     _resolve_ref,
     _run_git,
 )
@@ -71,10 +72,21 @@ class ExecutorMixin:
             )
             if snap.returncode == 0:
                 pre_retry_ref = snap.stdout.strip()
-        ok = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid, pipeline_branch=pipeline_branch)
-        if not ok:
+        agent_result = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid, pipeline_branch=pipeline_branch)
+        if agent_result is None:
             await db.release_agent(agent_id)
             return
+
+        # Check if the agent paused to ask a question
+        question_data = _parse_forge_question(agent_result.summary)
+        if question_data:
+            await self._handle_agent_question(
+                db, task_id, agent_id, pipeline_id=pid,
+                question_data=question_data,
+                session_id=agent_result.session_id,
+            )
+            return
+
         # Strip out-of-scope changes before review
         has_in_scope_changes = self._enforce_file_scope(task, worktree_path, pipeline_branch)
         if not has_in_scope_changes:
@@ -188,13 +200,25 @@ class ExecutorMixin:
     async def _run_agent(
         self, db, runtime, worktree_mgr, task, task_id: str, agent_id: str,
         worktree_path: str, pid: str, *, pipeline_branch: str | None = None,
-    ) -> bool:
-        """Run the agent, stream output, track cost. Returns ``True`` on success."""
+        resume: str | None = None, prompt_override: str | None = None,
+    ):
+        """Run the agent, stream output, track cost.
+
+        Returns the ``AgentResult`` on success, or ``None`` on failure (after
+        scheduling a retry).  Callers must check the result for ``None`` before
+        proceeding.
+
+        Args:
+            prompt_override: When provided, overrides the task-derived prompt.
+                Used by ``_resume_task`` to send the human's answer as the next
+                user message when resuming a paused conversation.
+            resume: SDK session ID for conversation continuation (``ClaudeCodeOptions.resume``).
+        """
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
-        prompt = self._build_prompt(task)
+        prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
-        result = await self._stream_agent(runtime, agent_id, prompt, worktree_path, task, task_id, pid, db, agent_model)
+        result = await self._stream_agent(runtime, agent_id, prompt, worktree_path, task, task_id, pid, db, agent_model, resume=resume)
         if hasattr(result, "cost_usd") and result.cost_usd > 0:
             await db.add_task_agent_cost(task_id, result.cost_usd, result.input_tokens, result.output_tokens)
             await db.add_pipeline_cost(pid, result.cost_usd)
@@ -211,16 +235,163 @@ class ExecutorMixin:
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
-            return False
+            return None
         diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         if not diff.strip():
-            console.print(f"[red]{task_id} agent produced no changes[/red]")
-            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
-            return False
+            # A FORGE_QUESTION with no diff is valid — the agent stopped to ask.
+            # Detect it before declaring failure; the caller checks summary after return.
+            question_data = _parse_forge_question(result.summary)
+            if not question_data:
+                console.print(f"[red]{task_id} agent produced no changes[/red]")
+                await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+                return None
         console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
         if result.files_changed:
             await self._emit("task:files_changed", {"task_id": task_id, "files": result.files_changed}, db=db, pipeline_id=pid)
-        return True
+        return result
+
+    # -- question handling (pause / resume) --------------------------------
+
+    async def _handle_agent_question(
+        self, db, task_id: str, agent_id: str,
+        question_data: dict, session_id: str | None,
+        pipeline_id: str | None = None,
+    ) -> None:
+        """Persist a FORGE_QUESTION and transition the task to awaiting_input.
+
+        The agent slot is released so the scheduler can pick up other tasks
+        while waiting for the human's answer.  The *session_id* is stored on
+        the task row so :meth:`_resume_task` can continue the conversation.
+        """
+        pid = pipeline_id or ""
+
+        # Persist the question
+        q = await db.create_task_question(
+            task_id=task_id,
+            pipeline_id=pid,
+            question=question_data["question"],
+            suggestions=question_data.get("suggestions"),
+            context=question_data.get("context"),
+        )
+
+        # Store session_id and increment questions_asked counter
+        if session_id:
+            async with db._session_factory() as session:
+                from forge.storage.db import TaskRow
+                task_row = await session.get(TaskRow, task_id)
+                if task_row:
+                    task_row.session_id = session_id
+                    task_row.questions_asked = (task_row.questions_asked or 0) + 1
+                    await session.commit()
+        else:
+            # No session_id: still increment the counter
+            async with db._session_factory() as session:
+                from forge.storage.db import TaskRow
+                task_row = await session.get(TaskRow, task_id)
+                if task_row:
+                    task_row.questions_asked = (task_row.questions_asked or 0) + 1
+                    await session.commit()
+
+        # Transition state
+        await db.update_task_state(task_id, TaskState.AWAITING_INPUT.value)
+        await self._emit("task:state_changed", {
+            "task_id": task_id, "state": "awaiting_input",
+        }, db=db, pipeline_id=pid)
+
+        # Emit the question event for the UI / API consumers
+        await self._emit("task:question", {
+            "task_id": task_id,
+            "question": {
+                "id": q.id,
+                "question": q.question,
+                "suggestions": question_data.get("suggestions", []),
+                "context": question_data.get("context"),
+            },
+        }, db=db, pipeline_id=pid)
+
+        # Release the agent slot — no subprocess running while paused
+        await db.release_agent(agent_id)
+
+    async def _resume_task(
+        self, db, runtime, worktree_mgr, merge_worker,
+        task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+    ) -> None:
+        """Resume a task after a human answered a FORGE_QUESTION.
+
+        The human's *answer* is sent as the new prompt to the SDK, which
+        continues the prior conversation via ``resume=session_id``.  After
+        the agent returns, question-detection runs again — the agent may ask
+        another follow-up question, or proceed to finish the task.
+        """
+        pid = pipeline_id or ""
+        task = await db.get_task(task_id)
+        if not task or task.state != TaskState.AWAITING_INPUT.value:
+            logger.warning("_resume_task: task %s not in awaiting_input (got %s)", task_id, getattr(task, "state", None))
+            return
+
+        session_id = getattr(task, "session_id", None)
+
+        # Transition back to in_progress
+        await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
+        await self._emit("task:state_changed", {
+            "task_id": task_id, "state": "in_progress",
+        }, db=db, pipeline_id=pid)
+        await self._emit("task:resumed", {"task_id": task_id}, db=db, pipeline_id=pid)
+
+        # Resolve worktree path (reuse existing — the agent's code is still there)
+        worktree_path = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
+        if not os.path.isdir(worktree_path):
+            console.print(f"[red]{task_id}: worktree missing on resume — scheduling full retry[/red]")
+            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            await db.release_agent(agent_id)
+            return
+
+        pipeline_branch = merge_worker._main
+
+        # Re-run the agent: the human's answer becomes the new user message,
+        # and resume=session_id restores the prior conversation context.
+        agent_result = await self._run_agent(
+            db, runtime, worktree_mgr, task, task_id, agent_id,
+            worktree_path, pid, pipeline_branch=pipeline_branch,
+            resume=session_id, prompt_override=answer,
+        )
+
+        if agent_result is None:
+            # _run_agent already handled the retry/release
+            return
+
+        # Another question?
+        question_data = _parse_forge_question(agent_result.summary)
+        if question_data:
+            await self._handle_agent_question(
+                db, task_id, agent_id, pipeline_id=pid,
+                question_data=question_data,
+                session_id=agent_result.session_id,
+            )
+            return
+
+        # Agent finished — proceed to review
+        has_in_scope_changes = self._enforce_file_scope(task, worktree_path, pipeline_branch)
+        if not has_in_scope_changes:
+            console.print(f"[red]{task_id}: all changes were outside file scope (after resume)[/red]")
+            await self._handle_retry(
+                db, task_id, worktree_mgr,
+                review_feedback=(
+                    "ALL your changes were to files outside your allowed scope.\n"
+                    f"You are ONLY allowed to modify: {', '.join(task.files)}\n"
+                    "Do NOT touch any other files — changes outside scope are automatically reverted."
+                ),
+                pipeline_id=pid,
+            )
+            await db.release_agent(agent_id)
+            return
+
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        await self._attempt_merge(
+            db, merge_worker, worktree_mgr, task, task_id, worktree_path,
+            agent_model, pid, pipeline_branch=pipeline_branch,
+        )
+        await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
     # -- file scope enforcement -------------------------------------------
 
@@ -480,7 +651,7 @@ class ExecutorMixin:
             )
         return _build_agent_prompt(task.title, task.description, task.files, agent_prompt_modifier=agent_prompt_modifier)
 
-    async def _stream_agent(self, runtime, agent_id: str, prompt: str, worktree_path: str, task, task_id: str, pid: str, db, agent_model: str):
+    async def _stream_agent(self, runtime, agent_id: str, prompt: str, worktree_path: str, task, task_id: str, pid: str, db, agent_model: str, *, resume: str | None = None):
         """Run agent with batched streaming callback."""
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
@@ -551,6 +722,7 @@ class ExecutorMixin:
             conventions_md=conventions_md,
             completed_deps=completed_deps if completed_deps else None,
             contracts_block=contracts_block,
+            resume=resume,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)

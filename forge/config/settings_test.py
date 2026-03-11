@@ -70,3 +70,29 @@ def test_new_settings_defaults():
     s = ForgeSettings()
     assert s.pipeline_timeout_seconds == 3600
     assert s.contracts_required is False
+
+
+def test_autonomy_default():
+    s = ForgeSettings()
+    assert s.autonomy == "balanced"
+
+
+def test_question_limit_default():
+    s = ForgeSettings()
+    assert s.question_limit == 3
+
+
+def test_question_timeout_default():
+    s = ForgeSettings()
+    assert s.question_timeout == 1800
+
+
+def test_auto_pr_default():
+    s = ForgeSettings()
+    assert s.auto_pr is False
+
+
+def test_autonomy_valid_values():
+    for val in ("full", "balanced", "supervised"):
+        s = ForgeSettings(autonomy=val)
+        assert s.autonomy == val

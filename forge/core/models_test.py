@@ -104,3 +104,12 @@ class TestAgentRecord:
         agent = AgentRecord(id="agent-1")
         assert agent.state == AgentState.IDLE
         assert agent.current_task is None
+
+
+class TestTaskState:
+    def test_awaiting_input_state_exists(self):
+        assert TaskState.AWAITING_INPUT == "awaiting_input"
+        assert TaskState.AWAITING_INPUT.value == "awaiting_input"
+
+    def test_awaiting_input_distinct_from_awaiting_approval(self):
+        assert TaskState.AWAITING_INPUT != TaskState.AWAITING_APPROVAL

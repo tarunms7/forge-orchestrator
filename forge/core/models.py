@@ -16,6 +16,7 @@ class TaskState(str, Enum):
     IN_PROGRESS = "in_progress"
     IN_REVIEW = "in_review"
     AWAITING_APPROVAL = "awaiting_approval"
+    AWAITING_INPUT = "awaiting_input"
     MERGING = "merging"
     DONE = "done"
     CANCELLED = "cancelled"

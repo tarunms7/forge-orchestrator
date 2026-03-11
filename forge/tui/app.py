@@ -16,6 +16,7 @@ from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
+from forge.tui.screens.final_approval import FinalApprovalScreen
 
 logger = logging.getLogger("forge.tui.app")
 
@@ -49,6 +50,8 @@ class ForgeApp(App):
         Binding("4", "switch_settings", "Settings", show=True),
         Binding("q", "quit_app", "Quit"),
         Binding("s", "screenshot_export", "Screenshot", show=False),
+        Binding("tab", "cycle_questions", "Next", show=False, priority=True),
+        Binding("question_mark", "show_help", "Help", show=False),
     ]
 
     def __init__(
@@ -71,6 +74,7 @@ class ForgeApp(App):
         self._db = None
         self._graph = None
         self._pipeline_id = None
+        self._final_approval_pushed = False
 
     async def _init_db(self):
         """Initialize database connection."""
@@ -117,6 +121,10 @@ class ForgeApp(App):
             phase = self._state.phase
             if phase in ("planning", "executing", "complete"):
                 self._auto_screenshot(phase)
+            # Transition to FinalApprovalScreen when pipeline finishes
+            if phase == "final_approval" and not self._final_approval_pushed:
+                self._final_approval_pushed = True
+                self._push_final_approval()
 
     def _auto_screenshot(self, label: str) -> None:
         """Automatically save a screenshot for README."""
@@ -128,6 +136,152 @@ class ForgeApp(App):
             logger.info("Auto-screenshot: %s", filename)
         except Exception:
             logger.debug("Auto-screenshot failed for %s", label)
+
+    def _push_final_approval(self) -> None:
+        """Build stats/tasks summary and push FinalApprovalScreen."""
+        state = self._state
+        tasks_list = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+        total_questions = sum(len(v) for v in state.question_history.values())
+        elapsed_secs = int(state.elapsed_seconds)
+        elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
+        stats = {
+            "added": 0,
+            "removed": 0,
+            "files": 0,
+            "elapsed": elapsed_str,
+            "cost": state.total_cost_usd,
+            "questions": total_questions,
+        }
+        task_summaries = [
+            {
+                "title": t.get("title", ""),
+                "added": t.get("added", 0),
+                "removed": t.get("removed", 0),
+                "tests_passed": t.get("tests_passed", 0),
+                "tests_total": t.get("tests_total", 0),
+                "review": "passed" if t.get("state") == "done" else "failed",
+            }
+            for t in tasks_list
+        ]
+        self.push_screen(FinalApprovalScreen(stats=stats, tasks=task_summaries))
+
+    async def on_chat_thread_answer_submitted(self, event) -> None:
+        """Write the user's answer to DB and update TUI state."""
+        task_id = event.task_id
+        answer = event.answer
+        if not self._db or not self._pipeline_id:
+            logger.warning("Cannot record answer: DB or pipeline_id not set")
+            return
+        try:
+            pending = await self._db.get_pending_questions(self._pipeline_id)
+            for q in pending:
+                if q.task_id == task_id and q.answer is None:
+                    await self._db.answer_question(q.id, answer, "human")
+                    break
+        except Exception:
+            logger.error("Failed to record answer to DB", exc_info=True)
+        self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
+        # The daemon's execution loop detects the answered question and resumes the task.
+
+    async def on_final_approval_screen_create_pr(self, event) -> None:
+        """User confirmed PR creation from FinalApprovalScreen."""
+        from forge.tui.pr_creator import push_branch, create_pr, generate_pr_body
+
+        self._state.apply_event("pipeline:pr_creating", {})
+
+        # Derive the git branch and project directory
+        branch = await self._get_current_branch()
+        project_dir = self._project_dir
+
+        # Build question history list for PR body
+        all_questions: list[dict] = []
+        for qlist in self._state.question_history.values():
+            for qa in qlist:
+                q_text = qa.get("question", {})
+                if isinstance(q_text, dict):
+                    q_text = q_text.get("question", "")
+                all_questions.append({"question": q_text, "answer": qa.get("answer", "")})
+
+        state = self._state
+        elapsed_secs = int(state.elapsed_seconds)
+        elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
+        tasks_list = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+
+        try:
+            pushed = await push_branch(project_dir, branch)
+            if not pushed:
+                self._state.apply_event("pipeline:pr_failed", {"error": "git push failed"})
+                self.notify("PR creation failed: could not push branch.", severity="error")
+                return
+
+            body = generate_pr_body(
+                tasks=tasks_list,
+                time=elapsed_str,
+                cost=state.total_cost_usd,
+                questions=all_questions,
+            )
+            pr_url = await create_pr(
+                project_dir,
+                title=f"Forge: {self._pipeline_description()}",
+                body=body,
+            )
+            if pr_url:
+                self._state.apply_event("pipeline:pr_created", {"pr_url": pr_url})
+                self.notify(f"PR created: {pr_url}", severity="information")
+            else:
+                self._state.apply_event("pipeline:pr_failed", {"error": "gh pr create failed"})
+                self.notify("PR creation failed: check logs.", severity="error")
+        except Exception as e:
+            logger.error("PR creation error: %s", e, exc_info=True)
+            self._state.apply_event("pipeline:pr_failed", {"error": str(e)})
+            self.notify(f"PR creation error: {e}", severity="error")
+
+    async def _get_current_branch(self) -> str:
+        """Return the current git branch name for PR creation."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                cwd=self._project_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                return stdout.decode().strip()
+        except Exception:
+            logger.debug("Could not detect git branch", exc_info=True)
+        return "main"
+
+    def _pipeline_description(self) -> str:
+        """Return a short description for the PR title."""
+        # Use the pipeline description stored in state if available
+        if self._state.tasks:
+            first = next(iter(self._state.task_order), None)
+            if first and first in self._state.tasks:
+                return self._state.tasks[first].get("title", "automated pipeline")
+        return "automated pipeline"
+
+    def action_cycle_questions(self) -> None:
+        """Tab: cycle through tasks with pending questions."""
+        state = self._state
+        pending_task_ids = list(state.pending_questions.keys())
+        if not pending_task_ids:
+            return
+        current = state.selected_task_id
+        if current in pending_task_ids:
+            idx = (pending_task_ids.index(current) + 1) % len(pending_task_ids)
+        else:
+            idx = 0
+        state.selected_task_id = pending_task_ids[idx]
+        state._notify("tasks")
+
+    def action_show_help(self) -> None:
+        """?: show a brief help notification."""
+        self.notify(
+            "1-4: screens | j/k: tasks | o/c/d/r: views | Tab: next question | q: quit",
+            title="Forge Keybindings",
+            timeout=8,
+        )
 
     async def on_home_screen_task_submitted(self, event: HomeScreen.TaskSubmitted) -> None:
         """User submitted a task from HomeScreen."""

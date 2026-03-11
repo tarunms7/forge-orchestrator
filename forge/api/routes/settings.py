@@ -20,6 +20,10 @@ DEFAULT_SETTINGS: dict = {
     "agent_model_medium": "opus",
     "agent_model_high": "opus",
     "reviewer_model": "sonnet",
+    "autonomy": "balanced",
+    "question_limit": 3,
+    "question_timeout": 1800,
+    "auto_pr": False,
 }
 
 
@@ -35,6 +39,10 @@ class UpdateSettingsRequest(BaseModel):
     agent_model_medium: str | None = None
     agent_model_high: str | None = None
     reviewer_model: str | None = None
+    autonomy: str | None = None
+    question_limit: int | None = Field(None, ge=1, le=10)
+    question_timeout: int | None = Field(None, ge=60, le=7200)
+    auto_pr: bool | None = None
 
 
 def _get_db(request: Request):

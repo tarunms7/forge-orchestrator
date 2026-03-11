@@ -15,6 +15,7 @@ from forge.core.daemon_helpers import (
     _get_diff_vs_main,
     _is_pytest_cmd,
     _load_conventions_md,
+    _parse_forge_question,
     _run_git,
 )
 
@@ -475,6 +476,58 @@ class TestFindRelatedTestFiles:
             ["forge/core/foo.py", "forge/core/foo_test.py"],
         )
         assert result == ["forge/core/foo_test.py"]
+
+
+class TestParseForgeQuestion:
+    """_parse_forge_question() extracts structured question data from agent output."""
+
+    def test_valid_question_at_end(self):
+        text = "I analyzed the code.\n\nFORGE_QUESTION:\n{\"question\": \"Which pattern?\", \"suggestions\": [\"A\", \"B\"], \"impact\": \"high\"}"
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Which pattern?"
+        assert result["suggestions"] == ["A", "B"]
+        assert result["impact"] == "high"
+
+    def test_valid_question_with_context(self):
+        text = 'Analyzed.\n\nFORGE_QUESTION:\n{"question": "Which?", "context": "Found 2", "suggestions": ["A", "B"]}'
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["context"] == "Found 2"
+
+    def test_question_in_markdown_fence(self):
+        text = "Done.\n\nFORGE_QUESTION:\n```json\n{\"question\": \"Which?\", \"suggestions\": [\"A\"]}\n```"
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Which?"
+
+    def test_no_question_returns_none(self):
+        text = "I wrote the code and committed it."
+        result = _parse_forge_question(text)
+        assert result is None
+
+    def test_missing_question_field_returns_none(self):
+        text = 'FORGE_QUESTION:\n{"suggestions": ["A", "B"]}'
+        result = _parse_forge_question(text)
+        assert result is None
+
+    def test_malformed_json_returns_none(self):
+        text = "FORGE_QUESTION:\n{not valid json}"
+        result = _parse_forge_question(text)
+        assert result is None
+
+    def test_question_mid_output_ignored(self):
+        text = 'FORGE_QUESTION:\n{"question": "?", "suggestions": ["A"]}\n\nThen I continued working and wrote code.'
+        result = _parse_forge_question(text)
+        assert result is None
+
+    def test_empty_text_returns_none(self):
+        result = _parse_forge_question("")
+        assert result is None
+
+    def test_none_text_returns_none(self):
+        result = _parse_forge_question(None)
+        assert result is None
 
 
 class TestRunGit:

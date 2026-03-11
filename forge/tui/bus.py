@@ -49,6 +49,21 @@ TUI_EVENT_TYPES = [
     "followup:task_completed",
     "followup:task_error",
     "followup:agent_output",
+    "task:question",
+    "task:answer",
+    "task:resumed",
+    "task:auto_decided",
+    "pipeline:all_tasks_done",
+    "pipeline:pr_creating",
+    "pipeline:pr_created",
+    "pipeline:pr_failed",
+    "review:gate_started",
+    "review:gate_passed",
+    "review:gate_failed",
+    "review:llm_feedback",
+    "slot:acquired",
+    "slot:released",
+    "slot:queued",
 ]
 
 
