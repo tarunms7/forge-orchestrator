@@ -72,6 +72,29 @@ async def test_embedded_source_bridges_emitter():
 
 
 @pytest.mark.asyncio
+async def test_review_llm_output_in_tui_event_types():
+    """review:llm_output must be in TUI_EVENT_TYPES for bridging."""
+    from forge.tui.bus import TUI_EVENT_TYPES
+    assert "review:llm_output" in TUI_EVENT_TYPES
+
+
+@pytest.mark.asyncio
+async def test_embedded_source_bridges_review_llm_output():
+    """EmbeddedSource bridges review:llm_output events."""
+    from forge.core.events import EventEmitter
+    emitter = EventEmitter()
+    bus = EventBus()
+    source = EmbeddedSource(emitter, bus)
+    received = []
+    async def handler(data): received.append(data)
+    bus.subscribe("review:llm_output", handler)
+    source.connect()
+    await emitter.emit("review:llm_output", {"task_id": "t1", "line": "Reviewing..."})
+    assert len(received) == 1
+    assert received[0]["line"] == "Reviewing..."
+
+
+@pytest.mark.asyncio
 async def test_embedded_source_disconnect():
     from forge.core.events import EventEmitter
     emitter = EventEmitter()

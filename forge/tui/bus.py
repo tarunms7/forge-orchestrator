@@ -61,6 +61,7 @@ TUI_EVENT_TYPES = [
     "review:gate_passed",
     "review:gate_failed",
     "review:llm_feedback",
+    "review:llm_output",
     "slot:acquired",
     "slot:released",
     "slot:queued",
