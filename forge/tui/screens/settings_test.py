@@ -9,7 +9,7 @@ from forge.tui.screens.settings import SettingsScreen, format_settings
 class MockSettings:
     """Minimal mock to avoid pydantic import issues."""
     model_strategy = "auto"
-    max_agents = 4
+    max_agents = 2
     agent_timeout_seconds = 600
     max_retries = 5
     build_cmd = None

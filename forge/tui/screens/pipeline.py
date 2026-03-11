@@ -92,6 +92,12 @@ class PipelineScreen(Screen):
             agent_output.update_output(tid, task.get("title"), task.get("state"), lines)
         elif state.phase == "planning" and state.planner_output:
             agent_output.update_output("planner", "Planning", "planning", state.planner_output)
+        elif state.phase == "contracts":
+            agent_output.update_output(
+                "contracts", "Generating Contracts", "contracts",
+                ["⚙ Building API contracts for parallel task execution...",
+                 "  This enables tasks to run in parallel instead of sequentially."],
+            )
         else:
             agent_output.update_output(None, None, None, [])
 
