@@ -56,6 +56,20 @@ def format_plan_summary(tasks: list[dict], estimated_cost: float = 0.0) -> str:
     return " · ".join(parts)
 
 
+def format_cost_estimate(cost_estimate: dict | None) -> str | None:
+    """Format a cost estimate dict into a display string, or None if no estimate."""
+    if not cost_estimate:
+        return None
+    min_usd = cost_estimate.get("min_usd")
+    max_usd = cost_estimate.get("max_usd")
+    if min_usd is not None and max_usd is not None:
+        return f"[#d29922]💰 Estimated cost: ${min_usd:.2f} – ${max_usd:.2f}[/]"
+    legacy = cost_estimate.get("estimated_cost")
+    if legacy is not None:
+        return f"[#d29922]💰 Estimated cost: ~${legacy:.2f}[/]"
+    return None
+
+
 class PlanApprovalScreen(Screen):
     """Shows the planned tasks for user approval before execution."""
 
@@ -68,6 +82,11 @@ class PlanApprovalScreen(Screen):
         padding: 1 2;
         background: #161b22;
         color: #58a6ff;
+    }
+    #plan-cost {
+        padding: 0 2;
+        background: #161b22;
+        height: 1;
     }
     #plan-body {
         padding: 1 2;
@@ -92,14 +111,23 @@ class PlanApprovalScreen(Screen):
     class PlanCancelled(Message):
         """User cancelled the plan."""
 
-    def __init__(self, tasks: list[dict], estimated_cost: float = 0.0) -> None:
+    def __init__(
+        self,
+        tasks: list[dict],
+        estimated_cost: float = 0.0,
+        cost_estimate: dict | None = None,
+    ) -> None:
         super().__init__()
         self._tasks = tasks
         self._estimated_cost = estimated_cost
+        self._cost_estimate = cost_estimate
 
     def compose(self) -> ComposeResult:
         summary = format_plan_summary(self._tasks, self._estimated_cost)
         yield Static(f"[bold #58a6ff]PLAN REVIEW[/]  {summary}", id="plan-header")
+        cost_line = format_cost_estimate(self._cost_estimate)
+        if cost_line is not None:
+            yield Static(cost_line, id="plan-cost")
         with VerticalScroll(id="plan-body"):
             for i, task in enumerate(self._tasks, 1):
                 yield Static(format_plan_task(task, i))

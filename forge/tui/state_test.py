@@ -4,6 +4,15 @@ import pytest
 from forge.tui.state import TuiState
 
 
+def _make_state_with_task(task_id="t1"):
+    """Helper: create state with one task ready."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": task_id, "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
+    return state
+
+
 def test_initial_state():
     state = TuiState()
     assert state.phase == "idle"
@@ -11,6 +20,18 @@ def test_initial_state():
     assert state.selected_task_id is None
     assert state.total_cost_usd == 0.0
     assert state.pipeline_id is None
+
+
+def test_initial_state_new_fields():
+    state = TuiState()
+    assert state.contracts_output == []
+    assert state.contracts_ready is False
+    assert state.contracts_failed is None
+    assert state.cost_estimate is None
+    assert state.budget_exceeded is False
+    assert state.preflight_error is None
+    assert state.followup_tasks == {}
+    assert state.followup_output == {}
 
 
 def test_apply_phase_changed():
@@ -164,3 +185,371 @@ def test_review_llm_output_ignores_missing_task_id():
     state.on_change(lambda field: changes.append(field))
     state.apply_event("review:llm_output", {"line": "no task_id"})
     assert "review_output" not in changes
+
+
+# --- cost_estimate ---
+
+def test_cost_estimate_range():
+    state = TuiState()
+    state.apply_event("pipeline:cost_estimate", {"min_usd": 1.0, "max_usd": 5.0})
+    assert state.cost_estimate == {"min_usd": 1.0, "max_usd": 5.0}
+
+
+def test_cost_estimate_legacy():
+    state = TuiState()
+    state.apply_event("pipeline:cost_estimate", {"estimated_cost": 3.5})
+    assert state.cost_estimate == {"estimated_cost": 3.5}
+
+
+def test_cost_estimate_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("pipeline:cost_estimate", {"min_usd": 1.0, "max_usd": 2.0})
+    assert "cost_estimate" in changes
+
+
+# --- budget_exceeded ---
+
+def test_budget_exceeded():
+    state = TuiState()
+    state.apply_event("pipeline:budget_exceeded", {})
+    assert state.budget_exceeded is True
+
+
+def test_budget_exceeded_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("pipeline:budget_exceeded", {})
+    assert "budget_exceeded" in changes
+
+
+# --- contracts:output ---
+
+def test_contracts_output_appends():
+    state = TuiState()
+    state.apply_event("contracts:output", {"line": "Building..."})
+    state.apply_event("contracts:output", {"line": "Done."})
+    assert state.contracts_output == ["Building...", "Done."]
+
+
+def test_contracts_output_ring_buffer():
+    state = TuiState(max_output_lines=3)
+    for i in range(5):
+        state.apply_event("contracts:output", {"line": f"line {i}"})
+    assert len(state.contracts_output) == 3
+    assert state.contracts_output[0] == "line 2"
+
+
+def test_contracts_output_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("contracts:output", {"line": "x"})
+    assert "contracts_output" in changes
+
+
+def test_contracts_output_missing_line():
+    state = TuiState()
+    state.apply_event("contracts:output", {})
+    assert state.contracts_output == [""]
+
+
+# --- contracts_ready ---
+
+def test_contracts_ready():
+    state = TuiState()
+    state.apply_event("pipeline:contracts_ready", {})
+    assert state.contracts_ready is True
+
+
+def test_contracts_ready_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("pipeline:contracts_ready", {})
+    assert "contracts_ready" in changes
+
+
+# --- contracts_failed ---
+
+def test_contracts_failed():
+    state = TuiState()
+    state.apply_event("pipeline:contracts_failed", {"error": "timeout"})
+    assert state.contracts_failed == "timeout"
+
+
+def test_contracts_failed_default_error():
+    state = TuiState()
+    state.apply_event("pipeline:contracts_failed", {})
+    assert state.contracts_failed == "Unknown"
+
+
+def test_contracts_failed_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("pipeline:contracts_failed", {"error": "x"})
+    assert "contracts_failed" in changes
+
+
+# --- files_changed ---
+
+def test_files_changed():
+    state = _make_state_with_task("t1")
+    state.apply_event("task:files_changed", {"task_id": "t1", "files": ["a.py", "b.py"]})
+    assert state.tasks["t1"]["files_changed"] == ["a.py", "b.py"]
+
+
+def test_files_changed_missing_files():
+    state = _make_state_with_task("t1")
+    state.apply_event("task:files_changed", {"task_id": "t1"})
+    assert state.tasks["t1"]["files_changed"] == []
+
+
+def test_files_changed_unknown_task():
+    state = TuiState()
+    # Should not crash for unknown task
+    state.apply_event("task:files_changed", {"task_id": "unknown", "files": ["x.py"]})
+    assert "unknown" not in state.tasks
+
+
+def test_files_changed_notifies():
+    state = _make_state_with_task("t1")
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("task:files_changed", {"task_id": "t1", "files": ["a.py"]})
+    assert "tasks" in changes
+
+
+# --- cancelled ---
+
+def test_cancelled():
+    state = TuiState()
+    state.apply_event("pipeline:cancelled", {})
+    assert state.phase == "cancelled"
+
+
+def test_cancelled_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("pipeline:cancelled", {})
+    assert "phase" in changes
+
+
+# --- paused ---
+
+def test_paused():
+    state = TuiState()
+    state.apply_event("pipeline:paused", {})
+    assert state.phase == "paused"
+
+
+# --- resumed ---
+
+def test_resumed():
+    state = TuiState()
+    state.apply_event("pipeline:resumed", {})
+    assert state.phase == "executing"
+
+
+# --- restarted ---
+
+def test_restarted_resets_state():
+    state = _make_state_with_task("t1")
+    state.contracts_output.append("x")
+    state.contracts_ready = True
+    state.cost_estimate = {"min_usd": 1.0, "max_usd": 2.0}
+    state.budget_exceeded = True
+    state.error = "some error"
+    state.total_cost_usd = 5.0
+    state.followup_tasks["f1"] = {"task_id": "f1", "state": "started", "error": None}
+
+    state.apply_event("pipeline:restarted", {})
+
+    assert state.phase == "planning"
+    assert state.tasks == {}
+    assert state.task_order == []
+    assert state.contracts_output == []
+    assert state.contracts_ready is False
+    assert state.contracts_failed is None
+    assert state.cost_estimate is None
+    assert state.budget_exceeded is False
+    assert state.preflight_error is None
+    assert state.followup_tasks == {}
+    assert state.error is None
+    assert state.total_cost_usd == 0.0
+
+
+# --- worktrees_cleaned ---
+
+def test_worktrees_cleaned_no_op():
+    state = TuiState()
+    state.phase = "executing"
+    state.apply_event("pipeline:worktrees_cleaned", {})
+    # Should not change phase
+    assert state.phase == "executing"
+
+
+# --- preflight_failed ---
+
+def test_preflight_failed():
+    state = TuiState()
+    state.apply_event("pipeline:preflight_failed", {"error": "git dirty"})
+    assert state.preflight_error == "git dirty"
+
+
+def test_preflight_failed_default():
+    state = TuiState()
+    state.apply_event("pipeline:preflight_failed", {})
+    assert state.preflight_error == "Unknown"
+
+
+def test_preflight_failed_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("pipeline:preflight_failed", {"error": "x"})
+    assert "preflight_error" in changes
+
+
+# --- followup:task_started ---
+
+def test_followup_started():
+    state = TuiState()
+    state.apply_event("followup:task_started", {"task_id": "f1"})
+    assert state.followup_tasks["f1"] == {"task_id": "f1", "state": "started", "error": None}
+
+
+def test_followup_started_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("followup:task_started", {"task_id": "f1"})
+    assert "followup_tasks" in changes
+
+
+# --- followup:task_completed ---
+
+def test_followup_completed():
+    state = TuiState()
+    state.apply_event("followup:task_started", {"task_id": "f1"})
+    state.apply_event("followup:task_completed", {"task_id": "f1"})
+    assert state.followup_tasks["f1"]["state"] == "completed"
+
+
+def test_followup_completed_unknown_task():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("followup:task_completed", {"task_id": "unknown"})
+    # Should not crash, should not notify
+    assert "followup_tasks" not in changes
+
+
+# --- followup:task_error ---
+
+def test_followup_error():
+    state = TuiState()
+    state.apply_event("followup:task_started", {"task_id": "f1"})
+    state.apply_event("followup:task_error", {"task_id": "f1", "error": "boom"})
+    assert state.followup_tasks["f1"]["state"] == "error"
+    assert state.followup_tasks["f1"]["error"] == "boom"
+
+
+def test_followup_error_unknown_task():
+    state = TuiState()
+    state.apply_event("followup:task_error", {"task_id": "unknown", "error": "x"})
+    assert "unknown" not in state.followup_tasks
+
+
+# --- followup:agent_output ---
+
+def test_followup_output():
+    state = TuiState()
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "Running..."})
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "Done."})
+    assert state.followup_output["f1"] == ["Running...", "Done."]
+
+
+def test_followup_output_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda f: changes.append(f))
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "x"})
+    assert "followup_output" in changes
+
+
+def test_followup_output_missing_line():
+    state = TuiState()
+    state.apply_event("followup:agent_output", {"task_id": "f1"})
+    assert state.followup_output["f1"] == [""]
+
+
+# --- slot events (no-op) ---
+
+def test_slot_acquired_no_op():
+    state = TuiState()
+    state.phase = "executing"
+    state.apply_event("slot:acquired", {})
+    assert state.phase == "executing"
+
+
+def test_slot_released_no_op():
+    state = TuiState()
+    state.phase = "executing"
+    state.apply_event("slot:released", {})
+    assert state.phase == "executing"
+
+
+def test_slot_queued_no_op():
+    state = TuiState()
+    state.phase = "executing"
+    state.apply_event("slot:queued", {})
+    assert state.phase == "executing"
+
+
+# --- task:state_changed stores error ---
+
+def test_task_state_changed_stores_error():
+    state = _make_state_with_task("t1")
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "Agent crashed"})
+    assert state.tasks["t1"]["state"] == "error"
+    assert state.tasks["t1"]["error"] == "Agent crashed"
+
+
+def test_task_state_changed_no_error_key():
+    state = _make_state_with_task("t1")
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+    assert state.tasks["t1"]["error"] is None
+
+
+# --- all 19 events in _EVENT_MAP ---
+
+def test_all_new_events_in_event_map():
+    """Verify all 19 new event types are registered in _EVENT_MAP."""
+    new_events = [
+        "pipeline:cost_estimate",
+        "pipeline:budget_exceeded",
+        "contracts:output",
+        "pipeline:contracts_ready",
+        "pipeline:contracts_failed",
+        "task:files_changed",
+        "pipeline:cancelled",
+        "pipeline:paused",
+        "pipeline:resumed",
+        "pipeline:restarted",
+        "pipeline:worktrees_cleaned",
+        "pipeline:preflight_failed",
+        "followup:task_started",
+        "followup:task_completed",
+        "followup:task_error",
+        "followup:agent_output",
+        "slot:acquired",
+        "slot:released",
+        "slot:queued",
+    ]
+    for evt in new_events:
+        assert evt in TuiState._EVENT_MAP, f"{evt} missing from _EVENT_MAP"

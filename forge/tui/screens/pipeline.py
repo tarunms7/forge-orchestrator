@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from textual.app import ComposeResult
 from textual.screen import Screen
@@ -18,6 +19,9 @@ from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.review_gates import ReviewGates
 from forge.tui.widgets.diff_viewer import DiffViewer
+from forge.tui.widgets.copy_overlay import CopyOverlay
+
+logger = logging.getLogger("forge.tui.screens.pipeline")
 
 # Map phase → display label and colour
 _PHASE_BANNER: dict[str, tuple[str, str]] = {
@@ -34,6 +38,8 @@ _PHASE_BANNER: dict[str, tuple[str, str]] = {
     "pr_created":     ("✔ PR Created",      "#3fb950"),
     "complete":       ("✔ Complete",        "#3fb950"),
     "error":          ("✖ Error",           "#f85149"),
+    "cancelled":      ("✘ Cancelled",       "#8b949e"),
+    "paused":         ("⏸ Paused",          "#d29922"),
 }
 
 _VIEW_NAMES = ("output", "chat", "diff", "review")
@@ -56,14 +62,22 @@ class PhaseBanner(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._phase = "idle"
+        self._read_only_banner: str | None = None
 
     def update_phase(self, phase: str) -> None:
         self._phase = phase
         self.refresh()
 
+    def set_read_only_banner(self, text: str | None) -> None:
+        self._read_only_banner = text
+        self.refresh()
+
     def render(self) -> str:
         label, colour = _PHASE_BANNER.get(self._phase, ("Unknown", "#8b949e"))
-        return f"[bold {colour}]{label}[/]"
+        banner = f"[bold {colour}]{label}[/]"
+        if self._read_only_banner:
+            banner += f"\n[dim]{self._read_only_banner}[/]"
+        return banner
 
 
 class DecisionBadge(Widget):
@@ -121,11 +135,13 @@ class ViewLabel(Widget):
         return (
             _item("output", "o", "Output")
             + "  "
-            + _item("chat", "c", "Chat")
+            + _item("chat", "t", "Chat")
             + "  "
             + _item("diff", "d", "Diff")
             + "  "
-            + _item("review", "r", "Review")
+            + _item("review", "v", "Review")
+            + "  "
+            + _item("copy", "c", "Copy")
         )
 
 
@@ -212,9 +228,14 @@ class PipelineScreen(Screen):
         Binding("g", "toggle_dag", "Toggle DAG"),
         Binding("tab", "cycle_agent", "Next agent", show=False),
         Binding("o", "view_output", "Output", show=True),
-        Binding("c", "view_chat", "Chat", show=True),
+        Binding("c", "copy_mode", "Copy", show=True),
+        Binding("t", "view_chat", "Chat", show=True),
         Binding("d", "view_diff", "Diff", show=True),
-        Binding("r", "view_review", "Review", show=True),
+        Binding("r", "retry_task", "Retry", show=False),
+        Binding("v", "view_review", "Review", show=True),
+        Binding("s", "skip_task", "Skip", show=False),
+        Binding("C", "copy_all", "Copy All", show=False),
+        Binding("escape", "pop_screen", "Back", show=False),
         Binding("1", "jump_task(1)", show=False),
         Binding("2", "jump_task(2)", show=False),
         Binding("3", "jump_task(3)", show=False),
@@ -226,13 +247,15 @@ class PipelineScreen(Screen):
         Binding("9", "jump_task(9)", show=False),
     ]
 
-    def __init__(self, state: TuiState) -> None:
+    def __init__(self, state: TuiState, *, read_only: bool = False) -> None:
         super().__init__()
         self._state = state
+        self._read_only = read_only
         self._active_view: str = "output"
         self._agent_streaming_tasks: set[str] = set()  # tasks with active agent streaming
         self._review_streaming_tasks: set[str] = set()  # tasks with active review streaming
         self._diff_cache: dict[str, str] = {}  # task_id -> diff text
+        self._copy_overlay: CopyOverlay | None = None
 
     # ------------------------------------------------------------------
     # Composition
@@ -259,6 +282,13 @@ class PipelineScreen(Screen):
         self._state.on_change(self._on_state_change)
         self._refresh_all()
 
+        # Set up read-only mode banner
+        if self._read_only:
+            created = getattr(self._state, "_replay_date", None) or ""
+            date_str = str(created)[:10] if created else "unknown date"
+            banner = self.query_one(PhaseBanner)
+            banner.set_read_only_banner(f"📖 Viewing pipeline from {date_str} — press Esc to return")
+
     # ------------------------------------------------------------------
     # State change handling
     # ------------------------------------------------------------------
@@ -271,7 +301,8 @@ class PipelineScreen(Screen):
         if field == "review_output":
             self._handle_review_output_fast()
             return
-        if field in ("tasks", "cost", "phase", "elapsed", "planner_output"):
+        if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
+                     "contracts_output"):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
             if field == "tasks":
                 for cache_tid in list(self._diff_cache):
@@ -282,10 +313,46 @@ class PipelineScreen(Screen):
             # On task state changes, also update streaming lifecycle
             self._update_streaming_lifecycle()
             self._refresh_all()
+
+            # Feature 7: auto-transition to review screen
+            if field == "tasks" and not self._read_only:
+                self._check_review_auto_transition()
+
         if field == "error":
             error = self._state.error
             if error:
                 self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
+
+    def _check_review_auto_transition(self) -> None:
+        """Auto-select task entering review and push ReviewScreen."""
+        state = self._state
+        for tid in state.task_order:
+            if tid not in state.tasks:
+                continue
+            task = state.tasks[tid]
+            if task.get("state") == "in_review":
+                # Guard: check if user is typing in chat
+                try:
+                    chat_input = self.query_one("#chat-input")
+                    if chat_input.has_focus:
+                        title = task.get("title", tid)
+                        self.app.notify(
+                            f"Task {title} entered review — press v to view",
+                            timeout=5,
+                        )
+                        return
+                except Exception:
+                    pass
+
+                # Auto-select and push review
+                state.selected_task_id = tid
+                self._refresh_all()
+                try:
+                    from forge.tui.screens.review import ReviewScreen
+                    self.app.push_screen(ReviewScreen(state))
+                except Exception:
+                    logger.debug("Failed to push ReviewScreen", exc_info=True)
+                return
 
     def _handle_agent_output_fast(self) -> None:
         """Fast path for agent_output: only update AgentOutput widget."""
@@ -358,27 +425,41 @@ class PipelineScreen(Screen):
         task_list.update_tasks(ordered_tasks, state.selected_task_id, phase=state.phase)
 
         tid = state.selected_task_id
+
+        # Show error detail view for errored tasks
         if tid and tid in state.tasks:
             task = state.tasks[tid]
             lines = state.agent_output.get(tid, [])
-            if tid in self._agent_streaming_tasks:
+            if task.get("state") == "error":
+                agent_output.render_error_detail(tid, task, lines)
+            elif tid in self._agent_streaming_tasks:
                 # Streaming active — only update header, not content/scroll
                 agent_output.update_header(tid, task.get("title"), task.get("state"))
             else:
+                agent_output.clear_error_detail()
                 agent_output.update_output(tid, task.get("title"), task.get("state"), lines)
 
-            # Auto-switch to chat view when the selected task is awaiting input
-            if task.get("state") == "awaiting_input":
-                self._auto_switch_chat(tid, task)
+                # Auto-switch to chat view when the selected task is awaiting input
+                if task.get("state") == "awaiting_input":
+                    self._auto_switch_chat(tid, task)
         elif state.phase == "planning" and state.planner_output:
+            agent_output.clear_error_detail()
             agent_output.update_output("planner", "Planning", "planning", state.planner_output)
         elif state.phase == "contracts":
-            agent_output.update_output(
-                "contracts", "Generating Contracts", "contracts",
-                ["⚙ Building API contracts for parallel task execution...",
-                 "  This enables tasks to run in parallel instead of sequentially."],
-            )
+            agent_output.clear_error_detail()
+            # Feature 2: stream contracts output like planner output
+            if state.contracts_output:
+                agent_output.update_output(
+                    "contracts", "⚙ Contracts", "contracts", state.contracts_output,
+                )
+            else:
+                agent_output.update_output(
+                    "contracts", "Generating Contracts", "contracts",
+                    ["⚙ Building API contracts...",
+                     "  This enables tasks to run in parallel instead of sequentially."],
+                )
         else:
+            agent_output.clear_error_detail()
             agent_output.update_output(None, None, None, [])
 
         # Update diff and review for selected task
@@ -500,6 +581,17 @@ class PipelineScreen(Screen):
                 pass
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _get_selected_task(self) -> dict | None:
+        """Return the currently selected task dict, or None."""
+        tid = self._state.selected_task_id
+        if tid and tid in self._state.tasks:
+            return self._state.tasks[tid]
+        return None
+
+    # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
 
@@ -512,6 +604,30 @@ class PipelineScreen(Screen):
         # Bubble up — the main App should handle sending the answer back.
         # We post as a regular message so the App can catch it.
         self.post_message(event)
+
+    def on_copy_overlay_copy_complete(self, event: CopyOverlay.CopyComplete) -> None:
+        """Remove overlay after copy."""
+        self._dismiss_copy_overlay()
+        if event.success:
+            self.app.notify("Copied to clipboard!", timeout=3)
+        else:
+            self.app.notify(
+                "Clipboard unavailable — install xclip or xsel",
+                severity="warning", timeout=5,
+            )
+
+    def on_copy_overlay_cancelled(self, event: CopyOverlay.Cancelled) -> None:
+        """Remove overlay on Esc."""
+        self._dismiss_copy_overlay()
+
+    def _dismiss_copy_overlay(self) -> None:
+        """Remove the CopyOverlay widget if mounted."""
+        if self._copy_overlay is not None:
+            try:
+                self._copy_overlay.remove()
+            except Exception:
+                pass
+            self._copy_overlay = None
 
     # ------------------------------------------------------------------
     # Actions
@@ -553,6 +669,72 @@ class PipelineScreen(Screen):
 
     def action_view_review(self) -> None:
         self._set_view("review")
+
+    def action_copy_mode(self) -> None:
+        """Enter copy mode — mount CopyOverlay on AgentOutput."""
+        agent_output = self.query_one(AgentOutput)
+        lines = list(agent_output._lines)
+        self._copy_overlay = CopyOverlay(lines=lines)
+        try:
+            self.mount(self._copy_overlay)
+            self._copy_overlay.focus()
+        except Exception:
+            logger.debug("Failed to mount CopyOverlay", exc_info=True)
+
+    def action_copy_all(self) -> None:
+        """Instant copy of all visible output to clipboard."""
+        from forge.tui.widgets.copy_overlay import copy_to_clipboard
+        agent_output = self.query_one(AgentOutput)
+        lines = list(agent_output._lines)
+        if not lines:
+            self.app.notify("No output to copy", timeout=3)
+            return
+        text = "\n".join(lines)
+        success = copy_to_clipboard(text)
+        if not success:
+            try:
+                self.app.copy_to_clipboard(text)
+                success = True
+            except Exception:
+                pass
+        if success:
+            self.app.notify("Copied all output to clipboard!", timeout=3)
+        else:
+            self.app.notify(
+                "Clipboard unavailable — install xclip or xsel",
+                severity="warning", timeout=5,
+            )
+
+    def action_retry_task(self) -> None:
+        """Retry the selected task (only active for error-state tasks)."""
+        if self._read_only:
+            return
+        task = self._get_selected_task()
+        if not task or task.get("state") != "error":
+            return
+        tid = task["id"]
+        try:
+            self.app._bus.emit("task:retry", {"task_id": tid})
+        except Exception:
+            logger.debug("Failed to emit task:retry", exc_info=True)
+
+    def action_skip_task(self) -> None:
+        """Skip the selected errored task (only active for error-state tasks)."""
+        if self._read_only:
+            return
+        task = self._get_selected_task()
+        if not task or task.get("state") != "error":
+            return
+        tid = task["id"]
+        try:
+            self.app._bus.emit("task:skip", {"task_id": tid})
+        except Exception:
+            logger.debug("Failed to emit task:skip", exc_info=True)
+
+    def action_pop_screen(self) -> None:
+        """Esc — only active in read-only mode."""
+        if self._read_only:
+            self.app.pop_screen()
 
     def action_jump_task(self, index: int) -> None:
         """Jump to task by 1-based position in the task list."""

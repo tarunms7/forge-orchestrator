@@ -1,7 +1,6 @@
 """Tests for ForgeDaemon: pause tracking, all_tasks_done event, question timeout checker."""
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -538,3 +537,94 @@ class TestPipelinePauseTracking:
         pause_events = [e for e in emitted if e[0] == "pipeline:paused"]
         assert len(pause_events) == 0
         db.set_pipeline_paused_at.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for retry_task
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestRetryTask:
+    """Tests for ForgeDaemon.retry_task."""
+
+    async def test_retry_task_resets_state_to_todo(self, tmp_path):
+        """retry_task should update task state to 'todo' in DB."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.log_event = AsyncMock()
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        with patch("forge.core.daemon.WorktreeManager") as MockWM:
+            MockWM.return_value.remove = MagicMock()
+            await daemon.retry_task("task-1", db, "pipe-abc")
+
+        db.update_task_state.assert_called_once_with("task-1", "todo")
+
+    async def test_retry_task_emits_state_changed(self, tmp_path):
+        """retry_task should emit task:state_changed with state='todo'."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.log_event = AsyncMock()
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        with patch("forge.core.daemon.WorktreeManager") as MockWM:
+            MockWM.return_value.remove = MagicMock()
+            await daemon.retry_task("task-1", db, "pipe-abc")
+
+        assert len(emitted) == 1
+        event_type, payload = emitted[0]
+        assert event_type == "task:state_changed"
+        assert payload["task_id"] == "task-1"
+        assert payload["state"] == "todo"
+
+    async def test_retry_task_clears_worktree(self, tmp_path):
+        """retry_task should attempt to remove the worktree for the task."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.log_event = AsyncMock()
+
+        daemon._emit = AsyncMock()
+
+        with patch("forge.core.daemon.WorktreeManager") as MockWM:
+            mock_wm_instance = MockWM.return_value
+            mock_wm_instance.remove = MagicMock()
+            await daemon.retry_task("task-1", db, "pipe-abc")
+            mock_wm_instance.remove.assert_called_once_with("task-1")
+
+    async def test_retry_task_worktree_remove_failure_does_not_raise(self, tmp_path):
+        """If worktree removal fails, retry_task should not raise."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.log_event = AsyncMock()
+
+        daemon._emit = AsyncMock()
+
+        with patch("forge.core.daemon.WorktreeManager") as MockWM:
+            mock_wm_instance = MockWM.return_value
+            mock_wm_instance.remove = MagicMock(side_effect=RuntimeError("no worktree"))
+            # Should not raise
+            await daemon.retry_task("task-1", db, "pipe-abc")
+
+        # State should still be reset
+        db.update_task_state.assert_called_once_with("task-1", "todo")
+        daemon._emit.assert_called_once()
