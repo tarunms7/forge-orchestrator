@@ -24,7 +24,7 @@ class PipelineTestApp(App):
 @pytest.mark.asyncio
 async def test_pipeline_screen_mounts():
     app = PipelineTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         assert app.screen.query_one("TaskList") is not None
         assert app.screen.query_one("AgentOutput") is not None
         assert app.screen.query_one("PipelineProgress") is not None
