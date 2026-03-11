@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import time
 
 from rich.console import Console
@@ -723,6 +722,8 @@ class ExecutorMixin:
             completed_deps=completed_deps if completed_deps else None,
             contracts_block=contracts_block,
             resume=resume,
+            autonomy=self._settings.autonomy,
+            questions_remaining=self._settings.question_limit,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)

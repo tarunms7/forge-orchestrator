@@ -318,6 +318,60 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
     assert "Setup" in system_prompt
 
 
+def test_build_options_autonomy_settings():
+    """_build_options should forward autonomy and questions_remaining to system prompt."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        "/tmp/wt", [],
+        autonomy="full",
+        questions_remaining=0,
+    )
+    assert "Autonomy level: full" in options.system_prompt
+    assert "Questions remaining: 0" in options.system_prompt
+    assert "NEVER ask questions" in options.system_prompt
+
+
+def test_build_options_supervised_autonomy():
+    """_build_options with supervised autonomy should include supervised protocol."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        "/tmp/wt", [],
+        autonomy="supervised",
+        questions_remaining=5,
+    )
+    assert "Autonomy level: supervised" in options.system_prompt
+    assert "Questions remaining: 5" in options.system_prompt
+
+
+async def test_claude_adapter_run_forwards_autonomy():
+    """ClaudeAdapter.run() should forward autonomy params to _build_options."""
+    mock_result = AsyncMock()
+    mock_result.result_text = "Done"
+    mock_result.cost_usd = 0.01
+    mock_result.is_error = False
+    mock_result.input_tokens = 100
+    mock_result.output_tokens = 50
+
+    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+        mock_query.return_value = mock_result
+        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
+            adapter = ClaudeAdapter()
+            result = await adapter.run(
+                task_prompt="test",
+                worktree_path="/tmp/test",
+                allowed_files=["a.py"],
+                timeout_seconds=60,
+                autonomy="supervised",
+                questions_remaining=5,
+            )
+
+    assert result.success is True
+    call_kwargs = mock_query.call_args[1]
+    system_prompt = call_kwargs["options"].system_prompt
+    assert "Autonomy level: supervised" in system_prompt
+    assert "Questions remaining: 5" in system_prompt
+
+
 async def test_claude_adapter_error_includes_cost():
     """ClaudeAdapter.run() should include cost_usd in error AgentResult."""
     mock_result = AsyncMock()

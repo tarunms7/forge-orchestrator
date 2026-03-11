@@ -208,6 +208,8 @@ class AgentAdapter(ABC):
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
         resume: str | None = None,
+        autonomy: str = "balanced",
+        questions_remaining: int = 3,
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -283,6 +285,8 @@ class ClaudeAdapter(AgentAdapter):
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
         resume: str | None = None,
+        autonomy: str = "balanced",
+        questions_remaining: int = 3,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -292,6 +296,8 @@ class ClaudeAdapter(AgentAdapter):
             completed_deps=completed_deps,
             allowed_files=allowed_files,
             contracts_block=contracts_block,
+            autonomy=autonomy,
+            questions_remaining=questions_remaining,
             resume=resume,
         )
 
