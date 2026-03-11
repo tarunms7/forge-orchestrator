@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
 
 from forge.tui.widgets.agent_output import (
     AgentOutput,
