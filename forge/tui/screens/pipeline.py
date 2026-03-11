@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
-from textual.widgets import Static
 from textual.widget import Widget
 
 from forge.tui.state import TuiState
