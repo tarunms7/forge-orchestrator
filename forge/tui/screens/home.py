@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Input, Static
+from textual.binding import Binding
+from textual.widgets import Input, Static, TextArea
 from textual.containers import Vertical, Center
 from textual.message import Message
 
@@ -48,6 +49,11 @@ class HomeScreen(Screen):
     }
     #prompt-input {
         margin: 1 2;
+        height: 6;
+        border: tall #30363d;
+    }
+    #prompt-input:focus {
+        border: tall #58a6ff;
     }
     #recent-label {
         margin: 1 2 0 2;
@@ -63,6 +69,7 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         ("escape", "app.quit", "Quit"),
+        Binding("ctrl+j", "submit_task", "Submit", show=True, priority=True),
     ]
 
     class TaskSubmitted(Message):
@@ -78,14 +85,17 @@ class HomeScreen(Screen):
         with Center():
             with Vertical(id="home-container"):
                 yield ForgeLogo()
-                yield Input(placeholder="What should I build?", id="prompt-input")
+                yield TextArea(id="prompt-input")
+                yield Static("[#8b949e]Ctrl+Enter to submit[/]", id="submit-hint")
                 yield Static("Recent pipelines", id="recent-label")
                 yield Static(
                     format_recent_pipelines(self._recent_pipelines),
                     id="recent-list",
                 )
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        task = event.value.strip()
+    def action_submit_task(self) -> None:
+        """Ctrl+Enter: submit the task prompt."""
+        textarea = self.query_one("#prompt-input", TextArea)
+        task = textarea.text.strip()
         if task:
             self.post_message(self.TaskSubmitted(task))
