@@ -4,6 +4,8 @@ These utilities handle git operations, prompt construction, diff analysis,
 and console output used by the Forge daemon orchestration loop.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re
@@ -26,7 +28,13 @@ def _extract_text(message) -> str | None:
         parts = []
         for block in (message.content or []):
             if hasattr(block, "text"):
-                parts.append(block.text)
+                text = block.text.strip()
+                # Skip empty, JSON blobs, and tool metadata
+                if not text:
+                    continue
+                if text.startswith("{") or text.startswith("["):
+                    continue
+                parts.append(text)
         return "\n".join(parts) if parts else None
     if isinstance(message, ResultMessage):
         return message.result if message.result else None
