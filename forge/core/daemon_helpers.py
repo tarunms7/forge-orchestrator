@@ -6,6 +6,7 @@ and console output used by the Forge daemon orchestration loop.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import os
 import re
@@ -16,6 +17,62 @@ from rich.table import Table
 
 logger = logging.getLogger("forge")
 console = Console()
+
+_FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
+
+
+def _parse_forge_question(text: str | None) -> dict | None:
+    """Parse a FORGE_QUESTION block from agent output.
+
+    Returns dict with at least 'question' and 'suggestions' keys, or None.
+    Only matches if the marker appears near the end of output (agent stopped to ask).
+    """
+    if not text:
+        return None
+
+    marker_idx = text.rfind(_FORGE_QUESTION_MARKER)
+    if marker_idx == -1:
+        return None
+
+    after_marker = text[marker_idx + len(_FORGE_QUESTION_MARKER):].strip()
+
+    # Check nothing substantial follows the JSON (agent continued working)
+    # Strip markdown fences if present
+    json_text = after_marker
+    fence_match = re.match(r"```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", json_text, re.DOTALL)
+    if fence_match:
+        json_text = fence_match.group(1).strip()
+    else:
+        # Check if there's significant text after the JSON block
+        # Find the closing brace
+        brace_depth = 0
+        json_end = -1
+        for i, ch in enumerate(json_text):
+            if ch == "{":
+                brace_depth += 1
+            elif ch == "}":
+                brace_depth -= 1
+                if brace_depth == 0:
+                    json_end = i + 1
+                    break
+        if json_end == -1:
+            return None
+        trailing = json_text[json_end:].strip()
+        if len(trailing) > 20:  # significant trailing text = agent continued
+            return None
+        json_text = json_text[:json_end]
+
+    try:
+        data = _json.loads(json_text)
+    except (_json.JSONDecodeError, ValueError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+    if "question" not in data or not isinstance(data["question"], str):
+        return None
+
+    return data
 
 
 def _extract_text(message) -> str | None:
