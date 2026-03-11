@@ -4,7 +4,7 @@
 
 **Approach:** Surgical wiring. Extend existing widgets, wire missing events, add targeted new components. No layout restructuring. All existing happy paths unchanged.
 
-**Scope:** 10 features across 9 modified files + 2 new files (~600–900 lines).
+**Scope:** 10 features across 10 modified files + 2 new files (~600–900 lines).
 
 ---
 
@@ -14,6 +14,7 @@
 
 **Design:**
 
+- **Key binding change:** The existing `c` binding (`action_view_chat`) is relocated to `t` (for "talk/thread"). This frees `c` for copy mode, which is more universally expected.
 - `c` key enters **copy mode** — a temporary overlay on AgentOutput (like Vim visual mode)
 - In copy mode:
   - Lines display with `○` (unselected) / `●` (selected) markers
@@ -23,16 +24,17 @@
   - Status bar at bottom shows: `── COPY MODE ── j/k: move │ space: toggle │ Enter: copy │ Esc: cancel ──` and selected line count
 - `C` (shift+c) — instant copy of ALL currently visible output. No mode entry, immediate clipboard write.
 - Clipboard library: `pyperclip` (cross-platform, handles macOS pbcopy / Linux xclip / Windows clip)
+- **Clipboard failure handling:** If `pyperclip` fails (headless Linux, no xclip), show a persistent notification: "Clipboard unavailable — install xclip or xsel". Do not crash.
 
 **Files:**
 - New: `forge/tui/widgets/copy_overlay.py` — CopyOverlay widget
-- Modify: `forge/tui/screens/pipeline.py` — add `c`/`C` bindings, mount CopyOverlay on AgentOutput
+- Modify: `forge/tui/screens/pipeline.py` — relocate `c` → `t` for chat view, add `c`/`C` bindings for copy, mount CopyOverlay on AgentOutput
 
 ---
 
 ## Feature 2: Contracts Phase Display
 
-**Problem:** The daemon emits `contracts:output` events during contract generation, but the TUI ignores them. Users stare at a blank screen during the contracts phase.
+**Problem:** The daemon emits `contracts:output` events during contract generation, but the TUI ignores them. Users stare at a hardcoded placeholder during the contracts phase.
 
 **Design:**
 
@@ -41,19 +43,24 @@
   - `contracts:output` → `_on_contracts_output` — appends line to `contracts_output`
   - `pipeline:contracts_ready` → `_on_contracts_ready` — stores readiness flag
   - `pipeline:contracts_failed` → `_on_contracts_failed` — stores error, sets `error` field
-- When `phase == "contracts"`, PipelineScreen tells AgentOutput to display `contracts_output` lines with header `"⚙ Contracts"` (same pattern as planner output during planning phase)
+- **Replace** the existing hardcoded contracts display in `pipeline.py` `_refresh_all()` (lines 356–361, the `elif state.phase == "contracts"` branch with placeholder text) with a streaming view that reads from `state.contracts_output` with header `"⚙ Contracts"`
+- Pattern: identical to how `planner_output` displays during `phase == "planning"`
 
 **Files:**
 - Modify: `forge/tui/state.py` — 3 new handlers + `contracts_output` field
-- Modify: `forge/tui/screens/pipeline.py` — contracts view branch in `_refresh_all`
+- Modify: `forge/tui/screens/pipeline.py` — replace hardcoded contracts branch in `_refresh_all` with streaming view
 
 ---
 
 ## Feature 3: Wire All Missing Event Handlers
 
-**Problem:** 18 of 29 registered `TUI_EVENT_TYPES` are silently dropped — no handler in `TuiState._EVENT_MAP`.
+**Problem:** 19 of 43 unique registered `TUI_EVENT_TYPES` have no handler in `TuiState._EVENT_MAP`. They are silently dropped.
 
-**Design:**
+**Note:** `TUI_EVENT_TYPES` in `bus.py` contains duplicate entries for `pipeline:pr_created` and `pipeline:pr_failed` (lines 34+58 and 35+59). Clean up these duplicates as part of this task.
+
+**Currently handled (24 events):** `pipeline:phase_changed`, `pipeline:plan_ready`, `pipeline:cost_update`, `pipeline:error`, `pipeline:all_tasks_done`, `pipeline:pr_creating`, `pipeline:pr_created`, `pipeline:pr_failed`, `task:state_changed`, `task:agent_output`, `task:cost_update`, `task:review_update`, `task:merge_result`, `task:awaiting_approval`, `task:question`, `task:answer`, `task:resumed`, `task:auto_decided`, `planner:output`, `review:gate_started`, `review:gate_passed`, `review:gate_failed`, `review:llm_feedback`, `review:llm_output`.
+
+**Missing (19 events to add):**
 
 | Event | TuiState Field | UI Effect |
 |-------|---------------|-----------|
@@ -67,19 +74,21 @@
 | `pipeline:paused` | phase → `"paused"` | PipelineProgress status |
 | `pipeline:resumed` | phase → `"executing"` | PipelineProgress status |
 | `pipeline:restarted` | phase → `"planning"` | Reset + restart |
-| `pipeline:pr_created` | `pr_url: str` | Inline banner on FinalApproval |
-| `pipeline:pr_failed` | `pr_error: str` | Error detail on FinalApproval |
-| `pipeline:worktrees_cleaned` | no-op log | Debug visibility |
+| `pipeline:worktrees_cleaned` | no-op log | Debug visibility only |
 | `pipeline:preflight_failed` | `preflight_error: str` | Error notification |
 | `followup:task_started` | followup tracking | Followup task progress |
 | `followup:task_completed` | followup tracking | Followup task completion |
 | `followup:task_error` | followup tracking | Followup task error |
 | `followup:agent_output` | followup output lines | Stream in AgentOutput if viewing followup |
+| `slot:acquired` | no-op log | Debug visibility only |
+| `slot:released` | no-op log | Debug visibility only |
+| `slot:queued` | no-op log | Debug visibility only |
 
-Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update phase use the existing `_on_phase_changed` pattern.
+Every handler calls `_notify(field)` to trigger UI refresh. No-op handlers log at DEBUG level and return. Handlers that update phase use the existing `_on_phase_changed` pattern.
 
 **Files:**
-- Modify: `forge/tui/state.py` — add all 18 handlers to `_EVENT_MAP`
+- Modify: `forge/tui/state.py` — add 19 handlers to `_EVENT_MAP`
+- Modify: `forge/tui/bus.py` — remove duplicate `pipeline:pr_created` and `pipeline:pr_failed` entries
 
 ---
 
@@ -90,8 +99,8 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
 **Design:**
 
 - `task:files_changed` handler stores `task["files_changed"]: list[str]` in TuiState
-- TaskList `format_task_line()` appends dim file count: `[#8b949e]N files[/]` after the task title (only for tasks that have reported file changes)
-- When an errored task is selected, AgentOutput header shows the full file list (one per line, scrollable)
+- TaskList `format_task_line()` appends dim file count: `[#8b949e]N files[/]` after the task title (for all task states, not just errored tasks — seeing which files a completed task modified is also useful)
+- When any task is selected, AgentOutput header can include file count summary. Full file list is visible in the diff view (`d` key) which already shows changed files.
 - File count display respects the TaskList max-width — truncates title if needed to fit count
 
 **Files:**
@@ -112,12 +121,14 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
   PLAN REVIEW  5 tasks · 2 low · 2 medium · 1 high
   💰 Estimated cost: $3.50 – $5.20
   ```
+- If the estimate contains only a single value (legacy `{"estimated_cost": float}`), display as `~$X.XX` instead of a range
 - If no estimate is available (backwards compatibility), the cost line is omitted
 - Uses amber color `#d29922` for the estimate line to draw attention without alarming
+- PlanApprovalScreen constructor already accepts cost data — update it to read from `state.cost_estimate` dict instead of a single float
 
 **Files:**
 - Modify: `forge/tui/state.py` — `_on_cost_estimate` handler
-- Modify: `forge/tui/screens/plan_approval.py` — render cost estimate in header
+- Modify: `forge/tui/screens/plan_approval.py` — render cost estimate range in header
 
 ---
 
@@ -127,25 +138,29 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
 
 **Design:**
 
+- **Key binding change:** The existing `r` binding (`action_view_review`) is relocated to `v` (for "review view"). This frees `r` for retry, which is more intuitive for error recovery. The `r` binding is only active when the selected task is in error state; otherwise `r` does nothing (prevents accidental triggers).
 - **Error badge in TaskList:** Error tasks already show `✖` icon in red. Add a persistent `⚠` badge suffix so errors are visible even when scrolled past. Format: `✖ Task title ⚠ N files`
-- **Error detail view:** When an errored task is selected, AgentOutput shows:
+- **Error detail view in AgentOutput:** When an errored task is selected, AgentOutput shows a **combined view** with both error info and file changes:
   1. Header: `✖ Task Title — ERROR` (red)
   2. Separator
   3. Error message from `task["error"]` (red text)
-  4. Separator with label `── Last output ──`
-  5. Last N lines of agent output (context for what went wrong)
-  6. Action bar: `[r] retry  [s] skip  [Esc] dismiss`
-- **Actions:**
-  - `r` (retry) — calls daemon API to re-enqueue task, resets state to `todo`
-  - `s` (skip) — marks task as `cancelled`, pipeline continues with remaining tasks
-  - `Esc` — navigates away, error badge stays visible in TaskList
-- Error message stored in `task["error"]` from `task:state_changed` event's `error` field
+  4. If `task["files_changed"]` exists: file list (dim, shows what the task touched before failing)
+  5. Separator with label `── Last output ──`
+  6. Last 20 lines of agent output (context for what went wrong)
+  7. Action bar: `[r] retry  [s] skip  [Esc] dismiss`
+  - This resolves the overlap with Feature 4 — file info is integrated into the error detail view for errored tasks.
+- **Actions — daemon interaction mechanism:**
+  - `r` (retry): Emits `task:retry` event through the EventBus → daemon's `retry_task(task_id)` method resets the task state to `todo` in DB, clears the worktree, and re-adds the task to the scheduler queue. The `task:state_changed` event fires with `state: "todo"`, and the task re-enters the execution loop on the next scheduler tick. If `retry_task()` doesn't exist yet, create it in `forge/core/daemon.py` (it's a simple state reset + re-enqueue).
+  - `s` (skip): Emits `task:skip` event → daemon's `cancel_task(task_id)` method (already exists) marks the task as `cancelled` in DB. Pipeline continues with remaining tasks. Dependent tasks that reference the skipped task should also be cancelled (scheduler already handles this via `depends_on` resolution).
+  - `Esc` — navigates away (selects next non-error task), error badge stays visible in TaskList
+- Error message stored in `task["error"]` from `task:state_changed` event's `error` field (already emitted by daemon when tasks fail)
 
 **Files:**
 - Modify: `forge/tui/widgets/task_list.py` — `⚠` badge for error tasks
-- Modify: `forge/tui/screens/pipeline.py` — `r`/`s` bindings, error detail rendering
-- Modify: `forge/tui/widgets/agent_output.py` — error detail view mode
+- Modify: `forge/tui/screens/pipeline.py` — relocate `r` → `v` for review view, add `r`/`s` bindings for error actions, error detail rendering in AgentOutput
+- Modify: `forge/tui/widgets/agent_output.py` — error detail view mode with combined error + files + output
 - Modify: `forge/tui/state.py` — store error message in task dict
+- Modify: `forge/core/daemon.py` — add `retry_task(task_id)` method if not present
 
 ---
 
@@ -158,13 +173,15 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
 - In PipelineScreen's `_on_state_change` callback, when `task:state_changed` fires with `state: "in_review"`:
   1. Auto-select that task in the TaskList
   2. Push ReviewScreen (if not already on ReviewScreen)
-- Guard: only auto-transitions if current screen is PipelineScreen (not if user is on settings, etc.)
+- **Guards:**
+  - Only auto-transitions if current screen is PipelineScreen (not if user is on settings, plan approval, etc.)
+  - If the user is actively typing in ChatThread (has focus on an input widget), **do not auto-transition**. Instead, show a notification: "Task X entered review — press `v` to view." This prevents interrupting user input.
 - If multiple tasks enter review simultaneously, select the first one chronologically
-- Review gate updates (`task:review_update`) stream into the review view in real-time — gate results appear as they complete
+- Review gate updates (`task:review_update`) stream into the review view in real-time — gate results appear as they complete. ReviewScreen already renders gates from `state.review_gates[tid]`, so no changes to `review.py` are needed — just ensure `_refresh_all` is called when review gates update.
 - When review completes and task moves to `awaiting_approval`, ReviewScreen shows approve/reject actions (already implemented)
 
 **Files:**
-- Modify: `forge/tui/screens/pipeline.py` — auto-transition logic in `_on_state_change`
+- Modify: `forge/tui/screens/pipeline.py` — auto-transition logic in `_on_state_change`, input-focus guard
 
 ---
 
@@ -174,13 +191,16 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
 
 **Design:**
 
-- After `ruff check --fix` completes in `_gate1()`, run `git diff` in the worktree to capture what ruff changed
-- Include the diff summary (capped at 20 lines) in the `task:review_update` event payload as `auto_fix_summary: str`
-- When building retry feedback for the agent, prepend: `"Ruff auto-fixed the following changes (do not revert): \n{summary}"`
-- This gives the agent explicit visibility into what the linter changed so it doesn't fight the auto-fixer
+- In `_gate1()` (daemon_review.py lines 538–555), after `ruff check --fix` runs and **before** the `git add -A` + `git commit`:
+  1. Run `_run_git(["diff"], cwd=worktree_path)` to capture what ruff changed (unstaged diff)
+  2. Store the diff output (capped at 30 lines) as `auto_fix_diff: str`
+  3. Proceed with the existing `git add -A` + `git commit` flow
+- Include `auto_fix_diff` in the `GateResult.details` when the gate passes with auto-fixes applied. The details string becomes: `"Lint clean (auto-fixed: {summary})"` instead of just `"Lint clean"`
+- The retry feedback mechanism is in `_run_review()` (the caller), which already includes `gate.details` in the feedback sent to the agent. So the auto-fix diff naturally flows into the agent's retry context without needing a separate code path.
+- Cap at 30 lines to avoid flooding agent context with large diffs
 
 **Files:**
-- Modify: `forge/core/daemon_review.py` — gate1 lint step: capture + surface ruff diff
+- Modify: `forge/core/daemon_review.py` — gate1 lint step: capture unstaged diff before commit, include in GateResult details
 
 ---
 
@@ -194,16 +214,25 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
 - `j/k` or arrow keys navigate the list when pipeline list is focused
 - `Tab` switches focus between prompt TextArea and PipelineList
 - `Enter` on a pipeline:
-  1. Loads pipeline state from DB (tasks, events, costs, diffs)
-  2. Hydrates a TuiState from the stored events
-  3. Pushes PipelineScreen in **read-only replay mode** — shows final task states, agent output, diffs, costs
-  4. No re-execution possible from replay mode
+  1. Calls `db.get_pipeline(pipeline_id)` to get pipeline metadata
+  2. Calls `db.list_tasks_by_pipeline(pipeline_id)` to get all tasks
+  3. Calls `db.list_events(pipeline_id)` to get all stored events
+  4. Creates a fresh `TuiState` and replays events via `state.apply_event()` in chronological order — this hydrates the full state (tasks, outputs, diffs, review gates, costs) exactly as it existed
+  5. Pushes PipelineScreen with a `read_only=True` flag
+- **Read-only mode enforcement:**
+  - PipelineScreen checks `self._read_only` flag
+  - Retry (`r`), skip (`s`), approve actions are disabled (bindings removed or no-op)
+  - A dim banner at top: `"📖 Viewing pipeline from {date} — press Esc to return"`
+  - `Esc` pops back to HomeScreen
+- **DB methods needed:** `db.get_pipeline()`, `db.list_tasks_by_pipeline()`, and `db.list_events()` — verify these exist. If `list_events` doesn't exist, add it (simple `SELECT * FROM events WHERE pipeline_id = ? ORDER BY created_at`).
 - PipelineList reuses the same status icons/colors as the HomeScreen static list
 
 **Files:**
 - New: `forge/tui/widgets/pipeline_list.py` — PipelineList widget
 - Modify: `forge/tui/screens/home.py` — replace Static with PipelineList, add Tab/Enter bindings
-- Modify: `forge/tui/app.py` — load pipeline from DB, hydrate state for replay
+- Modify: `forge/tui/screens/pipeline.py` — add `read_only` flag, disable mutation bindings, show banner
+- Modify: `forge/tui/app.py` — load pipeline from DB, hydrate state, push in replay mode
+- Possibly modify: `forge/storage/db.py` — add `list_events()` if missing
 
 ---
 
@@ -218,10 +247,31 @@ Every handler calls `_notify(field)` to trigger UI refresh. Handlers that update
 - Keep the existing color scheme: orange `#f0883e` for the anvil, blue `#58a6ff` for the text
 - Gray `#8b949e` subtitle: "multi-agent code orchestration"
 - **Must be properly centered** on the HomeScreen — both horizontally and vertically within the available space
-- The logo widget uses Textual's `Center` container and the `text-align: center` CSS property
+- Centering approach: use Textual's `content-align: center middle` on the logo container, with each line of the ASCII art left-padded to produce a centered block. The `ForgeLogo` widget sets `text-align: center` in its CSS.
+- The exact ASCII art will be designed during implementation — the spec defines scale and constraints, not the pixel art. Implementer should produce 2-3 options for review.
 
 **Files:**
 - Modify: `forge/tui/widgets/logo.py` — new ASCII art, ensure proper centering
+- Modify: `forge/tui/screens/home.py` — verify logo centering in the home layout
+
+---
+
+## Binding Summary
+
+Updated PipelineScreen key bindings after Features 1, 6, and 7:
+
+| Key | Before | After |
+|-----|--------|-------|
+| `o` | Output view | Output view (unchanged) |
+| `c` | Chat view | **Copy mode** (Feature 1) |
+| `t` | — | **Chat view** (relocated from `c`) |
+| `d` | Diff view | Diff view (unchanged) |
+| `r` | Review view | **Retry errored task** (Feature 6, only when error task selected) |
+| `v` | — | **Review view** (relocated from `r`) |
+| `s` | — | **Skip errored task** (Feature 6, only when error task selected) |
+| `C` | — | **Copy all** (Feature 1) |
+| `g` | Toggle DAG | Toggle DAG (unchanged) |
+| `j/k` | Navigate tasks | Navigate tasks (unchanged) |
 
 ---
 
@@ -239,11 +289,12 @@ All 10 features plug into this existing pipeline. No new architectural patterns 
 
 **Testing:**
 - Co-located `*_test.py` files for all modified modules
-- Copy mode: test overlay mount/unmount, line selection, clipboard mock
+- Copy mode: test overlay mount/unmount, line selection, clipboard mock, pyperclip failure handling
 - Event handlers: test each new handler sets the correct field
-- Pipeline list: test navigation, selection, replay mode hydration
-- Error recovery: test retry/skip actions update task state
-- Lint loop fix: test that auto-fix diff is included in review feedback
+- Pipeline list: test navigation, selection, replay mode hydration via event replay
+- Error recovery: test retry/skip actions update task state, test binding guards (r/s only active on error tasks)
+- Lint loop fix: test that auto-fix diff is included in GateResult details
+- Key binding changes: test that `t` opens chat, `v` opens review, `c` enters copy mode
 
 ---
 
@@ -252,14 +303,17 @@ All 10 features plug into this existing pipeline. No new architectural patterns 
 | File | Change Level | Features |
 |------|-------------|----------|
 | `forge/tui/state.py` | Heavy | 2, 3, 4, 5, 6 |
-| `forge/tui/screens/pipeline.py` | Heavy | 1, 2, 6, 7 |
+| `forge/tui/screens/pipeline.py` | Heavy | 1, 2, 6, 7, 9 (read-only flag) |
 | `forge/tui/widgets/copy_overlay.py` | New | 1 |
 | `forge/tui/widgets/pipeline_list.py` | New | 9 |
 | `forge/tui/widgets/task_list.py` | Moderate | 4, 6 |
 | `forge/tui/widgets/agent_output.py` | Moderate | 2, 6 |
 | `forge/tui/screens/plan_approval.py` | Light | 5 |
-| `forge/tui/screens/home.py` | Moderate | 9 |
+| `forge/tui/screens/home.py` | Moderate | 9, 10 |
 | `forge/tui/widgets/progress_bar.py` | Light | 3 (budget warning) |
 | `forge/tui/widgets/logo.py` | Moderate | 10 |
-| `forge/tui/app.py` | Light | 9 |
+| `forge/tui/app.py` | Moderate | 9 (replay mode) |
+| `forge/tui/bus.py` | Light | 3 (remove duplicates) |
 | `forge/core/daemon_review.py` | Light | 8 |
+| `forge/core/daemon.py` | Light | 6 (retry_task method) |
+| `forge/storage/db.py` | Light | 9 (list_events if missing) |
