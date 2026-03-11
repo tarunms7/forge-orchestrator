@@ -8,15 +8,21 @@ logger = logging.getLogger("forge.tui.pr_creator")
 
 
 async def push_branch(project_dir: str, branch: str) -> bool:
-    proc = await asyncio.create_subprocess_exec(
-        "git", "push", "-u", "origin", branch,
-        cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        logger.error("Push failed: %s", stderr.decode())
+    logger.info("Pushing branch %r from %s", branch, project_dir)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "push", "-u", "origin", branch,
+            cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.error("Push failed (exit %d): %s", proc.returncode, stderr.decode())
+            return False
+        logger.info("Push succeeded: %s", stderr.decode().strip() or stdout.decode().strip())
+        return True
+    except FileNotFoundError:
+        logger.error("git not found on PATH")
         return False
-    return True
 
 
 def generate_pr_body(
@@ -39,12 +45,19 @@ def generate_pr_body(
 
 
 async def create_pr(project_dir: str, title: str, body: str, base: str = "main") -> str | None:
-    proc = await asyncio.create_subprocess_exec(
-        "gh", "pr", "create", "--title", title, "--body", body, "--base", base,
-        cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        logger.error("PR creation failed: %s", stderr.decode())
+    logger.info("Creating PR: branch → %s, title=%r", base, title)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gh", "pr", "create", "--title", title, "--body", body, "--base", base,
+            cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.error("PR creation failed (exit %d): %s", proc.returncode, stderr.decode())
+            return None
+        url = stdout.decode().strip()
+        logger.info("PR created: %s", url)
+        return url
+    except FileNotFoundError:
+        logger.error("gh CLI not found on PATH")
         return None
-    return stdout.decode().strip()
