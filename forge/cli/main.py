@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 # Remove CLAUDECODE immediately — before any SDK imports.
 # Claude Code sets this env var in its terminal sessions. The Claude CLI
@@ -13,9 +14,14 @@ os.environ.pop("CLAUDECODE", None)
 
 import click
 
+try:
+    _version = _pkg_version("forge-orchestrator")
+except PackageNotFoundError:
+    _version = "dev"
+
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="Forge")
+@click.version_option(version=_version, prog_name="Forge")
 def cli() -> None:
     """Forge -- Multi-agent orchestration engine."""
 
