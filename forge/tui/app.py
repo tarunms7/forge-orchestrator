@@ -144,10 +144,22 @@ class ForgeApp(App):
         total_questions = sum(len(v) for v in state.question_history.values())
         elapsed_secs = int(state.elapsed_seconds)
         elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
+
+        # Aggregate diff stats from merge results (keys are camelCase from _get_diff_stats)
+        total_added = 0
+        total_removed = 0
+        total_files = 0
+        for t in tasks_list:
+            mr = t.get("merge_result", {})
+            if mr and mr.get("success"):
+                total_added += mr.get("linesAdded", 0)
+                total_removed += mr.get("linesRemoved", 0)
+                total_files += mr.get("filesChanged", 0)
+
         stats = {
-            "added": 0,
-            "removed": 0,
-            "files": 0,
+            "added": total_added,
+            "removed": total_removed,
+            "files": total_files,
             "elapsed": elapsed_str,
             "cost": state.total_cost_usd,
             "questions": total_questions,
@@ -155,8 +167,8 @@ class ForgeApp(App):
         task_summaries = [
             {
                 "title": t.get("title", ""),
-                "added": t.get("added", 0),
-                "removed": t.get("removed", 0),
+                "added": t.get("merge_result", {}).get("linesAdded", 0),
+                "removed": t.get("merge_result", {}).get("linesRemoved", 0),
                 "tests_passed": t.get("tests_passed", 0),
                 "tests_total": t.get("tests_total", 0),
                 "review": "passed" if t.get("state") == "done" else "failed",
@@ -189,8 +201,15 @@ class ForgeApp(App):
 
         self._state.apply_event("pipeline:pr_creating", {})
 
-        # Derive the git branch and project directory
-        branch = await self._get_current_branch()
+        # Use the pipeline branch stored in DB — NOT the user's current HEAD.
+        # The daemon creates an isolated branch (e.g. forge/add-feature) and merges
+        # task work into it.  _get_current_branch() returns the user's checkout
+        # (usually main), which is wrong.
+        branch = await self._get_pipeline_branch()
+        if not branch:
+            self._state.apply_event("pipeline:pr_failed", {"error": "Could not determine pipeline branch"})
+            self.notify("PR creation failed: no pipeline branch found.", severity="error")
+            return
         project_dir = self._project_dir
 
         # Build question history list for PR body
@@ -206,6 +225,15 @@ class ForgeApp(App):
         elapsed_secs = int(state.elapsed_seconds)
         elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
         tasks_list = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+
+        # Determine the base branch for the PR target
+        base_branch = "main"
+        if self._db and self._pipeline_id:
+            try:
+                pipeline = await self._db.get_pipeline(self._pipeline_id)
+                base_branch = getattr(pipeline, "base_branch", None) or "main"
+            except Exception:
+                pass
 
         try:
             pushed = await push_branch(project_dir, branch)
@@ -224,6 +252,7 @@ class ForgeApp(App):
                 project_dir,
                 title=f"Forge: {self._pipeline_description()}",
                 body=body,
+                base=base_branch,
             )
             if pr_url:
                 self._state.apply_event("pipeline:pr_created", {"pr_url": pr_url})
@@ -236,8 +265,17 @@ class ForgeApp(App):
             self._state.apply_event("pipeline:pr_failed", {"error": str(e)})
             self.notify(f"PR creation error: {e}", severity="error")
 
-    async def _get_current_branch(self) -> str:
-        """Return the current git branch name for PR creation."""
+    async def _get_pipeline_branch(self) -> str | None:
+        """Return the pipeline branch name from DB (the branch where task work was merged)."""
+        if self._db and self._pipeline_id:
+            try:
+                pipeline = await self._db.get_pipeline(self._pipeline_id)
+                branch = getattr(pipeline, "branch_name", None) if pipeline else None
+                if branch:
+                    return branch
+            except Exception:
+                logger.debug("Could not read pipeline branch from DB", exc_info=True)
+        # Fallback: detect from git (only correct if user is on the pipeline branch)
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git", "rev-parse", "--abbrev-ref", "HEAD",
@@ -247,10 +285,12 @@ class ForgeApp(App):
             )
             stdout, _ = await proc.communicate()
             if proc.returncode == 0:
-                return stdout.decode().strip()
+                name = stdout.decode().strip()
+                if name != "main" and name != "master":
+                    return name
         except Exception:
             logger.debug("Could not detect git branch", exc_info=True)
-        return "main"
+        return None
 
     def _pipeline_description(self) -> str:
         """Return a short description for the PR title."""
