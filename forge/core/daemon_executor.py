@@ -475,6 +475,7 @@ class ExecutorMixin:
         # agent changed, so the reviewer can focus on the fix rather than
         # re-reading the entire accumulated diff.
         delta_diff = None
+        no_changes_on_retry = False
         if pre_retry_ref and task.retry_count > 0:
             delta_result = _run_git(
                 ["diff", pre_retry_ref, "HEAD"],
@@ -482,53 +483,67 @@ class ExecutorMixin:
             )
             if delta_result.returncode == 0 and delta_result.stdout.strip():
                 delta_diff = delta_result.stdout
+            else:
+                # Agent made no changes in response to reviewer feedback.
+                # This means the agent determined the feedback was already addressed
+                # or inapplicable. Auto-pass to avoid infinite review loops.
+                no_changes_on_retry = True
+                logger.info(
+                    "Task %s retry %d: agent made no changes — auto-passing review "
+                    "(feedback was likely already addressed)",
+                    task_id, task.retry_count,
+                )
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
         # Resolve per-pipeline build/test commands for review gates
         pipeline = await db.get_pipeline(pid) if pid else None
         self._pipeline_build_cmd = getattr(pipeline, 'build_cmd', None) if pipeline else None
         self._pipeline_test_cmd = getattr(pipeline, 'test_cmd', None) if pipeline else None
-        # Review with automatic re-review on transient failures (empty response,
-        # SDK errors) so they don't waste the task's limited retry budget.
-        max_re_reviews = 2
-        passed, feedback = False, None
-        for re_review_attempt in range(max_re_reviews + 1):
-            passed, feedback = await self._run_review(
-                task, worktree_path, diff, db=db, pipeline_id=pid,
-                pipeline_branch=pipeline_branch, delta_diff=delta_diff,
-            )
-            if passed:
+        if no_changes_on_retry:
+            console.print(f"[dim]{task_id}: no changes on retry — auto-passing review[/dim]")
+            passed, feedback = True, None
+        else:
+            # Review with automatic re-review on transient failures (empty response,
+            # SDK errors) so they don't waste the task's limited retry budget.
+            max_re_reviews = 2
+            passed, feedback = False, None
+            for re_review_attempt in range(max_re_reviews + 1):
+                passed, feedback = await self._run_review(
+                    task, worktree_path, diff, db=db, pipeline_id=pid,
+                    pipeline_branch=pipeline_branch, delta_diff=delta_diff,
+                )
+                if passed:
+                    break
+                if feedback and "[RETRIABLE]" in feedback and re_review_attempt < max_re_reviews:
+                    console.print(f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]")
+                    continue
                 break
-            if feedback and "[RETRIABLE]" in feedback and re_review_attempt < max_re_reviews:
-                console.print(f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]")
-                continue
-            break
-        if not passed:
-            # Build focused retry feedback: reviewer feedback + changed files.
-            # The agent has the worktree and can read its own code — no need
-            # to dump the raw diff which wastes context on unchanged code.
-            enriched_feedback = feedback or ""
-            changed_files = _get_changed_files_vs_main(
-                worktree_path, base_ref=pipeline_branch,
-            )
-            if changed_files:
-                files_summary = "\n".join(f"  - {f}" for f in changed_files)
-                enriched_feedback = (
-                    f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
-                    f"=== FILES YOU MODIFIED ===\n{files_summary}\n\n"
-                    "Your code is still in the worktree. Read the files above to "
-                    "understand what you wrote, then fix the specific issues the "
-                    "reviewer flagged."
+            if not passed:
+                # Build focused retry feedback: reviewer feedback + changed files.
+                # The agent has the worktree and can read its own code — no need
+                # to dump the raw diff which wastes context on unchanged code.
+                enriched_feedback = feedback or ""
+                changed_files = _get_changed_files_vs_main(
+                    worktree_path, base_ref=pipeline_branch,
                 )
-            else:
-                enriched_feedback = (
-                    f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
-                    "Your code is still in the worktree. Fix the specific issues above."
-                )
-            # Store current diff so re-reviewer can compare on next attempt
-            await db.set_task_prior_diff(task_id, diff[:10000])
-            await self._handle_retry(db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid)
-            return
+                if changed_files:
+                    files_summary = "\n".join(f"  - {f}" for f in changed_files)
+                    enriched_feedback = (
+                        f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
+                        f"=== FILES YOU MODIFIED ===\n{files_summary}\n\n"
+                        "Your code is still in the worktree. Read the files above to "
+                        "understand what you wrote, then fix the specific issues the "
+                        "reviewer flagged."
+                    )
+                else:
+                    enriched_feedback = (
+                        f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
+                        "Your code is still in the worktree. Fix the specific issues above."
+                    )
+                # Store current diff so re-reviewer can compare on next attempt
+                await db.set_task_prior_diff(task_id, diff[:10000])
+                await self._handle_retry(db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid)
+                return
 
         # ── Approval gate ─────────────────────────────────────────────
         require_approval = (
