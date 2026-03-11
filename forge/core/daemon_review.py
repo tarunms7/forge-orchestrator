@@ -26,6 +26,32 @@ logger = logging.getLogger("forge.daemon")
 console = Console()
 
 
+def _summarize_auto_fix(diff_text: str) -> str:
+    """Produce a brief human-readable summary of an auto-fix diff.
+
+    Counts removed imports and other changed lines to give the agent
+    context about what ruff auto-fixed.
+    """
+    removed_imports = 0
+    added_lines = 0
+    removed_lines = 0
+    for line in diff_text.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            removed_lines += 1
+            if "import " in line:
+                removed_imports += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            added_lines += 1
+
+    parts: list[str] = []
+    if removed_imports:
+        parts.append(f"removed {removed_imports} unused import{'s' if removed_imports != 1 else ''}")
+    other_removed = removed_lines - removed_imports
+    if other_removed > 0 or added_lines > 0:
+        parts.append(f"{removed_lines + added_lines} line{'s' if (removed_lines + added_lines) != 1 else ''} changed")
+    return "; ".join(parts) if parts else "minor fixes applied"
+
+
 class ReviewMixin:
     """Review pipeline methods mixed into ForgeDaemon.
 
@@ -541,6 +567,15 @@ class ReviewMixin:
             capture_output=True,
             text=True,
         )
+        # Capture what ruff changed (unstaged diff) before staging
+        auto_fix_diff = ""
+        diff_result = _run_git(["diff"], cwd=worktree_path, check=False, description="capture ruff auto-fix diff")
+        if diff_result.stdout.strip():
+            diff_lines = diff_result.stdout.splitlines()
+            if len(diff_lines) > 30:
+                auto_fix_diff = "\n".join(diff_lines[:30]) + "\n... (truncated)"
+            else:
+                auto_fix_diff = diff_result.stdout.strip()
         # Commit any auto-fixes so they're included in the diff
         _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
         # Only commit if there are staged changes
@@ -564,6 +599,12 @@ class ReviewMixin:
         lint_clean = lint_result.returncode == 0
 
         if lint_clean:
+            if auto_fix_diff:
+                summary = _summarize_auto_fix(auto_fix_diff)
+                return GateResult(
+                    passed=True, gate="gate1_auto_check",
+                    details=f"Lint clean (auto-fixed: {summary})",
+                )
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
         # Include both stdout and stderr — ruff errors may go to either

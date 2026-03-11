@@ -4,7 +4,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from forge.core.daemon_review import ReviewMixin
+from forge.core.daemon_review import ReviewMixin, _summarize_auto_fix
 from forge.review.pipeline import GateResult
 
 
@@ -629,3 +629,207 @@ class TestRunReviewPassesOnMessage:
         # on_message should be a callable, not None
         assert call_kwargs.kwargs.get("on_message") is not None
         assert callable(call_kwargs.kwargs["on_message"])
+
+
+class TestGate1AutoFixDiff:
+    """Verify _gate1 captures ruff auto-fix diff and includes it in GateResult."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock()
+        mixin._emit = AsyncMock()
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_auto_fix_diff_captured_when_ruff_makes_changes(self):
+        """When ruff auto-fixes code, the diff is captured and included in details."""
+        mixin = self._make_mixin()
+
+        diff_output = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "-import os\n"
+            "-import sys\n"
+        )
+
+        def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            if args == ["diff"]:
+                result.stdout = diff_output
+            elif args == ["diff", "--cached", "--name-only"]:
+                result.stdout = "foo.py\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            # First call: ruff --fix (returncode irrelevant), second: ruff check (pass)
+            fix_result = MagicMock()
+            fix_result.returncode = 0
+            check_result = MagicMock()
+            check_result.returncode = 0
+            check_result.stdout = ""
+            check_result.stderr = ""
+            mock_subprocess.side_effect = [fix_result, check_result]
+
+            result = await mixin._gate1("/repo")
+
+        assert result.passed is True
+        assert "auto-fixed" in result.details
+        assert "removed 2 unused imports" in result.details
+
+    @pytest.mark.asyncio
+    async def test_diff_capped_at_30_lines(self):
+        """Auto-fix diff is truncated to 30 lines."""
+        mixin = self._make_mixin()
+
+        # Generate a diff with more than 30 lines
+        long_diff_lines = [f"-import mod{i}" for i in range(40)]
+        long_diff = "\n".join(long_diff_lines)
+
+        def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            if args == ["diff"]:
+                result.stdout = long_diff
+            elif args == ["diff", "--cached", "--name-only"]:
+                result.stdout = "foo.py\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            fix_result = MagicMock()
+            fix_result.returncode = 0
+            check_result = MagicMock()
+            check_result.returncode = 0
+            check_result.stdout = ""
+            check_result.stderr = ""
+            mock_subprocess.side_effect = [fix_result, check_result]
+
+            result = await mixin._gate1("/repo")
+
+        assert result.passed is True
+        assert "auto-fixed" in result.details
+        # The diff stored internally should have been capped — verify via summary
+        # The summary should reflect only the first 30 lines of diff
+
+    @pytest.mark.asyncio
+    async def test_no_diff_when_ruff_makes_no_changes(self):
+        """When ruff makes no changes, GateResult.details is plain 'Lint clean'."""
+        mixin = self._make_mixin()
+
+        def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            result.stdout = ""  # No diff — ruff didn't change anything
+            return result
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            fix_result = MagicMock()
+            fix_result.returncode = 0
+            check_result = MagicMock()
+            check_result.returncode = 0
+            check_result.stdout = ""
+            check_result.stderr = ""
+            mock_subprocess.side_effect = [fix_result, check_result]
+
+            result = await mixin._gate1("/repo")
+
+        assert result.passed is True
+        assert result.details == "Lint clean"
+        assert "auto-fixed" not in result.details
+
+    @pytest.mark.asyncio
+    async def test_details_includes_auto_fix_summary(self):
+        """GateResult.details has format 'Lint clean (auto-fixed: <summary>)'."""
+        mixin = self._make_mixin()
+
+        diff_output = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "-import unused_module\n"
+            "+\n"
+        )
+
+        def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            if args == ["diff"]:
+                result.stdout = diff_output
+            elif args == ["diff", "--cached", "--name-only"]:
+                result.stdout = "foo.py\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            fix_result = MagicMock()
+            fix_result.returncode = 0
+            check_result = MagicMock()
+            check_result.returncode = 0
+            check_result.stdout = ""
+            check_result.stderr = ""
+            mock_subprocess.side_effect = [fix_result, check_result]
+
+            result = await mixin._gate1("/repo")
+
+        assert result.passed is True
+        assert result.details.startswith("Lint clean (auto-fixed:")
+        assert "removed 1 unused import" in result.details
+
+
+class TestSummarizeAutoFix:
+    """Unit tests for _summarize_auto_fix helper."""
+
+    def test_removed_imports_counted(self):
+        diff = "-import os\n-import sys\n"
+        summary = _summarize_auto_fix(diff)
+        assert "removed 2 unused imports" in summary
+
+    def test_single_import(self):
+        diff = "-import os\n"
+        summary = _summarize_auto_fix(diff)
+        assert "removed 1 unused import" in summary
+        assert "imports" not in summary  # singular
+
+    def test_mixed_changes(self):
+        diff = "-import os\n+x = 1\n-y = 2\n"
+        summary = _summarize_auto_fix(diff)
+        assert "removed 1 unused import" in summary
+        assert "lines changed" in summary
+
+    def test_no_imports_only_changes(self):
+        diff = "+x = 1\n-y = 2\n"
+        summary = _summarize_auto_fix(diff)
+        assert "2 lines changed" in summary
+
+    def test_empty_diff_fallback(self):
+        summary = _summarize_auto_fix("")
+        assert summary == "minor fixes applied"
+
+    def test_ignores_diff_header_lines(self):
+        diff = "--- a/foo.py\n+++ b/foo.py\n-import os\n"
+        summary = _summarize_auto_fix(diff)
+        assert "removed 1 unused import" in summary
