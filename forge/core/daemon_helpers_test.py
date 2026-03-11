@@ -9,9 +9,11 @@ import pytest
 
 from forge.core.daemon_helpers import (
     _extract_implementation_summary,
+    _find_related_test_files,
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
+    _is_pytest_cmd,
     _load_conventions_md,
     _run_git,
 )
@@ -352,6 +354,127 @@ class TestExtractImplementationSummary:
             )
 
         assert len(result) <= 300
+
+
+class TestIsPytestCmd:
+    """_is_pytest_cmd() detects pytest-based test commands."""
+
+    def test_plain_pytest(self):
+        assert _is_pytest_cmd("pytest") is True
+
+    def test_python_m_pytest(self):
+        assert _is_pytest_cmd("python -m pytest") is True
+
+    def test_pytest_with_args(self):
+        assert _is_pytest_cmd("pytest -v --tb=short") is True
+
+    def test_non_pytest(self):
+        assert _is_pytest_cmd("npm test") is False
+
+    def test_make_test(self):
+        assert _is_pytest_cmd("make test") is False
+
+
+class TestFindRelatedTestFiles:
+    """_find_related_test_files() discovers test files for changed source files."""
+
+    def test_co_located_test_found(self, tmp_path):
+        """foo.py → foo_test.py (same directory)."""
+        (tmp_path / "forge" / "core").mkdir(parents=True)
+        (tmp_path / "forge" / "core" / "foo.py").touch()
+        (tmp_path / "forge" / "core" / "foo_test.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path), ["forge/core/foo.py"],
+        )
+        assert result == ["forge/core/foo_test.py"]
+
+    def test_test_dir_convention(self, tmp_path):
+        """src/foo.py → src/tests/test_foo.py."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "foo.py").touch()
+        (tmp_path / "src" / "tests").mkdir()
+        (tmp_path / "src" / "tests" / "test_foo.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path), ["src/foo.py"],
+        )
+        assert result == ["src/tests/test_foo.py"]
+
+    def test_root_tests_convention(self, tmp_path):
+        """src/foo.py → tests/test_foo.py (root-level tests dir)."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "foo.py").touch()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_foo.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path), ["src/foo.py"],
+        )
+        assert result == ["tests/test_foo.py"]
+
+    def test_changed_file_is_test(self, tmp_path):
+        """Test files themselves are included directly."""
+        (tmp_path / "forge" / "core").mkdir(parents=True)
+        (tmp_path / "forge" / "core" / "foo_test.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path), ["forge/core/foo_test.py"],
+        )
+        assert result == ["forge/core/foo_test.py"]
+
+    def test_changed_file_test_prefix(self, tmp_path):
+        """test_foo.py style test files are included directly."""
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_bar.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path), ["tests/test_bar.py"],
+        )
+        assert result == ["tests/test_bar.py"]
+
+    def test_no_test_files_found(self, tmp_path):
+        """Returns empty list when no test files exist for the changed files."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "foo.py").touch()
+        # No test files anywhere
+
+        result = _find_related_test_files(
+            str(tmp_path), ["src/foo.py"],
+        )
+        assert result == []
+
+    def test_non_python_files_ignored(self, tmp_path):
+        """Non-.py files are skipped."""
+        result = _find_related_test_files(
+            str(tmp_path), ["README.md", "package.json"],
+        )
+        assert result == []
+
+    def test_multiple_changed_files(self, tmp_path):
+        """Multiple changed files accumulate their test files."""
+        (tmp_path / "forge" / "core").mkdir(parents=True)
+        (tmp_path / "forge" / "core" / "foo.py").touch()
+        (tmp_path / "forge" / "core" / "foo_test.py").touch()
+        (tmp_path / "forge" / "core" / "bar.py").touch()
+        (tmp_path / "forge" / "core" / "bar_test.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path), ["forge/core/foo.py", "forge/core/bar.py"],
+        )
+        assert result == ["forge/core/bar_test.py", "forge/core/foo_test.py"]
+
+    def test_deduplicates_test_files(self, tmp_path):
+        """Same test file found via different paths is only included once."""
+        (tmp_path / "forge" / "core").mkdir(parents=True)
+        (tmp_path / "forge" / "core" / "foo.py").touch()
+        (tmp_path / "forge" / "core" / "foo_test.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path),
+            ["forge/core/foo.py", "forge/core/foo_test.py"],
+        )
+        assert result == ["forge/core/foo_test.py"]
 
 
 class TestRunGit:
