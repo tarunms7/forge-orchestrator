@@ -1,7 +1,5 @@
 """Tests for daemon_review — sibling context builder, test gate scoping, and review streaming."""
 
-import asyncio
-import time
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
