@@ -1,25 +1,40 @@
-"""Forge flame logo widget."""
+"""Forge anvil logo widget."""
+
+from __future__ import annotations
 
 from textual.widgets import Static
 
 
 FORGE_LOGO = """\
-[#f0883e]    /\\
-   /  \\
-  / ** \\[/]   [bold #58a6ff]F O R G E[/]
-[#f0883e]  \\ ** /[/]
-[#f0883e]   \\  /[/]   [#8b949e]multi-agent orchestration[/]
-[#f0883e]    \\/[/]\
+[#f0883e]           _______________
+          /               \\_____
+         /    ___________        \\
+        /    /           \\        \\
+       /    /   ◆  ◆  ◆   \\        \\
+      /    /_______________\\        \\
+     /____/_________________\\_______\\
+    |_________________________________|
+              |           |
+        ______|___________|______
+       |_______________________|[/]
+
+[bold #58a6ff] ███████  ██████  ██████   ██████  ███████
+ ██       ██  ██  ██  ██  ██       ██
+ █████    ██  ██  ██████  ██  ███  █████
+ ██       ██  ██  ██ ██   ██   ██  ██
+ ██        ██████ ██  ██   ██████  ███████
+   F    O    R    G    E[/]
+[#8b949e]      multi-agent code orchestration[/]\
 """
 
 
 class ForgeLogo(Static):
-    """Renders the Forge flame logo with Rich markup."""
+    """Renders the Forge anvil logo with Rich markup."""
 
     DEFAULT_CSS = """
     ForgeLogo {
         width: auto;
-        height: 6;
+        height: 20;
         content-align: center middle;
         text-align: center;
         padding: 1 0;
