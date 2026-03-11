@@ -30,15 +30,47 @@ STATE_COLORS: dict[str, str] = {
 }
 
 
+MAX_WIDTH = 40
+
+
 def format_task_line(task: dict, *, selected: bool) -> str:
     state = task.get("state", "todo")
     icon = STATE_ICONS.get(state, "?")
     color = STATE_COLORS.get(state, "#8b949e")
     title = task.get("title", "Untitled")
+
+    # Build suffix parts
+    suffix_parts: list[str] = []
+    files_changed = task.get("files_changed", [])
+    file_count = len(files_changed) if files_changed else 0
+
+    if state == "error":
+        suffix_parts.append("⚠")
+    if file_count > 0:
+        suffix_parts.append(f"[#8b949e]{file_count} files[/]")
+
+    suffix = " ".join(suffix_parts)
+
+    # Calculate available width for title: max_width - icon prefix (3 chars) - suffix
+    # Rough visible length of suffix (strip markup for length calc)
+    suffix_visible_len = 0
+    if suffix:
+        import re
+        suffix_visible_len = len(re.sub(r"\[.*?\]", "", suffix)) + 1  # +1 for space before suffix
+
+    available = MAX_WIDTH - 3 - suffix_visible_len  # 3 = " X " icon prefix
+    if available < 4:
+        available = 4
+
+    if len(title) > available:
+        title = title[: available - 1] + "…"
+
+    # Build the final line
+    suffix_str = f" {suffix}" if suffix else ""
     if selected:
-        return f"[bold on #1f2937] [{color}]{icon} [#c9d1d9]{title} [/]"
+        return f"[bold on #1f2937] [{color}]{icon} [#c9d1d9]{title}{suffix_str} [/]"
     else:
-        return f" [{color}]{icon}[/] [#c9d1d9]{title}[/]"
+        return f" [{color}]{icon}[/] [#c9d1d9]{title}{suffix_str}[/]"
 
 
 class TaskList(Widget):

@@ -6,6 +6,8 @@ from __future__ import annotations
 from forge.tui.widgets.agent_output import (
     AgentOutput,
     _TYPING_FRAMES,
+    _ERROR_TAIL_LINES,
+    format_error_detail,
     format_header,
     format_output,
 )
@@ -193,3 +195,100 @@ def test_set_streaming_on_off_resets_typing_frame():
     widget._typing_frame = 5
     widget.set_streaming(False)
     assert widget._typing_frame == 0
+
+
+# ── format_error_detail tests ─────────────────────────────────────────
+
+
+def test_format_error_detail_basic():
+    """Error detail view should contain header, error, and action bar."""
+    task = {"title": "Auth middleware", "error": "Import failed", "files_changed": ["auth.py"]}
+    result = format_error_detail("task-1", task, ["line1", "line2"])
+    assert "✖ Auth middleware — ERROR" in result
+    assert "Import failed" in result
+    assert "auth.py" in result
+    assert "Last output" in result
+    assert "line1" in result
+    assert "line2" in result
+    assert "[r] retry" in result
+    assert "[s] skip" in result
+    assert "[Esc] dismiss" in result
+
+
+def test_format_error_detail_no_files_changed():
+    """Error detail without files_changed should still render."""
+    task = {"title": "Task X", "error": "Boom"}
+    result = format_error_detail("task-1", task, [])
+    assert "✖ Task X — ERROR" in result
+    assert "Boom" in result
+    assert "No output captured" in result
+
+
+def test_format_error_detail_truncates_to_last_20_lines():
+    """Only the last 20 lines of output should be shown."""
+    lines = [f"line-{i}" for i in range(50)]
+    task = {"title": "T", "error": "err"}
+    result = format_error_detail("t1", task, lines)
+    assert "line-30" in result
+    assert "line-49" in result
+    assert "line-0" not in result
+
+
+def test_format_error_detail_fewer_than_20_lines():
+    """When fewer than 20 lines, all should be shown."""
+    lines = [f"line-{i}" for i in range(5)]
+    task = {"title": "T", "error": "err"}
+    result = format_error_detail("t1", task, lines)
+    for i in range(5):
+        assert f"line-{i}" in result
+
+
+def test_format_error_detail_default_error_message():
+    """When error key is missing, should show 'Unknown error'."""
+    task = {"title": "T"}
+    result = format_error_detail("t1", task, [])
+    assert "Unknown error" in result
+
+
+def test_format_error_detail_valid_rich_markup():
+    """Error detail output should be valid Rich markup."""
+    from rich.console import Console
+    from io import StringIO
+
+    task = {"title": "Auth", "error": "Failed", "files_changed": ["a.py"]}
+    result = format_error_detail("t1", task, ["line1"])
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(result)  # Raises MarkupError if broken
+
+
+# ── AgentOutput error mode tests ──────────────────────────────────────
+
+
+def test_agent_output_error_mode_default_false():
+    widget = AgentOutput()
+    assert widget.is_error_mode is False
+
+
+def test_agent_output_render_error_detail_sets_mode():
+    widget = AgentOutput()
+    task = {"title": "T", "error": "err"}
+    widget.render_error_detail("t1", task, ["line"])
+    assert widget.is_error_mode is True
+    assert widget._streaming is False
+
+
+def test_agent_output_clear_error_detail_resets_mode():
+    widget = AgentOutput()
+    task = {"title": "T", "error": "err"}
+    widget.render_error_detail("t1", task, ["line"])
+    widget.clear_error_detail()
+    assert widget.is_error_mode is False
+
+
+def test_agent_output_render_error_detail_before_compose():
+    """render_error_detail should not raise before widget is composed."""
+    widget = AgentOutput()
+    task = {"title": "T", "error": "err", "files_changed": ["a.py"]}
+    widget.render_error_detail("t1", task, ["line1", "line2"])
+    assert widget.is_error_mode is True
+    assert widget._task_id == "t1"

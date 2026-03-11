@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 from textual.containers import VerticalScroll
 
+logger = logging.getLogger("forge.tui.agent_output")
+
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
+
+_ERROR_TAIL_LINES = 20
 
 
 def format_header(task_id: str | None, title: str | None, state: str | None) -> str:
@@ -18,6 +24,37 @@ def format_header(task_id: str | None, title: str | None, state: str | None) -> 
         return "[bold #a371f7]⚙ Planner[/] [#8b949e]exploring codebase & building task graph...[/]"
     state_label = f" [{state}]" if state else ""
     return f"[bold #58a6ff]{task_id}[/]: {title or 'Untitled'} [#8b949e]{state_label}[/]"
+
+
+def format_error_detail(task_id: str, task: dict, output_lines: list[str]) -> str:
+    """Render the error detail combined view as a single Rich markup string."""
+    title = task.get("title", "Untitled")
+    error = task.get("error", "Unknown error")
+    files_changed = task.get("files_changed", [])
+
+    parts: list[str] = []
+    # Header
+    parts.append(f"[bold #f85149]✖ {title} — ERROR[/]")
+    parts.append("[#30363d]" + "─" * 60 + "[/]")
+    # Error message
+    parts.append(f"[#f85149]{error}[/]")
+    # File list
+    if files_changed:
+        parts.append("")
+        for f in files_changed:
+            parts.append(f"[#8b949e]  {f}[/]")
+    # Separator and last output
+    parts.append("")
+    parts.append("[#8b949e]── Last output ──[/]")
+    tail = output_lines[-_ERROR_TAIL_LINES:] if output_lines else []
+    if tail:
+        parts.extend(tail)
+    else:
+        parts.append("[#8b949e]No output captured[/]")
+    # Action bar
+    parts.append("")
+    parts.append("[#8b949e]\\[r] retry  \\[s] skip  \\[Esc] dismiss[/]")
+    return "\n".join(parts)
 
 
 def format_output(
@@ -65,6 +102,7 @@ class AgentOutput(Widget):
         self._streaming: bool = False
         self._typing_frame: int = 0
         self._typing_timer = None
+        self._error_mode: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
@@ -202,3 +240,41 @@ class AgentOutput(Widget):
             )
         except Exception:
             pass
+
+    @property
+    def is_error_mode(self) -> bool:
+        """Whether the widget is currently displaying an error detail view."""
+        return self._error_mode
+
+    def render_error_detail(self, task_id: str, task: dict, output_lines: list[str]) -> None:
+        """Render the error detail combined view, replacing normal output."""
+        self._error_mode = True
+        self._task_id = task_id
+        self._title = task.get("title")
+        self._state = "error"
+        self._lines = list(output_lines)
+        self.set_streaming(False)
+
+        rendered = format_error_detail(task_id, task, output_lines)
+        try:
+            self.query_one("#agent-header", Static).update(
+                f"[bold #f85149]✖ {task.get('title', 'Untitled')} — ERROR[/]"
+            )
+            self.query_one("#agent-content", Static).update(rendered)
+            self.call_after_refresh(self._scroll_to_end)
+        except Exception:
+            pass  # Not yet composed
+
+    def clear_error_detail(self) -> None:
+        """Exit error detail view mode and return to normal output rendering."""
+        self._error_mode = False
+        # Re-render normal view with current data
+        try:
+            self.query_one("#agent-header", Static).update(
+                format_header(self._task_id, self._title, self._state)
+            )
+            self.query_one("#agent-content", Static).update(
+                format_output(self._lines, self._spinner_frame)
+            )
+        except Exception:
+            pass  # Not yet composed
