@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from forge.tui.widgets.logo import FORGE_LOGO, ForgeLogo
 
