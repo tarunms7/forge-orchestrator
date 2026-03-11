@@ -1,9 +1,13 @@
 """Gate 2: LLM code review. A fresh Claude instance reviews changes against the task spec."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions
 
@@ -58,6 +62,7 @@ async def gate2_llm_review(
     delta_diff: str | None = None,
     sibling_context: str | None = None,
     custom_review_focus: str = "",
+    on_message: Callable[[Any], Awaitable[None]] | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -118,7 +123,7 @@ async def gate2_llm_review(
     for attempt in range(1, max_review_attempts + 1):
         try:
             result = await asyncio.wait_for(
-                sdk_query(prompt=prompt, options=options),
+                sdk_query(prompt=prompt, options=options, on_message=on_message),
                 timeout=review_timeout_seconds,
             )
         except asyncio.TimeoutError:

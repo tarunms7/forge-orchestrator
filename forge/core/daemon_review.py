@@ -7,10 +7,12 @@ import os
 import subprocess
 import sys
 import logging
+import time
 
 from rich.console import Console
 
 from forge.core.daemon_helpers import (
+    _extract_text,
     _find_related_test_files,
     _get_changed_files_vs_main,
     _is_pytest_cmd,
@@ -158,6 +160,45 @@ class ReviewMixin:
             gate=gate_name,
             details=f"Exit code {proc.returncode}:\n{truncated}",
         )
+
+    # -- streaming helpers --------------------------------------------------
+
+    def _make_review_on_message(self, task_id: str, db, pipeline_id: str):
+        """Build a batched on_message callback for LLM review streaming.
+
+        Returns (callback, flush) where *flush* drains any remaining
+        buffered lines.  The pattern mirrors ``_stream_agent`` in
+        daemon_executor.
+        """
+        _last_flush = [time.monotonic()]
+        _batch: list[str] = []
+
+        async def _on_msg(msg):
+            text = _extract_text(msg)
+            if not text:
+                return
+            _batch.append(text)
+            now = time.monotonic()
+            if now - _last_flush[0] >= 0.1:
+                for line in _batch:
+                    await self._emit(
+                        "review:llm_output",
+                        {"task_id": task_id, "line": line},
+                        db=db, pipeline_id=pipeline_id,
+                    )
+                _batch.clear()
+                _last_flush[0] = now
+
+        async def _flush():
+            for line in _batch:
+                await self._emit(
+                    "review:llm_output",
+                    {"task_id": task_id, "line": line},
+                    db=db, pipeline_id=pipeline_id,
+                )
+            _batch.clear()
+
+        return _on_msg, _flush
 
     # -- main review pipeline ----------------------------------------------
 
@@ -368,6 +409,9 @@ class ReviewMixin:
             await self._emit("review:gate_started", {
                 "task_id": task.id, "gate": "gate2_llm_review",
             }, db=db, pipeline_id=pipeline_id)
+            on_message, flush_review = self._make_review_on_message(
+                task.id, db, pipeline_id,
+            )
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title, task.description, diff, worktree_path,
                 model=reviewer_model,
@@ -378,7 +422,9 @@ class ReviewMixin:
                 delta_diff=delta_diff,
                 sibling_context=sibling_context,
                 custom_review_focus=custom_review_focus,
+                on_message=on_message,
             )
+            await flush_review()
             # Emit LLM feedback so the TUI can display reviewer comments
             await self._emit("review:llm_feedback", {
                 "task_id": task.id, "feedback": gate2_result.details,

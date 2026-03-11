@@ -1,6 +1,7 @@
-"""Tests for daemon_review — sibling context builder and test gate scoping."""
+"""Tests for daemon_review — sibling context builder, test gate scoping, and review streaming."""
 
 import asyncio
+import time
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -491,3 +492,142 @@ class TestReviewGateEvents:
         assert lint_started_idx is not None
         assert lint_result_idx is not None
         assert lint_started_idx < lint_result_idx
+
+
+class TestMakeReviewOnMessage:
+    """ReviewMixin._make_review_on_message() builds a batched streaming callback."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock()
+        mixin._emit = AsyncMock()
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_emits_review_llm_output_events(self):
+        """Callback emits review:llm_output with task_id and line."""
+        mixin = self._make_mixin()
+
+        with patch("forge.core.daemon_review.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.2]  # initial + flush trigger
+            on_msg, flush = mixin._make_review_on_message("task-1", MagicMock(), "pipe-1")
+
+            with patch("forge.core.daemon_review._extract_text", return_value="Review text here"):
+                await on_msg(MagicMock())
+
+        emit_calls = [
+            (call.args[0], call.args[1])
+            for call in mixin._emit.call_args_list
+        ]
+        assert len(emit_calls) == 1
+        assert emit_calls[0][0] == "review:llm_output"
+        assert emit_calls[0][1]["task_id"] == "task-1"
+        assert emit_calls[0][1]["line"] == "Review text here"
+
+    @pytest.mark.asyncio
+    async def test_batches_messages_within_interval(self):
+        """Messages within 0.1s interval are batched, not flushed immediately."""
+        mixin = self._make_mixin()
+
+        with patch("forge.core.daemon_review.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.05, 0.09]
+            on_msg, flush = mixin._make_review_on_message("task-1", MagicMock(), "pipe-1")
+
+            with patch("forge.core.daemon_review._extract_text", return_value="line"):
+                await on_msg(MagicMock())
+                await on_msg(MagicMock())
+
+        # No emit yet — within batch interval
+        assert mixin._emit.call_count == 0
+
+        # Flush drains remaining
+        await flush()
+
+        assert mixin._emit.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_flush_drains_remaining(self):
+        """flush() emits any buffered lines."""
+        mixin = self._make_mixin()
+
+        with patch("forge.core.daemon_review.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.01]
+            on_msg, flush = mixin._make_review_on_message("task-2", MagicMock(), "pipe-2")
+
+            with patch("forge.core.daemon_review._extract_text", return_value="buffered line"):
+                await on_msg(MagicMock())
+
+        assert mixin._emit.call_count == 0
+
+        await flush()
+
+        assert mixin._emit.call_count == 1
+        call_data = mixin._emit.call_args_list[0].args[1]
+        assert call_data["task_id"] == "task-2"
+        assert call_data["line"] == "buffered line"
+
+    @pytest.mark.asyncio
+    async def test_skips_none_text(self):
+        """Messages with no extractable text are ignored."""
+        mixin = self._make_mixin()
+
+        with patch("forge.core.daemon_review.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.2]
+            on_msg, flush = mixin._make_review_on_message("task-1", MagicMock(), "pipe-1")
+
+            with patch("forge.core.daemon_review._extract_text", return_value=None):
+                await on_msg(MagicMock())
+
+        await flush()
+        assert mixin._emit.call_count == 0
+
+
+class TestRunReviewPassesOnMessage:
+    """Verify _run_review wires on_message to gate2_llm_review."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock()
+        mixin._settings.agent_timeout_seconds = 600
+        mixin._emit = AsyncMock()
+        mixin._template_config = None
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_on_message_passed_to_gate2(self):
+        """_run_review constructs on_message callback and passes it to gate2_llm_review."""
+        mixin = self._make_mixin()
+        task = _make_task_for_review()
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._settings.build_cmd = None
+        mixin._pipeline_build_cmd = None
+        mixin._settings.test_cmd = None
+        mixin._pipeline_test_cmd = None
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch("forge.core.daemon_review.gate2_llm_review", new_callable=AsyncMock) as mock_gate2,
+            patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
+        ):
+            mock_gate2.return_value = (
+                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                MagicMock(cost_usd=0),
+            )
+            passed, _ = await mixin._run_review(
+                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+            )
+
+        assert passed is True
+        mock_gate2.assert_called_once()
+        call_kwargs = mock_gate2.call_args
+        # on_message should be a callable, not None
+        assert call_kwargs.kwargs.get("on_message") is not None
+        assert callable(call_kwargs.kwargs["on_message"])
