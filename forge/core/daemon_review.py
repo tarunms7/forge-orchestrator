@@ -233,7 +233,15 @@ class ReviewMixin:
         build_cmd = self._resolve_build_cmd()
         if build_cmd:
             console.print(f"[blue]  Gate 0 (build): Running build for {task.id}...[/blue]")
+            await self._emit("review:gate_started", {
+                "task_id": task.id, "gate": "gate0_build",
+            }, db=db, pipeline_id=pipeline_id)
             build_result = await self._gate_build(worktree_path, build_cmd, gate_timeout)
+            await self._emit(
+                "review:gate_passed" if build_result.passed else "review:gate_failed",
+                {"task_id": task.id, "gate": "gate0_build", "details": build_result.details},
+                db=db, pipeline_id=pipeline_id,
+            )
             await self._emit("task:review_update", {
                 "task_id": task.id, "gate": "Gate0_Build", "passed": build_result.passed,
                 "details": build_result.details,
@@ -255,7 +263,15 @@ class ReviewMixin:
 
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
+        await self._emit("review:gate_started", {
+            "task_id": task.id, "gate": "gate1_lint",
+        }, db=db, pipeline_id=pipeline_id)
         gate1_result = await self._gate1(worktree_path, pipeline_branch=pipeline_branch)
+        await self._emit(
+            "review:gate_passed" if gate1_result.passed else "review:gate_failed",
+            {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details},
+            db=db, pipeline_id=pipeline_id,
+        )
         await self._emit("task:review_update", {
             "task_id": task.id, "gate": "L1", "passed": gate1_result.passed,
             "details": gate1_result.details,
@@ -278,8 +294,16 @@ class ReviewMixin:
         test_cmd = self._resolve_test_cmd()
         if test_cmd:
             console.print(f"[blue]  Gate 1.5 (test): Running tests for {task.id}...[/blue]")
+            await self._emit("review:gate_started", {
+                "task_id": task.id, "gate": "gate1_5_test",
+            }, db=db, pipeline_id=pipeline_id)
             test_result = await self._gate_test(
                 worktree_path, test_cmd, gate_timeout, changed_files=changed_files,
+            )
+            await self._emit(
+                "review:gate_passed" if test_result.passed else "review:gate_failed",
+                {"task_id": task.id, "gate": "gate1_5_test", "details": test_result.details},
+                db=db, pipeline_id=pipeline_id,
             )
             await self._emit("task:review_update", {
                 "task_id": task.id, "gate": "Gate1_5_Test", "passed": test_result.passed,
@@ -341,6 +365,9 @@ class ReviewMixin:
                             "passed": True,
                             "details": "Contract loading failed — reviewing without contract compliance checks",
                         }, db=db, pipeline_id=pipeline_id)
+            await self._emit("review:gate_started", {
+                "task_id": task.id, "gate": "gate2_llm_review",
+            }, db=db, pipeline_id=pipeline_id)
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title, task.description, diff, worktree_path,
                 model=reviewer_model,
@@ -352,6 +379,10 @@ class ReviewMixin:
                 sibling_context=sibling_context,
                 custom_review_focus=custom_review_focus,
             )
+            # Emit LLM feedback so the TUI can display reviewer comments
+            await self._emit("review:llm_feedback", {
+                "task_id": task.id, "feedback": gate2_result.details,
+            }, db=db, pipeline_id=pipeline_id)
             # Track review cost
             if review_cost_info.cost_usd > 0:
                 await db.add_task_review_cost(task.id, review_cost_info.cost_usd)
@@ -366,6 +397,11 @@ class ReviewMixin:
                 await self._emit("pipeline:cost_update", {
                     "total_cost_usd": total_cost,
                 }, db=db, pipeline_id=pipeline_id)
+            await self._emit(
+                "review:gate_passed" if gate2_result.passed else "review:gate_failed",
+                {"task_id": task.id, "gate": "gate2_llm_review", "details": gate2_result.details},
+                db=db, pipeline_id=pipeline_id,
+            )
             await self._emit("task:review_update", {
                 "task_id": task.id, "gate": "L2", "passed": gate2_result.passed,
                 "details": gate2_result.details,
