@@ -28,6 +28,33 @@ async def test_pipeline_screen_mounts():
         assert app.screen.query_one("TaskList") is not None
         assert app.screen.query_one("AgentOutput") is not None
         assert app.screen.query_one("PipelineProgress") is not None
+        assert app.screen.query_one("PhaseBanner") is not None
+
+
+@pytest.mark.asyncio
+async def test_phase_banner_is_outside_split_pane():
+    """PhaseBanner must be a direct child of PipelineScreen, not inside #split-pane."""
+    from forge.tui.screens.pipeline import PhaseBanner
+    app = PipelineTestApp()
+    async with app.run_test() as pilot:
+        screen = app.screen
+        phase_banner = screen.query_one(PhaseBanner)
+        split_pane = screen.query_one("#split-pane")
+        # PhaseBanner should NOT be a descendant of split-pane
+        assert phase_banner not in split_pane.query(PhaseBanner)
+        # PhaseBanner's parent should be the screen itself
+        assert phase_banner.parent is screen
+
+
+@pytest.mark.asyncio
+async def test_phase_banner_not_in_left_panel():
+    """PhaseBanner must not be inside #left-panel."""
+    from forge.tui.screens.pipeline import PhaseBanner
+    app = PipelineTestApp()
+    async with app.run_test() as pilot:
+        left_panel = app.screen.query_one("#left-panel")
+        # left-panel should not contain any PhaseBanner
+        assert len(left_panel.query(PhaseBanner)) == 0
 
 
 @pytest.mark.asyncio
