@@ -1,12 +1,25 @@
+from importlib.metadata import PackageNotFoundError
+from unittest.mock import patch
+
 from click.testing import CliRunner
+
 from forge.cli.main import cli
 
 
 def test_cli_version():
     runner = CliRunner()
-    result = runner.invoke(cli, ["--version"])
+    with patch("importlib.metadata.version", return_value="1.2.3"):
+        result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert "1.2.3" in result.output
+
+
+def test_cli_version_not_installed():
+    runner = CliRunner()
+    with patch("importlib.metadata.version", side_effect=PackageNotFoundError("forge")):
+        result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert "dev" in result.output
 
 
 def test_cli_help():
