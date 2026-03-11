@@ -1,9 +1,12 @@
-"""Tests for daemon_review — sibling context builder."""
+"""Tests for daemon_review — sibling context builder and test gate scoping."""
+
+import asyncio
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.core.daemon_review import ReviewMixin
+from forge.review.pipeline import GateResult
 
 
 def _make_task(task_id="task-2", title="Create webhook", files=None, state="todo"):
@@ -115,3 +118,100 @@ class TestBuildSiblingContext:
 
         assert result is not None
         assert "(none)" in result
+
+
+class TestGateTestScoping:
+    """ReviewMixin._gate_test() scopes pytest to changed files when possible."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock()
+        mixin._settings.agent_timeout_seconds = 600
+        mixin._emit = AsyncMock()
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_scoped_when_pytest_and_changed_files(self):
+        """With pytest cmd and changed files, scopes to related test files."""
+        mixin = self._make_mixin()
+
+        # Mock _run_shell_gate to capture the actual command passed
+        captured_cmds = []
+
+        async def fake_shell_gate(worktree_path, cmd, timeout, *, gate_name):
+            captured_cmds.append(cmd)
+            return GateResult(passed=True, gate=gate_name, details="OK")
+
+        mixin._run_shell_gate = fake_shell_gate
+
+        with patch(
+            "forge.core.daemon_review._find_related_test_files",
+            return_value=["forge/core/foo_test.py", "forge/core/bar_test.py"],
+        ):
+            result = await mixin._gate_test(
+                "/repo", "pytest -v", 300,
+                changed_files=["forge/core/foo.py", "forge/core/bar.py"],
+            )
+
+        assert result.passed is True
+        assert len(captured_cmds) == 1
+        assert "forge/core/foo_test.py" in captured_cmds[0]
+        assert "forge/core/bar_test.py" in captured_cmds[0]
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_related_tests(self):
+        """Passes gate with 'skipped' message when no related test files found."""
+        mixin = self._make_mixin()
+
+        with patch(
+            "forge.core.daemon_review._find_related_test_files",
+            return_value=[],
+        ):
+            result = await mixin._gate_test(
+                "/repo", "pytest", 300,
+                changed_files=["forge/core/new_module.py"],
+            )
+
+        assert result.passed is True
+        assert "No test files found" in result.details
+
+    @pytest.mark.asyncio
+    async def test_full_suite_when_not_pytest(self):
+        """Non-pytest commands run as-is (unscoped)."""
+        mixin = self._make_mixin()
+
+        captured_cmds = []
+
+        async def fake_shell_gate(worktree_path, cmd, timeout, *, gate_name):
+            captured_cmds.append(cmd)
+            return GateResult(passed=True, gate=gate_name, details="OK")
+
+        mixin._run_shell_gate = fake_shell_gate
+
+        result = await mixin._gate_test(
+            "/repo", "npm test", 300,
+            changed_files=["src/foo.js"],
+        )
+
+        assert result.passed is True
+        assert captured_cmds == ["npm test"]  # Unmodified command
+
+    @pytest.mark.asyncio
+    async def test_full_suite_when_no_changed_files(self):
+        """Without changed_files, runs the full test command."""
+        mixin = self._make_mixin()
+
+        captured_cmds = []
+
+        async def fake_shell_gate(worktree_path, cmd, timeout, *, gate_name):
+            captured_cmds.append(cmd)
+            return GateResult(passed=True, gate=gate_name, details="OK")
+
+        mixin._run_shell_gate = fake_shell_gate
+
+        result = await mixin._gate_test("/repo", "pytest", 300)
+
+        assert result.passed is True
+        assert captured_cmds == ["pytest"]

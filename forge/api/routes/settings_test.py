@@ -58,7 +58,7 @@ class TestGetSettings:
         data = resp.json()
         assert data["max_agents"] == 4
         assert data["timeout"] == 600
-        assert data["max_retries"] == 3
+        assert data["max_retries"] == 5
         assert data["model_strategy"] == "auto"
         assert data["planner_model"] == "opus"
         assert data["agent_model_low"] == "sonnet"

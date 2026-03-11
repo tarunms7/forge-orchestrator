@@ -16,7 +16,7 @@ class ForgeSettings(BaseSettings):
     max_agents: int = 4
     agent_timeout_seconds: int = 600  # lowered from 1800
     context_rotation_tokens: int = 80_000
-    max_retries: int = 3
+    max_retries: int = 5
 
     # Agent sandboxing
     allowed_dirs: list[str] = []  # Extra directories agents can access

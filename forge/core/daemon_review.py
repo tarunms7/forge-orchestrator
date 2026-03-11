@@ -10,7 +10,12 @@ import logging
 
 from rich.console import Console
 
-from forge.core.daemon_helpers import _get_changed_files_vs_main, _run_git
+from forge.core.daemon_helpers import (
+    _find_related_test_files,
+    _get_changed_files_vs_main,
+    _is_pytest_cmd,
+    _run_git,
+)
 from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
@@ -83,8 +88,36 @@ class ReviewMixin:
         """Gate 0: Build gate — run the project build command."""
         return await self._run_shell_gate(worktree_path, build_cmd, timeout, gate_name='gate0_build')
 
-    async def _gate_test(self, worktree_path: str, test_cmd: str, timeout: int) -> GateResult:
-        """Gate 1.5: Test gate — run the project test command."""
+    async def _gate_test(
+        self, worktree_path: str, test_cmd: str, timeout: int,
+        *, changed_files: list[str] | None = None,
+    ) -> GateResult:
+        """Gate 1.5: Test gate — run the project test command.
+
+        When *changed_files* is provided and *test_cmd* is pytest-based, the
+        gate automatically scopes to test files related to the changed source
+        files.  This prevents pre-existing failures in unrelated tests from
+        blocking every task in the pipeline.
+
+        If no related test files are found, the gate passes with a "no
+        relevant tests" message rather than running the full suite.
+        """
+        if changed_files and _is_pytest_cmd(test_cmd):
+            test_files = _find_related_test_files(worktree_path, changed_files)
+            if not test_files:
+                return GateResult(
+                    passed=True,
+                    gate="gate1_5_test",
+                    details="No test files found for changed files — skipped",
+                )
+            scoped_cmd = f"{test_cmd} {' '.join(test_files)}"
+            logger.info(
+                "Test gate scoped to %d test file(s): %s",
+                len(test_files), ", ".join(test_files),
+            )
+            return await self._run_shell_gate(
+                worktree_path, scoped_cmd, timeout, gate_name="gate1_5_test",
+            )
         return await self._run_shell_gate(worktree_path, test_cmd, timeout, gate_name='gate1_5_test')
 
     async def _run_shell_gate(
@@ -217,6 +250,9 @@ class ReviewMixin:
                 "skipped": True, "details": "No build command configured",
             }, db=db, pipeline_id=pipeline_id)
 
+        # Compute changed files once — used by both lint (L1) and test (Gate 1.5) gates
+        changed_files = _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
+
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
         gate1_result = await self._gate1(worktree_path, pipeline_branch=pipeline_branch)
@@ -238,11 +274,13 @@ class ReviewMixin:
             from forge.core.daemon_helpers import _get_diff_vs_main
             diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
 
-        # Gate 1.5: Test gate (skip silently if no command configured)
+        # Gate 1.5: Test gate — scoped to changed files when possible
         test_cmd = self._resolve_test_cmd()
         if test_cmd:
             console.print(f"[blue]  Gate 1.5 (test): Running tests for {task.id}...[/blue]")
-            test_result = await self._gate_test(worktree_path, test_cmd, gate_timeout)
+            test_result = await self._gate_test(
+                worktree_path, test_cmd, gate_timeout, changed_files=changed_files,
+            )
             await self._emit("task:review_update", {
                 "task_id": task.id, "gate": "Gate1_5_Test", "passed": test_result.passed,
                 "details": test_result.details,

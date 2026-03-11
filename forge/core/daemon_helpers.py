@@ -524,6 +524,51 @@ def _print_status_table(tasks) -> None:
     console.print(table)
 
 
+def _is_pytest_cmd(cmd: str) -> bool:
+    """Check if a test command is pytest-based (can be scoped to specific files)."""
+    return "pytest" in cmd.lower()
+
+
+def _find_related_test_files(worktree_path: str, changed_files: list[str]) -> list[str]:
+    """Find test files related to the changed source files.
+
+    Handles two common Python test naming conventions:
+    - Co-located: ``foo.py`` → ``foo_test.py`` (same directory)
+    - Test directory: ``src/foo.py`` → ``tests/test_foo.py``
+
+    Changed files that ARE test files are included directly.
+    """
+    test_files: set[str] = set()
+    for f in changed_files:
+        if not f.endswith(".py"):
+            continue
+        basename = os.path.basename(f)
+
+        # If the changed file IS a test file, include it directly
+        if basename.startswith("test_") or basename.endswith("_test.py"):
+            if os.path.isfile(os.path.join(worktree_path, f)):
+                test_files.add(f)
+            continue
+
+        # Co-located convention: foo.py → foo_test.py
+        co_located = f"{f[:-3]}_test.py"
+        if os.path.isfile(os.path.join(worktree_path, co_located)):
+            test_files.add(co_located)
+
+        # Test directory convention: src/foo.py → src/tests/test_foo.py
+        dirname = os.path.dirname(f)
+        test_dir_path = os.path.join(dirname, "tests", f"test_{basename}")
+        if os.path.isfile(os.path.join(worktree_path, test_dir_path)):
+            test_files.add(test_dir_path)
+
+        # Root tests/ convention: src/foo.py → tests/test_foo.py
+        root_test_path = os.path.join("tests", f"test_{basename}")
+        if os.path.isfile(os.path.join(worktree_path, root_test_path)):
+            test_files.add(root_test_path)
+
+    return sorted(test_files)
+
+
 def _run_git(
     args: list[str],
     cwd: str,
