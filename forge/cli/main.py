@@ -185,6 +185,10 @@ from forge.cli.doctor import doctor  # noqa: E402
 
 cli.add_command(doctor)
 
+from forge.cli.fix import fix  # noqa: E402
+
+cli.add_command(fix)
+
 
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
