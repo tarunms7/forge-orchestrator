@@ -94,3 +94,73 @@ def test_task_counts():
     assert state.done_count == 1
     assert state.total_count == 3
     assert state.progress_pct == pytest.approx(33.3, abs=1)
+
+
+def test_initial_state_has_review_output_and_streaming():
+    state = TuiState()
+    assert state.review_output == {}
+    assert state.streaming_task_ids == set()
+
+
+def test_review_llm_output_appends():
+    state = TuiState()
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Checking scope..."})
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Looks good."})
+    assert state.review_output["t1"] == ["Checking scope...", "Looks good."]
+
+
+def test_review_llm_output_ring_buffer():
+    state = TuiState(max_output_lines=3)
+    for i in range(5):
+        state.apply_event("review:llm_output", {"task_id": "t1", "line": f"line {i}"})
+    assert len(state.review_output["t1"]) == 3
+    assert state.review_output["t1"][0] == "line 2"
+
+
+def test_review_llm_output_notifies():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda field: changes.append(field))
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "x"})
+    assert "review_output" in changes
+
+
+def test_review_llm_output_adds_to_streaming_task_ids():
+    state = TuiState()
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "x"})
+    assert "t1" in state.streaming_task_ids
+
+
+def test_agent_output_adds_to_streaming_task_ids():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
+    assert "t1" in state.streaming_task_ids
+
+
+def test_state_changed_done_clears_streaming():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
+    assert "t1" in state.streaming_task_ids
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+    assert "t1" not in state.streaming_task_ids
+
+
+def test_state_changed_error_clears_streaming():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error"})
+    assert "t1" not in state.streaming_task_ids
+
+
+def test_review_llm_output_ignores_missing_task_id():
+    state = TuiState()
+    changes = []
+    state.on_change(lambda field: changes.append(field))
+    state.apply_event("review:llm_output", {"line": "no task_id"})
+    assert "review_output" not in changes

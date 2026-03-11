@@ -1,8 +1,9 @@
 """Tests for llm_review — review prompt construction and verdict parsing."""
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from forge.review.llm_review import _build_review_prompt, _parse_review_result
+from forge.review.llm_review import _build_review_prompt, _parse_review_result, gate2_llm_review
 
 
 class TestBuildReviewPrompt:
@@ -191,6 +192,79 @@ class TestParseReviewResult:
         result = _parse_review_result("FAIL: critical bug\nBut PASS case exists")
         # Stage 1 catches "FAIL" at the start of the text, so this is FAIL.
         assert result.passed is False
+
+
+class TestOnMessagePassthrough:
+    """gate2_llm_review() passes on_message to sdk_query."""
+
+    @pytest.mark.asyncio
+    async def test_on_message_passed_to_sdk_query(self):
+        """on_message callback is forwarded to sdk_query."""
+        mock_result = MagicMock()
+        mock_result.result = "PASS: looks good"
+        mock_result.cost_usd = 0.01
+        mock_result.input_tokens = 100
+        mock_result.output_tokens = 50
+
+        callback = AsyncMock()
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            result, cost = await gate2_llm_review(
+                "Test task", "Test desc", "diff content",
+                on_message=callback,
+            )
+
+        assert result.passed is True
+        # Verify on_message was passed through to sdk_query
+        mock_sdk.assert_called_once()
+        call_kwargs = mock_sdk.call_args
+        assert call_kwargs.kwargs.get("on_message") is callback
+
+    @pytest.mark.asyncio
+    async def test_on_message_none_by_default(self):
+        """on_message defaults to None when not provided."""
+        mock_result = MagicMock()
+        mock_result.result = "PASS: ok"
+        mock_result.cost_usd = 0.0
+        mock_result.input_tokens = 0
+        mock_result.output_tokens = 0
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            await gate2_llm_review("T", "D", "diff")
+
+        call_kwargs = mock_sdk.call_args
+        assert call_kwargs.kwargs.get("on_message") is None
+
+    @pytest.mark.asyncio
+    async def test_on_message_passed_on_retry(self):
+        """on_message is passed on every retry attempt."""
+        mock_result_empty = MagicMock()
+        mock_result_empty.result = ""
+        mock_result_empty.cost_usd = 0.0
+        mock_result_empty.input_tokens = 0
+        mock_result_empty.output_tokens = 0
+
+        mock_result_ok = MagicMock()
+        mock_result_ok.result = "PASS: ok"
+        mock_result_ok.cost_usd = 0.01
+        mock_result_ok.input_tokens = 100
+        mock_result_ok.output_tokens = 50
+
+        callback = AsyncMock()
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.side_effect = [mock_result_empty, mock_result_ok]
+            result, _ = await gate2_llm_review(
+                "T", "D", "diff", on_message=callback,
+            )
+
+        assert result.passed is True
+        # Called twice (first empty, then success)
+        assert mock_sdk.call_count == 2
+        for call in mock_sdk.call_args_list:
+            assert call.kwargs.get("on_message") is callback
 
 
 class TestDeadCodeRemoval:

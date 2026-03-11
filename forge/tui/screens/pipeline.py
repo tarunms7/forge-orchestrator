@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
-from textual.widgets import Static
 from textual.widget import Widget
 
 from forge.tui.state import TuiState
@@ -218,6 +217,8 @@ class PipelineScreen(Screen):
         super().__init__()
         self._state = state
         self._active_view: str = "output"
+        self._agent_streaming_tasks: set[str] = set()  # tasks with active agent streaming
+        self._review_streaming_tasks: set[str] = set()  # tasks with active review streaming
 
     # ------------------------------------------------------------------
     # Composition
@@ -249,12 +250,74 @@ class PipelineScreen(Screen):
     # ------------------------------------------------------------------
 
     def _on_state_change(self, field: str) -> None:
-        if field in ("tasks", "agent_output", "cost", "phase", "elapsed", "planner_output"):
+        # Fast path: streaming fields only update the relevant widget
+        if field == "agent_output":
+            self._handle_agent_output_fast()
+            return
+        if field == "review_output":
+            self._handle_review_output_fast()
+            return
+        if field in ("tasks", "cost", "phase", "elapsed", "planner_output"):
+            # On task state changes, also update streaming lifecycle
+            self._update_streaming_lifecycle()
             self._refresh_all()
         if field == "error":
             error = self._state.error
             if error:
                 self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
+
+    def _handle_agent_output_fast(self) -> None:
+        """Fast path for agent_output: only update AgentOutput widget."""
+        state = self._state
+        tid = state.selected_task_id
+        if not tid:
+            return
+        lines = state.agent_output.get(tid, [])
+        if not lines:
+            return
+        agent_output = self.query_one(AgentOutput)
+        # Start streaming if not already active for this task
+        if tid not in self._agent_streaming_tasks:
+            self._agent_streaming_tasks.add(tid)
+            agent_output.set_streaming(True)
+        # Append only the latest line
+        agent_output.append_line(lines[-1])
+
+    def _handle_review_output_fast(self) -> None:
+        """Fast path for review_output: only update ReviewGates widget."""
+        state = self._state
+        tid = state.selected_task_id
+        if not tid:
+            return
+        lines = state.review_output.get(tid, [])
+        review_gates = self.query_one(ReviewGates)
+        review_gates.update_streaming_output(lines)
+        # Start streaming indicator if not already active
+        if tid not in self._review_streaming_tasks and lines:
+            self._review_streaming_tasks.add(tid)
+            review_gates.set_streaming(True)
+
+    def _update_streaming_lifecycle(self) -> None:
+        """Stop streaming indicators for tasks that are done/error."""
+        state = self._state
+        tid = state.selected_task_id
+        if not tid:
+            return
+        # Check if the selected task is no longer streaming
+        if tid not in state.streaming_task_ids:
+            if tid in self._agent_streaming_tasks:
+                self._agent_streaming_tasks.discard(tid)
+                try:
+                    self.query_one(AgentOutput).set_streaming(False)
+                except Exception:
+                    pass
+            if tid in self._review_streaming_tasks:
+                self._review_streaming_tasks.discard(tid)
+                try:
+                    review_gates = self.query_one(ReviewGates)
+                    review_gates.set_streaming(False)
+                except Exception:
+                    pass
 
     def _refresh_all(self) -> None:
         state = self._state
@@ -297,8 +360,12 @@ class PipelineScreen(Screen):
             diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
             gates = state.review_gates.get(tid, {})
             review_gates.update_gates(gates)
+            # Show streaming review output if available
+            review_lines = state.review_output.get(tid, [])
+            review_gates.update_streaming_output(review_lines)
         else:
             review_gates.update_gates({})
+            review_gates.update_streaming_output([])
 
         progress.update_progress(
             state.done_count, state.total_count,

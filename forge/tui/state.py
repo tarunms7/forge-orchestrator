@@ -38,6 +38,8 @@ class TuiState:
         self.review_gates: dict[str, dict[str, dict]] = {}  # task_id → gate_name → {status, details}
         self.pr_url: str | None = None
         self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
+        self.review_output: dict[str, list[str]] = defaultdict(list)  # task_id → streaming LLM review lines
+        self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
 
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
@@ -91,6 +93,9 @@ class TuiState:
         tid = data.get("task_id")
         if not tid:
             return
+        new_state = data.get("state", "")
+        if new_state in ("done", "error"):
+            self.streaming_task_ids.discard(tid)
         if tid in self.tasks:
             self.tasks[tid]["state"] = data.get("state", self.tasks[tid]["state"])
             if "error" in data:
@@ -107,6 +112,8 @@ class TuiState:
         lines.append(line)
         if len(lines) > self._max_output_lines:
             del lines[: len(lines) - self._max_output_lines]
+        if tid:
+            self.streaming_task_ids.add(tid)
         self._notify("agent_output")
 
     def _on_planner_output(self, data: dict) -> None:
@@ -201,6 +208,17 @@ class TuiState:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "failed", "details": data.get("details")}
             self._notify("tasks")
 
+    def _on_review_llm_output(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        line = data.get("line", "")
+        if task_id:
+            lines = self.review_output[task_id]
+            lines.append(line)
+            if len(lines) > self._max_output_lines:
+                del lines[: len(lines) - self._max_output_lines]
+            self.streaming_task_ids.add(task_id)
+            self._notify("review_output")
+
     def _on_review_llm_feedback(self, data: dict) -> None:
         task_id = data.get("task_id")
         if task_id:
@@ -267,6 +285,7 @@ class TuiState:
         "review:gate_passed": _on_review_gate_passed,
         "review:gate_failed": _on_review_gate_failed,
         "review:llm_feedback": _on_review_llm_feedback,
+        "review:llm_output": _on_review_llm_output,
         "pipeline:all_tasks_done": _on_all_tasks_done,
         "pipeline:pr_creating": _on_pr_creating,
         "pipeline:pr_created": _on_pr_created,
