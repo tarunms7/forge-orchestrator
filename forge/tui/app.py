@@ -17,6 +17,7 @@ from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
+from forge.tui.widgets.pipeline_list import PipelineList
 
 logger = logging.getLogger("forge.tui.app")
 
@@ -96,6 +97,8 @@ class ForgeApp(App):
                     "status": p.status or "unknown",
                     "created_at": p.created_at or "",
                     "cost": p.total_cost_usd or 0.0,
+                    "total_cost_usd": p.total_cost_usd or 0.0,
+                    "task_count": 0,
                 }
                 for p in pipelines[:10]
             ]
@@ -506,3 +509,31 @@ class ForgeApp(App):
         filename = os.path.join(path, f"forge-{self._state.phase}.svg")
         self.save_screenshot(filename)
         self.notify(f"Screenshot saved: {filename}")
+
+    async def on_pipeline_list_selected(self, event: PipelineList.Selected) -> None:
+        """User selected a pipeline from the history list — replay it."""
+        pipeline_id = event.pipeline_id
+        if not self._db:
+            self.notify("Database not available", severity="error")
+            return
+
+        try:
+            pipeline = await self._db.get_pipeline(pipeline_id)
+            if not pipeline:
+                self.notify("Pipeline not found", severity="error")
+                return
+
+            # Load events and replay into a fresh TuiState
+            events = await self._db.list_events(pipeline_id)
+            replay_state = TuiState()
+            replay_state._replay_date = pipeline.created_at or ""
+
+            for evt in events:
+                replay_state.apply_event(evt.event_type, evt.payload or {})
+
+            # Push PipelineScreen in read-only mode
+            self.push_screen(PipelineScreen(replay_state, read_only=True))
+
+        except Exception as e:
+            logger.error("Failed to load pipeline history: %s", e, exc_info=True)
+            self.notify(f"Failed to load pipeline: {e}", severity="error")

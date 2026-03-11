@@ -35,3 +35,87 @@ async def test_load_recent_pipelines_empty(tmp_project):
     result = await app._load_recent_pipelines()
     assert result == []
     await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_load_recent_pipelines_includes_id(tmp_project):
+    """_load_recent_pipelines should include 'id' and 'total_cost_usd' keys."""
+    from forge.tui.app import ForgeApp
+    app = ForgeApp(project_dir=tmp_project)
+    await app._init_db()
+    await app._db.create_pipeline(
+        id="test-pipe", description="Test pipeline",
+        project_dir="/tmp", model_strategy="auto",
+    )
+    result = await app._load_recent_pipelines()
+    assert len(result) == 1
+    assert result[0]["id"] == "test-pipe"
+    assert "total_cost_usd" in result[0]
+    assert "cost" in result[0]
+    await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_replay_loading(tmp_project):
+    """on_pipeline_list_selected should create replay state and push read-only screen."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.pipeline import PipelineScreen
+    from forge.tui.widgets.pipeline_list import PipelineList
+
+    app = ForgeApp(project_dir=tmp_project)
+    await app._init_db()
+
+    # Create a pipeline with events
+    await app._db.create_pipeline(
+        id="replay-pipe", description="Replay test",
+        project_dir="/tmp", model_strategy="auto",
+    )
+    await app._db.log_event(
+        pipeline_id="replay-pipe", task_id=None,
+        event_type="pipeline:phase_changed",
+        payload={"phase": "planning"},
+    )
+    await app._db.log_event(
+        pipeline_id="replay-pipe", task_id=None,
+        event_type="pipeline:plan_ready",
+        payload={"tasks": [
+            {"id": "t1", "title": "Task 1", "description": "D",
+             "files": ["a.py"], "depends_on": [], "complexity": "low"},
+        ]},
+    )
+
+    # Mock push_screen and verify
+    pushed_screens = []
+    app.push_screen = lambda s: pushed_screens.append(s)
+
+    event = PipelineList.Selected("replay-pipe")
+    await app.on_pipeline_list_selected(event)
+
+    assert len(pushed_screens) == 1
+    screen = pushed_screens[0]
+    assert isinstance(screen, PipelineScreen)
+    assert screen._read_only is True
+    # Verify state was hydrated from events
+    assert screen._state.phase == "planning"
+    assert "t1" in screen._state.tasks
+
+    await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_replay_missing_pipeline(tmp_project):
+    """on_pipeline_list_selected notifies when pipeline not found."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.widgets.pipeline_list import PipelineList
+
+    app = ForgeApp(project_dir=tmp_project)
+    await app._init_db()
+
+    notifications = []
+    app.notify = lambda msg, **kw: notifications.append(msg)
+
+    event = PipelineList.Selected("nonexistent")
+    await app.on_pipeline_list_selected(event)
+
+    assert any("not found" in n for n in notifications)
+    await app._db.close()

@@ -3,22 +3,25 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock, AsyncMock
 from textual.app import App
 
-from forge.tui.screens.pipeline import PipelineScreen
+from forge.tui.screens.pipeline import PipelineScreen, ViewLabel
 from forge.tui.state import TuiState
 
 
 class PipelineTestApp(App):
     NOTIFICATIONS: list = []
 
-    def __init__(self, state: TuiState | None = None) -> None:
+    def __init__(self, state: TuiState | None = None, read_only: bool = False) -> None:
         super().__init__()
         self._tui_state = state or TuiState()
+        self._read_only = read_only
+        self._bus = MagicMock()
+        self._bus.emit = AsyncMock()
 
     def on_mount(self) -> None:
-        self.push_screen(PipelineScreen(self._tui_state))
+        self.push_screen(PipelineScreen(self._tui_state, read_only=self._read_only))
 
 
 @pytest.mark.asyncio
@@ -206,3 +209,222 @@ async def test_streaming_stops_on_task_done():
             await pilot.pause()
             mock_stream.assert_called_with(False)
         assert "t1" not in screen._agent_streaming_tasks
+
+
+# ── Key binding tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_t_key_opens_chat_view():
+    """Pressing 't' should switch to chat view (relocated from 'c')."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        await pilot.press("t")
+        assert screen._active_view == "chat"
+
+
+@pytest.mark.asyncio
+async def test_v_key_opens_review_view():
+    """Pressing 'v' should switch to review view (relocated from 'r')."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        await pilot.press("v")
+        assert screen._active_view == "review"
+
+
+@pytest.mark.asyncio
+async def test_o_key_opens_output_view():
+    """Pressing 'o' should switch to output view (unchanged)."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        await pilot.press("d")  # Switch away to diff first
+        await pilot.press("o")
+        assert app.screen._active_view == "output"
+
+
+@pytest.mark.asyncio
+async def test_d_key_opens_diff_view():
+    """Pressing 'd' should switch to diff view (unchanged)."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        await pilot.press("d")
+        assert app.screen._active_view == "diff"
+
+
+# ── ViewLabel tests ──────────────────────────────────────────────
+
+
+def test_view_label_render_shows_new_keys():
+    """ViewLabel should show updated key bindings."""
+    vl = ViewLabel()
+    rendered = vl.render()
+    assert "[t]Chat" in rendered
+    assert "[v]Review" in rendered
+    assert "[c]Copy" in rendered
+    assert "[o]Output" in rendered
+
+
+# ── Error recovery action tests ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_retry_noop_when_not_error():
+    """action_retry_task is a no-op when selected task is not in error state."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        # Should not crash or emit anything
+        screen.action_retry_task()
+        # Bus emit should not have been called with task:retry
+        app._bus.emit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skip_noop_when_not_error():
+    """action_skip_task is a no-op when selected task is not in error state."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen.action_skip_task()
+        app._bus.emit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_emits_when_error():
+    """action_retry_task emits task:retry when task is in error state."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen.action_retry_task()
+        app._bus.emit.assert_called_once_with("task:retry", {"task_id": "t1"})
+
+
+@pytest.mark.asyncio
+async def test_skip_emits_when_error():
+    """action_skip_task emits task:skip when task is in error state."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen.action_skip_task()
+        app._bus.emit.assert_called_once_with("task:skip", {"task_id": "t1"})
+
+
+# ── Read-only mode tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_read_only_mode_disables_retry():
+    """In read-only mode, retry is a no-op even for error tasks."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
+    app = PipelineTestApp(state=state, read_only=True)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen.action_retry_task()
+        app._bus.emit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_read_only_mode_disables_skip():
+    """In read-only mode, skip is a no-op even for error tasks."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
+    app = PipelineTestApp(state=state, read_only=True)
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen.action_skip_task()
+        app._bus.emit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_read_only_shows_banner():
+    """In read-only mode, PhaseBanner shows the read-only banner text."""
+    from forge.tui.screens.pipeline import PhaseBanner
+    state = TuiState()
+    state._replay_date = "2026-03-10T12:00:00"
+    app = PipelineTestApp(state=state, read_only=True)
+    async with app.run_test() as pilot:
+        banner = app.screen.query_one(PhaseBanner)
+        rendered = banner.render()
+        assert "Viewing pipeline" in rendered
+
+
+# ── Contracts display tests ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_contracts_streaming_output():
+    """contracts:output events stream into AgentOutput during contracts phase."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "contracts"})
+        state.apply_event("contracts:output", {"line": "Building contracts..."})
+        state.apply_event("contracts:output", {"line": "Analyzing interfaces..."})
+        await pilot.pause()
+        agent_output = app.screen.query_one("AgentOutput")
+        assert agent_output._task_id == "contracts"
+        assert len(agent_output._lines) == 2
+        assert "Building contracts..." in agent_output._lines[0]
+
+
+@pytest.mark.asyncio
+async def test_contracts_fallback_placeholder():
+    """Without contracts_output, contracts phase shows fallback placeholder."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "contracts"})
+        await pilot.pause()
+        agent_output = app.screen.query_one("AgentOutput")
+        assert agent_output._task_id == "contracts"
+        assert any("Building API contracts" in line for line in agent_output._lines)
+
+
+# ── Error detail display tests ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_error_task_shows_error_detail():
+    """Selecting an errored task renders error detail view."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test Task", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "Build failed"})
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        agent_output = app.screen.query_one("AgentOutput")
+        assert agent_output.is_error_mode
