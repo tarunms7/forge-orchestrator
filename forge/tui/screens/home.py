@@ -7,30 +7,32 @@ from textual.screen import Screen
 from textual.binding import Binding
 from textual.widgets import Input, Static, TextArea
 from textual.containers import Vertical, Center
-from textual.events import Key
 from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
 
 
 class PromptTextArea(TextArea):
-    """TextArea that emits Submitted on Ctrl+Enter instead of inserting a newline."""
+    """TextArea that emits Submitted on Ctrl+S instead of inserting a newline.
+
+    Note: Terminals cannot distinguish Ctrl+Enter from Enter, so we use
+    Ctrl+S as the submit shortcut (common "send" shortcut in chat apps).
+    """
+
+    BINDINGS = [
+        Binding("ctrl+s", "submit_prompt", "Submit", show=False, priority=True),
+    ]
 
     class Submitted(Message):
-        """Fired when user presses Ctrl+Enter."""
+        """Fired when user presses Ctrl+S."""
         def __init__(self, text: str) -> None:
             self.text = text
             super().__init__()
 
-    def _on_key(self, event: Key) -> None:
-        if event.key == "ctrl+j":
-            event.stop()
-            event.prevent_default()
-            text = self.text.strip()
-            if text:
-                self.post_message(self.Submitted(text))
-            return
-        super()._on_key(event)
+    def action_submit_prompt(self) -> None:
+        text = self.text.strip()
+        if text:
+            self.post_message(self.Submitted(text))
 
 
 _PIPELINE_STATUS_ICONS = {
@@ -106,7 +108,7 @@ class HomeScreen(Screen):
             with Vertical(id="home-container"):
                 yield ForgeLogo()
                 yield PromptTextArea(id="prompt-input")
-                yield Static("[#8b949e]Ctrl+Enter to submit[/]", id="submit-hint")
+                yield Static("[#8b949e]Ctrl+S to submit[/]", id="submit-hint")
                 yield Static("Recent pipelines", id="recent-label")
                 yield Static(
                     format_recent_pipelines(self._recent_pipelines),
