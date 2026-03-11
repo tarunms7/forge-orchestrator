@@ -186,6 +186,7 @@ class AgentResult:
     input_tokens: int = 0
     output_tokens: int = 0
     error: str | None = None
+    session_id: str | None = None
 
 
 class AgentAdapter(ABC):
@@ -206,6 +207,7 @@ class AgentAdapter(ABC):
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
+        resume: str | None = None,
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -223,6 +225,7 @@ class ClaudeAdapter(AgentAdapter):
         contracts_block: str = "",
         autonomy: str = "balanced",
         questions_remaining: int = 3,
+        resume: str | None = None,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -262,6 +265,7 @@ class ClaudeAdapter(AgentAdapter):
             cwd=worktree_path,
             model=model,
             max_turns=25,
+            resume=resume,
         )
 
     async def run(
@@ -278,6 +282,7 @@ class ClaudeAdapter(AgentAdapter):
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
+        resume: str | None = None,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -287,6 +292,7 @@ class ClaudeAdapter(AgentAdapter):
             completed_deps=completed_deps,
             allowed_files=allowed_files,
             contracts_block=contracts_block,
+            resume=resume,
         )
 
         try:
@@ -325,6 +331,7 @@ class ClaudeAdapter(AgentAdapter):
                 cost_usd=cost_usd,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
+                session_id=result.session_id,
             )
 
         return AgentResult(
@@ -334,6 +341,7 @@ class ClaudeAdapter(AgentAdapter):
             cost_usd=cost_usd,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            session_id=result.session_id,
         )
 
 
