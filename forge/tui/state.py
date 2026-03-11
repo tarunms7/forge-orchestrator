@@ -40,6 +40,7 @@ class TuiState:
         self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
         self.review_output: dict[str, list[str]] = defaultdict(list)  # task_id → streaming LLM review lines
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
+        self.pipeline_branch: str = ""  # branch where task work is merged
 
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
@@ -242,6 +243,26 @@ class TuiState:
     def _on_pr_failed(self, data: dict) -> None:
         self.error = data.get("error", "PR creation failed")
         self._notify("error")
+
+    def reset(self) -> None:
+        """Reset all pipeline-specific state for a new task."""
+        self.phase = "idle"
+        self.tasks.clear()
+        self.task_order.clear()
+        self.selected_task_id = None
+        self.agent_output.clear()
+        self.review_output.clear()
+        self.planner_output.clear()
+        self.review_gates.clear()
+        self.streaming_task_ids.clear()
+        self.error = None
+        self.elapsed_seconds = 0.0
+        self.total_cost_usd = 0.0
+        self.pipeline_branch = ""
+        self.question_history.clear()
+        self.pending_questions.clear()
+        self.pr_url = None
+        self._pending_state_updates.clear()
 
     @property
     def done_count(self) -> int:

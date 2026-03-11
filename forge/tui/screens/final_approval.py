@@ -78,6 +78,7 @@ class FinalApprovalScreen(Screen):
         Binding("enter", "create_pr", "Create PR", show=True, priority=True),
         Binding("d", "view_diff", "View Diff", show=True),
         Binding("r", "rerun", "Re-run Failed", show=True),
+        Binding("n", "new_task", "New Task", show=True),
         Binding("escape", "app.pop_screen", "Cancel", show=True),
     ]
 
@@ -106,7 +107,7 @@ class FinalApprovalScreen(Screen):
                 yield Static("", id="pr-url")
                 yield Static("\n[bold]Tasks:[/]", id="tasks-header")
                 yield Static(format_task_table(self._tasks), id="task-table")
-                yield Static("\n[#8b949e]Press Enter to create PR, d for diff, r to re-run, Esc to cancel[/]")
+                yield Static("\n[#8b949e]Enter: create PR  d: diff  r: re-run  n: new task  Esc: cancel[/]")
         yield Footer()
 
     def show_pr_url(self, url: str) -> None:
@@ -116,6 +117,10 @@ class FinalApprovalScreen(Screen):
             pr_widget.update(f"[bold #3fb950]PR created:[/] [underline #58a6ff]{url}[/]")
         except Exception:
             pass
+
+    def action_new_task(self) -> None:
+        """Return to HomeScreen for a new task, cleaning up pipeline state."""
+        self.app.action_reset_for_new_task()
 
     def action_create_pr(self) -> None:
         self.post_message(self.CreatePR())

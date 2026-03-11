@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -59,11 +60,24 @@ class ReviewScreen(Screen):
         Binding("e", "edit", "Open in $EDITOR"),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
+        Binding("escape", "app.pop_screen", "Back", show=True),
+        # Task jump — priority=True prevents bubble to app-level screen switch
+        Binding("1", "jump_task(1)", show=False, priority=True),
+        Binding("2", "jump_task(2)", show=False, priority=True),
+        Binding("3", "jump_task(3)", show=False, priority=True),
+        Binding("4", "jump_task(4)", show=False, priority=True),
+        Binding("5", "jump_task(5)", show=False, priority=True),
+        Binding("6", "jump_task(6)", show=False, priority=True),
+        Binding("7", "jump_task(7)", show=False, priority=True),
+        Binding("8", "jump_task(8)", show=False, priority=True),
+        Binding("9", "jump_task(9)", show=False, priority=True),
     ]
 
     def __init__(self, state: TuiState) -> None:
         super().__init__()
         self._state = state
+        self._diff_cache: dict[str, str] = {}
+        self._diff_loading: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
@@ -92,9 +106,12 @@ class ReviewScreen(Screen):
         tid = state.selected_task_id
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            diff = task.get("merge_result", {}).get("diff", "")
-            if not diff:
-                diff = task.get("review", {}).get("diff", "")
+            # On-demand diff: use cache or trigger async load
+            diff = self._diff_cache.get(tid, "")
+            if not diff and tid not in self._diff_loading:
+                self._diff_loading.add(tid)
+                asyncio.create_task(self._load_diff(tid))
+                diff = "Loading diff..."
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
     def on_task_list_selected(self, event: TaskList.Selected) -> None:
@@ -121,8 +138,7 @@ class ReviewScreen(Screen):
         tid = self._state.selected_task_id
         if not tid or tid not in self._state.tasks:
             return
-        task = self._state.tasks[tid]
-        diff = task.get("merge_result", {}).get("diff", "")
+        diff = self._diff_cache.get(tid, "")
         if not diff:
             return
         editor = os.environ.get("EDITOR", "vim")
@@ -136,3 +152,42 @@ class ReviewScreen(Screen):
             self.app.resume()
         finally:
             os.unlink(tmp_path)
+
+    def action_jump_task(self, index: int) -> None:
+        """Jump to the Nth reviewable task (1-based)."""
+        reviewable = [
+            tid for tid in self._state.task_order
+            if tid in self._state.tasks
+            and self._state.tasks[tid]["state"] in _REVIEWABLE_STATES
+        ]
+        if 0 < index <= len(reviewable):
+            self._state.selected_task_id = reviewable[index - 1]
+            self._refresh()
+
+    async def _load_diff(self, tid: str) -> None:
+        """Load diff on-demand from git."""
+        branch = self._state.pipeline_branch or ""
+        if not branch:
+            diff = "No pipeline branch available yet."
+        else:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "diff", f"main...{branch}",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                diff = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
+            except Exception as e:
+                diff = f"Error: {e}"
+        self._diff_cache[tid] = diff
+        self._diff_loading.discard(tid)
+        # Guard: only update if user is still on this task
+        if self._state.selected_task_id != tid:
+            return
+        try:
+            self.query_one(DiffViewer).update_diff(
+                tid, self._state.tasks.get(tid, {}).get("title", ""), diff,
+            )
+        except Exception:
+            pass
