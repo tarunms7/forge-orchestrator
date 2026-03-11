@@ -25,6 +25,8 @@ class AgentRuntime:
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
         resume: str | None = None,
+        autonomy: str = "balanced",
+        questions_remaining: int = 3,
     ) -> AgentResult:
         try:
             return await self._adapter.run(
@@ -41,6 +43,8 @@ class AgentRuntime:
                 completed_deps=completed_deps,
                 contracts_block=contracts_block,
                 resume=resume,
+                autonomy=autonomy,
+                questions_remaining=questions_remaining,
             )
         except TimeoutError:
             return AgentResult(
