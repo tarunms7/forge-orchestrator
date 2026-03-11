@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import patch, MagicMock
-from textual.app import App, ComposeResult
+from unittest.mock import patch
+from textual.app import App
 
 from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.state import TuiState
