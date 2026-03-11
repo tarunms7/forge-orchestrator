@@ -784,6 +784,28 @@ class Database:
                 row.paused = paused
                 await session.commit()
 
+    async def set_pipeline_paused_at(self, pipeline_id: str, paused_at: str | None) -> None:
+        """Set or clear the paused_at timestamp on a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.paused_at = paused_at
+                await session.commit()
+
+    async def add_pipeline_paused_duration(self, pipeline_id: str, elapsed_seconds: float) -> None:
+        """Add elapsed_seconds to the pipeline's paused_duration accumulator."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.paused_duration = (row.paused_duration or 0.0) + elapsed_seconds
+                await session.commit()
+
     # ── User templates ─────────────────────────────────────────────
 
     async def create_user_template(
