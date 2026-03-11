@@ -98,8 +98,8 @@ class CopyOverlay(Widget):
         parts: list[str] = []
         # Status bar
         parts.append(
-            f"[bold #f0883e]── COPY MODE ── [/]"
-            f"[#8b949e]j/k: move │ space: toggle │ Enter: copy │ Esc: cancel[/]"
+            "[bold #f0883e]── COPY MODE ── [/]"
+            "[#8b949e]j/k: move │ space: toggle │ Enter: copy │ Esc: cancel[/]"
         )
         parts.append(f"[#8b949e]{self.selected_count} line{'s' if self.selected_count != 1 else ''} selected[/]")
         parts.append("")

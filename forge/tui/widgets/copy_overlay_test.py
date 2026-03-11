@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch, MagicMock
 
 from forge.tui.widgets.copy_overlay import CopyOverlay, copy_to_clipboard

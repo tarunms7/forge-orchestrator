@@ -648,7 +648,6 @@ class PipelineScreen(Screen):
             return
         tid = task["id"]
         try:
-            from forge.tui.bus import EventBus
             self.app._bus.emit("task:retry", {"task_id": tid})
         except Exception:
             logger.debug("Failed to emit task:retry", exc_info=True)

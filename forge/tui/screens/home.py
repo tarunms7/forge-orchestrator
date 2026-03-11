@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Static, TextArea
 from textual.containers import Vertical, Center
 from textual.message import Message
 

@@ -1,7 +1,7 @@
 """Tests for HomeScreen."""
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import App
 
 from forge.tui.screens.home import HomeScreen, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
