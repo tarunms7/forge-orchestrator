@@ -189,6 +189,10 @@ from forge.cli.fix import fix  # noqa: E402
 
 cli.add_command(fix)
 
+from forge.cli.ping import ping  # noqa: E402
+
+cli.add_command(ping)
+
 
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
