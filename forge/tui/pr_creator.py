@@ -44,11 +44,18 @@ def generate_pr_body(
     return "\n".join(lines)
 
 
-async def create_pr(project_dir: str, title: str, body: str, base: str = "main") -> str | None:
-    logger.info("Creating PR: branch → %s, title=%r", base, title)
+async def create_pr(
+    project_dir: str, title: str, body: str, base: str = "main", head: str | None = None,
+) -> str | None:
+    # --head is REQUIRED: the working directory is on main, not the pipeline branch.
+    # Without --head, gh tries to create a PR from main→main which always fails.
+    cmd = ["gh", "pr", "create", "--title", title, "--body", body, "--base", base]
+    if head:
+        cmd.extend(["--head", head])
+    logger.info("Creating PR: %s → %s, title=%r", head or "(current)", base, title)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "gh", "pr", "create", "--title", title, "--body", body, "--base", base,
+            *cmd,
             cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()

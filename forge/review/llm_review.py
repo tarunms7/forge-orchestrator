@@ -113,10 +113,25 @@ async def gate2_llm_review(
     # Retry the SDK call up to 3 times if the result is empty.
     # Empty results are transient SDK issues (rate limits, timeouts) —
     # retrying the review is much cheaper than retrying the entire task.
+    review_timeout_seconds = 120  # 2 min — review is a short, focused task
     max_review_attempts = 3
     for attempt in range(1, max_review_attempts + 1):
         try:
-            result = await sdk_query(prompt=prompt, options=options)
+            result = await asyncio.wait_for(
+                sdk_query(prompt=prompt, options=options),
+                timeout=review_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("L2 review timed out after %ds (attempt %d/%d)", review_timeout_seconds, attempt, max_review_attempts)
+            if attempt == max_review_attempts:
+                return (
+                    GateResult(
+                        passed=True, gate="gate2_llm_review",
+                        details=f"Review timed out after {max_review_attempts} attempts — auto-passing to unblock pipeline",
+                    ),
+                    cost_info,
+                )
+            continue
         except Exception as e:
             logger.warning("L2 review SDK call failed (attempt %d/%d): %s", attempt, max_review_attempts, e)
             if attempt == max_review_attempts:

@@ -253,6 +253,7 @@ class ForgeApp(App):
                 title=f"Forge: {self._pipeline_description()}",
                 body=body,
                 base=base_branch,
+                head=branch,
             )
             if pr_url:
                 self._state.apply_event("pipeline:pr_created", {"pr_url": pr_url})
