@@ -6,7 +6,6 @@ from __future__ import annotations
 from forge.tui.widgets.agent_output import (
     AgentOutput,
     _TYPING_FRAMES,
-    _ERROR_TAIL_LINES,
     format_error_detail,
     format_header,
     format_output,

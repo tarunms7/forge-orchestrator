@@ -1,6 +1,6 @@
 """Tests for TaskList widget."""
 
-from forge.tui.widgets.task_list import format_task_line, STATE_ICONS, MAX_WIDTH
+from forge.tui.widgets.task_list import format_task_line, STATE_ICONS
 
 
 def test_state_icons_all_states():

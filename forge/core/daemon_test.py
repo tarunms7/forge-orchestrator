@@ -1,7 +1,6 @@
 """Tests for ForgeDaemon: pause tracking, all_tasks_done event, question timeout checker."""
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
