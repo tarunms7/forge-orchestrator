@@ -182,6 +182,39 @@ def test_issue_not_found(runner):
     assert "not found" in result.output
 
 
+# ── Branch creation failure ───────────────────────────────────────────
+
+
+def test_branch_creation_failure(runner):
+    """Failed git checkout -b exits with error and does not run daemon."""
+    daemon = _make_daemon()
+
+    def _branch_fail_dispatch(cmd, **kwargs):
+        name = cmd[0] if cmd else ""
+        if name == "git" and "checkout" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=128, stdout="",
+                stderr="fatal: a branch named 'fix/42-login' already exists",
+            )
+        return _subprocess_dispatch(cmd, **kwargs)
+
+    with (
+        patch(f"{_P}._parse_ref", return_value=(42, None)),
+        patch(f"{_P}._check_auth", return_value=True),
+        patch(f"{_P}.subprocess.run", side_effect=_branch_fail_dispatch),
+        patch(f"{_P}._fetch", return_value=_make_issue()),
+        patch(f"{_P}._compose", return_value=PROMPT_TEXT),
+        patch(f"{_P}._slugify", return_value="login-returns-500-on-expired-token"),
+        patch(_DAEMON_P, return_value=daemon),
+        patch(_SETTINGS_P, return_value=MagicMock(budget_limit_usd=10.0)),
+    ):
+        result = runner.invoke(fix, ["42", "--yes"])
+
+    assert result.exit_code == 1
+    assert "failed to create branch" in result.output
+    daemon.run.assert_not_called()
+
+
 # ── Dry-run ──────────────────────────────────────────────────────────
 
 

@@ -164,10 +164,13 @@ def fix(
         return
 
     # ── 10. Create branch & run pipeline ─────────────────────────────
-    subprocess.run(
+    branch_result = subprocess.run(
         ["git", "checkout", "-b", branch_name],
         capture_output=True, text=True, timeout=30,
     )
+    if branch_result.returncode != 0:
+        click.echo(f"Error: failed to create branch '{branch_name}': {branch_result.stderr.strip()}")
+        raise SystemExit(1)
 
     daemon = ForgeDaemon(project_dir, settings=settings)
     try:
