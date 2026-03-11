@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-
-from forge.issue import GitHubIssue
-from forge.issue.prompt import compose_prompt
+from forge.issue.prompt import GitHubIssue, compose_prompt
 
 
 def _make_comment(login: str, body: str) -> dict:
