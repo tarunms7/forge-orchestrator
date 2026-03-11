@@ -41,6 +41,8 @@ async def test_run_task_calls_adapter(mock_adapter):
         completed_deps=None,
         contracts_block="",
         resume=None,
+        autonomy="balanced",
+        questions_remaining=3,
     )
 
 
@@ -180,4 +182,28 @@ async def test_runtime_passes_all_new_params_together():
         completed_deps=deps,
         contracts_block="",
         resume=None,
+        autonomy="balanced",
+        questions_remaining=3,
     )
+
+
+async def test_runtime_passes_autonomy_settings_to_adapter():
+    """AgentRuntime.run_task() should forward autonomy and questions_remaining to adapter."""
+    mock_adapter = AsyncMock()
+    mock_adapter.run.return_value = AgentResult(
+        success=True, files_changed=[], summary="Done",
+    )
+
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="test",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        autonomy="full",
+        questions_remaining=0,
+    )
+
+    call_kwargs = mock_adapter.run.call_args[1]
+    assert call_kwargs["autonomy"] == "full"
+    assert call_kwargs["questions_remaining"] == 0
