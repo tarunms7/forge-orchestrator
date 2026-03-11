@@ -178,7 +178,7 @@ class AgentOutput(Widget):
         self._task_id = task_id
         self._title = title
         self._state = state
-        self._lines = lines
+        self._lines = list(lines)  # Copy to avoid aliasing state.agent_output[tid]
 
         # Reset streaming state on full refresh
         self.set_streaming(False)
