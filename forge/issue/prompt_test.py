@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from forge.issue import GitHubIssue
 from forge.issue.prompt import compose_prompt
