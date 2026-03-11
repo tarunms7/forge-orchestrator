@@ -41,6 +41,84 @@ def _extract_text(message) -> str | None:
     return None
 
 
+def _extract_activity(message) -> str | None:
+    """Extract human-readable activity from a claude-code-sdk message.
+
+    Unlike ``_extract_text`` which only returns TextBlock content, this
+    also formats ToolUseBlock messages as short activity descriptions
+    (e.g. "📖 Reading src/models/user.py").  This makes planner and agent
+    progress visible in the TUI even during tool-heavy exploration phases
+    where no text is produced.
+    """
+    try:
+        from claude_code_sdk import AssistantMessage, ResultMessage
+    except ImportError:
+        return None
+
+    if isinstance(message, AssistantMessage):
+        parts: list[str] = []
+        for block in (message.content or []):
+            # Text blocks — same filtering as _extract_text
+            if hasattr(block, "text"):
+                text = block.text.strip()
+                if not text:
+                    continue
+                if text.startswith("{") or text.startswith("["):
+                    continue
+                parts.append(text)
+            # Tool use blocks — show what tool is being called
+            elif hasattr(block, "name"):
+                tool = block.name
+                inp = getattr(block, "input", {}) or {}
+                label = _format_tool_activity(tool, inp)
+                if label:
+                    parts.append(label)
+        return "\n".join(parts) if parts else None
+
+    if isinstance(message, ResultMessage):
+        return message.result if message.result else None
+    return None
+
+
+_TOOL_ICONS = {
+    "Read": "📖",
+    "Glob": "🔍",
+    "Grep": "🔎",
+    "Bash": "⚡",
+    "Write": "✏️",
+    "Edit": "✏️",
+}
+
+
+def _format_tool_activity(tool: str, inp: dict) -> str | None:
+    """Format a tool use block as a short human-readable string."""
+    icon = _TOOL_ICONS.get(tool, "🔧")
+    if tool == "Read":
+        path = inp.get("file_path") or inp.get("path", "")
+        if path:
+            # Show just filename and parent dir for brevity
+            short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
+            return f"{icon} Reading {short}"
+        return f"{icon} Reading file"
+    if tool == "Glob":
+        pattern = inp.get("pattern", "")
+        return f"{icon} Searching: {pattern}" if pattern else f"{icon} Searching files"
+    if tool == "Grep":
+        pattern = inp.get("pattern", "")
+        return f"{icon} Grep: {pattern[:60]}" if pattern else f"{icon} Searching code"
+    if tool == "Bash":
+        cmd = inp.get("command", "")
+        if cmd:
+            short = cmd[:80] + ("..." if len(cmd) > 80 else "")
+            return f"{icon} {short}"
+        return f"{icon} Running command"
+    if tool in ("Write", "Edit"):
+        path = inp.get("file_path", "")
+        short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
+        return f"{icon} Editing {short}" if path else f"{icon} Editing file"
+    return f"🔧 {tool}"
+
+
 def _get_current_branch(repo_path: str) -> str:
     """Get the current branch name of the repo.
 

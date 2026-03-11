@@ -39,6 +39,7 @@ from forge.core.daemon_merge import MergeMixin
 
 # Re-export all helpers at module level for backward compatibility.
 from forge.core.daemon_helpers import (  # noqa: F401
+    _extract_activity,
     _extract_text,
     _get_current_branch,
     _build_agent_prompt,
@@ -233,14 +234,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
         async def _on_planner_msg(msg):
-            text = _extract_text(msg)
+            text = _extract_activity(msg)
             if text:
                 if pipeline_id:
                     await self._emit("planner:output", {"line": text}, db=db, pipeline_id=pipeline_id)
                 else:
                     await self._events.emit("planner:output", {"line": text})
 
-        self._snapshot = gather_project_snapshot(self._project_dir)
+        # Run snapshot gathering in a thread to avoid blocking the event loop
+        self._snapshot = await asyncio.get_event_loop().run_in_executor(
+            None, gather_project_snapshot, self._project_dir,
+        )
         graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
 
         # Persist planner-discovered conventions

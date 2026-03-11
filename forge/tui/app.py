@@ -195,17 +195,27 @@ class ForgeApp(App):
             self._state.apply_event("pipeline:error", {"error": str(e)})
 
     async def on_plan_approval_screen_plan_approved(self, event) -> None:
-        """User approved the plan — start execution."""
+        """User approved the plan — start contract generation + execution."""
         self.pop_screen()  # Remove PlanApprovalScreen, back to PipelineScreen
+        # Launch contracts + execution as a single background task so the
+        # TUI event loop stays responsive and can show progress.
+        self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
+        self._daemon_task.add_done_callback(self._on_daemon_done)
+
+    async def _run_contracts_and_execute(self) -> None:
+        """Generate contracts then execute — runs as background task."""
         try:
+            self._state.apply_event(
+                "pipeline:phase_changed", {"phase": "contracts"},
+            )
             self._daemon._contracts = await self._daemon.generate_contracts(
                 self._graph, self._db, self._pipeline_id,
             )
-            self._daemon_task = asyncio.create_task(self._run_execute())
-            self._daemon_task.add_done_callback(self._on_daemon_done)
         except Exception as e:
             logger.error("Contract generation failed: %s", e, exc_info=True)
             self._state.apply_event("pipeline:error", {"error": str(e)})
+            return
+        await self._run_execute()
 
     async def on_plan_approval_screen_plan_cancelled(self, event) -> None:
         """User cancelled the plan — clean up and return to HomeScreen."""

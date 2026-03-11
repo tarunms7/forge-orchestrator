@@ -14,6 +14,8 @@ def format_progress(done: int, total: int, cost_usd: float, elapsed_seconds: flo
         return f"[#58a6ff]◌ Planning...[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
     if phase == "planned":
         return f"[#a371f7]◉ Plan ready — review required[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
+    if phase == "contracts":
+        return f"[#d2a8ff]⚙ Generating contracts...[/] │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
     if phase == "complete":
         return f"[#3fb950]✔ Complete[/] │ {done}/{total} tasks │ [#3fb950]${cost_usd:.2f}[/] │ {time_str}"
     if phase == "error":
