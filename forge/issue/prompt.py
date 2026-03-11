@@ -1,26 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass
-class IssueComment:
-    """Shape of each comment in GitHubIssue.comments."""
-    author: dict  # {"login": "username"}
-    body: str
-
-
-@dataclass
-class GitHubIssue:
-    """GitHub issue data model."""
-    number: int
-    title: str
-    body: str | None = None
-    comments: list[dict] | None = None  # list of {"author": {"login": ...}, "body": ...}
-    labels: list[str] | None = None
-    assignees: list[str] | None = None
-    milestone: str | None = None
-    repo_url: str | None = None
+from forge.issue import GitHubIssue
 
 
 def compose_prompt(issue: GitHubIssue) -> str:
