@@ -44,6 +44,11 @@ _PHASE_BANNER: dict[str, tuple[str, str]] = {
 
 _VIEW_NAMES = ("output", "chat", "diff", "review")
 
+_SIDEBAR_HIDDEN_PHASES = frozenset({
+    "idle", "planning", "planned", "contracts",
+    "final_approval", "complete", "pr_creating", "pr_created", "cancelled",
+})
+
 
 class PhaseBanner(Widget):
     """Full-width centered phase indicator displayed above the split pane."""
@@ -186,6 +191,12 @@ class PipelineScreen(Screen):
     }
     #split-pane {
         height: 1fr;
+    }
+    #split-pane.full-width #left-panel {
+        display: none;
+    }
+    #split-pane.full-width #right-panel {
+        width: 100%;
     }
     #left-panel {
         width: 35;
@@ -502,6 +513,13 @@ class PipelineScreen(Screen):
         )
         dag.update_tasks(ordered_tasks)
         phase_banner.update_phase(state.phase)
+
+        split_pane = self.query_one("#split-pane")
+        if state.phase in _SIDEBAR_HIDDEN_PHASES:
+            split_pane.add_class("full-width")
+        else:
+            split_pane.remove_class("full-width")
+
         decision_badge.update_count(len(state.pending_questions))
 
     # ------------------------------------------------------------------

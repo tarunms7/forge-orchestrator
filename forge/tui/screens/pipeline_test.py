@@ -459,3 +459,50 @@ def test_phase_banner_icon_preserved():
     rendered = banner.render()
     assert "⚡" in rendered
     assert "E  X  E  C  U  T  I  O  N" in rendered
+
+
+# ── Dynamic sidebar tests ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sidebar_hidden_during_planning():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        await pilot.pause()
+        split_pane = app.screen.query_one("#split-pane")
+        assert split_pane.has_class("full-width")
+
+
+@pytest.mark.asyncio
+async def test_sidebar_shown_during_execution():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+        await pilot.pause()
+        split_pane = app.screen.query_one("#split-pane")
+        assert not split_pane.has_class("full-width")
+
+
+@pytest.mark.asyncio
+async def test_sidebar_hidden_during_complete():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "complete"})
+        await pilot.pause()
+        split_pane = app.screen.query_one("#split-pane")
+        assert split_pane.has_class("full-width")
+
+
+@pytest.mark.asyncio
+async def test_sidebar_shown_during_error():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "error"})
+        await pilot.pause()
+        split_pane = app.screen.query_one("#split-pane")
+        assert not split_pane.has_class("full-width")
