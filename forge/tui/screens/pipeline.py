@@ -17,7 +17,6 @@ from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.progress_bar import PipelineProgress
 from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.chat_thread import ChatThread
-from forge.tui.widgets.review_gates import ReviewGates
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.copy_overlay import CopyOverlay
 
@@ -42,7 +41,7 @@ _PHASE_BANNER: dict[str, tuple[str, str]] = {
     "paused":         ("⏸ Paused",          "#d29922"),
 }
 
-_VIEW_NAMES = ("output", "chat", "diff", "review")
+_VIEW_NAMES = ("output", "chat", "diff")
 
 _SIDEBAR_HIDDEN_PHASES = frozenset({
     "idle", "planning", "planned", "contracts",
@@ -120,61 +119,20 @@ class DecisionBadge(Widget):
         return f"[bold #f0883e]● {self._count} decision{'s' if self._count != 1 else ''} pending[/]"
 
 
-class ViewLabel(Widget):
-    """Single-line header showing current right-panel view name and available shortcuts."""
-
-    DEFAULT_CSS = """
-    ViewLabel {
-        height: 1;
-        padding: 0 1;
-        background: #161b22;
-        border-bottom: tall #30363d;
-    }
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._active = "output"
-
-    def update_active(self, view: str) -> None:
-        self._active = view
-        self.refresh()
-
-    def render(self) -> str:
-        def _item(name: str, key: str, abbrev: str) -> str:
-            if name == self._active:
-                return f"[bold #f0883e][{key}]{abbrev}[/]"
-            return f"[#484f58][{key}]{abbrev}[/]"
-
-        return (
-            _item("output", "o", "Output")
-            + "  "
-            + _item("chat", "t", "Chat")
-            + "  "
-            + _item("diff", "d", "Diff")
-            + "  "
-            + _item("review", "v", "Review")
-            + "  "
-            + _item("copy", "c", "Copy")
-        )
-
-
 class PipelineScreen(Screen):
-    """Main pipeline execution screen with full-width phase banner + 2-panel layout.
+    """Main pipeline execution screen with full-width phase banner + dynamic layout.
 
     Phase banner (full width, centered):
-      - PhaseBanner
+      - PhaseBanner — 5-line wide-spaced label
 
-    Left panel (fixed ~35 cols):
+    Left panel (hidden during planning, shown during execution):
       - TaskList
       - DecisionBadge
 
-    Right panel (fills remaining space):
-      - ViewLabel (tab-bar replacement)
-      - AgentOutput   (view=output)
-      - ChatThread    (view=chat)
-      - DiffViewer    (view=diff)
-      - ReviewGates   (view=review)
+    Right panel (fills remaining or full width):
+      - AgentOutput   (unified log stream — agent + review + gates)
+      - ChatThread    (auto-shown for questions)
+      - DiffViewer    (toggled with 'd')
     """
 
     DEFAULT_CSS = """
@@ -228,11 +186,6 @@ class PipelineScreen(Screen):
         height: 1fr;
         padding: 1 1;
     }
-    #right-panel ReviewGates {
-        width: 1fr;
-        height: 1fr;
-        padding: 1 1;
-    }
     PipelineProgress {
         dock: bottom;
         height: 1;
@@ -252,7 +205,6 @@ class PipelineScreen(Screen):
         Binding("t", "view_chat", "Chat", show=True),
         Binding("d", "view_diff", "Diff", show=True),
         Binding("r", "retry_task", "Retry", show=False),
-        Binding("v", "view_review", "Review", show=True),
         Binding("s", "skip_task", "Skip", show=False),
         Binding("C", "copy_all", "Copy All", show=False),
         Binding("escape", "pop_screen", "Back", show=False),
@@ -289,11 +241,9 @@ class PipelineScreen(Screen):
                 yield TaskList()
                 yield DecisionBadge()
             with Vertical(id="right-panel"):
-                yield ViewLabel()
                 yield AgentOutput()
                 yield ChatThread()
                 yield DiffViewer()
-                yield ReviewGates()
         yield PipelineProgress()
 
     def on_mount(self) -> None:
@@ -357,7 +307,7 @@ class PipelineScreen(Screen):
                     if chat_input.has_focus:
                         title = task.get("title", tid)
                         self.app.notify(
-                            f"Task {title} entered review — press v to view",
+                            f"Task {title} entered review — finish typing to auto-open",
                             timeout=5,
                         )
                         return
@@ -375,7 +325,7 @@ class PipelineScreen(Screen):
                 return
 
     def _handle_agent_output_fast(self) -> None:
-        """Fast path for agent_output: only update AgentOutput widget."""
+        """Fast path for agent_output: append to unified log in AgentOutput widget."""
         state = self._state
         tid = state.selected_task_id
         if not tid:
@@ -384,26 +334,25 @@ class PipelineScreen(Screen):
         if not lines:
             return
         agent_output = self.query_one(AgentOutput)
-        # Start streaming if not already active for this task
         if tid not in self._agent_streaming_tasks:
             self._agent_streaming_tasks.add(tid)
             agent_output.set_streaming(True)
-        # Append only the latest line
-        agent_output.append_line(lines[-1])
+        agent_output.append_unified("agent", lines[-1])
 
     def _handle_review_output_fast(self) -> None:
-        """Fast path for review_output: only update ReviewGates widget."""
+        """Fast path for review_output: append to unified log in AgentOutput widget."""
         state = self._state
         tid = state.selected_task_id
         if not tid:
             return
         lines = state.review_output.get(tid, [])
-        review_gates = self.query_one(ReviewGates)
-        review_gates.update_streaming_output(lines)
-        # Start streaming indicator if not already active
-        if tid not in self._review_streaming_tasks and lines:
+        if not lines:
+            return
+        agent_output = self.query_one(AgentOutput)
+        if tid not in self._review_streaming_tasks:
             self._review_streaming_tasks.add(tid)
-            review_gates.set_streaming(True)
+            agent_output.set_streaming(True)
+        agent_output.append_unified("review", lines[-1])
 
     def _update_streaming_lifecycle(self) -> None:
         """Stop streaming indicators for tasks that are done/error."""
@@ -411,24 +360,21 @@ class PipelineScreen(Screen):
         tid = state.selected_task_id
         if not tid:
             return
-        # Check if the selected task is no longer streaming
         if tid not in state.streaming_task_ids:
+            needs_reconcile = False
             if tid in self._agent_streaming_tasks:
                 self._agent_streaming_tasks.discard(tid)
+                needs_reconcile = True
+            if tid in self._review_streaming_tasks:
+                self._review_streaming_tasks.discard(tid)
+                needs_reconcile = True
+            if needs_reconcile:
                 try:
                     ao = self.query_one(AgentOutput)
                     ao.set_streaming(False)
-                    # Final sync: full refresh to pick up lines accumulated during guard
-                    lines = state.agent_output.get(tid, [])
+                    unified = state.unified_log.get(tid, [])
                     task = state.tasks.get(tid, {})
-                    ao.update_output(tid, task.get("title"), task.get("state"), lines)
-                except Exception:
-                    pass
-            if tid in self._review_streaming_tasks:
-                self._review_streaming_tasks.discard(tid)
-                try:
-                    review_gates = self.query_one(ReviewGates)
-                    review_gates.set_streaming(False)
+                    ao.update_unified(tid, task.get("title"), task.get("state"), unified)
                 except Exception:
                     pass
 
@@ -449,15 +395,15 @@ class PipelineScreen(Screen):
         # Show error detail view for errored tasks
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            lines = state.agent_output.get(tid, [])
+            unified = state.unified_log.get(tid, [])
             if task.get("state") == "error":
-                agent_output.render_error_detail(tid, task, lines)
-            elif tid in self._agent_streaming_tasks:
+                agent_output.render_error_detail(tid, task, state.agent_output.get(tid, []))
+            elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
                 # Streaming active — only update header, not content/scroll
                 agent_output.update_header(tid, task.get("title"), task.get("state"))
             else:
                 agent_output.clear_error_detail()
-                agent_output.update_output(tid, task.get("title"), task.get("state"), lines)
+                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
 
                 # Auto-switch to chat view when the selected task is awaiting input
                 if task.get("state") == "awaiting_input":
@@ -467,7 +413,6 @@ class PipelineScreen(Screen):
             agent_output.update_output("planner", "Planning", "planning", state.planner_output)
         elif state.phase == "contracts":
             agent_output.clear_error_detail()
-            # Feature 2: stream contracts output like planner output
             if state.contracts_output:
                 agent_output.update_output(
                     "contracts", "⚙ Contracts", "contracts", state.contracts_output,
@@ -482,12 +427,10 @@ class PipelineScreen(Screen):
             agent_output.clear_error_detail()
             agent_output.update_output(None, None, None, [])
 
-        # Update diff and review for selected task
+        # Update diff for selected task (ReviewGates removed — data flows through unified log)
         diff_viewer = self.query_one(DiffViewer)
-        review_gates = self.query_one(ReviewGates)
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            # On-demand diff: use cache or trigger async load when diff view is active
             if self._active_view == "diff":
                 if tid in self._diff_cache:
                     diff_viewer.update_diff(tid, task.get("title", ""), self._diff_cache[tid])
@@ -495,17 +438,8 @@ class PipelineScreen(Screen):
                     diff_viewer.update_diff(tid, task.get("title", ""), "Loading diff...")
                     asyncio.create_task(self._refresh_diff_async(tid))
             else:
-                # Not viewing diff — show cached if available, empty otherwise
                 diff_text = self._diff_cache.get(tid, "")
                 diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
-            gates = state.review_gates.get(tid, {})
-            review_gates.update_gates(gates)
-            # Show streaming review output if available
-            review_lines = state.review_output.get(tid, [])
-            review_gates.update_streaming_output(review_lines)
-        else:
-            review_gates.update_gates({})
-            review_gates.update_streaming_output([])
 
         progress.update_progress(
             state.done_count, state.total_count,
@@ -597,17 +531,11 @@ class PipelineScreen(Screen):
             "output": AgentOutput,
             "chat": ChatThread,
             "diff": DiffViewer,
-            "review": ReviewGates,
         }
 
         for name, cls in widget_map.items():
             w = self.query_one(cls)
-            if name == view:
-                w.display = True
-            else:
-                w.display = False
-
-        self.query_one(ViewLabel).update_active(view)
+            w.display = (name == view)
 
     def _auto_switch_chat(self, task_id: str, task: dict) -> None:
         """Switch to chat view and populate question when task needs input."""
@@ -714,9 +642,6 @@ class PipelineScreen(Screen):
 
     def action_view_diff(self) -> None:
         self._set_view("diff")
-
-    def action_view_review(self) -> None:
-        self._set_view("review")
 
     def action_copy_mode(self) -> None:
         """Enter copy mode — mount CopyOverlay on AgentOutput."""

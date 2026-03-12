@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from textual.app import App
 
-from forge.tui.screens.pipeline import PipelineScreen, ViewLabel
+from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.state import TuiState
 
 
@@ -137,8 +137,8 @@ async def test_agent_output_fast_path_skips_refresh_all():
 
 
 @pytest.mark.asyncio
-async def test_agent_output_fast_path_calls_append_line():
-    """agent_output fast path uses append_line on AgentOutput widget."""
+async def test_agent_output_fast_path_calls_append_unified():
+    """agent_output fast path uses append_unified on AgentOutput widget."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
@@ -147,10 +147,10 @@ async def test_agent_output_fast_path_calls_append_line():
         })
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
-        with patch.object(agent_output, "append_line") as mock_append:
+        with patch.object(agent_output, "append_unified") as mock_append:
             state.apply_event("task:agent_output", {"task_id": "t1", "line": "hello"})
             await pilot.pause()
-            mock_append.assert_called_once_with("hello")
+            mock_append.assert_called_once_with("agent", "hello")
 
 
 @pytest.mark.asyncio
@@ -226,17 +226,6 @@ async def test_t_key_opens_chat_view():
 
 
 @pytest.mark.asyncio
-async def test_v_key_opens_review_view():
-    """Pressing 'v' should switch to review view (relocated from 'r')."""
-    state = TuiState()
-    app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
-        screen = app.screen
-        await pilot.press("v")
-        assert screen._active_view == "review"
-
-
-@pytest.mark.asyncio
 async def test_o_key_opens_output_view():
     """Pressing 'o' should switch to output view (unchanged)."""
     state = TuiState()
@@ -255,19 +244,6 @@ async def test_d_key_opens_diff_view():
     async with app.run_test() as pilot:
         await pilot.press("d")
         assert app.screen._active_view == "diff"
-
-
-# ── ViewLabel tests ──────────────────────────────────────────────
-
-
-def test_view_label_render_shows_new_keys():
-    """ViewLabel should show updated key bindings."""
-    vl = ViewLabel()
-    rendered = vl.render()
-    assert "[t]Chat" in rendered
-    assert "[v]Review" in rendered
-    assert "[c]Copy" in rendered
-    assert "[o]Output" in rendered
 
 
 # ── Error recovery action tests ──────────────────────────────────

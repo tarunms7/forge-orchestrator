@@ -282,6 +282,7 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         self._lines = list(lines)  # Copy to avoid aliasing state.agent_output[tid]
+        self._unified_entries = []  # Clear unified data when switching to line-based mode
 
         # Reset streaming state on full refresh
         self.set_streaming(False)
