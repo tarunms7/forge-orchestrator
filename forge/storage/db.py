@@ -11,7 +11,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-import bcrypt
 from sqlalchemy import DateTime, String, Text, JSON, func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -246,6 +245,13 @@ class Database:
         self, *, email: str, password: str, display_name: str,
     ) -> UserRow:
         """Register a new user. Raises ValueError if email already taken."""
+        try:
+            import bcrypt
+        except ImportError:
+            raise ImportError(
+                "bcrypt is required for user management. "
+                "Install with: pip install forge-orchestrator[web]"
+            )
         async with self._session_factory() as session:
             result = await session.execute(
                 select(UserRow).where(UserRow.email == email)
@@ -273,6 +279,13 @@ class Database:
 
     @staticmethod
     def verify_password(password: str, hashed: str) -> bool:
+        try:
+            import bcrypt
+        except ImportError:
+            raise ImportError(
+                "bcrypt is required for user management. "
+                "Install with: pip install forge-orchestrator[web]"
+            )
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
     # ── User settings ────────────────────────────────────────────────

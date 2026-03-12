@@ -129,6 +129,18 @@ def tui(project_dir: str, strategy: str | None) -> None:
 )
 def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, build_frontend: bool):
     """Start the Forge web server."""
+    try:
+        import uvicorn
+        from forge.api.app import create_app
+    except ImportError:
+        click.echo(
+            "Web UI requires additional dependencies.\n"
+            "Install them with: pip install forge-orchestrator[web]\n\n"
+            "Note: 'forge serve' also requires a git clone of the repository\n"
+            "for the Next.js frontend. See: https://github.com/tarunms7/forge-orchestrator"
+        )
+        raise SystemExit(1)
+
     import signal
     import subprocess
     import threading
@@ -139,9 +151,6 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
         repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
         db_path = os.path.join(repo_root, "forge.db")
         db_url = f"sqlite+aiosqlite:///{db_path}"
-
-    import uvicorn
-    from forge.api.app import create_app
 
     app = create_app(db_url=db_url, jwt_secret=jwt_secret)
 
