@@ -3,7 +3,7 @@
 import pytest
 from textual.app import App
 
-from forge.tui.screens.home import HomeScreen, format_recent_pipelines
+from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
 
 
@@ -97,3 +97,29 @@ async def test_pipeline_list_selected_posts_message():
         pl.post_message = lambda m: messages.append(m) or original_post(m)
         pl.action_select_pipeline()
         assert any(isinstance(m, PipelineList.Selected) for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_prompt_text_area_clear_input_empties_text():
+    """action_clear_input() should clear all text in PromptTextArea."""
+    app = HomeTestApp()
+    async with app.run_test() as pilot:
+        prompt = app.screen.query_one(PromptTextArea)
+        prompt.load_text("hello world")
+        await pilot.pause()
+        prompt.action_clear_input()
+        await pilot.pause()
+        assert prompt.text == ""
+
+
+@pytest.mark.asyncio
+async def test_prompt_text_area_clear_input_resets_cursor():
+    """action_clear_input() should reset cursor position to (0, 0)."""
+    app = HomeTestApp()
+    async with app.run_test() as pilot:
+        prompt = app.screen.query_one(PromptTextArea)
+        prompt.load_text("hello world")
+        await pilot.pause()
+        prompt.action_clear_input()
+        await pilot.pause()
+        assert prompt.cursor_location == (0, 0)

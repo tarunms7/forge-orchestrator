@@ -206,3 +206,24 @@ def test_submitted_message_fields():
     assert msg.prompt == "do stuff"
     assert msg.branch == "main"
     assert msg.files_changed == 5
+
+
+def test_followup_input_clear_action_clears_text():
+    """FollowUpTextArea.action_clear_input() should clear text and reset cursor."""
+    from forge.tui.widgets.followup_input import FollowUpTextArea
+
+    ta = FollowUpTextArea()
+    ta.text = "hello world"
+    ta.action_clear_input()
+
+    assert ta.text == ""
+
+
+def test_followup_input_clear_action_handles_missing_widget():
+    """FollowUpTextArea has action_clear_input and it sets text to empty string."""
+    from forge.tui.widgets.followup_input import FollowUpTextArea
+
+    ta = FollowUpTextArea()
+    # Should not raise even on empty text
+    ta.action_clear_input()
+    assert ta.text == ""
