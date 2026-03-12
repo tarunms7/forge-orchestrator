@@ -22,6 +22,7 @@ class PromptTextArea(TextArea):
 
     BINDINGS = [
         Binding("ctrl+s", "submit_prompt", "Submit", show=False, priority=True),
+        Binding("ctrl+u", "clear_input", "Clear", show=False, priority=True),
     ]
 
     class Submitted(Message):
@@ -34,6 +35,11 @@ class PromptTextArea(TextArea):
         text = self.text.strip()
         if text:
             self.post_message(self.Submitted(text))
+
+    def action_clear_input(self) -> None:
+        """Clear the text area content and reset cursor."""
+        self.text = ""
+        self.move_cursor((0, 0))
 
 
 _PIPELINE_STATUS_ICONS = {

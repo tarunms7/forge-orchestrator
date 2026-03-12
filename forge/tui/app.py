@@ -11,7 +11,7 @@ from textual.binding import Binding
 
 from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
 from forge.tui.state import TuiState
-from forge.tui.screens.home import HomeScreen
+from forge.tui.screens.home import HomeScreen, PromptTextArea
 from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
@@ -576,6 +576,20 @@ class ForgeApp(App):
             self._force_quit = True
         else:
             self.exit()
+
+    def action_clear_input(self) -> None:
+        """Clear the currently focused text input widget."""
+        focused = self.focused
+        if focused is None:
+            return
+        if isinstance(focused, PromptTextArea):
+            focused.action_clear_input()
+            return
+        # Check for FollowUpTextArea (import lazily to avoid circular imports)
+        from forge.tui.widgets.followup_input import FollowUpTextArea
+        if isinstance(focused, FollowUpTextArea):
+            focused.action_clear_input()
+            return
 
     def action_screenshot_export(self) -> None:
         path = os.path.join(self._project_dir, "screenshots")

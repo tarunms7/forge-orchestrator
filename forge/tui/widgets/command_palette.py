@@ -153,6 +153,13 @@ def get_all_actions() -> list[CommandPaletteAction]:
             callback_name="export_logs",
         ),
         CommandPaletteAction(
+            name="Clear Input",
+            description="Clear the current text input area",
+            shortcut="Cmd+>",
+            category="Tools",
+            callback_name="clear_input",
+        ),
+        CommandPaletteAction(
             name="Quit",
             description="Quit Forge",
             shortcut="q",

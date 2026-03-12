@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Static, TextArea
 from textual.containers import Vertical
@@ -33,6 +34,19 @@ def format_followup_history(history: list[str]) -> str:
         display = prompt if len(prompt) <= 80 else prompt[:77] + "..."
         lines.append(f"  [#6e7681]{i}. {display}[/]")
     return "\n".join(lines)
+
+
+class FollowUpTextArea(TextArea):
+    """TextArea subclass with clear-input binding for follow-up input."""
+
+    BINDINGS = [
+        Binding("ctrl+u", "clear_input", "Clear", show=False, priority=True),
+    ]
+
+    def action_clear_input(self) -> None:
+        """Clear the text area content and reset cursor."""
+        self.text = ""
+        self.move_cursor((0, 0))
 
 
 class FollowUpInput(Widget):
@@ -80,7 +94,7 @@ class FollowUpInput(Widget):
                 "[bold #58a6ff]Follow up:[/] refine, extend, or fix...",
                 id="followup-label",
             )
-            yield TextArea(id="followup-text")
+            yield FollowUpTextArea(id="followup-text")
             yield Static(
                 "[#6e7681]Ctrl+S to submit  •  f to focus[/]",
                 id="followup-hint",
@@ -109,7 +123,7 @@ class FollowUpInput(Widget):
     def focus_input(self) -> None:
         """Focus the text area for input."""
         try:
-            ta = self.query_one("#followup-text", TextArea)
+            ta = self.query_one("#followup-text", FollowUpTextArea)
             ta.focus()
         except Exception:
             pass
@@ -117,7 +131,7 @@ class FollowUpInput(Widget):
     def submit(self) -> None:
         """Submit the current text area contents as a follow-up prompt."""
         try:
-            ta = self.query_one("#followup-text", TextArea)
+            ta = self.query_one("#followup-text", FollowUpTextArea)
             text = ta.text.strip()
             if text:
                 self.add_history(text)

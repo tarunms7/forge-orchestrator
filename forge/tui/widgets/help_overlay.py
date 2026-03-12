@@ -50,6 +50,7 @@ GLOBAL_HELP: list[HelpEntry] = [
 
 HOME_HELP: list[HelpEntry] = [
     HelpEntry("Ctrl+S", "Submit task", "Type a task and press Ctrl+S to start", "Actions"),
+    HelpEntry("Cmd+>", "Clear Input", "Clear the text input area", "Actions"),
     HelpEntry("Tab", "Switch focus", "Cycle focus between input and panels", "Navigation"),
     HelpEntry("Esc", "Quit", "Exit Forge", "Navigation"),
 ]
@@ -61,6 +62,7 @@ HOME_TIPS: list[str] = [
 ]
 
 PIPELINE_HELP: list[HelpEntry] = [
+    HelpEntry("Cmd+>", "Clear Input", "Clear the text input area", "Actions"),
     HelpEntry("j/k", "Navigate tasks", "Move cursor up/down in task list", "Navigation"),
     HelpEntry("Tab", "Cycle agent", "Cycle through agent output panels", "Navigation"),
     HelpEntry("1-9", "Jump to task", "Jump directly to task by number", "Navigation"),
