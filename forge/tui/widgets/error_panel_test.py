@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from forge.tui.widgets.error_panel import (
     ErrorClassification,
