@@ -549,13 +549,29 @@ class ForgeApp(App):
         self._pipeline_start_time = None
         # Reset TUI state (tasks, output, costs, etc.)
         self._state.reset()
-        # Pop all screens back to HomeScreen
+        # Pop all pushed screens (keep only the default screen at index 0)
         while len(self.screen_stack) > 1:
             self.pop_screen()
+        # Push a fresh HomeScreen with recent pipelines
+        asyncio.create_task(self._push_fresh_home())
+
+    async def _push_fresh_home(self) -> None:
+        """Load recent pipelines and push a fresh HomeScreen."""
+        recent = await self._load_recent_pipelines()
+        home = HomeScreen(recent_pipelines=recent)
+        self.push_screen(home)
+        # Focus the prompt input
+        try:
+            prompt = home.query_one(PromptTextArea)
+            prompt.focus()
+        except Exception:
+            pass
 
     def action_switch_home(self) -> None:
         while len(self.screen_stack) > 1:
             self.pop_screen()
+        # Push a fresh HomeScreen
+        asyncio.create_task(self._push_fresh_home())
 
     def action_switch_pipeline(self) -> None:
         self.push_screen(PipelineScreen(self._state))

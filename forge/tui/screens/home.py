@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.binding import Binding
 from textual.widgets import Static, TextArea
-from textual.containers import Vertical, Center
+from textual.containers import Vertical, Horizontal, Center
 from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
@@ -73,17 +73,28 @@ class HomeScreen(Screen):
         align: center middle;
     }
     #home-container {
-        width: 80;
+        width: 110;
         height: auto;
         max-height: 100%;
     }
-    #prompt-input {
+    #input-row {
+        height: auto;
         margin: 1 2;
-        height: 6;
+    }
+    #prompt-input {
+        height: 10;
         border: tall #30363d;
+        width: 1fr;
     }
     #prompt-input:focus {
         border: tall #58a6ff;
+    }
+    #shortcuts-panel {
+        width: 30;
+        height: 10;
+        border: tall #30363d;
+        margin-left: 1;
+        padding: 0 1;
     }
     #recent-label {
         margin: 1 2 0 2;
@@ -111,11 +122,22 @@ class HomeScreen(Screen):
         self._recent_pipelines = recent_pipelines or []
 
     def compose(self) -> ComposeResult:
+        shortcuts_text = (
+            "[#D8DEE9 bold]Shortcuts[/]\n"
+            "\n"
+            "[#5FA8FF]Ctrl+S[/]  [#A9C7E8]Submit pipeline[/]\n"
+            "[#5FA8FF]Ctrl+U[/]  [#A9C7E8]Clear input[/]\n"
+            "[#5FA8FF]Tab[/]     [#A9C7E8]Switch focus[/]\n"
+            "[#5FA8FF]Ctrl+P[/]  [#A9C7E8]Command palette[/]\n"
+            "[#5FA8FF]Esc[/]     [#A9C7E8]Quit[/]\n"
+            "[#5FA8FF]?[/]       [#A9C7E8]Help[/]"
+        )
         with Center():
             with Vertical(id="home-container"):
                 yield ForgeLogo()
-                yield PromptTextArea(id="prompt-input")
-                yield Static("[#8b949e]Ctrl+S to submit[/]", id="submit-hint")
+                with Horizontal(id="input-row"):
+                    yield PromptTextArea(id="prompt-input")
+                    yield Static(shortcuts_text, id="shortcuts-panel")
                 yield Static("Recent pipelines", id="recent-label")
                 yield PipelineList()
 
