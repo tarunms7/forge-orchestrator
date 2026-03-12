@@ -182,14 +182,24 @@ class AgentOutput(Widget):
         self._typing_frame += 1
         try:
             content = self.query_one("#agent-content", Static)
-            content.update(
-                format_output(
-                    self._lines,
-                    self._spinner_frame,
-                    streaming=True,
-                    typing_frame=self._typing_frame,
+            if self._unified_entries:
+                content.update(
+                    format_unified_output(
+                        self._unified_entries,
+                        self._spinner_frame,
+                        streaming=True,
+                        typing_frame=self._typing_frame,
+                    )
                 )
-            )
+            else:
+                content.update(
+                    format_output(
+                        self._lines,
+                        self._spinner_frame,
+                        streaming=True,
+                        typing_frame=self._typing_frame,
+                    )
+                )
         except Exception:
             pass
 
@@ -218,14 +228,24 @@ class AgentOutput(Widget):
         # Refresh the content widget to show/hide the indicator
         try:
             content = self.query_one("#agent-content", Static)
-            content.update(
-                format_output(
-                    self._lines,
-                    self._spinner_frame,
-                    streaming=self._streaming,
-                    typing_frame=self._typing_frame,
+            if self._unified_entries:
+                content.update(
+                    format_unified_output(
+                        self._unified_entries,
+                        self._spinner_frame,
+                        streaming=self._streaming,
+                        typing_frame=self._typing_frame,
+                    )
                 )
-            )
+            else:
+                content.update(
+                    format_output(
+                        self._lines,
+                        self._spinner_frame,
+                        streaming=self._streaming,
+                        typing_frame=self._typing_frame,
+                    )
+                )
         except Exception:
             pass  # Not yet composed
 
@@ -349,6 +369,7 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
+        self._lines = []  # Clear line-based data when switching to unified mode
         self.set_streaming(False)
         try:
             self.query_one("#agent-header", Static).update(
@@ -397,13 +418,19 @@ class AgentOutput(Widget):
     def clear_error_detail(self) -> None:
         """Exit error detail view mode and return to normal output rendering."""
         self._error_mode = False
-        # Re-render normal view with current data
+        # Re-render normal view — use unified mode if we have unified entries,
+        # otherwise fall back to line-based rendering
         try:
             self.query_one("#agent-header", Static).update(
                 format_header(self._task_id, self._title, self._state)
             )
-            self.query_one("#agent-content", Static).update(
-                format_output(self._lines, self._spinner_frame)
-            )
+            if self._unified_entries:
+                self.query_one("#agent-content", Static).update(
+                    format_unified_output(self._unified_entries, self._spinner_frame)
+                )
+            else:
+                self.query_one("#agent-content", Static).update(
+                    format_output(self._lines, self._spinner_frame)
+                )
         except Exception:
             pass  # Not yet composed

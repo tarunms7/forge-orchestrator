@@ -181,6 +181,11 @@ class TuiState:
         self.error = data.get("error", "Unknown error")
         self._notify("error")
 
+    def _on_branch_resolved(self, data: dict) -> None:
+        branch = data.get("branch", "")
+        if branch:
+            self.pipeline_branch = branch
+
     def _on_task_question(self, data: dict) -> None:
         task_id = data.get("task_id")
         if task_id and task_id in self.tasks:
@@ -427,6 +432,7 @@ class TuiState:
         "pipeline:plan_ready": _on_plan_ready,
         "pipeline:cost_update": _on_cost_update,
         "pipeline:error": _on_pipeline_error,
+        "pipeline:branch_resolved": _on_branch_resolved,
         "task:state_changed": _on_task_state_changed,
         "task:agent_output": _on_agent_output,
         "task:cost_update": _on_task_cost_update,

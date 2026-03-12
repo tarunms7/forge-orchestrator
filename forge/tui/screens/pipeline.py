@@ -402,7 +402,7 @@ class PipelineScreen(Screen):
                 # Streaming active — only update header, not content/scroll
                 agent_output.update_header(tid, task.get("title"), task.get("state"))
             else:
-                agent_output.clear_error_detail()
+                agent_output._error_mode = False  # Exit error mode without double-render
                 agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
 
                 # Auto-switch to chat view when the selected task is awaiting input

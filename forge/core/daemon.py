@@ -460,6 +460,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             pipeline_branch = _sanitize_branch_name(description) if description else f"forge/pipeline-{pid[:8]}"
         # Persist the final computed branch name so the PR creation endpoint can use it
         await db.set_pipeline_branch_name(pid, pipeline_branch)
+        # Notify TUI so diff views can resolve the branch immediately
+        await self._emit("pipeline:branch_resolved", {"branch": pipeline_branch}, db=db, pipeline_id=pid)
 
         # Isolated pipeline branch — code reaches main only through a PR.
         # On resume/retry the branch already exists and may contain merged
