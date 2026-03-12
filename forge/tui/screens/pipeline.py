@@ -234,6 +234,8 @@ class PipelineScreen(Screen):
         self._diff_cache: dict[str, str] = {}  # task_id -> diff text
         self._copy_overlay: CopyOverlay | None = None
         self._review_notified_tasks: set[str] = set()  # tasks already notified for review
+        self._agent_output_len: dict[str, int] = {}  # tid -> last seen len of agent_output[tid]
+        self._review_output_len: dict[str, int] = {}  # tid -> last seen len of review_output[tid]
 
     # ------------------------------------------------------------------
     # Composition
@@ -318,7 +320,7 @@ class PipelineScreen(Screen):
                 return
 
     def _handle_agent_output_fast(self) -> None:
-        """Fast path for agent_output: append to unified log in AgentOutput widget."""
+        """Fast path for agent_output: append only NEW lines to unified log."""
         state = self._state
         tid = state.selected_task_id
         if not tid:
@@ -326,14 +328,21 @@ class PipelineScreen(Screen):
         lines = state.agent_output.get(tid, [])
         if not lines:
             return
+        prev_len = self._agent_output_len.get(tid, 0)
+        cur_len = len(lines)
+        if cur_len <= prev_len:
+            return  # No new lines for this task — event was for a different task
+        self._agent_output_len[tid] = cur_len
         agent_output = self.query_one(AgentOutput)
         if tid not in self._agent_streaming_tasks:
             self._agent_streaming_tasks.add(tid)
             agent_output.set_streaming(True)
-        agent_output.append_unified("agent", lines[-1])
+        # Append only the new lines
+        for line in lines[prev_len:]:
+            agent_output.append_unified("agent", line)
 
     def _handle_review_output_fast(self) -> None:
-        """Fast path for review_output: append to unified log in AgentOutput widget."""
+        """Fast path for review_output: append only NEW lines to unified log."""
         state = self._state
         tid = state.selected_task_id
         if not tid:
@@ -341,11 +350,17 @@ class PipelineScreen(Screen):
         lines = state.review_output.get(tid, [])
         if not lines:
             return
+        prev_len = self._review_output_len.get(tid, 0)
+        cur_len = len(lines)
+        if cur_len <= prev_len:
+            return  # No new lines for this task
+        self._review_output_len[tid] = cur_len
         agent_output = self.query_one(AgentOutput)
         if tid not in self._review_streaming_tasks:
             self._review_streaming_tasks.add(tid)
             agent_output.set_streaming(True)
-        agent_output.append_unified("review", lines[-1])
+        for line in lines[prev_len:]:
+            agent_output.append_unified("review", line)
 
     def _update_streaming_lifecycle(self) -> None:
         """Stop streaming indicators for tasks that are done/error."""
@@ -392,8 +407,10 @@ class PipelineScreen(Screen):
             if task.get("state") == "error":
                 agent_output.render_error_detail(tid, task, state.agent_output.get(tid, []))
             elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
-                # Streaming active — only update header, not content/scroll
-                agent_output.update_header(tid, task.get("title"), task.get("state"))
+                # Streaming active — sync unified entries from authoritative state
+                # (needed on task switch so we see the full log, not stale data)
+                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
+                agent_output.set_streaming(True)
             else:
                 agent_output._error_mode = False  # Exit error mode without double-render
                 agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
@@ -638,8 +655,19 @@ class PipelineScreen(Screen):
 
     def action_copy_mode(self) -> None:
         """Enter copy mode — mount CopyOverlay on AgentOutput."""
+        # Guard: dismiss existing overlay first
+        if self._copy_overlay is not None:
+            self._dismiss_copy_overlay()
+            return  # Toggle off
         agent_output = self.query_one(AgentOutput)
-        lines = list(agent_output._lines)
+        # Use unified entries if available, fall back to _lines
+        if agent_output._unified_entries:
+            lines = [line for _, line in agent_output._unified_entries]
+        else:
+            lines = list(agent_output._lines)
+        if not lines:
+            self.app.notify("No output to copy", timeout=3)
+            return
         self._copy_overlay = CopyOverlay(lines=lines)
         try:
             self.mount(self._copy_overlay)
@@ -651,7 +679,10 @@ class PipelineScreen(Screen):
         """Instant copy of all visible output to clipboard."""
         from forge.tui.widgets.copy_overlay import copy_to_clipboard
         agent_output = self.query_one(AgentOutput)
-        lines = list(agent_output._lines)
+        if agent_output._unified_entries:
+            lines = [line for _, line in agent_output._unified_entries]
+        else:
+            lines = list(agent_output._lines)
         if not lines:
             self.app.notify("No output to copy", timeout=3)
             return

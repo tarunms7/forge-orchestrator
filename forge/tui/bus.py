@@ -36,6 +36,7 @@ TUI_EVENT_TYPES = [
     "pipeline:worktrees_cleaned",
     "pipeline:preflight_failed",
     "pipeline:error",
+    "pipeline:branch_resolved",
     "task:state_changed",
     "task:agent_output",
     "task:files_changed",

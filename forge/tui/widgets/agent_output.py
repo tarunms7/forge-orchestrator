@@ -116,6 +116,8 @@ def format_unified_output(
 
         if source_type == "gate":
             parts.append(f"  [#79c0ff]{line}[/]")
+        elif source_type == "review":
+            parts.append(f"[#a371f7]{line}[/]")
         else:
             parts.append(line)
 
