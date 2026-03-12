@@ -1,9 +1,8 @@
 """Tests for FollowUpInput widget."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 from forge.tui.widgets.followup_input import (
     FollowUpInput,
