@@ -210,7 +210,7 @@ def test_format_error_detail_basic():
     assert "Last output" in result
     assert "line1" in result
     assert "line2" in result
-    assert "[r] retry" in result
+    assert "[R] retry" in result
     assert "[s] skip" in result
     assert "[Esc] dismiss" in result
 

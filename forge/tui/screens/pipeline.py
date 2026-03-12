@@ -204,7 +204,8 @@ class PipelineScreen(Screen):
         Binding("c", "copy_mode", "Copy", show=True),
         Binding("t", "view_chat", "Chat", show=True),
         Binding("d", "view_diff", "Diff", show=True),
-        Binding("r", "retry_task", "Retry", show=False),
+        Binding("r", "open_review", "Review", show=True),
+        Binding("R", "retry_task", "Retry", show=False),
         Binding("s", "skip_task", "Skip", show=False),
         Binding("C", "copy_all", "Copy All", show=False),
         Binding("escape", "pop_screen", "Back", show=False),
@@ -228,6 +229,7 @@ class PipelineScreen(Screen):
         self._review_streaming_tasks: set[str] = set()  # tasks with active review streaming
         self._diff_cache: dict[str, str] = {}  # task_id -> diff text
         self._copy_overlay: CopyOverlay | None = None
+        self._review_notified_tasks: set[str] = set()  # tasks already notified for review
 
     # ------------------------------------------------------------------
     # Composition
@@ -284,44 +286,30 @@ class PipelineScreen(Screen):
             self._update_streaming_lifecycle()
             self._refresh_all()
 
-            # Feature 7: auto-transition to review screen
+            # Notify user when task enters review (press 'r' to open)
             if field == "tasks" and not self._read_only:
-                self._check_review_auto_transition()
+                self._check_review_notification()
 
         if field == "error":
             error = self._state.error
             if error:
                 self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
 
-    def _check_review_auto_transition(self) -> None:
-        """Auto-select task entering review and push ReviewScreen."""
+    def _check_review_notification(self) -> None:
+        """Notify user when a task enters review — they can press 'r' to open ReviewScreen."""
         state = self._state
         for tid in state.task_order:
             if tid not in state.tasks:
                 continue
             task = state.tasks[tid]
-            if task.get("state") == "in_review":
-                # Guard: check if user is typing in chat
-                try:
-                    chat_input = self.query_one("#chat-input")
-                    if chat_input.has_focus:
-                        title = task.get("title", tid)
-                        self.app.notify(
-                            f"Task {title} entered review — finish typing to auto-open",
-                            timeout=5,
-                        )
-                        return
-                except Exception:
-                    pass
-
-                # Auto-select and push review
+            if task.get("state") == "in_review" and tid not in self._review_notified_tasks:
+                self._review_notified_tasks.add(tid)
+                title = task.get("title", tid)
                 state.selected_task_id = tid
-                self._refresh_all()
-                try:
-                    from forge.tui.screens.review import ReviewScreen
-                    self.app.push_screen(ReviewScreen(state))
-                except Exception:
-                    logger.debug("Failed to push ReviewScreen", exc_info=True)
+                self.app.notify(
+                    f"Task {title} ready for review — press [bold]r[/bold] to open",
+                    timeout=8,
+                )
                 return
 
     def _handle_agent_output_fast(self) -> None:
@@ -677,6 +665,20 @@ class PipelineScreen(Screen):
                 "Clipboard unavailable — install xclip or xsel",
                 severity="warning", timeout=5,
             )
+
+    def action_open_review(self) -> None:
+        """Open ReviewScreen for the selected task."""
+        if self._read_only:
+            return
+        tid = self._state.selected_task_id
+        if not tid or tid not in self._state.tasks:
+            self.app.notify("No task selected", timeout=3)
+            return
+        try:
+            from forge.tui.screens.review import ReviewScreen
+            self.app.push_screen(ReviewScreen(self._state))
+        except Exception:
+            logger.debug("Failed to push ReviewScreen", exc_info=True)
 
     def action_retry_task(self) -> None:
         """Retry the selected task (only active for error-state tasks)."""

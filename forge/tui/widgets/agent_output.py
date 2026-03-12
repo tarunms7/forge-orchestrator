@@ -60,7 +60,7 @@ def format_error_detail(task_id: str, task: dict, output_lines: list[str]) -> st
         parts.append("[#8b949e]No output captured[/]")
     # Action bar
     parts.append("")
-    parts.append("[#8b949e]\\[r] retry  \\[s] skip  \\[Esc] dismiss[/]")
+    parts.append("[#8b949e]\\[R] retry  \\[s] skip  \\[Esc] dismiss[/]")
     return "\n".join(parts)
 
 

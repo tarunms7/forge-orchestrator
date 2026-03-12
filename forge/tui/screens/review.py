@@ -172,9 +172,15 @@ class ReviewScreen(Screen):
 
     async def _load_diff(self, tid: str) -> None:
         """Load diff on-demand from git."""
-        branch = await self._resolve_branch()
+        # Retry branch resolution — daemon may still be computing it
+        branch = ""
+        for _attempt in range(3):
+            branch = await self._resolve_branch()
+            if branch:
+                break
+            await asyncio.sleep(1.0)
         if not branch:
-            diff = "No pipeline branch available — run 'forge doctor' to check git setup."
+            diff = "No pipeline branch available yet — waiting for execution to start.\nPress Esc to go back, then try again with [bold]r[/bold]."
         else:
             try:
                 proc = await asyncio.create_subprocess_exec(
