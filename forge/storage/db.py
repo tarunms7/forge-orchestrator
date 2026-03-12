@@ -7,6 +7,7 @@ pipelines, tasks, and agents.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -215,6 +216,17 @@ class Database:
             await conn.run_sync(self._add_missing_columns)
 
     @staticmethod
+    def _validate_identifier(name: str) -> str:
+        """Validate that a SQL identifier contains only safe characters.
+
+        Raises ValueError if the name contains anything other than
+        alphanumeric characters and underscores.
+        """
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name):
+            raise ValueError(f"Invalid SQL identifier: {name!r}")
+        return name
+
+    @staticmethod
     def _add_missing_columns(connection) -> None:
         """Add columns that exist in the ORM model but not in the DB table."""
         from sqlalchemy import inspect as sa_inspect, text
@@ -222,11 +234,15 @@ class Database:
         inspector = sa_inspect(connection)
         for table_cls in _ALL_MODELS:
             table_name = table_cls.__tablename__
+            # Validate table name from ORM metadata against injection
+            Database._validate_identifier(table_name)
             if not inspector.has_table(table_name):
                 continue
             existing = {col["name"] for col in inspector.get_columns(table_name)}
             for attr in table_cls.__table__.columns:
                 if attr.name not in existing:
+                    # Validate column name from ORM metadata against injection
+                    Database._validate_identifier(attr.name)
                     col_type = attr.type.compile(dialect=connection.dialect)
                     nullable = "NULL" if attr.nullable else "NOT NULL"
                     default = ""

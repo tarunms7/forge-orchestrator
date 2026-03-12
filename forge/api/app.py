@@ -8,8 +8,10 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(
@@ -71,6 +73,8 @@ def create_app(
     app.state.forge_db = db
     app.state.pending_graphs = {}
     app.state.pending_graphs_lock = asyncio.Lock()
+    app.state.rate_limit_store: dict[str, list[float]] = {}
+    app.state.rate_limit_last_cleanup: float = 0.0
 
     # ── WebSocket connection manager ─────────────────────────────────
     from forge.api.ws.manager import ConnectionManager
@@ -94,6 +98,17 @@ def create_app(
     # CORS -- configurable via FORGE_CORS_ORIGINS env var
     cors_origins_str = os.environ.get("FORGE_CORS_ORIGINS", "http://localhost:3000")
     cors_origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()]
+
+    # Reject wildcard '*' when credentials are enabled (browsers block this)
+    if "*" in cors_origins:
+        logger.warning(
+            "CORS origin '*' is not allowed with allow_credentials=True — "
+            "removing wildcard. Set specific origins via FORGE_CORS_ORIGINS."
+        )
+        cors_origins = [o for o in cors_origins if o != "*"]
+        if not cors_origins:
+            cors_origins = ["http://localhost:3000"]
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -101,6 +116,21 @@ def create_app(
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    # ── Security headers middleware ────────────────────────────────────
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next) -> Response:  # noqa: ANN001
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+            "frame-ancestors 'none'"
+        )
+        return response
 
     # ── GitHub webhook settings (from env) ──────────────────────────
     from forge.config.settings import ForgeSettings as _ForgeSettings

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -101,8 +102,12 @@ class RemoteExecutor(Executor):
         }
         if self.config.key_path:
             connect_kwargs["client_keys"] = [self.config.key_path]
-        if self.config.known_hosts_path is not None:
-            connect_kwargs["known_hosts"] = self.config.known_hosts_path
+        # Always set known_hosts — never pass None (skips host key verification).
+        # Use the explicit path if provided, otherwise fall back to system default.
+        known_hosts = self.config.known_hosts_path
+        if known_hosts is None:
+            known_hosts = os.path.expanduser("~/.ssh/known_hosts")
+        connect_kwargs["known_hosts"] = known_hosts
 
         async with asyncssh.connect(**connect_kwargs) as conn:
             result = await conn.run("claude --version", check=False)

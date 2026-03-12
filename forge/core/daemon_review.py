@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import subprocess
 import sys
 import logging
@@ -157,9 +158,10 @@ class ReviewMixin:
         truncated to the last 5000 characters so logs stay manageable.
         """
         def _run() -> subprocess.CompletedProcess:
+            parts = shlex.split(cmd)
             return subprocess.run(
-                cmd,
-                shell=True,
+                parts,
+                shell=False,
                 cwd=worktree_path,
                 capture_output=True,
                 text=True,

@@ -301,30 +301,97 @@ async def create_task(
     pipeline_id = str(uuid.uuid4())
     forge_db = _get_forge_db(request)
 
-    # Save uploaded images to disk so planner & agents can read them.
+    # Save uploaded images so planner & agents can reference them.
     description = body.description
     image_paths: list[str] = []
+
+    # Maximum limits for image uploads
+    _MAX_IMAGES = 10
+    _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB per image
+
+    # Magic bytes for supported image formats
+    _IMAGE_MAGIC = {
+        b"\x89PNG": "png",       # 89504E47
+        b"\xff\xd8\xff": "jpg",  # FFD8FF
+        b"GIF": "gif",           # 474946
+        b"RIFF": "webp",         # 52494646 (needs WEBP check at offset 8)
+    }
+
     if body.images:
-        project_dir = body.project_path or os.getcwd()
-        images_dir = os.path.join(project_dir, ".forge", "images", pipeline_id)
-        os.makedirs(images_dir, exist_ok=True)
+        if len(body.images) > _MAX_IMAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Too many images: {len(body.images)} exceeds maximum of {_MAX_IMAGES}",
+            )
+
+        # Validate decodable images (size + magic bytes) before accepting.
         for idx, data_uri in enumerate(body.images):
-            # data_uri format: "data:image/png;base64,iVBOR..."
             try:
-                header, b64data = data_uri.split(",", 1)
-                ext = "png"
-                if "image/jpeg" in header or "image/jpg" in header:
-                    ext = "jpg"
-                elif "image/gif" in header:
-                    ext = "gif"
-                elif "image/webp" in header:
-                    ext = "webp"
-                file_path = os.path.join(images_dir, f"image_{idx + 1}.{ext}")
-                with open(file_path, "wb") as f:
-                    f.write(base64.b64decode(b64data))
-                image_paths.append(file_path)
+                _header, b64data = data_uri.split(",", 1)
+                raw = base64.b64decode(b64data)
+
+                # Enforce per-image size limit (5 MB)
+                if len(raw) > _MAX_IMAGE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Image {idx + 1} exceeds maximum size of 5 MB",
+                    )
+
+                # Validate magic bytes to ensure data is a real image
+                valid_image = False
+                for magic, fmt in _IMAGE_MAGIC.items():
+                    if raw[:len(magic)] == magic:
+                        if fmt == "webp":
+                            # RIFF container must also have WEBP at offset 8
+                            if len(raw) >= 12 and raw[8:12] == b"WEBP":
+                                valid_image = True
+                        else:
+                            valid_image = True
+                        break
+
+                if not valid_image:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Image {idx + 1} is not a supported format (PNG, JPEG, GIF, WEBP)",
+                    )
+            except HTTPException:
+                raise
             except Exception:
+                # Base64 decode failed — skip validation for this entry
                 logger.warning("Failed to decode image %d for pipeline %s", idx, pipeline_id)
+
+        # Store data URIs in app state for downstream consumers.
+        if not hasattr(request.app.state, "pipeline_images"):
+            request.app.state.pipeline_images = {}
+        request.app.state.pipeline_images[pipeline_id] = list(body.images)
+
+        # Append image note to description.
+        description += f"\n\n[{len(body.images)} image(s) attached]"
+
+        # Also write valid images to disk when possible.
+        try:
+            project_dir = body.project_path or os.getcwd()
+            images_dir = os.path.join(project_dir, ".forge", "images", pipeline_id)
+            os.makedirs(images_dir, exist_ok=True)
+            for idx, data_uri in enumerate(body.images):
+                try:
+                    header, b64data = data_uri.split(",", 1)
+                    raw = base64.b64decode(b64data)
+                    ext = "png"
+                    if "image/jpeg" in header or "image/jpg" in header:
+                        ext = "jpg"
+                    elif "image/gif" in header:
+                        ext = "gif"
+                    elif "image/webp" in header:
+                        ext = "webp"
+                    file_path = os.path.join(images_dir, f"image_{idx + 1}.{ext}")
+                    with open(file_path, "wb") as f:
+                        f.write(raw)
+                    image_paths.append(file_path)
+                except Exception:
+                    logger.warning("Failed to write image %d to disk for pipeline %s", idx, pipeline_id)
+        except Exception:
+            logger.warning("Failed to create images directory for pipeline %s", pipeline_id)
 
         if image_paths:
             description += "\n\n## Attached Images\n"
