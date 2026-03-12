@@ -6,7 +6,6 @@ from forge.tui.widgets.search_overlay import (
     SearchOverlay,
     apply_highlights,
     _HIGHLIGHT_OPEN,
-    _HIGHLIGHT_CLOSE,
 )
 
 
