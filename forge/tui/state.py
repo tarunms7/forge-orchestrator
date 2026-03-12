@@ -39,6 +39,7 @@ class TuiState:
         self.pr_url: str | None = None
         self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
         self.review_output: dict[str, list[str]] = defaultdict(list)  # task_id → streaming LLM review lines
+        self.unified_log: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
         self.pipeline_branch: str = ""  # branch where task work is merged
 
@@ -123,6 +124,11 @@ class TuiState:
         lines.append(line)
         if len(lines) > self._max_output_lines:
             del lines[: len(lines) - self._max_output_lines]
+        # Unified log
+        ulog = self.unified_log[tid]
+        ulog.append(("agent", line))
+        if len(ulog) > self._max_output_lines:
+            del ulog[: len(ulog) - self._max_output_lines]
         if tid:
             self.streaming_task_ids.add(tid)
         self._notify("agent_output")
@@ -210,6 +216,11 @@ class TuiState:
         gate = data.get("gate")
         if task_id and gate:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "passed", "details": data.get("details")}
+            # Unified log
+            _GATE_LABELS = {"gate0_build": "\U0001f528 Build", "gate1_lint": "\U0001f4cf Lint",
+                            "gate1_5_test": "\U0001f9ea Tests", "gate2_llm_review": "\U0001f916 LLM Review"}
+            gate_label = _GATE_LABELS.get(gate, gate)
+            self.unified_log[task_id].append(("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}"))
             self._notify("tasks")
 
     def _on_review_gate_failed(self, data: dict) -> None:
@@ -217,6 +228,11 @@ class TuiState:
         gate = data.get("gate")
         if task_id and gate:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "failed", "details": data.get("details")}
+            # Unified log
+            _GATE_LABELS = {"gate0_build": "\U0001f528 Build", "gate1_lint": "\U0001f4cf Lint",
+                            "gate1_5_test": "\U0001f9ea Tests", "gate2_llm_review": "\U0001f916 LLM Review"}
+            gate_label = _GATE_LABELS.get(gate, gate)
+            self.unified_log[task_id].append(("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}"))
             self._notify("tasks")
 
     def _on_review_llm_output(self, data: dict) -> None:
@@ -227,6 +243,11 @@ class TuiState:
             lines.append(line)
             if len(lines) > self._max_output_lines:
                 del lines[: len(lines) - self._max_output_lines]
+            # Unified log
+            ulog = self.unified_log[task_id]
+            ulog.append(("review", line))
+            if len(ulog) > self._max_output_lines:
+                del ulog[: len(ulog) - self._max_output_lines]
             self.streaming_task_ids.add(task_id)
             self._notify("review_output")
 
@@ -281,6 +302,7 @@ class TuiState:
         self.tasks.clear()
         self.task_order.clear()
         self.agent_output.clear()
+        self.unified_log.clear()
         self.planner_output.clear()
         self.contracts_output.clear()
         self.contracts_ready = False
@@ -361,6 +383,7 @@ class TuiState:
         self.selected_task_id = None
         self.agent_output.clear()
         self.review_output.clear()
+        self.unified_log.clear()
         self.planner_output.clear()
         self.review_gates.clear()
         self.streaming_task_ids.clear()

@@ -553,3 +553,75 @@ def test_all_new_events_in_event_map():
     ]
     for evt in new_events:
         assert evt in TuiState._EVENT_MAP, f"{evt} missing from _EVENT_MAP"
+
+
+# --- unified_log ---
+
+def test_initial_state_has_unified_log():
+    state = TuiState()
+    assert state.unified_log == {}
+
+
+def test_agent_output_appends_to_unified_log():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "Creating file..."})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "Done."})
+    assert state.unified_log["t1"] == [("agent", "Creating file..."), ("agent", "Done.")]
+
+
+def test_review_llm_output_appends_to_unified_log():
+    state = TuiState()
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Checking scope..."})
+    assert state.unified_log["t1"] == [("review", "Checking scope...")]
+
+
+def test_unified_log_interleaves_agent_and_review():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "agent line"})
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "review line"})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "agent line 2"})
+    assert state.unified_log["t1"] == [
+        ("agent", "agent line"),
+        ("review", "review line"),
+        ("agent", "agent line 2"),
+    ]
+
+
+def test_unified_log_ring_buffer():
+    state = TuiState(max_output_lines=3)
+    for i in range(5):
+        state.apply_event("task:agent_output", {"task_id": "t1", "line": f"line {i}"})
+    assert len(state.unified_log["t1"]) == 3
+    assert state.unified_log["t1"][0] == ("agent", "line 2")
+
+
+def test_review_gate_passed_appends_to_unified_log():
+    state = _make_state_with_task("t1")
+    state.apply_event("review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "passed"})
+    assert len(state.unified_log["t1"]) == 1
+    assert state.unified_log["t1"][0][0] == "gate"
+    assert "Build" in state.unified_log["t1"][0][1]
+    assert "\u2713" in state.unified_log["t1"][0][1]
+
+
+def test_review_gate_failed_appends_to_unified_log():
+    state = _make_state_with_task("t1")
+    state.apply_event("review:gate_failed", {"task_id": "t1", "gate": "gate1_lint", "details": "3 errors"})
+    assert len(state.unified_log["t1"]) == 1
+    assert state.unified_log["t1"][0][0] == "gate"
+    assert "Lint" in state.unified_log["t1"][0][1]
+    assert "\u2717" in state.unified_log["t1"][0][1]
+
+
+def test_reset_clears_unified_log():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
+    state.reset()
+    assert state.unified_log == {}
+
+
+def test_restarted_clears_unified_log():
+    state = _make_state_with_task("t1")
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
+    state.apply_event("pipeline:restarted", {})
+    assert state.unified_log == {}
