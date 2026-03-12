@@ -19,6 +19,7 @@ from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.copy_overlay import CopyOverlay
+from forge.tui.widgets.search_overlay import SearchOverlay
 
 logger = logging.getLogger("forge.tui.screens.pipeline")
 
@@ -208,6 +209,9 @@ class PipelineScreen(Screen):
         Binding("R", "retry_task", "Retry", show=False),
         Binding("s", "skip_task", "Skip", show=False),
         Binding("C", "copy_all", "Copy All", show=False),
+        Binding("slash", "toggle_search", "Search", show=False),
+        Binding("n", "search_next", "Next match", show=False),
+        Binding("N", "search_prev", "Prev match", show=False),
         Binding("escape", "pop_screen", "Back", show=False),
         Binding("1", "jump_task(1)", show=False),
         Binding("2", "jump_task(2)", show=False),
@@ -246,6 +250,7 @@ class PipelineScreen(Screen):
                 yield AgentOutput()
                 yield ChatThread()
                 yield DiffViewer()
+        yield SearchOverlay()
         yield PipelineProgress()
 
     def on_mount(self) -> None:
@@ -717,3 +722,54 @@ class PipelineScreen(Screen):
         if 0 <= idx < len(self._state.task_order):
             self._state.selected_task_id = self._state.task_order[idx]
             self._refresh_all()
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def action_toggle_search(self) -> None:
+        """Show the search overlay."""
+        try:
+            self.query_one(SearchOverlay).show()
+        except Exception:
+            logger.debug("Failed to show SearchOverlay", exc_info=True)
+
+    def action_search_next(self) -> None:
+        """Navigate to next search match."""
+        try:
+            self.query_one(SearchOverlay).navigate(+1)
+        except Exception:
+            pass
+
+    def action_search_prev(self) -> None:
+        """Navigate to previous search match."""
+        try:
+            self.query_one(SearchOverlay).navigate(-1)
+        except Exception:
+            pass
+
+    def on_search_overlay_search_changed(self, event: SearchOverlay.SearchChanged) -> None:
+        """Apply search highlights to the active view widget."""
+        count = 0
+        try:
+            if self._active_view == "output":
+                count = self.query_one(AgentOutput).set_search_highlights(event.pattern)
+            elif self._active_view == "diff":
+                count = self.query_one(DiffViewer).set_search_highlights(event.pattern)
+        except Exception:
+            logger.debug("Failed to apply search highlights", exc_info=True)
+        try:
+            self.query_one(SearchOverlay).update_match_count(count)
+        except Exception:
+            pass
+
+    def on_search_overlay_search_dismissed(self, event: SearchOverlay.SearchDismissed) -> None:
+        """Clear highlights when search is fully dismissed."""
+        try:
+            self.query_one(AgentOutput).set_search_highlights(None)
+        except Exception:
+            pass
+        try:
+            self.query_one(DiffViewer).set_search_highlights(None)
+        except Exception:
+            pass

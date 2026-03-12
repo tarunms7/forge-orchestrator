@@ -7,10 +7,11 @@ import asyncio
 from textual.screen import Screen
 from textual.binding import Binding
 from textual.widgets import Static, Footer
-from textual.containers import Vertical, Center
+from textual.containers import Vertical, VerticalScroll, Center
 from textual.message import Message
 
 from forge.tui.widgets.diff_viewer import DiffViewer
+from forge.tui.widgets.followup_input import FollowUpInput
 
 
 def format_summary_stats(stats: dict) -> str:
@@ -74,11 +75,22 @@ class FinalApprovalScreen(Screen):
     class ReRun(Message):
         pass
 
+    class FollowUp(Message):
+        """Emitted when user submits a follow-up prompt."""
+
+        def __init__(self, prompt: str, branch: str, files_changed: int) -> None:
+            self.prompt = prompt
+            self.branch = branch
+            self.files_changed = files_changed
+            super().__init__()
+
     BINDINGS = [
         Binding("enter", "create_pr", "Create PR", show=True, priority=True),
         Binding("d", "view_diff", "View Diff", show=True),
         Binding("r", "rerun", "Re-run Failed", show=True),
+        Binding("f", "focus_followup", "Follow Up", show=True),
         Binding("n", "new_task", "New Task", show=True),
+        Binding("ctrl+s", "submit_followup", "Submit Follow-up", show=False),
         Binding("escape", "app.pop_screen", "Cancel", show=True),
     ]
 
@@ -100,14 +112,23 @@ class FinalApprovalScreen(Screen):
         self._pipeline_branch = pipeline_branch
 
     def compose(self):
-        with Center():
-            with Vertical(id="approval-container"):
-                yield Static("[bold #58a6ff]Pipeline Complete — Final Approval[/]\n", id="header")
-                yield Static(format_summary_stats(self._stats), id="stats")
-                yield Static("", id="pr-url")
-                yield Static("\n[bold]Tasks:[/]", id="tasks-header")
-                yield Static(format_task_table(self._tasks), id="task-table")
-                yield Static("\n[#8b949e]Enter: create PR  d: diff  r: re-run  n: new task  Esc: cancel[/]")
+        files_count = self._stats.get("files", 0)
+        with VerticalScroll():
+            with Center():
+                with Vertical(id="approval-container"):
+                    yield Static("[bold #58a6ff]Pipeline Complete — Final Approval[/]\n", id="header")
+                    yield Static(format_summary_stats(self._stats), id="stats")
+                    yield Static("", id="pr-url")
+                    yield Static("\n[bold]Tasks:[/]", id="tasks-header")
+                    yield Static(format_task_table(self._tasks), id="task-table")
+                    yield Static(
+                        "\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
+                        "f: follow up  n: new task  Esc: cancel[/]"
+                    )
+                    yield FollowUpInput(
+                        branch=self._pipeline_branch,
+                        files_changed=files_count,
+                    )
         yield Footer()
 
     def show_pr_url(self, url: str) -> None:
@@ -127,6 +148,28 @@ class FinalApprovalScreen(Screen):
 
     def action_rerun(self) -> None:
         self.post_message(self.ReRun())
+
+    def action_focus_followup(self) -> None:
+        """Focus the follow-up input area."""
+        try:
+            followup = self.query_one(FollowUpInput)
+            followup.focus_input()
+        except Exception:
+            pass
+
+    def action_submit_followup(self) -> None:
+        """Submit the follow-up input via Ctrl+S."""
+        try:
+            followup = self.query_one(FollowUpInput)
+            followup.submit()
+        except Exception:
+            pass
+
+    def on_follow_up_input_submitted(self, event: FollowUpInput.Submitted) -> None:
+        """Relay the follow-up submission as a screen-level message."""
+        self.post_message(
+            self.FollowUp(event.prompt, event.branch, event.files_changed)
+        )
 
     def action_view_diff(self) -> None:
         if not self._pipeline_branch:
