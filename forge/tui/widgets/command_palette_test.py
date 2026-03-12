@@ -386,3 +386,29 @@ class TestCommandPaletteWidget:
 
         palette.close()
         assert not palette.has_class("visible")
+
+
+class TestClearInputAction:
+    """Tests that CommandPalette includes a 'Clear Input' action."""
+
+    def test_get_all_actions_contains_clear_input(self):
+        """get_all_actions() should include a 'Clear Input' action."""
+        actions = get_all_actions()
+        names = [a.name for a in actions]
+        assert "Clear Input" in names
+
+    def test_clear_input_action_has_required_fields(self):
+        """'Clear Input' action should have name, description, callback_name, and valid category."""
+        actions = get_all_actions()
+        clear_actions = [a for a in actions if a.name == "Clear Input"]
+        assert len(clear_actions) == 1
+        action = clear_actions[0]
+        assert action.description
+        assert action.callback_name
+        assert action.category in ("Navigation", "Pipeline", "Tools", "View")
+
+    def test_fuzzy_match_clear_returns_clear_input(self):
+        """Fuzzy matching 'clear' should return the 'Clear Input' action."""
+        actions = get_all_actions()
+        results = fuzzy_match("clear", actions)
+        assert any(a.name == "Clear Input" for a in results)

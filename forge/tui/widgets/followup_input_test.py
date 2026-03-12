@@ -206,3 +206,22 @@ def test_submitted_message_fields():
     assert msg.prompt == "do stuff"
     assert msg.branch == "main"
     assert msg.files_changed == 5
+
+
+def test_followup_input_clear_action_clears_text():
+    """action_clear_input() should clear the text area contents."""
+    widget = FollowUpInput(branch="feat/x", files_changed=3)
+    mock_ta = MagicMock()
+    widget.query_one = MagicMock(return_value=mock_ta)
+
+    widget.action_clear_input()
+
+    mock_ta.clear.assert_called_once()
+
+
+def test_followup_input_clear_action_handles_missing_widget():
+    """action_clear_input() should not raise if the text area is missing."""
+    widget = FollowUpInput()
+    widget.query_one = MagicMock(side_effect=Exception("no widget"))
+    # Should not raise
+    widget.action_clear_input()

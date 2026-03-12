@@ -316,3 +316,15 @@ class TestHelpOverlayWidget:
         overlay = HelpOverlay(screen_name="HomeScreen")
         total = overlay._total_content_lines()
         assert total > 0
+
+
+class TestClearInputHelpEntries:
+    """Tests that help data includes the 'Clear Input' keybinding entry."""
+
+    def test_home_help_contains_clear_input(self):
+        """HOME_HELP should include a 'Clear Input' action entry."""
+        assert any(e.action == "Clear Input" for e in HOME_HELP)
+
+    def test_pipeline_help_contains_clear_input(self):
+        """PIPELINE_HELP should include a 'Clear Input' action entry."""
+        assert any(e.action == "Clear Input" for e in PIPELINE_HELP)
