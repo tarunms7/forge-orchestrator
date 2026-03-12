@@ -2,6 +2,7 @@
 
 import pytest
 from textual.app import App
+from textual.widgets import Static
 
 from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
@@ -123,3 +124,64 @@ async def test_prompt_text_area_clear_input_resets_cursor():
         prompt.action_clear_input()
         await pilot.pause()
         assert prompt.cursor_location == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_home_screen_has_shortcuts_panel():
+    """HomeScreen should contain a shortcuts panel with id 'shortcuts-panel'."""
+    app = HomeTestApp()
+    async with app.run_test():
+        panel = app.screen.query_one("#shortcuts-panel", Static)
+        assert panel is not None
+
+
+@pytest.mark.asyncio
+async def test_shortcuts_panel_contains_all_shortcuts():
+    """Shortcuts panel should list all applicable keybindings."""
+    app = HomeTestApp()
+    async with app.run_test():
+        panel = app.screen.query_one("#shortcuts-panel", Static)
+        rendered = str(panel.content)
+        assert "Ctrl+S" in rendered
+        assert "Submit pipeline" in rendered
+        assert "Ctrl+U" in rendered
+        assert "Clear input" in rendered
+        assert "Tab" in rendered
+        assert "Switch focus" in rendered
+        assert "Ctrl+P" in rendered
+        assert "Command palette" in rendered
+        assert "Esc" in rendered
+        assert "Quit" in rendered
+        assert "?" in rendered
+        assert "Help" in rendered
+
+
+@pytest.mark.asyncio
+async def test_shortcuts_panel_has_color_codes():
+    """Shortcuts panel should use the specified color codes."""
+    app = HomeTestApp()
+    async with app.run_test():
+        panel = app.screen.query_one("#shortcuts-panel", Static)
+        rendered = str(panel.content)
+        assert "#D8DEE9" in rendered  # section title color
+        assert "#5FA8FF" in rendered  # shortcut key color
+        assert "#A9C7E8" in rendered  # description color
+
+
+@pytest.mark.asyncio
+async def test_home_screen_no_submit_hint():
+    """Old submit-hint Static should be removed."""
+    app = HomeTestApp()
+    async with app.run_test():
+        results = app.screen.query("#submit-hint")
+        # submit-hint should not exist, or if query returns empty
+        assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_screen_has_input_row():
+    """HomeScreen should have a Horizontal input-row container."""
+    app = HomeTestApp()
+    async with app.run_test():
+        row = app.screen.query_one("#input-row")
+        assert row is not None
