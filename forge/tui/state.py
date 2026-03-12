@@ -61,6 +61,9 @@ class TuiState:
         self.followup_tasks: dict[str, dict] = {}
         self.followup_output: dict[str, list[str]] = defaultdict(list)
 
+        # Error history: maps task_id → list of previous error messages (across retries)
+        self.error_history: dict[str, list[str]] = defaultdict(list)
+
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
@@ -120,6 +123,9 @@ class TuiState:
             self.tasks[tid]["state"] = data.get("state", self.tasks[tid]["state"])
             if "error" in data:
                 self.tasks[tid]["error"] = data["error"]
+            # Track error history: when a task transitions to 'error', preserve the message
+            if new_state == "error" and "error" in data and data["error"]:
+                self.error_history[tid].append(data["error"])
             self._notify("tasks")
         else:
             # Buffer for when task is added via plan_ready
@@ -321,6 +327,7 @@ class TuiState:
         self.preflight_error = None
         self.followup_tasks.clear()
         self.followup_output.clear()
+        self.error_history.clear()
         self.error = None
         self.total_cost_usd = 0.0
         self.phase = "planning"
@@ -404,6 +411,7 @@ class TuiState:
         self.pending_questions.clear()
         self.pr_url = None
         self._pending_state_updates.clear()
+        self.error_history.clear()
 
     @property
     def done_count(self) -> int:
