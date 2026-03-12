@@ -499,11 +499,32 @@ class PipelineScreen(Screen):
     # On-demand diff loading
     # ------------------------------------------------------------------
 
+    async def _resolve_branch(self) -> str:
+        """Resolve the pipeline branch — from state or git fallback."""
+        branch = self._state.pipeline_branch or ""
+        if branch:
+            return branch
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                name = stdout.decode().strip()
+                if name and name not in ("main", "master", "HEAD"):
+                    self._state.pipeline_branch = name
+                    return name
+        except Exception:
+            pass
+        return ""
+
     async def _load_task_diff(self, tid: str) -> str:
         """Generate diff for a task from the pipeline branch."""
         if tid in self._diff_cache:
             return self._diff_cache[tid]
-        branch = self._state.pipeline_branch or ""
+        branch = await self._resolve_branch()
         if not branch:
             return "No pipeline branch available yet."
         cmd = ["git", "diff", f"main...{branch}"]

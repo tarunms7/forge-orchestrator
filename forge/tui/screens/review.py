@@ -96,12 +96,14 @@ class ReviewScreen(Screen):
 
     def _refresh(self) -> None:
         state = self._state
-        reviewable = [
+        # Show ALL tasks so navigation always works; review actions
+        # are guarded to only operate on reviewable-state tasks.
+        all_tasks = [
             state.tasks[tid] for tid in state.task_order
-            if tid in state.tasks and state.tasks[tid]["state"] in _REVIEWABLE_STATES
+            if tid in state.tasks
         ]
         task_list = self.query_one(TaskList)
-        task_list.update_tasks(reviewable, state.selected_task_id)
+        task_list.update_tasks(all_tasks, state.selected_task_id)
 
         tid = state.selected_task_id
         if tid and tid in state.tasks:
@@ -164,11 +166,33 @@ class ReviewScreen(Screen):
             self._state.selected_task_id = reviewable[index - 1]
             self._refresh()
 
+    async def _resolve_branch(self) -> str:
+        """Resolve the pipeline branch — from state or git."""
+        branch = self._state.pipeline_branch or ""
+        if branch:
+            return branch
+        # Fallback: detect current branch from git
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                name = stdout.decode().strip()
+                if name and name not in ("main", "master", "HEAD"):
+                    self._state.pipeline_branch = name
+                    return name
+        except Exception:
+            pass
+        return ""
+
     async def _load_diff(self, tid: str) -> None:
         """Load diff on-demand from git."""
-        branch = self._state.pipeline_branch or ""
+        branch = await self._resolve_branch()
         if not branch:
-            diff = "No pipeline branch available yet."
+            diff = "No pipeline branch available — run 'forge doctor' to check git setup."
         else:
             try:
                 proc = await asyncio.create_subprocess_exec(
