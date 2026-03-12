@@ -387,3 +387,59 @@ def test_format_unified_output_valid_rich_markup():
     result = format_unified_output(entries)
     console = Console(file=StringIO(), force_terminal=True)
     console.print(result)  # Raises MarkupError if broken
+
+
+# ── AgentOutput unified methods ────────────────────────────────────
+
+
+def test_agent_output_init_has_unified_entries():
+    widget = AgentOutput()
+    assert widget._unified_entries == []
+
+
+def test_append_unified_adds_to_entries():
+    widget = AgentOutput()
+    widget.append_unified("agent", "first line")
+    assert widget._unified_entries == [("agent", "first line")]
+    widget.append_unified("review", "review line")
+    assert widget._unified_entries == [("agent", "first line"), ("review", "review line")]
+
+
+def test_append_unified_before_compose():
+    """append_unified should not raise before widget is composed."""
+    widget = AgentOutput()
+    widget.append_unified("agent", "safe to call")
+    assert widget._unified_entries == [("agent", "safe to call")]
+
+
+def test_update_unified_replaces_entries():
+    widget = AgentOutput()
+    widget._unified_entries = [("agent", "old")]
+    widget.update_unified("t1", "Title", "running", [("agent", "new")])
+    assert widget._unified_entries == [("agent", "new")]
+    assert widget._task_id == "t1"
+    assert widget._title == "Title"
+    assert widget._state == "running"
+
+
+def test_update_unified_resets_streaming():
+    widget = AgentOutput()
+    widget._streaming = True
+    widget.update_unified("t1", "T", "s", [("agent", "x")])
+    assert widget._streaming is False
+
+
+def test_update_unified_before_compose():
+    """update_unified should not raise before widget is composed."""
+    widget = AgentOutput()
+    widget.update_unified("t1", "Title", "running", [("agent", "line")])
+    assert widget._unified_entries == [("agent", "line")]
+
+
+def test_tick_spinner_skipped_when_unified_entries_present():
+    """_tick_spinner should not overwrite content when unified entries exist."""
+    widget = AgentOutput()
+    widget._unified_entries = [("agent", "some content")]
+    initial_frame = widget._spinner_frame
+    widget._tick_spinner()
+    assert widget._spinner_frame == initial_frame  # Should not increment

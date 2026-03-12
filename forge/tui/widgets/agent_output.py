@@ -154,6 +154,7 @@ class AgentOutput(Widget):
         self._typing_frame: int = 0
         self._typing_timer = None
         self._error_mode: bool = False
+        self._unified_entries: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
@@ -165,7 +166,7 @@ class AgentOutput(Widget):
         self.set_interval(0.1, self._tick_spinner)
 
     def _tick_spinner(self) -> None:
-        if self._lines:
+        if self._lines or self._unified_entries:
             return
         self._spinner_frame += 1
         try:
@@ -313,6 +314,52 @@ class AgentOutput(Widget):
             )
         except Exception:
             pass
+
+    def append_unified(self, source_type: str, line: str) -> None:
+        """Append a single unified log entry during streaming."""
+        self._unified_entries.append((source_type, line))
+        try:
+            content = self.query_one("#agent-content", Static)
+            content.update(
+                format_unified_output(
+                    self._unified_entries,
+                    self._spinner_frame,
+                    streaming=self._streaming,
+                    typing_frame=self._typing_frame,
+                )
+            )
+            if self._is_near_bottom():
+                self.call_after_refresh(self._scroll_to_end)
+        except Exception:
+            pass  # Not yet composed
+
+    def update_unified(
+        self,
+        task_id: str | None,
+        title: str | None,
+        state: str | None,
+        entries: list[tuple[str, str]],
+    ) -> None:
+        """Full refresh with unified log entries.
+
+        Replaces _unified_entries with the authoritative state from TuiState.
+        """
+        self._task_id = task_id
+        self._title = title
+        self._state = state
+        self._unified_entries = list(entries)
+        self.set_streaming(False)
+        try:
+            self.query_one("#agent-header", Static).update(
+                format_header(task_id, title, state)
+            )
+            self.query_one("#agent-content", Static).update(
+                format_unified_output(entries, self._spinner_frame)
+            )
+            if entries and self._is_near_bottom():
+                self.call_after_refresh(self._scroll_to_end)
+        except Exception:
+            pass  # Not yet composed
 
     def _scroll_to_end(self) -> None:
         try:
