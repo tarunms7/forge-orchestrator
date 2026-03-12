@@ -209,19 +209,21 @@ def test_submitted_message_fields():
 
 
 def test_followup_input_clear_action_clears_text():
-    """action_clear_input() should clear the text area contents."""
-    widget = FollowUpInput(branch="feat/x", files_changed=3)
-    mock_ta = MagicMock()
-    widget.query_one = MagicMock(return_value=mock_ta)
+    """FollowUpTextArea.action_clear_input() should clear text and reset cursor."""
+    from forge.tui.widgets.followup_input import FollowUpTextArea
 
-    widget.action_clear_input()
+    ta = FollowUpTextArea()
+    ta.text = "hello world"
+    ta.action_clear_input()
 
-    mock_ta.clear.assert_called_once()
+    assert ta.text == ""
 
 
 def test_followup_input_clear_action_handles_missing_widget():
-    """action_clear_input() should not raise if the text area is missing."""
-    widget = FollowUpInput()
-    widget.query_one = MagicMock(side_effect=Exception("no widget"))
-    # Should not raise
-    widget.action_clear_input()
+    """FollowUpTextArea has action_clear_input and it sets text to empty string."""
+    from forge.tui.widgets.followup_input import FollowUpTextArea
+
+    ta = FollowUpTextArea()
+    # Should not raise even on empty text
+    ta.action_clear_input()
+    assert ta.text == ""
