@@ -103,6 +103,119 @@ async def test_pipeline_replay_loading(tmp_project):
 
 
 @pytest.mark.asyncio
+async def test_action_reset_for_new_task_pushes_home(tmp_project):
+    """action_reset_for_new_task should pop all screens and push a fresh HomeScreen."""
+    import asyncio
+    from unittest.mock import patch, PropertyMock
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.home import HomeScreen
+
+    app = ForgeApp(project_dir=tmp_project)
+    await app._init_db()
+
+    pushed_screens = []
+    popped_count = [0]
+    stack = [1, 2, 3, 4]
+
+    def mock_pop():
+        if len(stack) > 1:
+            stack.pop()
+            popped_count[0] += 1
+
+    app.pop_screen = mock_pop
+    app.push_screen = lambda s: pushed_screens.append(s)
+
+    with patch.object(type(app), "screen_stack", new_callable=PropertyMock, return_value=stack):
+        app.action_reset_for_new_task()
+        await asyncio.sleep(0.05)
+
+    # Should have popped 3 screens (4 -> 1)
+    assert popped_count[0] == 3
+    assert len(stack) == 1
+
+    # Should have pushed a fresh HomeScreen
+    assert len(pushed_screens) == 1
+    assert isinstance(pushed_screens[0], HomeScreen)
+
+    # State should be reset
+    assert app._final_approval_pushed is False
+    assert app._daemon is None
+    assert app._pipeline_id is None
+
+    await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_switch_home_pushes_home(tmp_project):
+    """action_switch_home should pop all screens and push a fresh HomeScreen."""
+    import asyncio
+    from unittest.mock import patch, PropertyMock
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.home import HomeScreen
+
+    app = ForgeApp(project_dir=tmp_project)
+    await app._init_db()
+
+    pushed_screens = []
+    stack = [1, 2, 3]
+
+    def mock_pop():
+        if len(stack) > 1:
+            stack.pop()
+
+    app.pop_screen = mock_pop
+    app.push_screen = lambda s: pushed_screens.append(s)
+
+    with patch.object(type(app), "screen_stack", new_callable=PropertyMock, return_value=stack):
+        app.action_switch_home()
+        await asyncio.sleep(0.05)
+
+    assert len(stack) == 1
+    assert len(pushed_screens) == 1
+    assert isinstance(pushed_screens[0], HomeScreen)
+
+    await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_action_reset_state_cleanup(tmp_project):
+    """action_reset_for_new_task should reset all pipeline state."""
+    import asyncio
+    from unittest.mock import patch, PropertyMock
+    from forge.tui.app import ForgeApp
+
+    app = ForgeApp(project_dir=tmp_project)
+    await app._init_db()
+
+    # Set up some pipeline state
+    app._final_approval_pushed = True
+    app._daemon = "fake"
+    app._daemon_task = "fake"
+    app._graph = "fake"
+    app._pipeline_id = "pipe-123"
+    app._cached_pipeline_branch = "forge/branch"
+    app._pipeline_start_time = 12345.0
+
+    stack = [1, 2]
+    app.pop_screen = lambda: stack.pop() if len(stack) > 1 else None
+    app.push_screen = lambda s: None
+
+    with patch.object(type(app), "screen_stack", new_callable=PropertyMock, return_value=stack):
+        app.action_reset_for_new_task()
+        await asyncio.sleep(0.05)
+
+    assert app._final_approval_pushed is False
+    assert app._daemon is None
+    assert app._daemon_task is None
+    assert app._graph is None
+    assert app._pipeline_id is None
+    assert app._cached_pipeline_branch == ""
+    assert app._pipeline_start_time is None
+
+    await app._db.close()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_replay_missing_pipeline(tmp_project):
     """on_pipeline_list_selected notifies when pipeline not found."""
     from forge.tui.app import ForgeApp
