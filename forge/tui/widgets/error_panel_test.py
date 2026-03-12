@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from forge.tui.state import TuiState
 from forge.tui.widgets.error_panel import (
     ErrorClassification,
     ErrorSuggestion,
@@ -286,10 +287,8 @@ class TestFormatErrorPanel:
 
 # ── TuiState error_history integration tests ─────────────────────────
 
-
 class TestTuiStateErrorHistory:
-    def _make_state_with_task(self, task_id: str = "t1") -> "TuiState":
-        from forge.tui.state import TuiState
+    def _make_state_with_task(self, task_id: str = "t1") -> TuiState:
 
         state = TuiState()
         state.apply_event(
@@ -310,8 +309,6 @@ class TestTuiStateErrorHistory:
         return state
 
     def test_error_history_initialized(self):
-        from forge.tui.state import TuiState
-
         state = TuiState()
         assert state.error_history == {}
 
