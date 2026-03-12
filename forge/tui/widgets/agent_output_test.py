@@ -9,6 +9,7 @@ from forge.tui.widgets.agent_output import (
     format_error_detail,
     format_header,
     format_output,
+    format_unified_output,
 )
 
 
@@ -291,3 +292,98 @@ def test_agent_output_render_error_detail_before_compose():
     widget.render_error_detail("t1", task, ["line1", "line2"])
     assert widget.is_error_mode is True
     assert widget._task_id == "t1"
+
+
+# ── format_unified_output tests ────────────────────────────────────────
+
+
+def test_format_unified_output_empty_shows_spinner():
+    result = format_unified_output([])
+    assert "Waiting" in result
+
+
+def test_format_unified_output_agent_section_header():
+    entries = [("agent", "line 1"), ("agent", "line 2")]
+    result = format_unified_output(entries)
+    assert "AGENT" in result
+    assert "─────" in result
+    assert "line 1" in result
+    assert "line 2" in result
+
+
+def test_format_unified_output_review_section_header():
+    entries = [("review", "review line")]
+    result = format_unified_output(entries)
+    assert "REVIEW 1" in result
+    assert "review line" in result
+
+
+def test_format_unified_output_interleaved_sections():
+    entries = [
+        ("agent", "agent 1"),
+        ("review", "review 1"),
+        ("agent", "agent 2"),
+    ]
+    result = format_unified_output(entries)
+    # Should have AGENT header, then REVIEW 1, then AGENT again
+    assert result.count("AGENT") == 2
+    assert "REVIEW 1" in result
+
+
+def test_format_unified_output_review_count_increments():
+    entries = [
+        ("agent", "a1"),
+        ("review", "r1"),
+        ("agent", "a2"),
+        ("review", "r2"),
+    ]
+    result = format_unified_output(entries)
+    assert "REVIEW 1" in result
+    assert "REVIEW 2" in result
+
+
+def test_format_unified_output_gate_merges_into_review():
+    """Gate entries should appear under the review section, not create their own header."""
+    entries = [
+        ("agent", "coding..."),
+        ("gate", "🔨 Build: ✓ passed"),
+        ("review", "analyzing..."),
+    ]
+    result = format_unified_output(entries)
+    # gate should trigger a REVIEW section, not a GATE section
+    assert "REVIEW 1" in result
+    assert "🔨 Build: ✓ passed" in result
+    assert "GATE" not in result
+
+
+def test_format_unified_output_gate_formatting():
+    """Gate lines should be indented and colored."""
+    entries = [("gate", "🔨 Build: ✓ passed")]
+    result = format_unified_output(entries)
+    assert "#79c0ff" in result  # gate color
+
+
+def test_format_unified_output_streaming_indicator():
+    entries = [("agent", "working...")]
+    result = format_unified_output(entries, streaming=True, typing_frame=0)
+    assert "Typing" in result
+
+
+def test_format_unified_output_no_streaming_indicator_by_default():
+    entries = [("agent", "done")]
+    result = format_unified_output(entries)
+    assert "Typing" not in result
+
+
+def test_format_unified_output_valid_rich_markup():
+    """Output should be valid Rich markup."""
+    from rich.console import Console
+    from io import StringIO
+    entries = [
+        ("agent", "line 1"),
+        ("gate", "🔨 Build: ✓ ok"),
+        ("review", "looks good"),
+    ]
+    result = format_unified_output(entries)
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(result)  # Raises MarkupError if broken

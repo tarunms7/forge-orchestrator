@@ -14,6 +14,13 @@ logger = logging.getLogger("forge.tui.agent_output")
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
+_SECTION_COLORS = {
+    "agent": "#f0883e",
+    "review": "#a371f7",
+    "gate": "#79c0ff",
+    "system": "#8b949e",
+}
+
 _ERROR_TAIL_LINES = 20
 
 
@@ -70,6 +77,50 @@ def format_output(
     if streaming:
         cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
         parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+    return "\n".join(parts)
+
+
+def format_unified_output(
+    entries: list[tuple[str, str]],
+    spinner_frame: int = 0,
+    streaming: bool = False,
+    typing_frame: int = 0,
+) -> str:
+    """Render unified log with section headers when source type changes."""
+    if not entries:
+        frame = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
+        return f"[#58a6ff]{frame}[/] [#8b949e]Waiting for output...[/]"
+
+    parts: list[str] = []
+    current_section: str | None = None
+    review_count = 0
+
+    for source_type, line in entries:
+        # Gate lines merge into review section
+        effective = "review" if source_type == "gate" else source_type
+
+        if effective != current_section:
+            current_section = effective
+            color = _SECTION_COLORS.get(effective, "#8b949e")
+            if effective == "review":
+                review_count += 1
+                label = f"REVIEW {review_count}"
+            else:
+                label = "AGENT"
+            header = f"[{color}]───── {label} " + "─" * max(1, 50 - len(label)) + "[/]"
+            if parts:
+                parts.append("")  # blank line before new section
+            parts.append(header)
+
+        if source_type == "gate":
+            parts.append(f"  [#79c0ff]{line}[/]")
+        else:
+            parts.append(line)
+
+    if streaming:
+        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
+        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+
     return "\n".join(parts)
 
 
