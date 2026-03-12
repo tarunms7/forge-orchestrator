@@ -183,7 +183,7 @@ def test_agent_output_set_search_highlights_stores_pattern():
     widget = AgentOutput()
     widget._lines = ["hello world", "hello again"]
     # Before compose, query_one will fail but pattern should still be stored
-    count = widget.set_search_highlights("hello")
+    widget.set_search_highlights("hello")
     assert widget._search_pattern == "hello"
 
 
