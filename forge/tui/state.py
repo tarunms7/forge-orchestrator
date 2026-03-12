@@ -67,6 +67,12 @@ class TuiState:
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
+    def remove_change_callback(self, callback: Callable[[str], None]) -> None:
+        try:
+            self._change_callbacks.remove(callback)
+        except ValueError:
+            pass
+
     def _notify(self, field: str) -> None:
         for cb in self._change_callbacks:
             try:

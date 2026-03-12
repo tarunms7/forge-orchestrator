@@ -251,6 +251,12 @@ class SearchOverlay(Widget):
     # Actions
     # ------------------------------------------------------------------
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Only handle dismiss when the overlay is visible or has active highlights."""
+        if action == "dismiss" and not self.is_visible and not self._highlights_active:
+            return False  # Let escape bubble to parent (e.g. pop_screen)
+        return True
+
     def action_dismiss(self) -> None:
         """Esc — first press hides bar (keeps highlights), second clears highlights."""
         if self.is_visible:

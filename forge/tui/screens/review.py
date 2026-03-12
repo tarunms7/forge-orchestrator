@@ -91,6 +91,9 @@ class ReviewScreen(Screen):
         self._state.on_change(self._on_state_change)
         self._refresh()
 
+    def on_unmount(self) -> None:
+        self._state.remove_change_callback(self._on_state_change)
+
     def _on_state_change(self, field: str) -> None:
         if field == "tasks":
             self._refresh()
@@ -153,17 +156,26 @@ class ReviewScreen(Screen):
             self._state.selected_task_id = reviewable[index - 1]
             self._refresh()
 
+    def _get_project_dir(self) -> str | None:
+        """Get the project directory from the app if available."""
+        try:
+            return getattr(self.app, "_project_dir", None) or os.getcwd()
+        except Exception:
+            return None
+
     async def _resolve_branch(self) -> str:
         """Resolve the pipeline branch — from state or git."""
         branch = self._state.pipeline_branch or ""
         if branch:
             return branch
         # Fallback: detect current branch from git
+        cwd = self._get_project_dir()
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git", "rev-parse", "--abbrev-ref", "HEAD",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
             )
             stdout, _ = await proc.communicate()
             if proc.returncode == 0:
@@ -176,7 +188,7 @@ class ReviewScreen(Screen):
         return ""
 
     async def _load_diff(self, tid: str) -> None:
-        """Load diff on-demand from git."""
+        """Load diff on-demand from git, scoped to task files when available."""
         # Retry branch resolution — daemon may still be computing it
         branch = ""
         for _attempt in range(3):
@@ -187,11 +199,20 @@ class ReviewScreen(Screen):
         if not branch:
             diff = "No pipeline branch available yet — waiting for execution to start.\nPress Esc to go back, then try again with [bold]r[/bold]."
         else:
+            cwd = self._get_project_dir()
             try:
+                # Scope diff to task's changed files when available
+                cmd: list[str] = ["git", "diff", f"main...{branch}"]
+                task = self._state.tasks.get(tid, {})
+                files = task.get("files_changed", [])
+                if files:
+                    cmd.append("--")
+                    cmd.extend(files)
                 proc = await asyncio.create_subprocess_exec(
-                    "git", "diff", f"main...{branch}",
+                    *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
                 )
                 stdout, stderr = await proc.communicate()
                 diff = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
