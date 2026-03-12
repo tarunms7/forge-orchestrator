@@ -18,6 +18,7 @@ from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
 from forge.tui.widgets.pipeline_list import PipelineList
+from forge.tui.widgets.command_palette import CommandPalette
 
 logger = logging.getLogger("forge.tui.app")
 
@@ -53,6 +54,7 @@ class ForgeApp(App):
         Binding("s", "screenshot_export", "Screenshot", show=False),
         Binding("tab", "cycle_questions", "Next", show=False, priority=True),
         Binding("question_mark", "show_help", "Help", show=False),
+        Binding("ctrl+p", "show_command_palette", "Command Palette", show=False),
     ]
 
     def __init__(
@@ -109,6 +111,8 @@ class ForgeApp(App):
     async def on_mount(self) -> None:
         """Initialize DB, push home screen, wire state changes."""
         await self._init_db()
+        # Mount the command palette overlay at the app level so it's available on all screens
+        await self.mount(CommandPalette())
         recent = await self._load_recent_pipelines()
         self.push_screen(HomeScreen(recent_pipelines=recent))
         self._state.on_change(self._on_state_change)
@@ -348,10 +352,48 @@ class ForgeApp(App):
     def action_show_help(self) -> None:
         """?: show a brief help notification."""
         self.notify(
-            "1-4: screens | j/k: tasks | o/c/d/r: views | Tab: next question | q: quit",
+            "1-4: screens | j/k: tasks | o/c/d/r: views | Tab: next question | Ctrl+P: palette | q: quit",
             title="Forge Keybindings",
             timeout=8,
         )
+
+    def action_show_command_palette(self) -> None:
+        """Ctrl+P: toggle the command palette overlay."""
+        try:
+            palette = self.query_one(CommandPalette)
+            if palette.is_open:
+                palette.close()
+            else:
+                palette.open()
+        except Exception:
+            logger.debug("Command palette not mounted", exc_info=True)
+
+    async def on_command_palette_action_selected(self, event: CommandPalette.ActionSelected) -> None:
+        """Execute the action selected from the command palette."""
+        action = event.action
+        callback_name = action.callback_name
+        if not callback_name:
+            return
+        method_name = f"action_{callback_name}"
+        method = getattr(self, method_name, None)
+        if method is None:
+            # Try screen-level action
+            try:
+                method = getattr(self.screen, method_name, None)
+            except Exception:
+                pass
+        if method:
+            try:
+                import inspect
+                if inspect.iscoroutinefunction(method):
+                    await method()
+                else:
+                    method()
+            except Exception as e:
+                logger.error("Command palette action %s failed: %s", callback_name, e, exc_info=True)
+                self.notify(f"Action failed: {e}", severity="error")
+        else:
+            self.notify(f"Action '{action.name}' not available", severity="warning")
 
     async def on_home_screen_task_submitted(self, event: HomeScreen.TaskSubmitted) -> None:
         """User submitted a task from HomeScreen."""
