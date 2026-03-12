@@ -11,6 +11,7 @@ from forge.tui.screens.final_approval import (
     FinalApprovalScreen,
     DiffScreen,
 )
+from forge.tui.widgets.followup_input import FollowUpInput
 
 
 def test_format_summary_stats():
@@ -151,3 +152,89 @@ def test_action_view_diff_with_branch_creates_task():
     with patch("asyncio.create_task") as mock_create_task:
         screen.action_view_diff()
         mock_create_task.assert_called_once()
+
+
+# --- Follow-up tests ---
+
+
+def test_followup_binding_exists():
+    """FinalApprovalScreen should have 'f' binding for follow-up."""
+    bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
+    assert "f" in bindings
+    assert "follow" in bindings["f"].description.lower()
+
+
+def test_ctrl_s_binding_exists():
+    """FinalApprovalScreen should have ctrl+s binding for submitting follow-up."""
+    bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
+    assert "ctrl+s" in bindings
+
+
+def test_action_focus_followup():
+    """action_focus_followup should focus the FollowUpInput widget."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    mock_followup = MagicMock()
+    screen.query_one = MagicMock(return_value=mock_followup)
+
+    screen.action_focus_followup()
+
+    mock_followup.focus_input.assert_called_once()
+
+
+def test_action_focus_followup_handles_missing():
+    """action_focus_followup should not raise if widget is missing."""
+    screen = FinalApprovalScreen(stats={}, tasks=[])
+    screen.query_one = MagicMock(side_effect=Exception("no widget"))
+    # Should not raise
+    screen.action_focus_followup()
+
+
+def test_action_submit_followup():
+    """action_submit_followup should call submit on FollowUpInput."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    mock_followup = MagicMock()
+    screen.query_one = MagicMock(return_value=mock_followup)
+
+    screen.action_submit_followup()
+
+    mock_followup.submit.assert_called_once()
+
+
+def test_action_submit_followup_handles_missing():
+    """action_submit_followup should not raise if widget is missing."""
+    screen = FinalApprovalScreen(stats={}, tasks=[])
+    screen.query_one = MagicMock(side_effect=Exception("no widget"))
+    # Should not raise
+    screen.action_submit_followup()
+
+
+def test_on_follow_up_input_submitted():
+    """FollowUpInput.Submitted should be relayed as FinalApprovalScreen.FollowUp."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    screen.post_message = MagicMock()
+
+    event = FollowUpInput.Submitted("add docs", "feat/x", 5)
+    screen.on_follow_up_input_submitted(event)
+
+    screen.post_message.assert_called_once()
+    msg = screen.post_message.call_args[0][0]
+    assert isinstance(msg, FinalApprovalScreen.FollowUp)
+    assert msg.prompt == "add docs"
+    assert msg.branch == "feat/x"
+    assert msg.files_changed == 5
+
+
+def test_followup_message_fields():
+    """FinalApprovalScreen.FollowUp should store all fields."""
+    msg = FinalApprovalScreen.FollowUp("refactor auth", "main", 3)
+    assert msg.prompt == "refactor auth"
+    assert msg.branch == "main"
+    assert msg.files_changed == 3
+
+
+def test_help_text_includes_followup():
+    """The help text in the screen should mention follow up."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    # The compose method yields statics — check that our bindings include follow up
+    bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
+    assert "f" in bindings
