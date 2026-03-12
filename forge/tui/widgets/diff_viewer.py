@@ -74,7 +74,7 @@ class DiffViewer(Widget):
     def render(self) -> str:
         if not self._task_id:
             return "[#8b949e]Select a task to view its diff[/]"
-        header = f"[bold #58a6ff]{self._task_id}[/]: {self._task_title or ''}\n"
+        header = f"[bold #58a6ff]{_escape(self._task_id)}[/]: {_escape(self._task_title or '')}\n"
         separator = "[#30363d]" + "─" * 60 + "[/]\n"
         diff_content = format_diff(self._diff_text)
         if self._search_pattern:
