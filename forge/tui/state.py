@@ -13,6 +13,14 @@ from collections.abc import Callable
 logger = logging.getLogger("forge.tui.state")
 
 
+_GATE_LABELS = {
+    "gate0_build": "\U0001f528 Build",
+    "gate1_lint": "\U0001f4cf Lint",
+    "gate1_5_test": "\U0001f9ea Tests",
+    "gate2_llm_review": "\U0001f916 LLM Review",
+}
+
+
 class TuiState:
     """Single source of truth for TUI data."""
 
@@ -217,8 +225,6 @@ class TuiState:
         if task_id and gate:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "passed", "details": data.get("details")}
             # Unified log
-            _GATE_LABELS = {"gate0_build": "\U0001f528 Build", "gate1_lint": "\U0001f4cf Lint",
-                            "gate1_5_test": "\U0001f9ea Tests", "gate2_llm_review": "\U0001f916 LLM Review"}
             gate_label = _GATE_LABELS.get(gate, gate)
             self.unified_log[task_id].append(("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}"))
             self._notify("tasks")
@@ -229,8 +235,6 @@ class TuiState:
         if task_id and gate:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "failed", "details": data.get("details")}
             # Unified log
-            _GATE_LABELS = {"gate0_build": "\U0001f528 Build", "gate1_lint": "\U0001f4cf Lint",
-                            "gate1_5_test": "\U0001f9ea Tests", "gate2_llm_review": "\U0001f916 LLM Review"}
             gate_label = _GATE_LABELS.get(gate, gate)
             self.unified_log[task_id].append(("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}"))
             self._notify("tasks")
