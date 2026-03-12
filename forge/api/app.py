@@ -73,6 +73,8 @@ def create_app(
     app.state.forge_db = db
     app.state.pending_graphs = {}
     app.state.pending_graphs_lock = asyncio.Lock()
+    app.state.rate_limit_store: dict[str, list[float]] = {}
+    app.state.rate_limit_last_cleanup: float = 0.0
 
     # ── WebSocket connection manager ─────────────────────────────────
     from forge.api.ws.manager import ConnectionManager

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -17,42 +16,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ── In-memory rate limiter ────────────────────────────────────────────
+# State is stored on app.state (rate_limit_store, rate_limit_last_cleanup)
+# so each app instance gets its own isolated rate-limit state.
 
 RATE_LIMIT_MAX_REQUESTS = 5
 RATE_LIMIT_WINDOW_SECONDS = 60
-_rate_limit_store: dict[str, list[float]] = defaultdict(list)
-_rate_limit_last_cleanup: float = 0.0
 _CLEANUP_INTERVAL = 300.0  # purge stale entries every 5 minutes
 
 
-def _cleanup_rate_limit_store() -> None:
+def _cleanup_rate_limit_store(request: Request) -> None:
     """Remove entries older than the rate-limit window (periodic)."""
-    global _rate_limit_last_cleanup  # noqa: PLW0603
+    store: dict[str, list[float]] = request.app.state.rate_limit_store
     now = time.monotonic()
-    if now - _rate_limit_last_cleanup < _CLEANUP_INTERVAL:
+    last_cleanup = getattr(request.app.state, "rate_limit_last_cleanup", 0.0)
+    if now - last_cleanup < _CLEANUP_INTERVAL:
         return
-    _rate_limit_last_cleanup = now
+    request.app.state.rate_limit_last_cleanup = now
     cutoff = now - RATE_LIMIT_WINDOW_SECONDS
-    stale_keys = [k for k, v in _rate_limit_store.items() if not v or v[-1] < cutoff]
+    stale_keys = [k for k, v in store.items() if not v or v[-1] < cutoff]
     for k in stale_keys:
-        del _rate_limit_store[k]
+        del store[k]
 
 
-def _check_rate_limit(client_ip: str) -> None:
-    """Raise 429 if *client_ip* has exceeded the request limit."""
-    _cleanup_rate_limit_store()
+def _check_rate_limit(request: Request) -> None:
+    """Raise 429 if the client IP has exceeded the request limit."""
+    client_ip = request.client.host if request.client else "unknown"
+    _cleanup_rate_limit_store(request)
+    store: dict[str, list[float]] = request.app.state.rate_limit_store
     now = time.monotonic()
     cutoff = now - RATE_LIMIT_WINDOW_SECONDS
-    timestamps = _rate_limit_store[client_ip]
+    timestamps = store.get(client_ip, [])
     # Drop timestamps outside the window
-    _rate_limit_store[client_ip] = [t for t in timestamps if t > cutoff]
-    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_MAX_REQUESTS:
+    timestamps = [t for t in timestamps if t > cutoff]
+    if len(timestamps) >= RATE_LIMIT_MAX_REQUESTS:
+        store[client_ip] = timestamps
         logger.warning("Rate limit exceeded for IP %s", client_ip)
         raise HTTPException(
             status_code=429,
             detail="Too many requests. Please try again later.",
         )
-    _rate_limit_store[client_ip].append(now)
+    timestamps.append(now)
+    store[client_ip] = timestamps
 
 
 # ── Request / response schemas ──────────────────────────────────────
@@ -116,7 +120,7 @@ def _build_auth_response(user, jwt_secret: str, *, status_code: int = 200) -> JS
 @router.post("/register", status_code=201)
 async def register(body: RegisterRequest, request: Request) -> JSONResponse:
     """Register a new user account."""
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    _check_rate_limit(request)
     db = request.app.state.db
     jwt_secret = request.app.state.jwt_secret
 
@@ -138,7 +142,7 @@ async def register(body: RegisterRequest, request: Request) -> JSONResponse:
 @router.post("/login")
 async def login(body: LoginRequest, request: Request) -> JSONResponse:
     """Authenticate and receive access token (refresh token set as cookie)."""
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    _check_rate_limit(request)
     db = request.app.state.db
     jwt_secret = request.app.state.jwt_secret
 
