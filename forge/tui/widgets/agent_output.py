@@ -9,6 +9,8 @@ from textual.widget import Widget
 from textual.widgets import Static
 from textual.containers import VerticalScroll
 
+from forge.tui.widgets.search_overlay import apply_highlights
+
 logger = logging.getLogger("forge.tui.agent_output")
 
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -155,6 +157,7 @@ class AgentOutput(Widget):
         self._typing_timer = None
         self._error_mode: bool = False
         self._unified_entries: list[tuple[str, str]] = []
+        self._search_pattern: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
@@ -382,6 +385,55 @@ class AgentOutput(Widget):
                 self.call_after_refresh(self._scroll_to_end)
         except Exception:
             pass  # Not yet composed
+
+    def set_search_highlights(self, pattern: str | None) -> int:
+        """Apply or clear search highlights on the current content.
+
+        When pattern is not None, wraps matching text in Rich markup
+        highlight tags ([on #d29922]...[/]) and returns match count.
+        When pattern is None, clears all highlights. Re-renders content
+        after applying.
+        """
+        self._search_pattern = pattern
+        return self._apply_search_highlights()
+
+    def _apply_search_highlights(self) -> int:
+        """Re-render content with current search highlights applied."""
+        pattern = self._search_pattern
+
+        # Build the base rendered content
+        if self._error_mode:
+            base = format_error_detail(
+                self._task_id or "",
+                {"title": self._title, "error": "", "state": self._state},
+                self._lines,
+            )
+        elif self._unified_entries:
+            base = format_unified_output(
+                self._unified_entries,
+                self._spinner_frame,
+                streaming=self._streaming,
+                typing_frame=self._typing_frame,
+            )
+        else:
+            base = format_output(
+                self._lines,
+                self._spinner_frame,
+                streaming=self._streaming,
+                typing_frame=self._typing_frame,
+            )
+
+        if pattern:
+            highlighted, count = apply_highlights(base, pattern)
+        else:
+            highlighted, count = base, 0
+
+        try:
+            content = self.query_one("#agent-content", Static)
+            content.update(highlighted)
+        except Exception:
+            pass
+        return count
 
     def _scroll_to_end(self) -> None:
         try:

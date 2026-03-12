@@ -15,6 +15,7 @@ from textual.message import Message
 
 from forge.tui.state import TuiState
 from forge.tui.widgets.diff_viewer import DiffViewer
+from forge.tui.widgets.search_overlay import SearchOverlay
 
 _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
 
@@ -58,6 +59,9 @@ class ReviewScreen(Screen):
         Binding("e", "edit", "Open in $EDITOR"),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
+        Binding("slash", "toggle_search", "Search", show=False),
+        Binding("n", "search_next", "Next match", show=False),
+        Binding("N", "search_prev", "Prev match", show=False),
         Binding("escape", "app.pop_screen", "Back", show=True),
         # Task jump — priority=True prevents bubble to app-level screen switch
         Binding("1", "jump_task(1)", show=False, priority=True),
@@ -80,7 +84,8 @@ class ReviewScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
         yield DiffViewer()
-        yield Static("[a] approve  [x] reject  [e] editor  [j/k] scroll  [1-9] jump task", id="review-status")
+        yield SearchOverlay()
+        yield Static("[a] approve  [x] reject  [e] editor  [j/k] scroll  [/] search  [1-9] jump task", id="review-status")
 
     def on_mount(self) -> None:
         self._state.on_change(self._on_state_change)
@@ -201,5 +206,49 @@ class ReviewScreen(Screen):
             self.query_one(DiffViewer).update_diff(
                 tid, self._state.tasks.get(tid, {}).get("title", ""), diff,
             )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def action_toggle_search(self) -> None:
+        """Show the search overlay."""
+        try:
+            self.query_one(SearchOverlay).show()
+        except Exception:
+            pass
+
+    def action_search_next(self) -> None:
+        """Navigate to next search match."""
+        try:
+            self.query_one(SearchOverlay).navigate(+1)
+        except Exception:
+            pass
+
+    def action_search_prev(self) -> None:
+        """Navigate to previous search match."""
+        try:
+            self.query_one(SearchOverlay).navigate(-1)
+        except Exception:
+            pass
+
+    def on_search_overlay_search_changed(self, event: SearchOverlay.SearchChanged) -> None:
+        """Apply search highlights to diff viewer."""
+        count = 0
+        try:
+            count = self.query_one(DiffViewer).set_search_highlights(event.pattern)
+        except Exception:
+            pass
+        try:
+            self.query_one(SearchOverlay).update_match_count(count)
+        except Exception:
+            pass
+
+    def on_search_overlay_search_dismissed(self, event: SearchOverlay.SearchDismissed) -> None:
+        """Clear highlights when search is fully dismissed."""
+        try:
+            self.query_one(DiffViewer).set_search_highlights(None)
         except Exception:
             pass
