@@ -401,15 +401,18 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
                 capture_output=True,
                 text=True,
             )
-            added, removed = 0, 0
+            added, removed, files = 0, 0, 0
             if result.returncode == 0 and result.stdout.strip():
+                m_files = re.search(r"(\d+) file", result.stdout)
                 m_add = re.search(r"(\d+) insertion", result.stdout)
                 m_del = re.search(r"(\d+) deletion", result.stdout)
+                if m_files:
+                    files = int(m_files.group(1))
                 if m_add:
                     added = int(m_add.group(1))
                 if m_del:
                     removed = int(m_del.group(1))
-            return {"linesAdded": added, "linesRemoved": removed}
+            return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
         else:
             logger.warning(
                 "_get_diff_stats: pipeline branch %r not found in %s — "
@@ -462,15 +465,18 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
             text=True,
         )
 
-    added, removed = 0, 0
+    added, removed, files = 0, 0, 0
     if result.returncode == 0 and result.stdout.strip():
+        m_files = re.search(r"(\d+) file", result.stdout)
         m_add = re.search(r"(\d+) insertion", result.stdout)
         m_del = re.search(r"(\d+) deletion", result.stdout)
+        if m_files:
+            files = int(m_files.group(1))
         if m_add:
             added = int(m_add.group(1))
         if m_del:
             removed = int(m_del.group(1))
-    return {"linesAdded": added, "linesRemoved": removed}
+    return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
 
 
 def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = None) -> list[str]:
