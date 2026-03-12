@@ -12,6 +12,10 @@ Current install requires 5+ manual steps: clone repo, create venv, pip install, 
 
 Rewrite `install.sh` to use `uv` (Astral) for Python toolchain management and PyPI for package distribution. Publish `forge-orchestrator` to PyPI with split dependencies (TUI core vs web extras).
 
+## Pre-Implementation Check
+
+Verify `forge-orchestrator` is available on PyPI before starting. If taken, use an alternative name (e.g. `forge-engine`, `forgeai`).
+
 ## User Journey
 
 ```
@@ -33,12 +37,17 @@ $ curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/
   Run:  forge tui        Launch the terminal UI
         forge doctor     Full health check
         forge --help     All commands
+
+  Note: If 'forge' is not found, open a new terminal or run:
+        source ~/.bashrc  (or ~/.zshrc)
 ```
 
 Alternative install paths (also work after PyPI publish):
 - `pipx install forge-orchestrator`
 - `uv tool install forge-orchestrator`
 - `pip install forge-orchestrator` (inside any venv)
+
+Uninstall: `uv tool uninstall forge-orchestrator`
 
 ## Deliverables
 
@@ -49,13 +58,17 @@ Replace the current 358-line script with ~80 lines. Four steps:
 **Step 1 — Install uv (skip if present)**
 - Detect via `command -v uv`
 - Install using Astral's official one-liner: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Source the uv env so it's available in the current shell session
+- Source `$HOME/.local/bin/env` (uv's env file) so `uv` is available in the current subshell
+- After install, verify `uv --version` succeeds; abort if not
+
+**Limitation:** `curl | sh` runs in a subshell. The uv installer adds PATH entries to `~/.bashrc`/`~/.zshrc`, but the user's current terminal won't pick them up until they open a new terminal or source their profile. The quickstart message in Step 4 must mention this.
 
 **Step 2 — Install Forge via uv**
-- `uv tool install forge-orchestrator`
+- Detection logic: `uv tool list 2>/dev/null | grep -q forge-orchestrator`
+  - If found: `uv tool upgrade forge-orchestrator`
+  - If not found: `uv tool install forge-orchestrator`
 - `uv` auto-provisions Python 3.12 if the system doesn't have it (managed toolchain)
 - `uv` creates an isolated venv and puts `forge` on PATH automatically
-- If already installed, use `uv tool upgrade forge-orchestrator` instead
 
 **Step 3 — Verify tools (non-blocking)**
 - Check: `git` (required), `claude` CLI (required for agents), `gh` CLI (optional, for PRs)
@@ -64,6 +77,7 @@ Replace the current 358-line script with ~80 lines. Four steps:
 
 **Step 4 — Print quickstart**
 - Show `forge tui`, `forge doctor`, `forge --help`
+- Print note about opening a new terminal if `forge` is not found
 
 **Removed from current script:**
 - Python version check + install (uv handles it)
@@ -79,10 +93,10 @@ Replace the current 358-line script with ~80 lines. Four steps:
 set -e
 
 # Color helpers (same as current)
-# Step 1: install uv
-# Step 2: uv tool install forge-orchestrator
+# Step 1: install uv (detect, install, source, verify)
+# Step 2: uv tool install/upgrade forge-orchestrator
 # Step 3: verify git, claude, gh
-# Step 4: print quickstart
+# Step 4: print quickstart + new-terminal note
 ```
 
 **Idempotent:** Safe to run multiple times. Re-running upgrades Forge if a new version is on PyPI.
@@ -130,8 +144,11 @@ dependencies = [
     "rich>=13.0",
     "textual>=0.50",
     "claude-code-sdk>=0.0.25",
+    "httpx>=0.27",
 ]
 ```
+
+Note: `httpx` is added to core because `forge/tui/app.py` uses it in `detect_server()`.
 
 Web extras (only for `forge serve` users):
 ```toml
@@ -149,21 +166,27 @@ Install web UI: `pip install forge-orchestrator[web]`
 
 Existing extras unchanged:
 ```toml
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.3", "httpx>=0.27"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.3"]
 postgres = ["asyncpg>=0.29"]
 remote = ["asyncssh>=2.14"]
 ```
 
-**Exclude web/ from wheel:**
+Note: `httpx` removed from dev (now in core).
+
+**Exclude test files from wheel:**
 ```toml
 [tool.hatch.build.targets.wheel]
 packages = ["forge"]
-exclude = ["web/"]
+exclude = ["*_test.py", "**/*_test.py"]
 ```
 
-### 3. Lazy Import Guard for `forge serve`
+Note: `web/` exclusion is unnecessary since `packages = ["forge"]` already limits the wheel to the `forge/` directory only.
 
-In `forge/cli/main.py`, the `serve` command must handle missing web dependencies gracefully:
+### 3. Lazy Import Guards
+
+Two files need import guards to avoid `ImportError` on TUI-only installs:
+
+#### 3a. `forge/cli/main.py` — guard `serve` command
 
 ```python
 @cli.command()
@@ -176,15 +199,69 @@ def serve(port, host, db_url, jwt_secret, build_frontend):
     except ImportError:
         click.echo(
             "Web UI requires additional dependencies.\n"
-            "Install them with: pip install forge-orchestrator[web]"
+            "Install them with: pip install forge-orchestrator[web]\n\n"
+            "Note: 'forge serve' also requires a git clone of the repository\n"
+            "for the Next.js frontend. See: https://github.com/tarunms7/forge-orchestrator"
         )
         raise SystemExit(1)
     # ... rest of serve logic unchanged
 ```
 
+Note: `serve` also calculates `repo_root` and `web_dir` relative to `__file__`, which resolves into site-packages when installed from PyPI (not a git clone). The import guard message documents this limitation. Fixing the path resolution is out of scope for this spec — `forge serve` is a git-clone-only feature for now.
+
+#### 3b. `forge/storage/db.py` — guard `bcrypt` import
+
+`db.py` has `import bcrypt` at the top level. This module is imported by `forge/core/daemon.py` (top-level), which is imported by `forge tui` when starting a pipeline. With `bcrypt` moved to web extras, this would crash TUI-only installs at runtime.
+
+Fix: make the bcrypt import lazy — only used by `create_user()` and `verify_password()`, which are web-only code paths.
+
+```python
+# At the top of db.py, REMOVE:
+import bcrypt
+
+# In create_user() and verify_password(), ADD:
+def create_user(self, ...):
+    try:
+        import bcrypt
+    except ImportError:
+        raise ImportError(
+            "bcrypt is required for user management. "
+            "Install with: pip install forge-orchestrator[web]"
+        )
+    # ... existing bcrypt usage
+```
+
 All other commands (`tui`, `run`, `doctor`, `init`, `status`, `logs`, `clean`, `fix`, `ping`) use only core deps and work without web extras.
 
-### 4. GitHub Actions Publish Workflow (optional)
+### 4. Update `forge doctor` for TUI-only installs
+
+When web extras are not installed, suppress Node.js/npm checks to avoid confusing TUI-only users:
+
+```python
+# In doctor.py, detect web extras:
+def _web_extras_installed() -> bool:
+    try:
+        import fastapi  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+# In doctor(), conditionally include Node checks:
+checks = [
+    _check_python(),
+    _check_git(),
+    _check_claude_cli(),
+    _check_gh(),
+    _check_disk_space(),
+    _check_db_connectivity(),
+]
+if _web_extras_installed():
+    checks.insert(4, _check_node_version())
+    checks.insert(5, _check_node_npm())
+    checks.insert(6, _check_jwt_secret())
+```
+
+### 5. GitHub Actions Publish Workflow (optional)
 
 `.github/workflows/publish.yml` — triggered on GitHub release creation:
 
@@ -215,8 +292,10 @@ Uses PyPI trusted publishing (no API token needed, OIDC-based).
 | File | Change |
 |------|--------|
 | `install.sh` | Full rewrite (~80 lines). uv-based, 4 steps. |
-| `pyproject.toml` | Add PyPI metadata, split deps (core vs web), exclude web/ from wheel |
+| `pyproject.toml` | Add PyPI metadata, split deps (core vs web), exclude test files from wheel, move httpx to core |
 | `forge/cli/main.py` | Add try/except ImportError guard around uvicorn/fastapi in `serve()` |
+| `forge/storage/db.py` | Make `bcrypt` import lazy (inside `create_user`/`verify_password` only) |
+| `forge/cli/doctor.py` | Conditionally skip Node.js/npm/JWT checks when web extras not installed |
 | `.github/workflows/publish.yml` | New file. Publish to PyPI on release. |
 
 ## Testing Plan
@@ -225,9 +304,12 @@ Uses PyPI trusted publishing (no API token needed, OIDC-based).
 2. `pip install dist/forge_orchestrator-0.1.0-py3-none-any.whl` in a clean venv → `forge --help` works
 3. `forge tui` works without web deps installed
 4. `forge serve` prints helpful error when web deps missing
-5. `forge doctor` works without web deps
-6. Run `install.sh` on a clean macOS — verify all 4 steps complete
-7. Run `install.sh` twice — verify idempotent (upgrades, doesn't duplicate)
+5. `forge doctor` works without web deps, does NOT show Node.js warnings
+6. **Import isolation test:** In a TUI-only venv, `python -c "from forge.cli.main import cli"` succeeds
+7. **Import isolation test:** In a TUI-only venv, `python -c "from forge.storage.db import Database"` succeeds (no bcrypt crash)
+8. Run `install.sh` on a clean macOS — verify all 4 steps complete
+9. Run `install.sh` twice — verify idempotent (upgrades, doesn't duplicate)
+10. Verify `.whl` does NOT contain `*_test.py` files: `unzip -l dist/*.whl | grep _test`
 
 ## Out of Scope
 
@@ -236,3 +318,5 @@ Uses PyPI trusted publishing (no API token needed, OIDC-based).
 - Homebrew formula (future enhancement)
 - Windows support (macOS + Linux only)
 - `forge setup` interactive wizard (verification is inline in install.sh)
+- Fixing `forge serve` path resolution for PyPI installs (git-clone-only for now)
+- `py.typed` marker (nice-to-have, not blocking)
