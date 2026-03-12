@@ -234,7 +234,6 @@ def test_followup_message_fields():
 
 def test_help_text_includes_followup():
     """The help text in the screen should mention follow up."""
-    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
-    # The compose method yields statics — check that our bindings include follow up
+    # Check that our bindings include follow up
     bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
     assert "f" in bindings
