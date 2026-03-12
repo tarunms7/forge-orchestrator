@@ -59,22 +59,42 @@ Writing code with an AI assistant is powerful — but you're still the bottlenec
 curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
 ```
 
-This detects your OS, installs missing dependencies (Python 3.12+, Node 18+), creates a virtualenv at `~/.forge/venv`, builds the frontend, and adds `forge` to your PATH. Safe to re-run — the installer is idempotent.
+Four steps: (1) installs [uv](https://docs.astral.sh/uv/) if not present, (2) installs `forge-orchestrator` from PyPI via `uv tool install` (uv auto-provisions Python 3.12 if your system doesn't have it), (3) verifies git, Claude Code CLI, and gh CLI, (4) prints quickstart. Safe to re-run — the installer is idempotent and upgrades Forge if a newer version is on PyPI.
 
 ### Manual install
+
+**From PyPI (no clone required):**
+
+```bash
+# Recommended — installs forge as an isolated global tool
+uv tool install forge-orchestrator
+
+# Alternatives
+pipx install forge-orchestrator
+pip install forge-orchestrator          # inside any venv
+```
+
+**From source:**
 
 ```bash
 git clone https://github.com/tarunms7/forge-orchestrator.git
 cd forge-orchestrator
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-cd web && npm install && npm run build && cd ..
 ```
 
-After either method, verify your setup:
+> **Web dashboard extras:** `forge serve` requires additional dependencies and the Next.js frontend source. Install with `pip install forge-orchestrator[web]` and use a git clone (not the PyPI wheel) so the `web/` directory is available.
+
+After any install method, verify your setup:
 
 ```bash
 forge doctor
+```
+
+### Uninstall
+
+```bash
+uv tool uninstall forge-orchestrator
 ```
 
 ---
@@ -82,8 +102,11 @@ forge doctor
 ## Quick Start
 
 ```bash
-# Run in your project — no init required, Forge auto-creates .forge/ on first run
-cd your-project
+# Launch the interactive TUI (recommended for first-time users)
+forge tui
+
+# Or run a task directly from the command line
+cd your-project   # no init required — Forge auto-creates .forge/ on first run
 forge run "Add input validation to all API endpoints"
 ```
 
@@ -170,6 +193,8 @@ Forge includes a real-time web UI for monitoring and controlling pipelines:
 ```bash
 forge serve   # Backend :8000 + Frontend :3000 (single-user mode by default)
 ```
+
+> **Requirements:** `forge serve` requires web extras (`pip install forge-orchestrator[web]`) and a git clone of the repository for the Next.js frontend. PyPI-only installs do not include the `web/` directory.
 
 > Set `FORGE_JWT_SECRET` to enable multi-user JWT authentication. Without it, Forge runs in single-user mode with no login required.
 
@@ -323,13 +348,18 @@ cd web && npx tsc --noEmit
 
 ## Requirements
 
-- Python 3.12+
-- Node.js 18+ (for web dashboard)
+**Core (TUI + `forge run`):**
+
+- Python 3.12+ — auto-provisioned by uv if not present
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (`claude login`)
 - Git 2.20+ (worktree support)
-- `gh` CLI (for auto-PR creation)
 
-The [one-command installer](#-install) handles all of these automatically. Or run `forge doctor` to verify your setup manually.
+**Optional:**
+
+- `gh` CLI — for auto-PR creation ([install](https://cli.github.com))
+- Node.js 18+ — only needed for the [web dashboard](#-web-dashboard)
+
+The [one-command installer](#-install) installs uv and Forge, then verifies git, Claude CLI, and gh. Run `forge doctor` to check your setup manually.
 
 ---
 
