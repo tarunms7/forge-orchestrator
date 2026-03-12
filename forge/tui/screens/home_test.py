@@ -3,7 +3,7 @@
 import pytest
 from textual.app import App
 
-from forge.tui.screens.home import HomeScreen, format_recent_pipelines
+from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
 
 
