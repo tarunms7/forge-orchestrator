@@ -9,13 +9,11 @@ import tempfile
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Horizontal
 from textual.widgets import Static
 from textual.binding import Binding
 from textual.message import Message
 
 from forge.tui.state import TuiState
-from forge.tui.widgets.task_list import TaskList
 from forge.tui.widgets.diff_viewer import DiffViewer
 
 _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
@@ -42,7 +40,7 @@ class ReviewScreen(Screen):
         background: #161b22;
         color: #a371f7;
     }
-    #review-pane {
+    DiffViewer {
         height: 1fr;
     }
     #review-status {
@@ -81,10 +79,8 @@ class ReviewScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
-        with Horizontal(id="review-pane"):
-            yield TaskList()
-            yield DiffViewer()
-        yield Static("[a] approve  [x] reject  [e] editor  [j/k] navigate", id="review-status")
+        yield DiffViewer()
+        yield Static("[a] approve  [x] reject  [e] editor  [j/k] scroll  [1-9] jump task", id="review-status")
 
     def on_mount(self) -> None:
         self._state.on_change(self._on_state_change)
@@ -96,17 +92,9 @@ class ReviewScreen(Screen):
 
     def _refresh(self) -> None:
         state = self._state
-        reviewable = [
-            state.tasks[tid] for tid in state.task_order
-            if tid in state.tasks and state.tasks[tid]["state"] in _REVIEWABLE_STATES
-        ]
-        task_list = self.query_one(TaskList)
-        task_list.update_tasks(reviewable, state.selected_task_id)
-
         tid = state.selected_task_id
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            # On-demand diff: use cache or trigger async load
             diff = self._diff_cache.get(tid, "")
             if not diff and tid not in self._diff_loading:
                 self._diff_loading.add(tid)
@@ -114,15 +102,11 @@ class ReviewScreen(Screen):
                 diff = "Loading diff..."
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
-    def on_task_list_selected(self, event: TaskList.Selected) -> None:
-        self._state.selected_task_id = event.task_id
-        self._refresh()
-
     def action_cursor_down(self) -> None:
-        self.query_one(TaskList).action_cursor_down()
+        self.query_one(DiffViewer).scroll_relative(y=3)
 
     def action_cursor_up(self) -> None:
-        self.query_one(TaskList).action_cursor_up()
+        self.query_one(DiffViewer).scroll_relative(y=-3)
 
     def action_approve(self) -> None:
         tid = self._state.selected_task_id
@@ -164,11 +148,33 @@ class ReviewScreen(Screen):
             self._state.selected_task_id = reviewable[index - 1]
             self._refresh()
 
+    async def _resolve_branch(self) -> str:
+        """Resolve the pipeline branch — from state or git."""
+        branch = self._state.pipeline_branch or ""
+        if branch:
+            return branch
+        # Fallback: detect current branch from git
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                name = stdout.decode().strip()
+                if name and name not in ("main", "master", "HEAD"):
+                    self._state.pipeline_branch = name
+                    return name
+        except Exception:
+            pass
+        return ""
+
     async def _load_diff(self, tid: str) -> None:
         """Load diff on-demand from git."""
-        branch = self._state.pipeline_branch or ""
+        branch = await self._resolve_branch()
         if not branch:
-            diff = "No pipeline branch available yet."
+            diff = "No pipeline branch available — run 'forge doctor' to check git setup."
         else:
             try:
                 proc = await asyncio.create_subprocess_exec(

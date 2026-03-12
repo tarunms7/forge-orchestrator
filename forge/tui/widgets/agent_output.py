@@ -14,6 +14,13 @@ logger = logging.getLogger("forge.tui.agent_output")
 _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
+_SECTION_COLORS = {
+    "agent": "#f0883e",
+    "review": "#a371f7",
+    "gate": "#79c0ff",
+    "system": "#8b949e",
+}
+
 _ERROR_TAIL_LINES = 20
 
 
@@ -73,6 +80,50 @@ def format_output(
     return "\n".join(parts)
 
 
+def format_unified_output(
+    entries: list[tuple[str, str]],
+    spinner_frame: int = 0,
+    streaming: bool = False,
+    typing_frame: int = 0,
+) -> str:
+    """Render unified log with section headers when source type changes."""
+    if not entries:
+        frame = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
+        return f"[#58a6ff]{frame}[/] [#8b949e]Waiting for output...[/]"
+
+    parts: list[str] = []
+    current_section: str | None = None
+    review_count = 0
+
+    for source_type, line in entries:
+        # Gate lines merge into review section
+        effective = "review" if source_type == "gate" else source_type
+
+        if effective != current_section:
+            current_section = effective
+            color = _SECTION_COLORS.get(effective, "#8b949e")
+            if effective == "review":
+                review_count += 1
+                label = f"REVIEW {review_count}"
+            else:
+                label = "AGENT"
+            header = f"[{color}]───── {label} " + "─" * max(1, 50 - len(label)) + "[/]"
+            if parts:
+                parts.append("")  # blank line before new section
+            parts.append(header)
+
+        if source_type == "gate":
+            parts.append(f"  [#79c0ff]{line}[/]")
+        else:
+            parts.append(line)
+
+    if streaming:
+        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
+        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+
+    return "\n".join(parts)
+
+
 class AgentOutput(Widget):
     """Scrollable agent output with fixed header and auto-scrolling body."""
 
@@ -103,6 +154,7 @@ class AgentOutput(Widget):
         self._typing_frame: int = 0
         self._typing_timer = None
         self._error_mode: bool = False
+        self._unified_entries: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
@@ -114,7 +166,7 @@ class AgentOutput(Widget):
         self.set_interval(0.1, self._tick_spinner)
 
     def _tick_spinner(self) -> None:
-        if self._lines:
+        if self._lines or self._unified_entries:
             return
         self._spinner_frame += 1
         try:
@@ -230,6 +282,7 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         self._lines = list(lines)  # Copy to avoid aliasing state.agent_output[tid]
+        self._unified_entries = []  # Clear unified data when switching to line-based mode
 
         # Reset streaming state on full refresh
         self.set_streaming(False)
@@ -262,6 +315,52 @@ class AgentOutput(Widget):
             )
         except Exception:
             pass
+
+    def append_unified(self, source_type: str, line: str) -> None:
+        """Append a single unified log entry during streaming."""
+        self._unified_entries.append((source_type, line))
+        try:
+            content = self.query_one("#agent-content", Static)
+            content.update(
+                format_unified_output(
+                    self._unified_entries,
+                    self._spinner_frame,
+                    streaming=self._streaming,
+                    typing_frame=self._typing_frame,
+                )
+            )
+            if self._is_near_bottom():
+                self.call_after_refresh(self._scroll_to_end)
+        except Exception:
+            pass  # Not yet composed
+
+    def update_unified(
+        self,
+        task_id: str | None,
+        title: str | None,
+        state: str | None,
+        entries: list[tuple[str, str]],
+    ) -> None:
+        """Full refresh with unified log entries.
+
+        Replaces _unified_entries with the authoritative state from TuiState.
+        """
+        self._task_id = task_id
+        self._title = title
+        self._state = state
+        self._unified_entries = list(entries)
+        self.set_streaming(False)
+        try:
+            self.query_one("#agent-header", Static).update(
+                format_header(task_id, title, state)
+            )
+            self.query_one("#agent-content", Static).update(
+                format_unified_output(entries, self._spinner_frame)
+            )
+            if entries and self._is_near_bottom():
+                self.call_after_refresh(self._scroll_to_end)
+        except Exception:
+            pass  # Not yet composed
 
     def _scroll_to_end(self) -> None:
         try:

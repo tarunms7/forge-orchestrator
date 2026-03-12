@@ -9,6 +9,7 @@ from forge.tui.widgets.agent_output import (
     format_error_detail,
     format_header,
     format_output,
+    format_unified_output,
 )
 
 
@@ -291,3 +292,154 @@ def test_agent_output_render_error_detail_before_compose():
     widget.render_error_detail("t1", task, ["line1", "line2"])
     assert widget.is_error_mode is True
     assert widget._task_id == "t1"
+
+
+# ── format_unified_output tests ────────────────────────────────────────
+
+
+def test_format_unified_output_empty_shows_spinner():
+    result = format_unified_output([])
+    assert "Waiting" in result
+
+
+def test_format_unified_output_agent_section_header():
+    entries = [("agent", "line 1"), ("agent", "line 2")]
+    result = format_unified_output(entries)
+    assert "AGENT" in result
+    assert "─────" in result
+    assert "line 1" in result
+    assert "line 2" in result
+
+
+def test_format_unified_output_review_section_header():
+    entries = [("review", "review line")]
+    result = format_unified_output(entries)
+    assert "REVIEW 1" in result
+    assert "review line" in result
+
+
+def test_format_unified_output_interleaved_sections():
+    entries = [
+        ("agent", "agent 1"),
+        ("review", "review 1"),
+        ("agent", "agent 2"),
+    ]
+    result = format_unified_output(entries)
+    # Should have AGENT header, then REVIEW 1, then AGENT again
+    assert result.count("AGENT") == 2
+    assert "REVIEW 1" in result
+
+
+def test_format_unified_output_review_count_increments():
+    entries = [
+        ("agent", "a1"),
+        ("review", "r1"),
+        ("agent", "a2"),
+        ("review", "r2"),
+    ]
+    result = format_unified_output(entries)
+    assert "REVIEW 1" in result
+    assert "REVIEW 2" in result
+
+
+def test_format_unified_output_gate_merges_into_review():
+    """Gate entries should appear under the review section, not create their own header."""
+    entries = [
+        ("agent", "coding..."),
+        ("gate", "🔨 Build: ✓ passed"),
+        ("review", "analyzing..."),
+    ]
+    result = format_unified_output(entries)
+    # gate should trigger a REVIEW section, not a GATE section
+    assert "REVIEW 1" in result
+    assert "🔨 Build: ✓ passed" in result
+    assert "GATE" not in result
+
+
+def test_format_unified_output_gate_formatting():
+    """Gate lines should be indented and colored."""
+    entries = [("gate", "🔨 Build: ✓ passed")]
+    result = format_unified_output(entries)
+    assert "#79c0ff" in result  # gate color
+
+
+def test_format_unified_output_streaming_indicator():
+    entries = [("agent", "working...")]
+    result = format_unified_output(entries, streaming=True, typing_frame=0)
+    assert "Typing" in result
+
+
+def test_format_unified_output_no_streaming_indicator_by_default():
+    entries = [("agent", "done")]
+    result = format_unified_output(entries)
+    assert "Typing" not in result
+
+
+def test_format_unified_output_valid_rich_markup():
+    """Output should be valid Rich markup."""
+    from rich.console import Console
+    from io import StringIO
+    entries = [
+        ("agent", "line 1"),
+        ("gate", "🔨 Build: ✓ ok"),
+        ("review", "looks good"),
+    ]
+    result = format_unified_output(entries)
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(result)  # Raises MarkupError if broken
+
+
+# ── AgentOutput unified methods ────────────────────────────────────
+
+
+def test_agent_output_init_has_unified_entries():
+    widget = AgentOutput()
+    assert widget._unified_entries == []
+
+
+def test_append_unified_adds_to_entries():
+    widget = AgentOutput()
+    widget.append_unified("agent", "first line")
+    assert widget._unified_entries == [("agent", "first line")]
+    widget.append_unified("review", "review line")
+    assert widget._unified_entries == [("agent", "first line"), ("review", "review line")]
+
+
+def test_append_unified_before_compose():
+    """append_unified should not raise before widget is composed."""
+    widget = AgentOutput()
+    widget.append_unified("agent", "safe to call")
+    assert widget._unified_entries == [("agent", "safe to call")]
+
+
+def test_update_unified_replaces_entries():
+    widget = AgentOutput()
+    widget._unified_entries = [("agent", "old")]
+    widget.update_unified("t1", "Title", "running", [("agent", "new")])
+    assert widget._unified_entries == [("agent", "new")]
+    assert widget._task_id == "t1"
+    assert widget._title == "Title"
+    assert widget._state == "running"
+
+
+def test_update_unified_resets_streaming():
+    widget = AgentOutput()
+    widget._streaming = True
+    widget.update_unified("t1", "T", "s", [("agent", "x")])
+    assert widget._streaming is False
+
+
+def test_update_unified_before_compose():
+    """update_unified should not raise before widget is composed."""
+    widget = AgentOutput()
+    widget.update_unified("t1", "Title", "running", [("agent", "line")])
+    assert widget._unified_entries == [("agent", "line")]
+
+
+def test_tick_spinner_skipped_when_unified_entries_present():
+    """_tick_spinner should not overwrite content when unified entries exist."""
+    widget = AgentOutput()
+    widget._unified_entries = [("agent", "some content")]
+    initial_frame = widget._spinner_frame
+    widget._tick_spinner()
+    assert widget._spinner_frame == initial_frame  # Should not increment
