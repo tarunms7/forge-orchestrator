@@ -51,7 +51,7 @@ class PhaseBanner(Widget):
     DEFAULT_CSS = """
     PhaseBanner {
         width: 1fr;
-        height: 3;
+        height: 5;
         content-align: center middle;
         text-align: center;
         background: #0d1117;
@@ -74,7 +74,16 @@ class PhaseBanner(Widget):
 
     def render(self) -> str:
         label, colour = _PHASE_BANNER.get(self._phase, ("Unknown", "#8b949e"))
-        banner = f"[bold {colour}]{label}[/]"
+        # Extract icon prefix and text
+        icon, _, text = label.partition(" ")
+        if not text:
+            text, icon = icon, ""
+        # Wide-space: double-space within words, triple-space between words
+        words = text.upper().split()
+        spaced_words = ["  ".join(w) for w in words]
+        spaced = "   ".join(spaced_words)
+        icon_prefix = f"{icon}  " if icon else ""
+        banner = f"[bold {colour}]{icon_prefix}{spaced}[/]"
         if self._read_only_banner:
             banner += f"\n[dim]{self._read_only_banner}[/]"
         return banner
@@ -169,7 +178,7 @@ class PipelineScreen(Screen):
     }
     PipelineScreen > PhaseBanner {
         width: 100%;
-        height: 3;
+        height: 5;
         content-align: center middle;
         text-align: center;
         background: #0d1117;

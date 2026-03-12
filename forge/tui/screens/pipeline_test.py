@@ -428,3 +428,34 @@ async def test_error_task_shows_error_detail():
     async with app.run_test():
         agent_output = app.screen.query_one("AgentOutput")
         assert agent_output.is_error_mode
+
+
+# ── PhaseBanner wide-spacing tests ──────────────────────────────
+
+
+def test_phase_banner_wide_spacing():
+    from forge.tui.screens.pipeline import PhaseBanner
+    banner = PhaseBanner()
+    banner._phase = "planning"
+    rendered = banner.render()
+    # Should contain wide-spaced "P L A N N I N G"
+    assert "P  L  A  N  N  I  N  G" in rendered
+
+
+def test_phase_banner_multiword_wide_spacing():
+    from forge.tui.screens.pipeline import PhaseBanner
+    banner = PhaseBanner()
+    banner._phase = "planned"
+    rendered = banner.render()
+    # "Plan Approval" → "P L A N   A P P R O V A L" (triple-space between words)
+    assert "P  L  A  N" in rendered
+    assert "A  P  P  R  O  V  A  L" in rendered
+
+
+def test_phase_banner_icon_preserved():
+    from forge.tui.screens.pipeline import PhaseBanner
+    banner = PhaseBanner()
+    banner._phase = "executing"
+    rendered = banner.render()
+    assert "⚡" in rendered
+    assert "E  X  E  C  U  T  I  O  N" in rendered
