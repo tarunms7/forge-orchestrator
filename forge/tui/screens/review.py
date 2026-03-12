@@ -9,13 +9,11 @@ import tempfile
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.containers import Horizontal
 from textual.widgets import Static
 from textual.binding import Binding
 from textual.message import Message
 
 from forge.tui.state import TuiState
-from forge.tui.widgets.task_list import TaskList
 from forge.tui.widgets.diff_viewer import DiffViewer
 
 _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
@@ -42,7 +40,7 @@ class ReviewScreen(Screen):
         background: #161b22;
         color: #a371f7;
     }
-    #review-pane {
+    DiffViewer {
         height: 1fr;
     }
     #review-status {
@@ -81,10 +79,8 @@ class ReviewScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
-        with Horizontal(id="review-pane"):
-            yield TaskList()
-            yield DiffViewer()
-        yield Static("[a] approve  [x] reject  [e] editor  [j/k] navigate", id="review-status")
+        yield DiffViewer()
+        yield Static("[a] approve  [x] reject  [e] editor  [j/k] scroll  [1-9] jump task", id="review-status")
 
     def on_mount(self) -> None:
         self._state.on_change(self._on_state_change)
@@ -96,19 +92,9 @@ class ReviewScreen(Screen):
 
     def _refresh(self) -> None:
         state = self._state
-        # Show ALL tasks so navigation always works; review actions
-        # are guarded to only operate on reviewable-state tasks.
-        all_tasks = [
-            state.tasks[tid] for tid in state.task_order
-            if tid in state.tasks
-        ]
-        task_list = self.query_one(TaskList)
-        task_list.update_tasks(all_tasks, state.selected_task_id)
-
         tid = state.selected_task_id
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            # On-demand diff: use cache or trigger async load
             diff = self._diff_cache.get(tid, "")
             if not diff and tid not in self._diff_loading:
                 self._diff_loading.add(tid)
@@ -116,15 +102,11 @@ class ReviewScreen(Screen):
                 diff = "Loading diff..."
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
-    def on_task_list_selected(self, event: TaskList.Selected) -> None:
-        self._state.selected_task_id = event.task_id
-        self._refresh()
-
     def action_cursor_down(self) -> None:
-        self.query_one(TaskList).action_cursor_down()
+        self.query_one(DiffViewer).scroll_relative(y=3)
 
     def action_cursor_up(self) -> None:
-        self.query_one(TaskList).action_cursor_up()
+        self.query_one(DiffViewer).scroll_relative(y=-3)
 
     def action_approve(self) -> None:
         tid = self._state.selected_task_id
