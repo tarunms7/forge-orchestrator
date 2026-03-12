@@ -1,8 +1,6 @@
 """Tests for PlanApprovalScreen interactive editor."""
 
-import copy
 
-import pytest
 
 from forge.tui.screens.plan_approval import (
     PlanApprovalScreen,

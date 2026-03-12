@@ -7,8 +7,8 @@ import uuid
 
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Static, TextArea, Input
-from textual.containers import VerticalScroll, Vertical, Horizontal
+from textual.widgets import Static, TextArea
+from textual.containers import VerticalScroll
 from textual.binding import Binding
 from textual.message import Message
 
