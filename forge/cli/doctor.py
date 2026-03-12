@@ -176,6 +176,16 @@ def _check_db_connectivity() -> tuple[str, str, str]:
         return "fail", "Database", f"connection failed: {exc}"
 
 
+def _web_extras_installed() -> bool:
+    """Check if web extras (fastapi, uvicorn, etc.) are installed."""
+    try:
+        import fastapi  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 _STATUS_ICONS = {
     "ok": "[green]✓[/green]",
     "warn": "[yellow]⚠[/yellow]",
@@ -200,12 +210,13 @@ def doctor() -> None:
         _check_git(),
         _check_claude_cli(),
         _check_gh(),
-        _check_node_version(),
-        _check_node_npm(),
-        _check_jwt_secret(),
         _check_disk_space(),
         _check_db_connectivity(),
     ]
+    if _web_extras_installed():
+        checks.insert(4, _check_node_version())
+        checks.insert(5, _check_node_npm())
+        checks.insert(6, _check_jwt_secret())
 
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("Status", width=3, justify="center")
