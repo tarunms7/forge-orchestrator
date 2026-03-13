@@ -55,24 +55,17 @@ logger = logging.getLogger("forge")
 console = Console()
 
 
-def _sanitize_branch_name(description: str) -> str:
-    """Generate a clean git branch name from a task description.
+def _sanitize_branch_name(raw: str) -> str:
+    """Sanitize a string into a valid git branch name.
 
-    Sanitizes: lowercase, replace spaces/underscores with hyphens, remove
-    special chars, truncate to ~50 chars, prefix with ``forge/``.
-
-    Example: "Add JWT auth and user registration" → "forge/add-jwt-auth-and-user-registration"
+    Lowercase, replace spaces/underscores with hyphens, remove special chars,
+    truncate to ~50 chars, prefix with ``forge/``.
     """
-    name = description.lower().strip()
-    # Replace whitespace and underscores with hyphens
+    name = raw.lower().strip()
     name = re.sub(r"[\s_]+", "-", name)
-    # Remove anything that isn't alphanumeric or hyphen
     name = re.sub(r"[^a-z0-9\-]", "", name)
-    # Collapse multiple consecutive hyphens
     name = re.sub(r"-{2,}", "-", name)
-    # Strip leading/trailing hyphens
     name = name.strip("-")
-    # Truncate to ~50 chars, preferring to break at a hyphen boundary
     if len(name) > 50:
         truncated = name[:50]
         last_hyphen = truncated.rfind("-")
@@ -80,6 +73,44 @@ def _sanitize_branch_name(description: str) -> str:
     if not name:
         name = "pipeline-task"
     return f"forge/{name}"
+
+
+async def _generate_branch_name(description: str) -> str:
+    """Generate a short, meaningful branch name from a task description using an LLM.
+
+    Falls back to the dumb slugify approach if the LLM call fails.
+
+    Examples:
+      "Fix duplicating progress log lines in mining CLI" → "forge/fix-mining-progress-duplicates"
+      "We haven't updated anything in the README, can we update it?" → "forge/update-readme"
+    """
+    from forge.core.sdk_helpers import sdk_query
+    from claude_code_sdk import ClaudeCodeOptions
+
+    try:
+        result = await sdk_query(
+            prompt=(
+                "Generate a short git branch name (3-5 words, kebab-case) for this task. "
+                "Reply with ONLY the branch name, nothing else. No 'forge/' prefix.\n\n"
+                f"Task: {description}"
+            ),
+            options=ClaudeCodeOptions(max_turns=1),
+        )
+        if result and result.result_text:
+            candidate = result.result_text.strip().strip("`\"'").strip()
+            # Remove any prefix the LLM might add
+            for prefix in ("forge/", "feature/", "fix/", "feat/"):
+                if candidate.lower().startswith(prefix):
+                    candidate = candidate[len(prefix):]
+            # Sanitize what the LLM gave us
+            sanitized = _sanitize_branch_name(candidate)
+            if sanitized != "forge/pipeline-task":
+                logger.debug("LLM generated branch name: %s", sanitized)
+                return sanitized
+    except Exception:
+        logger.debug("LLM branch name generation failed, falling back to slugify", exc_info=True)
+
+    return _sanitize_branch_name(description)
 
 
 class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
@@ -457,7 +488,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             pipeline_branch = custom_branch.strip()
         else:
             description = pipeline_record.description if pipeline_record else ""
-            pipeline_branch = _sanitize_branch_name(description) if description else f"forge/pipeline-{pid[:8]}"
+            pipeline_branch = (await _generate_branch_name(description)) if description else f"forge/pipeline-{pid[:8]}"
         # Persist the final computed branch name so the PR creation endpoint can use it
         await db.set_pipeline_branch_name(pid, pipeline_branch)
         # Notify TUI so diff views can resolve the branch immediately
