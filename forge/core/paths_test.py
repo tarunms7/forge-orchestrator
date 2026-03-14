@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
 
 from forge.core.paths import forge_data_dir, forge_db_path, forge_db_url, project_forge_dir
 
