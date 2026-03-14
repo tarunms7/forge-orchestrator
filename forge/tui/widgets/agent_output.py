@@ -26,8 +26,10 @@ _SECTION_COLORS = {
 _ERROR_TAIL_LINES = 20
 
 
-def _escape(text: str) -> str:
+def _escape(text: str | None) -> str:
     """Escape Rich markup characters in user-provided text."""
+    if text is None:
+        return ""
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
@@ -43,7 +45,7 @@ def format_header(task_id: str | None, title: str | None, state: str | None) -> 
 def format_error_detail(task_id: str, task: dict, output_lines: list[str]) -> str:
     """Render the error detail combined view as a single Rich markup string."""
     title = task.get("title", "Untitled")
-    error = task.get("error", "Unknown error")
+    error = task.get("error") or "Unknown error"
     files_changed = task.get("files_changed", [])
 
     parts: list[str] = []

@@ -33,8 +33,10 @@ STATE_COLORS: dict[str, str] = {
 MAX_WIDTH = 40
 
 
-def _escape(text: str) -> str:
+def _escape(text: str | None) -> str:
     """Escape Rich markup characters in user-provided text."""
+    if text is None:
+        return ""
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
