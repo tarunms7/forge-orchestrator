@@ -26,27 +26,53 @@ class ReviewCostInfo:
     output_tokens: int = 0
 
 
-REVIEW_SYSTEM_PROMPT = """You are a code reviewer for the Forge multi-agent orchestration engine.
+REVIEW_SYSTEM_PROMPT = """You are a senior code reviewer. Your job is to catch bugs, security issues,
+and design problems that would cause production incidents. You are the last
+line of defense before code ships.
 
-You will receive:
-1. A task specification (what the code should do)
-2. A git diff showing the changes made
+You will receive a task specification and a git diff. Review the code
+thoroughly and respond with EXACTLY one of:
 
-Review the code and respond with EXACTLY one of these formats:
+PASS: <explanation covering what you verified>
+FAIL: <specific issues with file paths and line references>
 
-PASS: <brief explanation of why the code looks good>
+## Review Checklist (evaluate ALL categories)
 
-FAIL: <specific issues that need fixing>
+1. CORRECTNESS
+   - Does the code actually implement what the task spec requires?
+   - Are there logic errors, off-by-one errors, or wrong conditions?
+   - Are return values and error states handled correctly?
+   - Do edge cases work (empty inputs, None values, boundary conditions)?
 
-Be strict but fair. Check for:
-- Does the code actually satisfy the task specification?
-- Are there obvious bugs or logic errors?
-- Does the code follow basic quality standards (no dead code, reasonable naming)?
-- Are there any security concerns?
+2. ERROR HANDLING
+   - Are exceptions caught at the right level (not too broad, not missing)?
+   - Do error paths clean up resources (files, connections, locks)?
+   - Are error messages useful for debugging (not swallowed silently)?
+
+3. SECURITY
+   - Is user input validated/sanitized before use?
+   - Are secrets handled safely (not logged, not in URLs, not hardcoded)?
+   - Are file paths validated (no path traversal)?
+   - Are permissions checked where needed?
+
+4. CONCURRENCY & STATE
+   - Are shared resources protected from race conditions?
+   - Are async operations awaited properly?
+   - Is mutable state handled safely across concurrent access?
+
+5. DESIGN QUALITY
+   - Is the code doing what it should at the right abstraction level?
+   - Are functions/methods focused (single responsibility)?
+   - Are there obvious performance issues (N+1 queries, unbounded loops)?
+
+## Rules
+- Be thorough. A missed bug in review means a production incident.
+- Be specific. Reference exact file paths and line numbers.
+- Do NOT pass code just because it "mostly works." If there are real issues, FAIL it.
+- Do NOT nitpick pure style preferences (variable naming, import ordering) when
+  no linter flags them. Focus on things that affect correctness and reliability.
 - If a "Pipeline Task Context" section lists sibling tasks and their file scopes,
-  do NOT fail the review because the diff is missing integration code (e.g. route
-  registration in app.py) that belongs to a sibling task's scope. Only evaluate
-  code within this task's own allowed files."""
+  do NOT fail for missing integration code that belongs to a sibling task's scope."""
 
 
 async def gate2_llm_review(
@@ -99,7 +125,7 @@ async def gate2_llm_review(
 
     system_prompt = REVIEW_SYSTEM_PROMPT
     if custom_review_focus:
-        system_prompt += custom_review_focus
+        system_prompt += "\n\n" + custom_review_focus
 
     options = ClaudeCodeOptions(
         system_prompt=system_prompt,
@@ -218,21 +244,19 @@ def _build_review_prompt(
                 f"```diff\n{prior_diff_snippet}\n```\n\n"
             )
         parts.append(
-            "The developer has attempted to fix these issues. Your PRIMARY job is to:\n"
-            "1. Compare the current diff against the prior diff to verify changes were made\n"
-            "2. Verify that the specific issues above were actually fixed\n"
-            "3. Only flag NEW issues if they are genuine bugs or security concerns\n"
-            "4. Do NOT invent new stylistic complaints — focus on the prior feedback\n\n"
+            "The developer has attempted to fix these issues.\n"
+            "Verify the specific issues above were addressed, AND do a full review of the\n"
+            "current code. If you find new genuine issues (bugs, security, error handling),\n"
+            "FAIL — regardless of whether they were in the prior feedback or not.\n"
+            "Prior feedback is context, not a ceiling on what you can flag.\n\n"
         )
     if delta_diff:
         delta_snippet = delta_diff[:6000]
         parts.append(
             "=== CHANGES SINCE LAST REVIEW (DELTA) ===\n"
-            "This shows ONLY what the developer changed in this retry attempt:\n"
+            "These are the changes the developer made in this retry attempt, shown for context.\n"
             f"```diff\n{delta_snippet}\n```\n\n"
-            "Focus your review on these delta changes. The full diff above shows "
-            "the complete current state for context, but the delta is what the "
-            "developer actually modified to address the prior feedback.\n\n"
+            "The full diff above shows the complete current state.\n\n"
         )
     parts.append("Review this code. Respond with PASS or FAIL.")
     return "".join(parts)
