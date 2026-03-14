@@ -1,6 +1,8 @@
 """Forge configuration. All settings in one place with sensible defaults."""
 
-from pydantic import field_validator
+from __future__ import annotations
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -33,8 +35,11 @@ class ForgeSettings(BaseSettings):
     memory_threshold_pct: float = 10.0
     disk_threshold_gb: float = 5.0
 
+    # Central data directory
+    data_dir: str = ""
+
     # Database
-    db_url: str = "sqlite+aiosqlite:///forge.db"
+    db_url: str = ""
 
     # Budget & cost tracking
     budget_limit_usd: float = 0.0  # 0 means unlimited
@@ -124,3 +129,14 @@ class ForgeSettings(BaseSettings):
         if v < 30:
             raise ValueError("agent_timeout_seconds must be >= 30")
         return v
+
+    @model_validator(mode="after")
+    def _apply_path_defaults(self) -> ForgeSettings:
+        """Set data_dir and db_url from centralized paths if not overridden."""
+        from forge.core.paths import forge_data_dir, forge_db_url
+
+        if not self.data_dir:
+            self.data_dir = forge_data_dir()
+        if not self.db_url:
+            self.db_url = forge_db_url()
+        return self
