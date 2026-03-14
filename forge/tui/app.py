@@ -58,8 +58,8 @@ class ForgeApp(App):
         Binding("ctrl+p", "show_command_palette", "Command Palette", show=False),
         # Block dangerous system shortcuts that can cause unrecoverable state
         # (e.g. Cmd+K sending unintended messages during execution).
-        Binding("ctrl+k", "noop", show=False, priority=True),
-        Binding("ctrl+l", "noop", show=False, priority=True),
+        # Binding("ctrl+k", "noop", show=False, priority=True),
+        # Binding("ctrl+l", "noop", show=False, priority=True),
     ]
 
     def __init__(
@@ -638,10 +638,6 @@ class ForgeApp(App):
         if self._is_input_focused() or self._is_modal_screen():
             return
         self.push_screen(SettingsScreen(self._settings))
-
-    def action_noop(self) -> None:
-        """Intentionally does nothing — used to block system shortcuts."""
-        pass
 
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():
