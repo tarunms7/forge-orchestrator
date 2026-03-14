@@ -560,6 +560,21 @@ class ReviewMixin:
         if not py_files:
             return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
 
+        # Check if ruff is available before trying to use it.
+        # ruff is a dev dependency — it may not be installed in the uv tool
+        # environment or production installs.  Skip gracefully instead of
+        # hard-failing the entire review pipeline.
+        ruff_check = subprocess.run(
+            [sys.executable, "-m", "ruff", "--version"],
+            capture_output=True, text=True,
+        )
+        if ruff_check.returncode != 0:
+            logger.warning("ruff not installed — skipping lint gate")
+            return GateResult(
+                passed=True, gate="gate1_auto_check",
+                details="Lint skipped — ruff not installed (install with: pip install ruff)",
+            )
+
         # Auto-fix trivial lint issues (unused imports, etc.) before checking.
         # Agents commonly add `import pytest` or unused imports — ruff can fix
         # these automatically, avoiding wasted retries on mechanical issues.

@@ -671,14 +671,17 @@ class TestGate1AutoFixDiff:
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            # First call: ruff --fix (returncode irrelevant), second: ruff check (pass)
+            # First call: ruff --version (availability check),
+            # second: ruff --fix, third: ruff check (pass)
+            version_result = MagicMock()
+            version_result.returncode = 0
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
+            mock_subprocess.side_effect = [version_result, fix_result, check_result]
 
             result = await mixin._gate1("/repo")
 
@@ -711,13 +714,15 @@ class TestGate1AutoFixDiff:
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
+            version_result = MagicMock()
+            version_result.returncode = 0
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
+            mock_subprocess.side_effect = [version_result, fix_result, check_result]
 
             result = await mixin._gate1("/repo")
 
@@ -742,13 +747,15 @@ class TestGate1AutoFixDiff:
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
+            version_result = MagicMock()
+            version_result.returncode = 0
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
+            mock_subprocess.side_effect = [version_result, fix_result, check_result]
 
             result = await mixin._gate1("/repo")
 
@@ -785,19 +792,41 @@ class TestGate1AutoFixDiff:
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
+            version_result = MagicMock()
+            version_result.returncode = 0
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
+            mock_subprocess.side_effect = [version_result, fix_result, check_result]
 
             result = await mixin._gate1("/repo")
 
         assert result.passed is True
         assert result.details.startswith("Lint clean (auto-fixed:")
         assert "removed 1 unused import" in result.details
+
+    @pytest.mark.asyncio
+    async def test_ruff_not_installed_skips_gracefully(self):
+        """When ruff is not installed, gate1 passes with a skip message."""
+        mixin = self._make_mixin()
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+        ):
+            # ruff --version returns non-zero (not installed)
+            version_result = MagicMock()
+            version_result.returncode = 1
+            mock_subprocess.return_value = version_result
+
+            result = await mixin._gate1("/repo")
+
+        assert result.passed is True
+        assert "ruff not installed" in result.details
 
 
 class TestSummarizeAutoFix:
