@@ -33,28 +33,28 @@ def get_all_actions() -> list[CommandPaletteAction]:
         CommandPaletteAction(
             name="Home",
             description="Go to home screen",
-            shortcut="Ctrl+1",
+            shortcut="1",
             category="Navigation",
             callback_name="switch_home",
         ),
         CommandPaletteAction(
             name="Pipeline",
             description="Go to pipeline screen",
-            shortcut="Ctrl+2",
+            shortcut="2",
             category="Navigation",
             callback_name="switch_pipeline",
         ),
         CommandPaletteAction(
             name="Review",
             description="Go to review screen",
-            shortcut="Ctrl+3",
+            shortcut="3",
             category="Navigation",
             callback_name="switch_review",
         ),
         CommandPaletteAction(
             name="Settings",
             description="Open settings screen",
-            shortcut="Ctrl+4",
+            shortcut="4",
             category="Navigation",
             callback_name="switch_settings",
         ),
@@ -62,21 +62,21 @@ def get_all_actions() -> list[CommandPaletteAction]:
         CommandPaletteAction(
             name="New Task",
             description="Start a new pipeline task",
-            shortcut="Ctrl+N",
+            shortcut="",
             category="Pipeline",
             callback_name="reset_for_new_task",
         ),
         CommandPaletteAction(
             name="Retry Task",
             description="Retry failed task",
-            shortcut="R",
+            shortcut="",
             category="Pipeline",
             callback_name="retry_task",
         ),
         CommandPaletteAction(
             name="Skip Task",
             description="Skip current task",
-            shortcut="Ctrl+X",
+            shortcut="",
             category="Pipeline",
             callback_name="skip_task",
         ),
@@ -91,37 +91,30 @@ def get_all_actions() -> list[CommandPaletteAction]:
         CommandPaletteAction(
             name="Toggle DAG",
             description="Toggle the dependency graph view",
-            shortcut="Ctrl+G",
+            shortcut="g",
             category="View",
             callback_name="toggle_dag",
         ),
         CommandPaletteAction(
             name="View Diff",
             description="Show diff for selected task",
-            shortcut="Ctrl+D",
+            shortcut="d",
             category="View",
             callback_name="view_diff",
         ),
         CommandPaletteAction(
             name="View Output",
             description="Show agent output for selected task",
-            shortcut="Ctrl+O",
+            shortcut="o",
             category="View",
             callback_name="view_output",
         ),
         CommandPaletteAction(
-            name="View Chat",
-            description="Show chat thread panel",
-            shortcut="Ctrl+T",
+            name="View Contracts",
+            description="Show contracts panel",
+            shortcut="c",
             category="View",
-            callback_name="view_chat",
-        ),
-        CommandPaletteAction(
-            name="Task Info",
-            description="Show task description overlay",
-            shortcut="i",
-            category="View",
-            callback_name="show_task_description",
+            callback_name="view_contracts",
         ),
         # Tools
         CommandPaletteAction(
@@ -139,25 +132,25 @@ def get_all_actions() -> list[CommandPaletteAction]:
             callback_name="show_help",
         ),
         CommandPaletteAction(
-            name="Copy Mode",
-            description="Enter line-selection copy mode",
-            shortcut="Ctrl+Y",
+            name="Copy Output",
+            description="Copy agent output to clipboard",
+            shortcut="y",
             category="Tools",
-            callback_name="copy_mode",
-        ),
-        CommandPaletteAction(
-            name="Copy All",
-            description="Copy all output to clipboard",
-            shortcut="C",
-            category="Tools",
-            callback_name="copy_all",
+            callback_name="copy_output",
         ),
         CommandPaletteAction(
             name="Screenshot",
             description="Export screenshot to file",
-            shortcut="",
+            shortcut="s",
             category="Tools",
             callback_name="screenshot_export",
+        ),
+        CommandPaletteAction(
+            name="Export Logs",
+            description="Export pipeline logs",
+            shortcut="",
+            category="Tools",
+            callback_name="export_logs",
         ),
         CommandPaletteAction(
             name="Clear Input",
@@ -169,7 +162,7 @@ def get_all_actions() -> list[CommandPaletteAction]:
         CommandPaletteAction(
             name="Quit",
             description="Quit Forge",
-            shortcut="Ctrl+Q",
+            shortcut="q",
             category="Tools",
             callback_name="quit_app",
         ),
@@ -179,7 +172,6 @@ def get_all_actions() -> list[CommandPaletteAction]:
 # ---------------------------------------------------------------------------
 # Fuzzy matching
 # ---------------------------------------------------------------------------
-
 
 def fuzzy_score(query: str, text: str) -> int:
     """Score how well query matches text. Higher = better. 0 = no match.
@@ -362,7 +354,6 @@ class CommandPalette(Widget):
 
     class Dismissed(Message):
         """Posted when the palette is dismissed."""
-
         pass
 
     def __init__(
@@ -437,16 +428,8 @@ class CommandPalette(Widget):
 
         # Let bindings handle special keys
         if event.key in (
-            "escape",
-            "enter",
-            "up",
-            "down",
-            "j",
-            "k",
-            "backspace",
-            "ctrl+p",
-            "tab",
-            "shift+tab",
+            "escape", "enter", "up", "down", "j", "k", "backspace",
+            "ctrl+p", "tab", "shift+tab",
         ):
             return
 

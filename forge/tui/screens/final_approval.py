@@ -87,10 +87,10 @@ class FinalApprovalScreen(Screen):
 
     BINDINGS = [
         Binding("enter", "create_pr", "Create PR", show=True, priority=True),
-        Binding("ctrl+d", "view_diff", "View Diff", show=True),
-        Binding("ctrl+r", "rerun", "Re-run Failed", show=True),
-        Binding("ctrl+f", "focus_followup", "Follow Up", show=True),
-        Binding("ctrl+n", "new_task", "New Task", show=True),
+        Binding("d", "view_diff", "View Diff", show=True),
+        Binding("r", "rerun", "Re-run Failed", show=True),
+        Binding("f", "focus_followup", "Follow Up", show=True),
+        Binding("n", "new_task", "New Task", show=True),
         Binding("ctrl+s", "submit_followup", "Submit Follow-up", show=False),
         Binding("escape", "app.pop_screen", "Cancel", show=True),
     ]
@@ -111,8 +111,6 @@ class FinalApprovalScreen(Screen):
         self._stats = stats or {}
         self._tasks = tasks or []
         self._pipeline_branch = pipeline_branch
-        self._pr_creating = False
-        self._pr_created = False
 
     def compose(self):
         files_count = self._stats.get("files", 0)
@@ -125,8 +123,8 @@ class FinalApprovalScreen(Screen):
                     yield Static("\n[bold]Tasks:[/]", id="tasks-header")
                     yield Static(format_task_table(self._tasks), id="task-table")
                     yield Static(
-                        "\n[#8b949e]Enter: create PR  ^D: diff  ^R: re-run  "
-                        "^F: follow up  ^N: new task  Esc: cancel[/]"
+                        "\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
+                        "f: follow up  n: new task  Esc: cancel[/]"
                     )
                     yield FollowUpInput(
                         branch=self._pipeline_branch,
@@ -136,8 +134,6 @@ class FinalApprovalScreen(Screen):
 
     def show_pr_url(self, url: str) -> None:
         """Display the PR URL inline in the stats area."""
-        self._pr_created = True
-        self._pr_creating = False
         try:
             pr_widget = self.query_one("#pr-url", Static)
             pr_widget.update(f"[bold #3fb950]PR created:[/] [underline #58a6ff]{url}[/]")
@@ -149,9 +145,6 @@ class FinalApprovalScreen(Screen):
         self.app.action_reset_for_new_task()
 
     def action_create_pr(self) -> None:
-        if self._pr_creating or self._pr_created:
-            return
-        self._pr_creating = True
         self.post_message(self.CreatePR())
 
     def action_rerun(self) -> None:

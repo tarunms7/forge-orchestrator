@@ -7,21 +7,9 @@ from forge.tui.state import TuiState
 def _make_state_with_task(task_id="t1"):
     """Helper: create state with one task ready."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": task_id,
-                    "title": "X",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": task_id, "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
     return state
 
 
@@ -54,29 +42,12 @@ def test_apply_phase_changed():
 
 def test_apply_plan_ready_populates_tasks():
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Setup DB",
-                    "description": "...",
-                    "files": ["db.py"],
-                    "depends_on": [],
-                    "complexity": "low",
-                },
-                {
-                    "id": "t2",
-                    "title": "Add API",
-                    "description": "...",
-                    "files": ["api.py"],
-                    "depends_on": ["t1"],
-                    "complexity": "medium",
-                },
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [
+            {"id": "t1", "title": "Setup DB", "description": "...", "files": ["db.py"], "depends_on": [], "complexity": "low"},
+            {"id": "t2", "title": "Add API", "description": "...", "files": ["api.py"], "depends_on": ["t1"], "complexity": "medium"},
+        ]
+    })
     assert len(state.tasks) == 2
     assert state.tasks["t1"]["title"] == "Setup DB"
     assert state.tasks["t1"]["state"] == "todo"
@@ -85,21 +56,9 @@ def test_apply_plan_ready_populates_tasks():
 
 def test_apply_task_state_changed():
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "X",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
     assert state.tasks["t1"]["state"] == "in_progress"
 
@@ -127,21 +86,9 @@ def test_apply_cost_update():
 
 def test_apply_task_cost_update():
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "X",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:cost_update", {"task_id": "t1", "agent_cost": 0.5})
     assert state.tasks["t1"]["agent_cost"] == 0.5
 
@@ -156,37 +103,13 @@ def test_on_change_callback():
 
 def test_task_counts():
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "A",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                },
-                {
-                    "id": "t2",
-                    "title": "B",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                },
-                {
-                    "id": "t3",
-                    "title": "C",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                },
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [
+            {"id": "t1", "title": "A", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"},
+            {"id": "t2", "title": "B", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"},
+            {"id": "t3", "title": "C", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"},
+        ]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
     state.apply_event("task:state_changed", {"task_id": "t2", "state": "in_progress"})
     assert state.done_count == 1
@@ -239,21 +162,9 @@ def test_state_changed_done_clears_streaming():
     state = TuiState()
     state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
     assert "t1" in state.streaming_task_ids
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "X",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
     assert "t1" not in state.streaming_task_ids
 
@@ -261,21 +172,9 @@ def test_state_changed_done_clears_streaming():
 def test_state_changed_error_clears_streaming():
     state = TuiState()
     state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "X",
-                    "description": "",
-                    "files": ["f"],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "X", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error"})
     assert "t1" not in state.streaming_task_ids
 
@@ -289,7 +188,6 @@ def test_review_llm_output_ignores_missing_task_id():
 
 
 # --- cost_estimate ---
-
 
 def test_cost_estimate_range():
     state = TuiState()
@@ -313,7 +211,6 @@ def test_cost_estimate_notifies():
 
 # --- budget_exceeded ---
 
-
 def test_budget_exceeded():
     state = TuiState()
     state.apply_event("pipeline:budget_exceeded", {})
@@ -329,7 +226,6 @@ def test_budget_exceeded_notifies():
 
 
 # --- contracts:output ---
-
 
 def test_contracts_output_appends():
     state = TuiState()
@@ -362,7 +258,6 @@ def test_contracts_output_missing_line():
 
 # --- contracts_ready ---
 
-
 def test_contracts_ready():
     state = TuiState()
     state.apply_event("pipeline:contracts_ready", {})
@@ -378,7 +273,6 @@ def test_contracts_ready_notifies():
 
 
 # --- contracts_failed ---
-
 
 def test_contracts_failed():
     state = TuiState()
@@ -401,7 +295,6 @@ def test_contracts_failed_notifies():
 
 
 # --- files_changed ---
-
 
 def test_files_changed():
     state = _make_state_with_task("t1")
@@ -432,7 +325,6 @@ def test_files_changed_notifies():
 
 # --- cancelled ---
 
-
 def test_cancelled():
     state = TuiState()
     state.apply_event("pipeline:cancelled", {})
@@ -449,7 +341,6 @@ def test_cancelled_notifies():
 
 # --- paused ---
 
-
 def test_paused():
     state = TuiState()
     state.apply_event("pipeline:paused", {})
@@ -458,7 +349,6 @@ def test_paused():
 
 # --- resumed ---
 
-
 def test_resumed():
     state = TuiState()
     state.apply_event("pipeline:resumed", {})
@@ -466,7 +356,6 @@ def test_resumed():
 
 
 # --- restarted ---
-
 
 def test_restarted_resets_state():
     state = _make_state_with_task("t1")
@@ -496,7 +385,6 @@ def test_restarted_resets_state():
 
 # --- worktrees_cleaned ---
 
-
 def test_worktrees_cleaned_no_op():
     state = TuiState()
     state.phase = "executing"
@@ -506,7 +394,6 @@ def test_worktrees_cleaned_no_op():
 
 
 # --- preflight_failed ---
-
 
 def test_preflight_failed():
     state = TuiState()
@@ -530,7 +417,6 @@ def test_preflight_failed_notifies():
 
 # --- followup:task_started ---
 
-
 def test_followup_started():
     state = TuiState()
     state.apply_event("followup:task_started", {"task_id": "f1"})
@@ -546,7 +432,6 @@ def test_followup_started_notifies():
 
 
 # --- followup:task_completed ---
-
 
 def test_followup_completed():
     state = TuiState()
@@ -566,7 +451,6 @@ def test_followup_completed_unknown_task():
 
 # --- followup:task_error ---
 
-
 def test_followup_error():
     state = TuiState()
     state.apply_event("followup:task_started", {"task_id": "f1"})
@@ -582,7 +466,6 @@ def test_followup_error_unknown_task():
 
 
 # --- followup:agent_output ---
-
 
 def test_followup_output():
     state = TuiState()
@@ -607,7 +490,6 @@ def test_followup_output_missing_line():
 
 # --- slot events (no-op) ---
 
-
 def test_slot_acquired_no_op():
     state = TuiState()
     state.phase = "executing"
@@ -631,12 +513,9 @@ def test_slot_queued_no_op():
 
 # --- task:state_changed stores error ---
 
-
 def test_task_state_changed_stores_error():
     state = _make_state_with_task("t1")
-    state.apply_event(
-        "task:state_changed", {"task_id": "t1", "state": "error", "error": "Agent crashed"}
-    )
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "Agent crashed"})
     assert state.tasks["t1"]["state"] == "error"
     assert state.tasks["t1"]["error"] == "Agent crashed"
 
@@ -648,7 +527,6 @@ def test_task_state_changed_no_error_key():
 
 
 # --- all 19 events in _EVENT_MAP ---
-
 
 def test_all_new_events_in_event_map():
     """Verify all 19 new event types are registered in _EVENT_MAP."""
@@ -678,7 +556,6 @@ def test_all_new_events_in_event_map():
 
 
 # --- unified_log ---
-
 
 def test_initial_state_has_unified_log():
     state = TuiState()
@@ -720,9 +597,7 @@ def test_unified_log_ring_buffer():
 
 def test_review_gate_passed_appends_to_unified_log():
     state = _make_state_with_task("t1")
-    state.apply_event(
-        "review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "passed"}
-    )
+    state.apply_event("review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "passed"})
     assert len(state.unified_log["t1"]) == 1
     assert state.unified_log["t1"][0][0] == "gate"
     assert "Build" in state.unified_log["t1"][0][1]
@@ -731,9 +606,7 @@ def test_review_gate_passed_appends_to_unified_log():
 
 def test_review_gate_failed_appends_to_unified_log():
     state = _make_state_with_task("t1")
-    state.apply_event(
-        "review:gate_failed", {"task_id": "t1", "gate": "gate1_lint", "details": "3 errors"}
-    )
+    state.apply_event("review:gate_failed", {"task_id": "t1", "gate": "gate1_lint", "details": "3 errors"})
     assert len(state.unified_log["t1"]) == 1
     assert state.unified_log["t1"][0][0] == "gate"
     assert "Lint" in state.unified_log["t1"][0][1]
@@ -752,57 +625,3 @@ def test_restarted_clears_unified_log():
     state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
     state.apply_event("pipeline:restarted", {})
     assert state.unified_log == {}
-
-
-# --- deferred phase ---
-
-
-def test_initial_deferred_phase_is_none():
-    state = TuiState()
-    assert state.deferred_phase is None
-
-
-def test_defer_phase_stores_phase():
-    state = TuiState()
-    state.defer_phase("final_approval")
-    assert state.deferred_phase == "final_approval"
-
-
-def test_defer_phase_notifies():
-    state = TuiState()
-    changes = []
-    state.on_change(lambda f: changes.append(f))
-    state.defer_phase("final_approval")
-    assert "deferred_phase" in changes
-
-
-def test_apply_deferred_phase_applies_and_clears():
-    state = TuiState()
-    state.defer_phase("final_approval")
-    result = state.apply_deferred_phase()
-    assert result is True
-    assert state.phase == "final_approval"
-    assert state.deferred_phase is None
-
-
-def test_apply_deferred_phase_notifies():
-    state = TuiState()
-    state.defer_phase("final_approval")
-    changes = []
-    state.on_change(lambda f: changes.append(f))
-    state.apply_deferred_phase()
-    assert "phase" in changes
-
-
-def test_apply_deferred_phase_returns_false_when_none():
-    state = TuiState()
-    result = state.apply_deferred_phase()
-    assert result is False
-    assert state.phase == "idle"
-
-
-def test_reset_clears_deferred_phase():
-    state = TuiState()
-    state.defer_phase("final_approval")
-    state.reset()
-    assert state.deferred_phase is None

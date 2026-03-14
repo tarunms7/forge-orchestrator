@@ -38,7 +38,6 @@ async def test_pipeline_screen_mounts():
 async def test_phase_banner_is_outside_split_pane():
     """PhaseBanner must be a direct child of PipelineScreen, not inside #split-pane."""
     from forge.tui.screens.pipeline import PhaseBanner
-
     app = PipelineTestApp()
     async with app.run_test():
         screen = app.screen
@@ -54,7 +53,6 @@ async def test_phase_banner_is_outside_split_pane():
 async def test_phase_banner_not_in_left_panel():
     """PhaseBanner must not be inside #left-panel."""
     from forge.tui.screens.pipeline import PhaseBanner
-
     app = PipelineTestApp()
     async with app.run_test():
         left_panel = app.screen.query_one("#left-panel")
@@ -68,9 +66,9 @@ async def test_pipeline_screen_dag_toggle():
     async with app.run_test() as pilot:
         dag = app.screen.query_one("DagOverlay")
         assert not dag.has_class("visible")
-        await pilot.press("ctrl+g")
+        await pilot.press("g")
         assert dag.has_class("visible")
-        await pilot.press("ctrl+g")
+        await pilot.press("g")
         assert not dag.has_class("visible")
 
 
@@ -126,21 +124,9 @@ async def test_agent_output_fast_path_skips_refresh_all():
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
         # Set up a plan with a selected task
-        state.apply_event(
-            "pipeline:plan_ready",
-            {
-                "tasks": [
-                    {
-                        "id": "t1",
-                        "title": "Test",
-                        "description": "",
-                        "files": ["f"],
-                        "depends_on": [],
-                        "complexity": "low",
-                    }
-                ]
-            },
-        )
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+        })
         await pilot.pause()
         screen = app.screen
         with patch.object(screen, "_refresh_all") as mock_refresh:
@@ -156,21 +142,9 @@ async def test_agent_output_fast_path_calls_append_unified():
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        state.apply_event(
-            "pipeline:plan_ready",
-            {
-                "tasks": [
-                    {
-                        "id": "t1",
-                        "title": "Test",
-                        "description": "",
-                        "files": ["f"],
-                        "depends_on": [],
-                        "complexity": "low",
-                    }
-                ]
-            },
-        )
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+        })
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
         with patch.object(agent_output, "append_unified") as mock_append:
@@ -185,21 +159,9 @@ async def test_agent_output_fast_path_enables_streaming():
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        state.apply_event(
-            "pipeline:plan_ready",
-            {
-                "tasks": [
-                    {
-                        "id": "t1",
-                        "title": "Test",
-                        "description": "",
-                        "files": ["f"],
-                        "depends_on": [],
-                        "complexity": "low",
-                    }
-                ]
-            },
-        )
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+        })
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
         with patch.object(agent_output, "set_streaming") as mock_stream:
@@ -214,21 +176,9 @@ async def test_review_output_fast_path_skips_refresh_all():
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        state.apply_event(
-            "pipeline:plan_ready",
-            {
-                "tasks": [
-                    {
-                        "id": "t1",
-                        "title": "Test",
-                        "description": "",
-                        "files": ["f"],
-                        "depends_on": [],
-                        "complexity": "low",
-                    }
-                ]
-            },
-        )
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+        })
         await pilot.pause()
         screen = app.screen
         with patch.object(screen, "_refresh_all") as mock_refresh:
@@ -243,21 +193,9 @@ async def test_streaming_stops_on_task_done():
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        state.apply_event(
-            "pipeline:plan_ready",
-            {
-                "tasks": [
-                    {
-                        "id": "t1",
-                        "title": "Test",
-                        "description": "",
-                        "files": ["f"],
-                        "depends_on": [],
-                        "complexity": "low",
-                    }
-                ]
-            },
-        )
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
+        })
         await pilot.pause()
         # Start streaming
         state.apply_event("task:agent_output", {"task_id": "t1", "line": "working..."})
@@ -277,34 +215,34 @@ async def test_streaming_stops_on_task_done():
 
 
 @pytest.mark.asyncio
-async def test_ctrl_t_opens_chat_view():
-    """Pressing Ctrl+T should switch to chat view."""
+async def test_t_key_opens_chat_view():
+    """Pressing 't' should switch to chat view (relocated from 'c')."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
         screen = app.screen
-        await pilot.press("ctrl+t")
+        await pilot.press("t")
         assert screen._active_view == "chat"
 
 
 @pytest.mark.asyncio
-async def test_ctrl_o_opens_output_view():
-    """Pressing Ctrl+O should switch to output view."""
+async def test_o_key_opens_output_view():
+    """Pressing 'o' should switch to output view (unchanged)."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+d")  # Switch away to diff first
-        await pilot.press("ctrl+o")
+        await pilot.press("d")  # Switch away to diff first
+        await pilot.press("o")
         assert app.screen._active_view == "output"
 
 
 @pytest.mark.asyncio
-async def test_ctrl_d_opens_diff_view():
-    """Pressing Ctrl+D should switch to diff view."""
+async def test_d_key_opens_diff_view():
+    """Pressing 'd' should switch to diff view (unchanged)."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        await pilot.press("ctrl+d")
+        await pilot.press("d")
         assert app.screen._active_view == "diff"
 
 
@@ -315,21 +253,9 @@ async def test_ctrl_d_opens_diff_view():
 async def test_retry_noop_when_not_error():
     """action_retry_task is a no-op when selected task is not in error state."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
     app = PipelineTestApp(state=state)
     async with app.run_test():
@@ -344,21 +270,9 @@ async def test_retry_noop_when_not_error():
 async def test_skip_noop_when_not_error():
     """action_skip_task is a no-op when selected task is not in error state."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
     app = PipelineTestApp(state=state)
     async with app.run_test():
@@ -371,21 +285,9 @@ async def test_skip_noop_when_not_error():
 async def test_retry_emits_when_error():
     """action_retry_task emits task:retry when task is in error state."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state)
     async with app.run_test():
@@ -398,21 +300,9 @@ async def test_retry_emits_when_error():
 async def test_skip_emits_when_error():
     """action_skip_task emits task:skip when task is in error state."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state)
     async with app.run_test():
@@ -428,21 +318,9 @@ async def test_skip_emits_when_error():
 async def test_read_only_mode_disables_retry():
     """In read-only mode, retry is a no-op even for error tasks."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state, read_only=True)
     async with app.run_test():
@@ -455,21 +333,9 @@ async def test_read_only_mode_disables_retry():
 async def test_read_only_mode_disables_skip():
     """In read-only mode, skip is a no-op even for error tasks."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
     state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
     app = PipelineTestApp(state=state, read_only=True)
     async with app.run_test():
@@ -482,7 +348,6 @@ async def test_read_only_mode_disables_skip():
 async def test_read_only_shows_banner():
     """In read-only mode, PhaseBanner shows the read-only banner text."""
     from forge.tui.screens.pipeline import PhaseBanner
-
     state = TuiState()
     state._replay_date = "2026-03-10T12:00:00"
     app = PipelineTestApp(state=state, read_only=True)
@@ -531,24 +396,10 @@ async def test_contracts_fallback_placeholder():
 async def test_error_task_shows_error_detail():
     """Selecting an errored task renders error detail view."""
     state = TuiState()
-    state.apply_event(
-        "pipeline:plan_ready",
-        {
-            "tasks": [
-                {
-                    "id": "t1",
-                    "title": "Test Task",
-                    "description": "",
-                    "files": [],
-                    "depends_on": [],
-                    "complexity": "low",
-                }
-            ]
-        },
-    )
-    state.apply_event(
-        "task:state_changed", {"task_id": "t1", "state": "error", "error": "Build failed"}
-    )
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Test Task", "description": "", "files": [], "depends_on": [], "complexity": "low"}]
+    })
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "Build failed"})
     app = PipelineTestApp(state=state)
     async with app.run_test():
         agent_output = app.screen.query_one("AgentOutput")
@@ -560,7 +411,6 @@ async def test_error_task_shows_error_detail():
 
 def test_phase_banner_wide_spacing():
     from forge.tui.screens.pipeline import PhaseBanner
-
     banner = PhaseBanner()
     banner._phase = "planning"
     rendered = banner.render()
@@ -570,7 +420,6 @@ def test_phase_banner_wide_spacing():
 
 def test_phase_banner_multiword_wide_spacing():
     from forge.tui.screens.pipeline import PhaseBanner
-
     banner = PhaseBanner()
     banner._phase = "planned"
     rendered = banner.render()
@@ -581,7 +430,6 @@ def test_phase_banner_multiword_wide_spacing():
 
 def test_phase_banner_icon_preserved():
     from forge.tui.screens.pipeline import PhaseBanner
-
     banner = PhaseBanner()
     banner._phase = "executing"
     rendered = banner.render()

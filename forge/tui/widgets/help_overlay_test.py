@@ -58,10 +58,10 @@ class TestHelpData:
 
     def test_pipeline_help_covers_key_bindings(self):
         keys = {e.key for e in PIPELINE_HELP}
-        assert "Ctrl+J/K" in keys
-        assert "Ctrl+O" in keys
-        assert "Ctrl+D" in keys
-        assert "Ctrl+G" in keys
+        assert "j/k" in keys
+        assert "o" in keys
+        assert "d" in keys
+        assert "g" in keys
 
     def test_review_help_has_approve_reject(self):
         actions = {e.action for e in REVIEW_HELP}
@@ -173,14 +173,16 @@ class TestFormatHelpOverlay:
 
     def test_scroll_indicator_shown_when_overflow(self):
         entries = [
-            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation") for i in range(40)
+            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation")
+            for i in range(40)
         ]
         result = format_help_overlay("Test", entries, [], scroll_offset=0, max_visible=10)
         assert "more lines" in result
 
     def test_scroll_up_indicator(self):
         entries = [
-            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation") for i in range(40)
+            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation")
+            for i in range(40)
         ]
         result = format_help_overlay("Test", entries, [], scroll_offset=5, max_visible=10)
         assert "lines above" in result

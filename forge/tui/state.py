@@ -43,14 +43,10 @@ class TuiState:
         self._pending_state_updates: dict[str, dict] = {}
 
         self.pending_questions: dict[str, dict] = {}  # task_id → question data
-        self.review_gates: dict[
-            str, dict[str, dict]
-        ] = {}  # task_id → gate_name → {status, details}
+        self.review_gates: dict[str, dict[str, dict]] = {}  # task_id → gate_name → {status, details}
         self.pr_url: str | None = None
         self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
-        self.review_output: dict[str, list[str]] = defaultdict(
-            list
-        )  # task_id → streaming LLM review lines
+        self.review_output: dict[str, list[str]] = defaultdict(list)  # task_id → streaming LLM review lines
         self.unified_log: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
         self.pipeline_branch: str = ""  # branch where task work is merged
@@ -67,10 +63,6 @@ class TuiState:
 
         # Error history: maps task_id → list of previous error messages (across retries)
         self.error_history: dict[str, list[str]] = defaultdict(list)
-
-        # Deferred phase transition: stores a phase that couldn't be applied
-        # because a modal/overlay was active when the transition occurred.
-        self.deferred_phase: str | None = None
 
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
@@ -234,9 +226,7 @@ class TuiState:
             q = self.pending_questions.pop(task_id, None)
             if q:
                 history = self.question_history.setdefault(task_id, [])
-                history.append(
-                    {"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"}
-                )
+                history.append({"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"})
             self._notify("tasks")
 
     def _on_review_gate_started(self, data: dict) -> None:
@@ -250,30 +240,20 @@ class TuiState:
         task_id = data.get("task_id")
         gate = data.get("gate")
         if task_id and gate:
-            self.review_gates.setdefault(task_id, {})[gate] = {
-                "status": "passed",
-                "details": data.get("details"),
-            }
+            self.review_gates.setdefault(task_id, {})[gate] = {"status": "passed", "details": data.get("details")}
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
-            self.unified_log[task_id].append(
-                ("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}")
-            )
+            self.unified_log[task_id].append(("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}"))
             self._notify("tasks")
 
     def _on_review_gate_failed(self, data: dict) -> None:
         task_id = data.get("task_id")
         gate = data.get("gate")
         if task_id and gate:
-            self.review_gates.setdefault(task_id, {})[gate] = {
-                "status": "failed",
-                "details": data.get("details"),
-            }
+            self.review_gates.setdefault(task_id, {})[gate] = {"status": "failed", "details": data.get("details")}
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
-            self.unified_log[task_id].append(
-                ("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}")
-            )
+            self.unified_log[task_id].append(("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}"))
             self._notify("tasks")
 
     def _on_review_llm_output(self, data: dict) -> None:
@@ -417,21 +397,6 @@ class TuiState:
         self.error = data.get("error", "PR creation failed")
         self._notify("error")
 
-    def defer_phase(self, phase: str) -> None:
-        """Store a phase transition to apply later (when modal is dismissed)."""
-        self.deferred_phase = phase
-        self._notify("deferred_phase")
-
-    def apply_deferred_phase(self) -> bool:
-        """Apply a stored deferred phase transition. Returns True if applied."""
-        if self.deferred_phase is None:
-            return False
-        phase = self.deferred_phase
-        self.deferred_phase = None
-        self.phase = phase
-        self._notify("phase")
-        return True
-
     def reset(self) -> None:
         """Reset all pipeline-specific state for a new task."""
         self.phase = "idle"
@@ -453,7 +418,6 @@ class TuiState:
         self.pr_url = None
         self._pending_state_updates.clear()
         self.error_history.clear()
-        self.deferred_phase = None
 
     @property
     def done_count(self) -> int:
@@ -475,11 +439,7 @@ class TuiState:
 
     @property
     def active_task_ids(self) -> list[str]:
-        return [
-            tid
-            for tid, t in self.tasks.items()
-            if t["state"] in ("in_progress", "in_review", "merging")
-        ]
+        return [tid for tid, t in self.tasks.items() if t["state"] in ("in_progress", "in_review", "merging")]
 
     _EVENT_MAP: dict[str, Callable[["TuiState", dict], None]] = {
         "pipeline:phase_changed": _on_phase_changed,

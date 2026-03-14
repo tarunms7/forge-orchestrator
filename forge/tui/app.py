@@ -28,7 +28,6 @@ async def detect_server(base_url: str = "http://localhost:8000", timeout: float 
     """Probe the Forge server health endpoint."""
     try:
         import httpx
-
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(f"{base_url}/health")
             return resp.status_code == 200
@@ -48,11 +47,11 @@ class ForgeApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+1", "switch_home", "Home", show=True),
-        Binding("ctrl+2", "switch_pipeline", "Pipeline", show=True),
-        Binding("ctrl+3", "switch_review", "Review", show=True),
-        Binding("ctrl+4", "switch_settings", "Settings", show=True),
-        Binding("ctrl+q", "quit_app", "Quit"),
+        Binding("1", "switch_home", "Home", show=True),
+        Binding("2", "switch_pipeline", "Pipeline", show=True),
+        Binding("3", "switch_review", "Review", show=True),
+        Binding("4", "switch_settings", "Settings", show=True),
+        Binding("q", "quit_app", "Quit"),
         Binding("s", "screenshot_export", "Screenshot", show=False),
         Binding("tab", "cycle_questions", "Next", show=False, priority=True),
         Binding("question_mark", "show_help", "Help", show=False),
@@ -80,7 +79,6 @@ class ForgeApp(App):
         self._pipeline_start_time: float | None = None
         self._elapsed_timer = None
         from forge.core.paths import forge_db_path
-
         self._db_path = forge_db_path()
         self._db = None
         self._graph = None
@@ -91,7 +89,6 @@ class ForgeApp(App):
         """Initialize database connection."""
         from forge.storage.db import Database
         from forge.core.paths import forge_db_url
-
         try:
             self._db = Database(forge_db_url())
             await self._db.initialize()
@@ -131,21 +128,6 @@ class ForgeApp(App):
         self.push_screen(HomeScreen(recent_pipelines=recent))
         self._state.on_change(self._on_state_change)
 
-    def _has_active_overlay(self) -> bool:
-        """Check if a modal screen or overlay is currently active."""
-        try:
-            screen = self.screen
-            # ReviewScreen and FinalApprovalScreen are overlay/modal screens
-            if isinstance(screen, (ReviewScreen, FinalApprovalScreen)):
-                return True
-            # Check for screens beyond the base pipeline/home screen
-            # (e.g., diff overlays pushed on top)
-            if len(self.screen_stack) > 2:
-                return True
-        except Exception:
-            pass
-        return False
-
     def _on_state_change(self, field: str) -> None:
         """Refresh current screen and auto-capture screenshots."""
         try:
@@ -159,17 +141,8 @@ class ForgeApp(App):
                 self._auto_screenshot(phase)
             # Transition to FinalApprovalScreen when pipeline finishes
             if phase == "final_approval" and not self._final_approval_pushed:
-                if self._has_active_overlay():
-                    # Defer the transition — user is viewing a modal/overlay
-                    self._state.defer_phase("final_approval")
-                    self.notify(
-                        "All tasks complete! Press Esc to continue",
-                        severity="information",
-                        timeout=6,
-                    )
-                else:
-                    self._final_approval_pushed = True
-                    self._push_final_approval()
+                self._final_approval_pushed = True
+                self._push_final_approval()
 
     def _auto_screenshot(self, label: str) -> None:
         """Automatically save a screenshot for README."""
@@ -223,13 +196,9 @@ class ForgeApp(App):
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
-        self.push_screen(
-            FinalApprovalScreen(
-                stats=stats,
-                tasks=task_summaries,
-                pipeline_branch=pipeline_branch,
-            )
-        )
+        self.push_screen(FinalApprovalScreen(
+            stats=stats, tasks=task_summaries, pipeline_branch=pipeline_branch,
+        ))
         # If no cached branch, fetch async and update the screen
         if not pipeline_branch:
             asyncio.create_task(self._resolve_pipeline_branch())
@@ -245,20 +214,6 @@ class ForgeApp(App):
                     screen._pipeline_branch = branch
             except Exception:
                 pass
-
-    def on_screen_resume(self) -> None:
-        """Called when a screen is resumed after a modal is popped.
-
-        Check for deferred phase transitions and apply them.
-        """
-        if self._state.deferred_phase and not self._final_approval_pushed:
-            deferred = self._state.deferred_phase
-            if deferred == "final_approval":
-                self._state.deferred_phase = None
-                self._final_approval_pushed = True
-                self._push_final_approval()
-            else:
-                self._state.apply_deferred_phase()
 
     async def on_chat_thread_answer_submitted(self, event) -> None:
         """Write the user's answer to DB and update TUI state."""
@@ -290,9 +245,7 @@ class ForgeApp(App):
         # (usually main), which is wrong.
         branch = await self._get_pipeline_branch()
         if not branch:
-            self._state.apply_event(
-                "pipeline:pr_failed", {"error": "Could not determine pipeline branch"}
-            )
+            self._state.apply_event("pipeline:pr_failed", {"error": "Could not determine pipeline branch"})
             self.notify("PR creation failed: no pipeline branch found.", severity="error")
             return
         project_dir = self._project_dir
@@ -385,10 +338,7 @@ class ForgeApp(App):
         # Fallback: detect from git (only correct if user is on the pipeline branch)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git",
-                "rev-parse",
-                "--abbrev-ref",
-                "HEAD",
+                "git", "rev-parse", "--abbrev-ref", "HEAD",
                 cwd=self._project_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -428,7 +378,7 @@ class ForgeApp(App):
     def action_show_help(self) -> None:
         """?: show a brief help notification."""
         self.notify(
-            "Ctrl+1-4: screens | j/k: tasks | o/c/d/r: views | Tab: next question | Ctrl+P: palette | Ctrl+Q: quit",
+            "1-4: screens | j/k: tasks | o/c/d/r: views | Tab: next question | Ctrl+P: palette | q: quit",
             title="Forge Keybindings",
             timeout=8,
         )
@@ -444,9 +394,7 @@ class ForgeApp(App):
         except Exception:
             logger.debug("Command palette not mounted", exc_info=True)
 
-    async def on_command_palette_action_selected(
-        self, event: CommandPalette.ActionSelected
-    ) -> None:
+    async def on_command_palette_action_selected(self, event: CommandPalette.ActionSelected) -> None:
         """Execute the action selected from the command palette."""
         action = event.action
         callback_name = action.callback_name
@@ -463,15 +411,12 @@ class ForgeApp(App):
         if method:
             try:
                 import inspect
-
                 if inspect.iscoroutinefunction(method):
                     await method()
                 else:
                     method()
             except Exception as e:
-                logger.error(
-                    "Command palette action %s failed: %s", callback_name, e, exc_info=True
-                )
+                logger.error("Command palette action %s failed: %s", callback_name, e, exc_info=True)
                 self.notify(f"Action failed: {e}", severity="error")
         else:
             self.notify(f"Action '{action.name}' not available", severity="warning")
@@ -505,10 +450,8 @@ class ForgeApp(App):
         self._source.connect()
 
         for evt_type in TUI_EVENT_TYPES:
-
             async def _handler(data, _type=evt_type):
                 self._state.apply_event(_type, data)
-
             self._bus.subscribe(evt_type, _handler)
 
         self._daemon = ForgeDaemon(
@@ -536,19 +479,12 @@ class ForgeApp(App):
 
         try:
             self._graph = await self._daemon.plan(
-                task,
-                self._db,
-                pipeline_id=self._pipeline_id,
+                task, self._db, pipeline_id=self._pipeline_id,
             )
             plan_tasks = [
-                {
-                    "id": t.id,
-                    "title": t.title,
-                    "description": t.description,
-                    "files": t.files,
-                    "depends_on": t.depends_on,
-                    "complexity": t.complexity.value,
-                }
+                {"id": t.id, "title": t.title, "description": t.description,
+                 "files": t.files, "depends_on": t.depends_on,
+                 "complexity": t.complexity.value}
                 for t in self._graph.tasks
             ]
             self.push_screen(PlanApprovalScreen(plan_tasks))
@@ -568,13 +504,10 @@ class ForgeApp(App):
         """Generate contracts then execute — runs as background task."""
         try:
             self._state.apply_event(
-                "pipeline:phase_changed",
-                {"phase": "contracts"},
+                "pipeline:phase_changed", {"phase": "contracts"},
             )
             self._daemon._contracts = await self._daemon.generate_contracts(
-                self._graph,
-                self._db,
-                self._pipeline_id,
+                self._graph, self._db, self._pipeline_id,
             )
         except Exception as e:
             logger.error("Contract generation failed: %s", e, exc_info=True)
@@ -611,9 +544,7 @@ class ForgeApp(App):
             logger.debug("Could not resolve pipeline branch for state", exc_info=True)
         try:
             await self._daemon.execute(
-                self._graph,
-                self._db,
-                pipeline_id=self._pipeline_id,
+                self._graph, self._db, pipeline_id=self._pipeline_id,
             )
         except Exception as e:
             logger.error("Execution failed: %s", e, exc_info=True)
@@ -630,9 +561,7 @@ class ForgeApp(App):
 
     def _tick_elapsed(self) -> None:
         if self._pipeline_start_time:
-            self._state.elapsed_seconds = (
-                asyncio.get_event_loop().time() - self._pipeline_start_time
-            )
+            self._state.elapsed_seconds = asyncio.get_event_loop().time() - self._pipeline_start_time
             self._state._notify("elapsed")
 
     def action_reset_for_new_task(self) -> None:
@@ -645,7 +574,7 @@ class ForgeApp(App):
         if self._source:
             self._source.disconnect()
             self._source = None
-        # Clear pipeline-specific flags and deferred state
+        # Clear pipeline-specific flags
         self._final_approval_pushed = False
         self._daemon = None
         self._daemon_task = None
@@ -735,7 +664,6 @@ class ForgeApp(App):
             return
         # Check for FollowUpTextArea (import lazily to avoid circular imports)
         from forge.tui.widgets.followup_input import FollowUpTextArea
-
         if isinstance(focused, FollowUpTextArea):
             focused.action_clear_input()
             return
@@ -763,18 +691,12 @@ class ForgeApp(App):
             # Resume a planned pipeline — show plan approval screen
             if pipeline.status == "planned" and pipeline.task_graph_json:
                 import json
-
                 graph_data = json.loads(pipeline.task_graph_json)
                 tasks_dict = graph_data.get("tasks", {})
                 plan_tasks = [
-                    {
-                        "id": tid,
-                        "title": t.get("title", ""),
-                        "description": t.get("description", ""),
-                        "files": t.get("files", []),
-                        "depends_on": t.get("depends_on", []),
-                        "complexity": t.get("complexity", "medium"),
-                    }
+                    {"id": tid, "title": t.get("title", ""), "description": t.get("description", ""),
+                     "files": t.get("files", []), "depends_on": t.get("depends_on", []),
+                     "complexity": t.get("complexity", "medium")}
                     for tid, t in tasks_dict.items()
                 ]
                 if plan_tasks:
@@ -789,7 +711,6 @@ class ForgeApp(App):
                     pipeline_screen = PipelineScreen(self._state)
                     self.push_screen(pipeline_screen)
                     from forge.tui.screens.plan_approval import PlanApprovalScreen
-
                     self.push_screen(PlanApprovalScreen(plan_tasks))
                     return
 
