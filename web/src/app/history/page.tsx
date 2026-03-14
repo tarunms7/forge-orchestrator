@@ -14,6 +14,9 @@ interface HistoryItem {
   task_count: number;
   build_cmd: string | null;
   test_cmd: string | null;
+  github_issue_url: string | null;
+  github_issue_number: number | null;
+  project_path: string;
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -93,7 +96,7 @@ export default function HistoryPage() {
     .filter(item => {
       if (!searchQuery) return true;
       const q = searchQuery.toLowerCase();
-      return item.description.toLowerCase().includes(q) || item.pipeline_id.toLowerCase().includes(q);
+      return item.description.toLowerCase().includes(q) || item.pipeline_id.toLowerCase().includes(q) || item.project_path.toLowerCase().includes(q);
     })
     .sort((a, b) => {
       if (sortBy === "oldest") return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
@@ -126,6 +129,7 @@ export default function HistoryPage() {
 
   return (
     <div className="page-content">
+      <style>{`.history-project { font-family: monospace; font-size: 12px; color: var(--text-dim); background: var(--bg-surface-2); padding: 2px 8px; border-radius: 4px; }`}</style>
       {/* Header */}
       <div className="page-header">
         <h1 className="page-title">Pipeline History</h1>
@@ -161,6 +165,7 @@ export default function HistoryPage() {
           <tr>
             <th style={{ width: "110px" }}>Status</th>
             <th>Pipeline</th>
+            <th style={{ width: "140px" }}>Project</th>
             <th style={{ width: "80px" }}>Tasks</th>
             <th className="right" style={{ width: "80px" }}>Duration</th>
             <th className="right" style={{ width: "120px" }}>Date</th>
@@ -168,7 +173,7 @@ export default function HistoryPage() {
         </thead>
         <tbody>
           {paginatedHistory.length === 0 ? (
-            <tr><td colSpan={5} style={{ textAlign: "center", padding: "48px 0", color: "var(--text-dim)" }}>
+            <tr><td colSpan={6} style={{ textAlign: "center", padding: "48px 0", color: "var(--text-dim)" }}>
               {history.length === 0 ? "No pipeline runs yet" : "No matching results"}
             </td></tr>
           ) : (
@@ -192,6 +197,15 @@ export default function HistoryPage() {
                       >T</span>
                     )}
                   </div>
+                </td>
+                <td>
+                  {item.project_path ? (
+                    <span className="history-project">
+                      {item.project_path.split("/").filter(Boolean).pop() || item.project_path}
+                    </span>
+                  ) : (
+                    <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>--</span>
+                  )}
                 </td>
                 <td><span className="history-tasks">{item.task_count}</span></td>
                 <td className="history-duration">{formatDuration(item.duration)}</td>
