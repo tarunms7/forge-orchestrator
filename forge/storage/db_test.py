@@ -210,6 +210,83 @@ async def test_migrate_adds_missing_columns():
     await engine.dispose()
 
 
+async def test_migrate_adds_project_columns():
+    """Verify initialize() adds project_path/project_name to an old pipelines table."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    # Create a DB with old schema (no project_path/project_name on pipelines)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE pipelines ("
+            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+            "  task_graph_json VARCHAR, user_id VARCHAR,"
+            "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
+            "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
+            "  build_cmd VARCHAR, test_cmd VARCHAR,"
+            "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
+            "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
+            "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
+            "  github_issue_url VARCHAR, github_issue_number INTEGER,"
+            "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
+            "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0"
+            ")"
+        ))
+        # Insert a row with old schema (no project columns)
+        await conn.execute(text(
+            "INSERT INTO pipelines (id, description, project_dir, created_at) "
+            "VALUES ('old-pipe', 'Old pipeline', '/tmp/old', '2025-01-01T00:00:00+00:00')"
+        ))
+        # Also create minimal tasks/agents tables to avoid errors
+        await conn.execute(text(
+            "CREATE TABLE tasks ("
+            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
+            "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
+            "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
+            "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
+            "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
+            "  implementation_summary VARCHAR, session_id VARCHAR,"
+            "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE agents ("
+            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+            ")"
+        ))
+
+    # Wrap in Database and call initialize() — should add project_path/project_name columns
+    from forge.storage.db import Database as DB
+    db = DB.__new__(DB)
+    db._engine = engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await db.initialize()
+
+    # Old row should still be intact with null project columns
+    old = await db.get_pipeline("old-pipe")
+    assert old is not None
+    assert old.description == "Old pipeline"
+    assert old.project_path is None
+    assert old.project_name is None
+
+    # New pipeline with project columns should work
+    await db.create_pipeline(
+        id="new-pipe", description="New pipeline", project_dir="/tmp/new",
+        project_path="/Users/tarun/my-project", project_name="my-project",
+    )
+    new = await db.get_pipeline("new-pipe")
+    assert new.project_path == "/Users/tarun/my-project"
+    assert new.project_name == "my-project"
+
+    await engine.dispose()
+
+
 async def test_set_pipeline_pr_url(db: Database):
     await db.create_pipeline(
         id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
