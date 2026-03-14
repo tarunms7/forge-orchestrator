@@ -92,6 +92,9 @@ async def test_load_and_show_diff_success():
     mock_proc.returncode = 0
     mock_proc.communicate = AsyncMock(return_value=(b"+++ a/file.py\n+new line\n", b""))
 
+    # Mock is_running so lifecycle guard doesn't block
+    type(screen).is_running = property(lambda self: True)
+
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         await screen._load_and_show_diff()
 

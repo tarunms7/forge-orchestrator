@@ -268,6 +268,9 @@ class PipelineScreen(Screen):
             banner = self.query_one(PhaseBanner)
             banner.set_read_only_banner(f"📖 Viewing pipeline from {date_str} — press Esc to return")
 
+    def on_unmount(self) -> None:
+        self._state.remove_change_callback(self._on_state_change)
+
     # ------------------------------------------------------------------
     # State change handling
     # ------------------------------------------------------------------
@@ -520,6 +523,9 @@ class PipelineScreen(Screen):
         diff = await self._load_task_diff(tid)
         # Guard: only update if user is still viewing this task
         if self._state.selected_task_id != tid:
+            return
+        # Guard: screen may have been destroyed while awaiting diff
+        if not self.is_running:
             return
         try:
             diff_viewer = self.query_one(DiffViewer)

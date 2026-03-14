@@ -222,7 +222,7 @@ async def _plan_only(daemon, prompt: str):
     try:
         pipeline_id = str(uuid.uuid4())
         await db.create_pipeline(
-            id=pipeline_id, description=prompt[:200],
+            id=pipeline_id, description=prompt,
             project_dir=daemon._project_dir, model_strategy=daemon._strategy,
             budget_limit_usd=daemon._settings.budget_limit_usd,
         )

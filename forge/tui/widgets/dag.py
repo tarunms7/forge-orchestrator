@@ -5,6 +5,11 @@ from __future__ import annotations
 from textual.widget import Widget
 
 
+def _escape(text: str) -> str:
+    """Escape Rich markup characters in user-provided text."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 def build_dag_text(tasks: list[dict]) -> str:
     if not tasks:
         return "[#8b949e]No tasks[/]"
@@ -22,11 +27,13 @@ def build_dag_text(tasks: list[dict]) -> str:
         deps = task.get("depends_on", [])
         title = task.get("title", task["id"])
         short_title = title[:30] + "…" if len(title) > 30 else title
+        escaped_title = _escape(short_title)
+        escaped_id = _escape(task["id"])
         if deps:
-            dep_str = ", ".join(d for d in deps if d in task_map)
-            lines.append(f"  [{color}]●[/] {task['id']}: {short_title} [#8b949e]← {dep_str}[/]")
+            dep_str = ", ".join(_escape(d) for d in deps if d in task_map)
+            lines.append(f"  [{color}]●[/] {escaped_id}: {escaped_title} [#8b949e]← {dep_str}[/]")
         else:
-            lines.append(f"  [{color}]●[/] {task['id']}: {short_title}")
+            lines.append(f"  [{color}]●[/] {escaped_id}: {escaped_title}")
     return "\n".join(lines)
 
 

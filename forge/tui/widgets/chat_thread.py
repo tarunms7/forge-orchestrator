@@ -9,12 +9,17 @@ from textual.message import Message
 from forge.tui.widgets.suggestion_chips import SuggestionChips
 
 
+def _escape(text: str) -> str:
+    """Escape Rich markup characters in user-provided text."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 def format_work_log(lines: list[str]) -> str:
     if not lines:
         return "[#484f58]No activity yet[/]"
     formatted = []
     for line in lines[-10:]:  # show last 10
-        formatted.append(f"  [#8b949e]{line}[/]")
+        formatted.append(f"  [#8b949e]{_escape(line)}[/]")
     return "\n".join(formatted)
 
 
@@ -23,8 +28,8 @@ def format_question_card(question: dict) -> str:
     ctx = question.get("context", "")
     parts = []
     if ctx:
-        parts.append(f"[#c9d1d9]{ctx}[/]")
-    parts.append(f"\n[#f0883e]{q}[/]")
+        parts.append(f"[#c9d1d9]{_escape(ctx)}[/]")
+    parts.append(f"\n[#f0883e]{_escape(q)}[/]")
     return "\n".join(parts)
 
 
