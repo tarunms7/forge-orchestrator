@@ -749,7 +749,11 @@ class PipelineScreen(Screen):
             logger.debug("Failed to emit task:skip", exc_info=True)
 
     def action_pop_screen(self) -> None:
-        """Esc — only active in read-only mode."""
+        """Esc — dismiss copy overlay if active, or pop screen in read-only mode."""
+        # Always dismiss copy overlay first, regardless of read-only mode
+        if self._copy_overlay is not None:
+            self._dismiss_copy_overlay()
+            return
         if self._read_only:
             self.app.pop_screen()
 

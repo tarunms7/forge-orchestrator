@@ -70,7 +70,8 @@ Rules:
   - endpoint_hints: (for api_endpoint only) List of endpoints like "GET /api/foo"
 - If there are NO cross-task interfaces (all tasks are independent), omit integration_hints entirely.
 - IMPORTANT: Integration hints enable PARALLEL execution. When you add integration hints, the system can generate contracts so both producer and consumer tasks run simultaneously. Without hints, consumer tasks must wait for producer tasks. PREFER adding hints over adding depends_on for API integration tasks.
-- Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object."""
+- Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object.
+- IMPORTANT: You have a LIMITED number of turns. Spend at most 3 turns reading files. After that, produce the TaskGraph JSON IMMEDIATELY. Do NOT re-read files you have already seen. Do NOT loop through the same directories. Once you have enough context, OUTPUT THE JSON."""
 
 
 class ClaudePlannerLLM(PlannerLLM):
@@ -147,7 +148,7 @@ class ClaudePlannerLLM(PlannerLLM):
 
         if feedback:
             parts.append(f"Previous attempt feedback:\n{feedback}")
-        parts.append("Respond with ONLY the TaskGraph JSON.")
+        parts.append("Respond with ONLY the TaskGraph JSON. You have very few turns — do NOT waste them re-reading files. Output JSON as soon as you have enough context.")
         return "\n\n".join(parts)
 
 
