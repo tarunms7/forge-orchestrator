@@ -91,7 +91,6 @@ def test_serve_uses_central_db_url_by_default():
          patch("uvicorn.run") as mock_uvicorn:
         # We need to handle the lazy import of uvicorn and create_app
         # The serve command tries to import uvicorn and create_app
-        import forge.cli.main as main_mod
 
         # Simulate the serve command logic directly
         mock_create_app.return_value = MagicMock()
