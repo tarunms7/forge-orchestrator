@@ -4,7 +4,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from forge.core.daemon_review import ReviewMixin, _summarize_auto_fix
+from forge.core.daemon_review import ReviewMixin, _summarize_auto_fix, LintStrategy, detect_lint_strategy
 from forge.review.pipeline import GateResult
 
 
@@ -240,6 +240,8 @@ class TestReviewGateEvents:
         mixin._snapshot = None
         mixin._settings = MagicMock()
         mixin._settings.agent_timeout_seconds = 600
+        mixin._settings.lint_cmd = None
+        mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
         mixin._template_config = None
         return mixin
@@ -268,7 +270,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
             patch("forge.core.daemon_review.gate2_llm_review", return_value=(
                 GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
                 MagicMock(cost_usd=0),
@@ -307,7 +309,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
             patch("forge.core.daemon_review.gate2_llm_review", return_value=(
                 GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
                 MagicMock(cost_usd=0),
@@ -351,7 +353,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate1", return_value=GateResult(
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(
                 passed=False, gate="gate1_auto_check", details="Lint errors:\nE501 line too long",
             )),
         ):
@@ -388,7 +390,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
             patch("forge.core.daemon_review.gate2_llm_review", return_value=(
                 GateResult(passed=True, gate="gate2_llm_review", details=llm_feedback_text),
                 MagicMock(cost_usd=0),
@@ -427,7 +429,7 @@ class TestReviewGateEvents:
             patch.object(mixin, "_gate_build", return_value=GateResult(
                 passed=True, gate="gate0_build", details="OK",
             )),
-            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
             patch("forge.core.daemon_review.gate2_llm_review", return_value=(
                 GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
                 MagicMock(cost_usd=0),
@@ -464,7 +466,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
             patch("forge.core.daemon_review.gate2_llm_review", return_value=(
                 GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
                 MagicMock(cost_usd=0),
@@ -591,6 +593,8 @@ class TestRunReviewPassesOnMessage:
         mixin._snapshot = None
         mixin._settings = MagicMock()
         mixin._settings.agent_timeout_seconds = 600
+        mixin._settings.lint_cmd = None
+        mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
         mixin._template_config = None
         return mixin
@@ -611,7 +615,7 @@ class TestRunReviewPassesOnMessage:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate1", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
+            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
             patch("forge.core.daemon_review.gate2_llm_review", new_callable=AsyncMock) as mock_gate2,
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
@@ -631,20 +635,34 @@ class TestRunReviewPassesOnMessage:
         assert callable(call_kwargs.kwargs["on_message"])
 
 
-class TestGate1AutoFixDiff:
-    """Verify _gate1 captures ruff auto-fix diff and includes it in GateResult."""
+class TestLintGateAutoFix:
+    """Verify _run_lint_gate with LintStrategy-based detection."""
 
     def _make_mixin(self):
         mixin = ReviewMixin()
         mixin._strategy = "auto"
         mixin._snapshot = None
         mixin._settings = MagicMock()
+        mixin._settings.lint_cmd = None
+        mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
+        mixin._template_config = None
         return mixin
 
+    def _ruff_strategy(self):
+        """Return a ruff LintStrategy for testing."""
+        import sys
+        return LintStrategy(
+            name="ruff",
+            check_cmd=[sys.executable, "-m", "ruff", "check"],
+            fix_cmd=[sys.executable, "-m", "ruff", "check", "--fix"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (ruff)",
+        )
+
     @pytest.mark.asyncio
-    async def test_auto_fix_diff_captured_when_ruff_makes_changes(self):
-        """When ruff auto-fixes code, the diff is captured and included in details."""
+    async def test_auto_fix_diff_captured_when_linter_makes_changes(self):
+        """When the linter auto-fixes code, the diff is captured and included in details."""
         mixin = self._make_mixin()
 
         diff_output = (
@@ -668,100 +686,111 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            # First call: ruff --version (availability check),
-            # second: ruff --fix, third: ruff check (pass)
-            version_result = MagicMock()
-            version_result.returncode = 0
+            # First call: ruff --fix, second: ruff check (pass)
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [version_result, fix_result, check_result]
+            mock_subprocess.side_effect = [fix_result, check_result]
 
-            result = await mixin._gate1("/repo")
+            result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
         assert "auto-fixed" in result.details
         assert "removed 2 unused imports" in result.details
 
     @pytest.mark.asyncio
-    async def test_diff_capped_at_30_lines(self):
-        """Auto-fix diff is truncated to 30 lines."""
+    async def test_no_diff_when_linter_makes_no_changes(self):
+        """When the linter makes no changes, GateResult.details is plain 'Lint clean'."""
         mixin = self._make_mixin()
-
-        # Generate a diff with more than 30 lines
-        long_diff_lines = [f"-import mod{i}" for i in range(40)]
-        long_diff = "\n".join(long_diff_lines)
 
         def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
-            if args == ["diff"]:
-                result.stdout = long_diff
-            elif args == ["diff", "--cached", "--name-only"]:
-                result.stdout = "foo.py\n"
-            else:
-                result.stdout = ""
+            result.stdout = ""
             return result
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            version_result = MagicMock()
-            version_result.returncode = 0
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [version_result, fix_result, check_result]
+            mock_subprocess.side_effect = [fix_result, check_result]
 
-            result = await mixin._gate1("/repo")
-
-        assert result.passed is True
-        assert "auto-fixed" in result.details
-        # The diff stored internally should have been capped — verify via summary
-        # The summary should reflect only the first 30 lines of diff
-
-    @pytest.mark.asyncio
-    async def test_no_diff_when_ruff_makes_no_changes(self):
-        """When ruff makes no changes, GateResult.details is plain 'Lint clean'."""
-        mixin = self._make_mixin()
-
-        def fake_run_git(args, cwd=None, check=True, description=""):
-            result = MagicMock()
-            result.stdout = ""  # No diff — ruff didn't change anything
-            return result
-
-        with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
-            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
-            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
-        ):
-            version_result = MagicMock()
-            version_result.returncode = 0
-            fix_result = MagicMock()
-            fix_result.returncode = 0
-            check_result = MagicMock()
-            check_result.returncode = 0
-            check_result.stdout = ""
-            check_result.stderr = ""
-            mock_subprocess.side_effect = [version_result, fix_result, check_result]
-
-            result = await mixin._gate1("/repo")
+            result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
         assert result.details == "Lint clean"
         assert "auto-fixed" not in result.details
+
+    @pytest.mark.asyncio
+    async def test_no_linter_detected_passes(self):
+        """When no linter is detected, gate passes with informative message."""
+        mixin = self._make_mixin()
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.detect_lint_strategy", return_value=None),
+        ):
+            result = await mixin._run_lint_gate("/repo")
+
+        assert result.passed is True
+        assert "No linter detected" in result.details
+
+    @pytest.mark.asyncio
+    async def test_check_via_output_fails_on_nonempty_stdout(self):
+        """Linters with check_via_output=True fail when stdout is non-empty."""
+        mixin = self._make_mixin()
+        gofmt_strategy = LintStrategy(
+            name="gofmt",
+            check_cmd=["gofmt", "-l"],
+            fix_cmd=["gofmt", "-w"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (gofmt)",
+            tool_check="gofmt",
+            check_via_output=True,
+        )
+
+        def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            result.stdout = ""
+            return result
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["main.go"]),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.detect_lint_strategy", return_value=gofmt_strategy),
+            patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/gofmt"),
+            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            fix_result = MagicMock()
+            fix_result.returncode = 0
+            # gofmt -l returns filenames on stdout when unformatted
+            check_result = MagicMock()
+            check_result.returncode = 0  # gofmt always exits 0
+            check_result.stdout = "main.go\n"
+            check_result.stderr = ""
+            mock_subprocess.side_effect = [fix_result, check_result]
+
+            result = await mixin._run_lint_gate("/repo")
+
+        assert result.passed is False
+        assert "Lint errors" in result.details
 
     @pytest.mark.asyncio
     async def test_details_includes_auto_fix_summary(self):
@@ -789,44 +818,23 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            version_result = MagicMock()
-            version_result.returncode = 0
             fix_result = MagicMock()
             fix_result.returncode = 0
             check_result = MagicMock()
             check_result.returncode = 0
             check_result.stdout = ""
             check_result.stderr = ""
-            mock_subprocess.side_effect = [version_result, fix_result, check_result]
+            mock_subprocess.side_effect = [fix_result, check_result]
 
-            result = await mixin._gate1("/repo")
+            result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
         assert result.details.startswith("Lint clean (auto-fixed:")
         assert "removed 1 unused import" in result.details
-
-    @pytest.mark.asyncio
-    async def test_ruff_not_installed_skips_gracefully(self):
-        """When ruff is not installed, gate1 passes with a skip message."""
-        mixin = self._make_mixin()
-
-        with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
-            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
-        ):
-            # ruff --version returns non-zero (not installed)
-            version_result = MagicMock()
-            version_result.returncode = 1
-            mock_subprocess.return_value = version_result
-
-            result = await mixin._gate1("/repo")
-
-        assert result.passed is True
-        assert "ruff not installed" in result.details
 
 
 class TestSummarizeAutoFix:
@@ -862,3 +870,112 @@ class TestSummarizeAutoFix:
         diff = "--- a/foo.py\n+++ b/foo.py\n-import os\n"
         summary = _summarize_auto_fix(diff)
         assert "removed 1 unused import" in summary
+
+
+class TestDetectLintStrategy:
+    """Unit tests for detect_lint_strategy."""
+
+    def test_empty_changed_files_returns_none(self):
+        result = detect_lint_strategy("/repo", [])
+        assert result is None
+
+    def test_user_override_lint_cmd(self):
+        result = detect_lint_strategy("/repo", ["foo.py"], lint_cmd_override="mycheck --strict")
+        assert result is not None
+        assert result.name == "custom"
+        assert result.check_cmd == ["mycheck", "--strict"]
+        assert result.fix_cmd is None
+        assert result.supports_file_args is False
+
+    def test_user_override_with_fix_cmd(self):
+        result = detect_lint_strategy(
+            "/repo", ["foo.py"],
+            lint_cmd_override="mycheck", lint_fix_cmd_override="myfix --auto",
+        )
+        assert result is not None
+        assert result.fix_cmd == ["myfix", "--auto"]
+
+    def test_python_fallback(self):
+        """Python files get ruff strategy when no project config found."""
+        import sys
+        with (
+            patch("forge.core.daemon_review.os.path.isfile", return_value=False),
+        ):
+            result = detect_lint_strategy("/repo", ["src/main.py", "src/utils.py"])
+
+        assert result is not None
+        assert result.name == "ruff"
+        assert sys.executable in result.check_cmd[0]
+
+    def test_js_fallback_with_npx(self):
+        """JS files get eslint strategy when npx is available."""
+        with (
+            patch("forge.core.daemon_review.os.path.isfile", return_value=False),
+            patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/npx"),
+        ):
+            result = detect_lint_strategy("/repo", ["src/app.tsx", "src/index.ts"])
+
+        assert result is not None
+        assert result.name == "eslint"
+
+    def test_go_fallback(self):
+        """Go files get gofmt strategy with check_via_output=True."""
+        with (
+            patch("forge.core.daemon_review.os.path.isfile", return_value=False),
+            patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/gofmt"),
+        ):
+            result = detect_lint_strategy("/repo", ["main.go", "handler.go"])
+
+        assert result is not None
+        assert result.name == "gofmt"
+        assert result.check_via_output is True
+
+    def test_no_tool_skips_language(self):
+        """When the tool isn't installed, fallback skips that language."""
+        with (
+            patch("forge.core.daemon_review.os.path.isfile", return_value=False),
+            patch("forge.core.daemon_review.shutil.which", return_value=None),
+        ):
+            result = detect_lint_strategy("/repo", ["main.go"])
+
+        assert result is None
+
+    def test_pre_commit_detected(self):
+        """Pre-commit config is detected when file exists and tool is installed."""
+
+        def fake_isfile(path):
+            return ".pre-commit-config.yaml" in path
+
+        with (
+            patch("forge.core.daemon_review.os.path.isfile", side_effect=fake_isfile),
+            patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/pre-commit"),
+        ):
+            result = detect_lint_strategy("/repo", ["foo.py"])
+
+        assert result is not None
+        assert result.name == "pre-commit"
+
+    def test_package_json_lint_script(self, tmp_path):
+        """package.json with lint script is detected."""
+        import json
+        pkg = tmp_path / "package.json"
+        pkg.write_text(json.dumps({"scripts": {"lint": "eslint .", "lint:fix": "eslint --fix ."}}))
+
+        with (
+            patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/npm"),
+        ):
+            result = detect_lint_strategy(str(tmp_path), ["src/app.js"])
+
+        assert result is not None
+        assert result.name == "npm-lint"
+        assert result.fix_cmd == ["npm", "run", "lint:fix"]
+
+    def test_makefile_lint_target(self, tmp_path):
+        """Makefile with lint target is detected."""
+        makefile = tmp_path / "Makefile"
+        makefile.write_text("lint:\n\teslint .\n\nlint-fix:\n\teslint --fix .\n")
+
+        result = detect_lint_strategy(str(tmp_path), ["src/app.js"])
+        assert result is not None
+        assert result.name == "make-lint"
+        assert result.fix_cmd == ["make", "lint-fix"]
