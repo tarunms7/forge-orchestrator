@@ -7,12 +7,12 @@ from forge.tui.screens.settings import (
     SettingsScreen,
     format_settings,
     _render_autonomy,
+    _AUTONOMY_MODES,
 )
 
 
 class MockSettings:
     """Minimal mock to avoid pydantic import issues."""
-
     model_strategy = "auto"
     max_agents = 2
     agent_timeout_seconds = 600
@@ -48,7 +48,7 @@ class SettingsTestApp(App):
 @pytest.mark.asyncio
 async def test_settings_screen_mounts():
     app = SettingsTestApp()
-    async with app.run_test():
+    async with app.run_test() as pilot:
         pass  # mount without crash is the test
 
 
