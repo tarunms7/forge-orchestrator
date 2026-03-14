@@ -39,11 +39,11 @@ _CATEGORY_COLORS = {
 }
 
 GLOBAL_HELP: list[HelpEntry] = [
-    HelpEntry("1", "Home", "Go to home screen", "Navigation"),
-    HelpEntry("2", "Pipeline", "Go to pipeline screen", "Navigation"),
-    HelpEntry("3", "Review", "Go to review screen", "Navigation"),
-    HelpEntry("4", "Settings", "Go to settings screen", "Navigation"),
-    HelpEntry("q", "Quit", "Quit Forge", "Navigation"),
+    HelpEntry("Ctrl+1", "Home", "Go to home screen", "Navigation"),
+    HelpEntry("Ctrl+2", "Pipeline", "Go to pipeline screen", "Navigation"),
+    HelpEntry("Ctrl+3", "Review", "Go to review screen", "Navigation"),
+    HelpEntry("Ctrl+4", "Settings", "Go to settings screen", "Navigation"),
+    HelpEntry("Ctrl+Q", "Quit", "Quit Forge", "Navigation"),
     HelpEntry("Ctrl+P", "Command Palette", "Fuzzy search all actions", "Tools"),
     HelpEntry("?", "Help", "Toggle this help overlay", "Tools"),
 ]
@@ -63,37 +63,38 @@ HOME_TIPS: list[str] = [
 
 PIPELINE_HELP: list[HelpEntry] = [
     HelpEntry("Cmd+>", "Clear Input", "Clear the text input area", "Actions"),
-    HelpEntry("j/k", "Navigate tasks", "Move cursor up/down in task list", "Navigation"),
+    HelpEntry("Ctrl+J/K", "Navigate tasks", "Move cursor up/down in task list", "Navigation"),
     HelpEntry("Tab", "Cycle agent", "Cycle through agent output panels", "Navigation"),
     HelpEntry("1-9", "Jump to task", "Jump directly to task by number", "Navigation"),
     HelpEntry("Esc", "Back", "Return to previous view", "Navigation"),
-    HelpEntry("o", "View output", "Show agent output for selected task", "Views"),
-    HelpEntry("d", "View diff", "Show diff for selected task", "Views"),
-    HelpEntry("t", "Chat thread", "Show chat thread panel", "Views"),
-    HelpEntry("r", "Review panel", "Show review output", "Views"),
-    HelpEntry("c", "Copy mode", "Enter line-selection copy mode", "Views"),
-    HelpEntry("g", "Toggle DAG", "Toggle the dependency graph view", "Views"),
+    HelpEntry("Ctrl+O", "View output", "Show agent output for selected task", "Views"),
+    HelpEntry("Ctrl+D", "View diff", "Show diff for selected task", "Views"),
+    HelpEntry("Ctrl+T", "Chat thread", "Show chat thread panel", "Views"),
+    HelpEntry("Ctrl+R", "Review panel", "Open review screen for selected task", "Views"),
+    HelpEntry("Ctrl+Y", "Copy mode", "Enter line-selection copy mode", "Views"),
+    HelpEntry("Ctrl+G", "Toggle DAG", "Toggle the dependency graph view", "Views"),
+    HelpEntry("i", "Task info", "Show task description overlay", "Views"),
     HelpEntry("/", "Search", "Toggle search overlay", "Tools"),
     HelpEntry("n/N", "Search nav", "Jump to next/previous search match", "Tools"),
     HelpEntry("R", "Retry task", "Retry a failed task", "Actions"),
-    HelpEntry("s", "Skip task", "Skip current task", "Actions"),
+    HelpEntry("Ctrl+X", "Skip task", "Skip current task", "Actions"),
     HelpEntry("C", "Copy all", "Copy all agent output to clipboard", "Actions"),
 ]
 
 REVIEW_HELP: list[HelpEntry] = [
-    HelpEntry("a", "Approve", "Approve the current review item", "Actions"),
-    HelpEntry("x", "Reject", "Reject the current review item", "Actions"),
-    HelpEntry("e", "Edit", "Open in external editor", "Actions"),
-    HelpEntry("j/k", "Navigate", "Move through review items", "Navigation"),
+    HelpEntry("Ctrl+A", "Approve", "Approve the current review item", "Actions"),
+    HelpEntry("Ctrl+X", "Reject", "Reject the current review item", "Actions"),
+    HelpEntry("Ctrl+E", "Edit", "Open in external editor", "Actions"),
+    HelpEntry("Ctrl+J/K", "Navigate", "Scroll through diff content", "Navigation"),
     HelpEntry("1-9", "Jump to item", "Jump directly to review item by number", "Navigation"),
     HelpEntry("/", "Search", "Toggle search overlay", "Tools"),
     HelpEntry("n/N", "Search nav", "Jump to next/previous search match", "Tools"),
 ]
 
 SETTINGS_HELP: list[HelpEntry] = [
-    HelpEntry("j/k", "Navigate", "Move through settings", "Navigation"),
-    HelpEntry("Enter", "Edit setting", "Modify the selected setting value", "Actions"),
-    HelpEntry("r", "Reset", "Reset setting to default value", "Actions"),
+    HelpEntry("↑/↓", "Navigate", "Move through settings", "Navigation"),
+    HelpEntry("←/→", "Change value", "Adjust the selected setting", "Actions"),
+    HelpEntry("Enter", "Toggle/Edit", "Toggle boolean or open editor", "Actions"),
     HelpEntry("Esc", "Back", "Return to previous screen", "Navigation"),
 ]
 
@@ -176,7 +177,7 @@ def format_help_overlay(
         content_lines.append("")
 
     # Apply scroll window
-    visible = content_lines[scroll_offset:scroll_offset + max_visible]
+    visible = content_lines[scroll_offset : scroll_offset + max_visible]
     parts.extend(visible)
 
     # Scroll indicator
@@ -204,7 +205,7 @@ class HelpOverlay(Widget):
     """Modal overlay showing contextual keybinding help per screen.
 
     Mount this widget and call .open(screen_name) to show, .close() to hide.
-    Bindings: j/k scroll, Esc dismisses.
+    Bindings: j/k or up/down to scroll, Esc to dismiss.
     """
 
     DEFAULT_CSS = """
@@ -232,6 +233,7 @@ class HelpOverlay(Widget):
 
     class Dismissed(Message):
         """Posted when the help overlay is dismissed."""
+
         pass
 
     def __init__(self, screen_name: str = "HomeScreen") -> None:

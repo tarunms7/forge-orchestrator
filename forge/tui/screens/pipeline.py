@@ -20,34 +20,44 @@ from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.search_overlay import SearchOverlay
+from forge.tui.widgets.task_description import TaskDescriptionOverlay
 
 logger = logging.getLogger("forge.tui.screens.pipeline")
 
 # Map phase → display label and colour
 _PHASE_BANNER: dict[str, tuple[str, str]] = {
-    "idle":           ("Idle",              "#8b949e"),
-    "planning":       ("◌ Planning",        "#58a6ff"),
-    "planned":        ("◉ Plan Approval",   "#a371f7"),
-    "contracts":      ("⚙ Contracts",       "#d2a8ff"),
-    "executing":      ("⚡ Execution",       "#f0883e"),
-    "in_progress":    ("⚡ Execution",       "#f0883e"),
-    "review":         ("🔍 Review",          "#79c0ff"),
-    "in_review":      ("🔍 Review",          "#79c0ff"),
-    "final_approval": ("◎ Final Approval",  "#f0883e"),
-    "pr_creating":    ("⚙ Creating PR",     "#d2a8ff"),
-    "pr_created":     ("✔ PR Created",      "#3fb950"),
-    "complete":       ("✔ Complete",        "#3fb950"),
-    "error":          ("✖ Error",           "#f85149"),
-    "cancelled":      ("✘ Cancelled",       "#8b949e"),
-    "paused":         ("⏸ Paused",          "#d29922"),
+    "idle": ("Idle", "#8b949e"),
+    "planning": ("◌ Planning", "#58a6ff"),
+    "planned": ("◉ Plan Approval", "#a371f7"),
+    "contracts": ("⚙ Contracts", "#d2a8ff"),
+    "executing": ("⚡ Execution", "#f0883e"),
+    "in_progress": ("⚡ Execution", "#f0883e"),
+    "review": ("🔍 Review", "#79c0ff"),
+    "in_review": ("🔍 Review", "#79c0ff"),
+    "final_approval": ("◎ Final Approval", "#f0883e"),
+    "pr_creating": ("⚙ Creating PR", "#d2a8ff"),
+    "pr_created": ("✔ PR Created", "#3fb950"),
+    "complete": ("✔ Complete", "#3fb950"),
+    "error": ("✖ Error", "#f85149"),
+    "cancelled": ("✘ Cancelled", "#8b949e"),
+    "paused": ("⏸ Paused", "#d29922"),
 }
 
 _VIEW_NAMES = ("output", "chat", "diff")
 
-_SIDEBAR_HIDDEN_PHASES = frozenset({
-    "idle", "planning", "planned", "contracts",
-    "final_approval", "complete", "pr_creating", "pr_created", "cancelled",
-})
+_SIDEBAR_HIDDEN_PHASES = frozenset(
+    {
+        "idle",
+        "planning",
+        "planned",
+        "contracts",
+        "final_approval",
+        "complete",
+        "pr_creating",
+        "pr_created",
+        "cancelled",
+    }
+)
 
 
 class PhaseBanner(Widget):
@@ -197,31 +207,32 @@ class PipelineScreen(Screen):
     """
 
     BINDINGS = [
-        Binding("j", "cursor_down", "Down", show=False),
-        Binding("k", "cursor_up", "Up", show=False),
-        Binding("g", "toggle_dag", "Toggle DAG"),
+        Binding("ctrl+j", "cursor_down", "Down", show=False),
+        Binding("ctrl+k", "cursor_up", "Up", show=False),
+        Binding("ctrl+g", "toggle_dag", "Toggle DAG"),
         Binding("tab", "cycle_agent", "Next agent", show=False),
-        Binding("o", "view_output", "Output", show=True),
-        Binding("c", "copy_mode", "Copy", show=True),
-        Binding("t", "view_chat", "Chat", show=True),
-        Binding("d", "view_diff", "Diff", show=True),
-        Binding("r", "open_review", "Review", show=True),
+        Binding("ctrl+o", "view_output", "Output", show=True),
+        Binding("ctrl+y", "copy_mode", "Copy", show=True),
+        Binding("ctrl+t", "view_chat", "Chat", show=True),
+        Binding("ctrl+d", "view_diff", "Diff", show=True),
+        Binding("ctrl+r", "open_review", "Review", show=True),
         Binding("R", "retry_task", "Retry", show=False),
-        Binding("s", "skip_task", "Skip", show=False),
+        Binding("ctrl+x", "skip_task", "Skip", show=False),
         Binding("C", "copy_all", "Copy All", show=False),
         Binding("slash", "toggle_search", "Search", show=False),
         Binding("n", "search_next", "Next match", show=False),
         Binding("N", "search_prev", "Prev match", show=False),
+        Binding("i", "show_task_description", "Task Info", show=False),
         Binding("escape", "pop_screen", "Back", show=False),
-        Binding("1", "jump_task(1)", show=False),
-        Binding("2", "jump_task(2)", show=False),
-        Binding("3", "jump_task(3)", show=False),
-        Binding("4", "jump_task(4)", show=False),
-        Binding("5", "jump_task(5)", show=False),
-        Binding("6", "jump_task(6)", show=False),
-        Binding("7", "jump_task(7)", show=False),
-        Binding("8", "jump_task(8)", show=False),
-        Binding("9", "jump_task(9)", show=False),
+        Binding("1", "jump_task(1)", show=False, priority=True),
+        Binding("2", "jump_task(2)", show=False, priority=True),
+        Binding("3", "jump_task(3)", show=False, priority=True),
+        Binding("4", "jump_task(4)", show=False, priority=True),
+        Binding("5", "jump_task(5)", show=False, priority=True),
+        Binding("6", "jump_task(6)", show=False, priority=True),
+        Binding("7", "jump_task(7)", show=False, priority=True),
+        Binding("8", "jump_task(8)", show=False, priority=True),
+        Binding("9", "jump_task(9)", show=False, priority=True),
     ]
 
     def __init__(self, state: TuiState, *, read_only: bool = False) -> None:
@@ -243,6 +254,7 @@ class PipelineScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield DagOverlay()
+        yield TaskDescriptionOverlay()
         yield PhaseBanner()
         with Horizontal(id="split-pane"):
             with Vertical(id="left-panel"):
@@ -266,7 +278,9 @@ class PipelineScreen(Screen):
             created = getattr(self._state, "_replay_date", None) or ""
             date_str = str(created)[:10] if created else "unknown date"
             banner = self.query_one(PhaseBanner)
-            banner.set_read_only_banner(f"📖 Viewing pipeline from {date_str} — press Esc to return")
+            banner.set_read_only_banner(
+                f"📖 Viewing pipeline from {date_str} — press Esc to return"
+            )
 
     def on_unmount(self) -> None:
         self._state.remove_change_callback(self._on_state_change)
@@ -283,8 +297,7 @@ class PipelineScreen(Screen):
         if field == "review_output":
             self._handle_review_output_fast()
             return
-        if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
-                     "contracts_output"):
+        if field in ("tasks", "cost", "phase", "elapsed", "planner_output", "contracts_output"):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
             if field == "tasks":
                 for cache_tid in list(self._diff_cache):
@@ -317,7 +330,7 @@ class PipelineScreen(Screen):
                 title = task.get("title", tid)
                 state.selected_task_id = tid
                 self.app.notify(
-                    f"Task {title} ready for review — press [bold]r[/bold] to open",
+                    f"Task {title} ready for review — press [bold]Ctrl+R[/bold] to open",
                     timeout=8,
                 )
                 return
@@ -428,13 +441,20 @@ class PipelineScreen(Screen):
             agent_output.clear_error_detail()
             if state.contracts_output:
                 agent_output.update_output(
-                    "contracts", "⚙ Contracts", "contracts", state.contracts_output,
+                    "contracts",
+                    "⚙ Contracts",
+                    "contracts",
+                    state.contracts_output,
                 )
             else:
                 agent_output.update_output(
-                    "contracts", "Generating Contracts", "contracts",
-                    ["⚙ Building API contracts...",
-                     "  This enables tasks to run in parallel instead of sequentially."],
+                    "contracts",
+                    "Generating Contracts",
+                    "contracts",
+                    [
+                        "⚙ Building API contracts...",
+                        "  This enables tasks to run in parallel instead of sequentially.",
+                    ],
                 )
         else:
             agent_output.clear_error_detail()
@@ -455,8 +475,11 @@ class PipelineScreen(Screen):
                 diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
 
         progress.update_progress(
-            state.done_count, state.total_count,
-            state.total_cost_usd, state.elapsed_seconds, state.phase,
+            state.done_count,
+            state.total_count,
+            state.total_cost_usd,
+            state.elapsed_seconds,
+            state.phase,
         )
         dag.update_tasks(ordered_tasks)
         phase_banner.update_phase(state.phase)
@@ -480,7 +503,10 @@ class PipelineScreen(Screen):
             return branch
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -551,7 +577,7 @@ class PipelineScreen(Screen):
 
         for name, cls in widget_map.items():
             w = self.query_one(cls)
-            w.display = (name == view)
+            w.display = name == view
 
     def _auto_switch_chat(self, task_id: str, task: dict) -> None:
         """Switch to chat view and populate question when task needs input."""
@@ -605,7 +631,8 @@ class PipelineScreen(Screen):
         else:
             self.app.notify(
                 "Clipboard unavailable — install xclip or xsel",
-                severity="warning", timeout=5,
+                severity="warning",
+                timeout=5,
             )
 
     def on_copy_overlay_cancelled(self, event: CopyOverlay.Cancelled) -> None:
@@ -684,6 +711,7 @@ class PipelineScreen(Screen):
     def action_copy_all(self) -> None:
         """Instant copy of all visible output to clipboard."""
         from forge.tui.widgets.copy_overlay import copy_to_clipboard
+
         agent_output = self.query_one(AgentOutput)
         if agent_output._unified_entries:
             lines = [line for _, line in agent_output._unified_entries]
@@ -705,7 +733,8 @@ class PipelineScreen(Screen):
         else:
             self.app.notify(
                 "Clipboard unavailable — install xclip or xsel",
-                severity="warning", timeout=5,
+                severity="warning",
+                timeout=5,
             )
 
     def action_open_review(self) -> None:
@@ -718,6 +747,7 @@ class PipelineScreen(Screen):
             return
         try:
             from forge.tui.screens.review import ReviewScreen
+
             self.app.push_screen(ReviewScreen(self._state))
         except Exception:
             logger.debug("Failed to push ReviewScreen", exc_info=True)
@@ -749,9 +779,35 @@ class PipelineScreen(Screen):
             logger.debug("Failed to emit task:skip", exc_info=True)
 
     def action_pop_screen(self) -> None:
-        """Esc — only active in read-only mode."""
+        """Esc — dismiss copy overlay if active, or pop screen in read-only mode."""
+        # Always dismiss copy overlay first, regardless of read-only mode
+        if self._copy_overlay is not None:
+            self._dismiss_copy_overlay()
+            return
         if self._read_only:
             self.app.pop_screen()
+
+    def action_show_task_description(self) -> None:
+        """Toggle the TaskDescriptionOverlay with current pipeline info."""
+        try:
+            overlay = self.query_one(TaskDescriptionOverlay)
+            if overlay.is_open:
+                overlay.close()
+            else:
+                state = self._state
+                # Build task list from state
+                tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+                # Get pipeline description from first task or app
+                description = ""
+                try:
+                    description = getattr(self.app, "_pipeline_description", lambda: "")()
+                except Exception:
+                    pass
+                if not description and tasks:
+                    description = tasks[0].get("title", "")
+                overlay.open(description=description, tasks=tasks)
+        except Exception:
+            logger.debug("Failed to toggle TaskDescriptionOverlay", exc_info=True)
 
     def action_jump_task(self, index: int) -> None:
         """Jump to task by 1-based position in the task list."""

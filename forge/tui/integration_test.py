@@ -14,8 +14,10 @@ async def test_full_event_flow():
     state = TuiState()
 
     for evt_type in TUI_EVENT_TYPES:
+
         async def _handler(data, _type=evt_type):
             state.apply_event(_type, data)
+
         bus.subscribe(evt_type, _handler)
 
     source = EmbeddedSource(emitter, bus)
@@ -24,11 +26,21 @@ async def test_full_event_flow():
     await emitter.emit("pipeline:phase_changed", {"phase": "planning"})
     assert state.phase == "planning"
 
-    await emitter.emit("pipeline:plan_ready", {
-        "tasks": [
-            {"id": "t1", "title": "Build API", "description": "...", "files": ["api.py"], "depends_on": [], "complexity": "medium"},
-        ]
-    })
+    await emitter.emit(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Build API",
+                    "description": "...",
+                    "files": ["api.py"],
+                    "depends_on": [],
+                    "complexity": "medium",
+                },
+            ]
+        },
+    )
     assert len(state.tasks) == 1
     assert state.tasks["t1"]["title"] == "Build API"
 

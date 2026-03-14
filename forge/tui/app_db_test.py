@@ -1,7 +1,9 @@
 """Tests for ForgeApp DB integration."""
+
+import asyncio
 import os
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, PropertyMock, MagicMock
 
 
 @pytest.fixture
@@ -22,6 +24,7 @@ def central_db_dir(tmp_path):
 @pytest.mark.asyncio
 async def test_app_creates_db_on_init_db(tmp_project, central_db_dir):
     from forge.tui.app import ForgeApp
+
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
         app = ForgeApp(project_dir=tmp_project)
         await app._init_db()
@@ -32,6 +35,7 @@ async def test_app_creates_db_on_init_db(tmp_project, central_db_dir):
 @pytest.mark.asyncio
 async def test_app_db_path_uses_central_path(tmp_project, central_db_dir):
     from forge.tui.app import ForgeApp
+
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
         app = ForgeApp(project_dir=tmp_project)
         expected = os.path.join(central_db_dir, "forge.db")
@@ -41,6 +45,7 @@ async def test_app_db_path_uses_central_path(tmp_project, central_db_dir):
 @pytest.mark.asyncio
 async def test_load_recent_pipelines_empty(tmp_project, central_db_dir):
     from forge.tui.app import ForgeApp
+
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
         app = ForgeApp(project_dir=tmp_project)
         await app._init_db()
@@ -53,12 +58,15 @@ async def test_load_recent_pipelines_empty(tmp_project, central_db_dir):
 async def test_load_recent_pipelines_includes_id(tmp_project, central_db_dir):
     """_load_recent_pipelines should include 'id' and 'total_cost_usd' keys."""
     from forge.tui.app import ForgeApp
+
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
         app = ForgeApp(project_dir=tmp_project)
         await app._init_db()
         await app._db.create_pipeline(
-            id="test-pipe", description="Test pipeline",
-            project_dir="/tmp", model_strategy="auto",
+            id="test-pipe",
+            description="Test pipeline",
+            project_dir="/tmp",
+            model_strategy="auto",
         )
         result = await app._load_recent_pipelines()
         assert len(result) == 1
@@ -81,21 +89,33 @@ async def test_pipeline_replay_loading(tmp_project, central_db_dir):
 
         # Create a pipeline with events
         await app._db.create_pipeline(
-            id="replay-pipe", description="Replay test",
-            project_dir="/tmp", model_strategy="auto",
+            id="replay-pipe",
+            description="Replay test",
+            project_dir="/tmp",
+            model_strategy="auto",
         )
         await app._db.log_event(
-            pipeline_id="replay-pipe", task_id=None,
+            pipeline_id="replay-pipe",
+            task_id=None,
             event_type="pipeline:phase_changed",
             payload={"phase": "planning"},
         )
         await app._db.log_event(
-            pipeline_id="replay-pipe", task_id=None,
+            pipeline_id="replay-pipe",
+            task_id=None,
             event_type="pipeline:plan_ready",
-            payload={"tasks": [
-                {"id": "t1", "title": "Task 1", "description": "D",
-                 "files": ["a.py"], "depends_on": [], "complexity": "low"},
-            ]},
+            payload={
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Task 1",
+                        "description": "D",
+                        "files": ["a.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    },
+                ]
+            },
         )
 
         # Mock push_screen and verify
@@ -119,8 +139,6 @@ async def test_pipeline_replay_loading(tmp_project, central_db_dir):
 @pytest.mark.asyncio
 async def test_action_reset_for_new_task_pushes_home(tmp_project, central_db_dir):
     """action_reset_for_new_task should pop all screens and push a fresh HomeScreen."""
-    import asyncio
-    from unittest.mock import PropertyMock
     from forge.tui.app import ForgeApp
     from forge.tui.screens.home import HomeScreen
 
@@ -163,8 +181,6 @@ async def test_action_reset_for_new_task_pushes_home(tmp_project, central_db_dir
 @pytest.mark.asyncio
 async def test_action_switch_home_pushes_home(tmp_project, central_db_dir):
     """action_switch_home should pop all screens and push a fresh HomeScreen."""
-    import asyncio
-    from unittest.mock import PropertyMock
     from forge.tui.app import ForgeApp
     from forge.tui.screens.home import HomeScreen
 
@@ -196,8 +212,6 @@ async def test_action_switch_home_pushes_home(tmp_project, central_db_dir):
 @pytest.mark.asyncio
 async def test_action_reset_state_cleanup(tmp_project, central_db_dir):
     """action_reset_for_new_task should reset all pipeline state."""
-    import asyncio
-    from unittest.mock import PropertyMock
     from forge.tui.app import ForgeApp
 
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
@@ -265,10 +279,16 @@ async def test_run_plan_passes_project_path_to_create_pipeline(tmp_project, cent
         # Mock daemon and plan
         mock_daemon = MagicMock()
         mock_graph = MagicMock()
-        mock_graph.tasks = [MagicMock(
-            id="t1", title="T", description="D",
-            files=[], depends_on=[], complexity=MagicMock(value="low"),
-        )]
+        mock_graph.tasks = [
+            MagicMock(
+                id="t1",
+                title="T",
+                description="D",
+                files=[],
+                depends_on=[],
+                complexity=MagicMock(value="low"),
+            )
+        ]
         mock_daemon.plan = AsyncMock(return_value=mock_graph)
 
         # Track the create_pipeline call
@@ -281,18 +301,120 @@ async def test_run_plan_passes_project_path_to_create_pipeline(tmp_project, cent
 
         app._db.create_pipeline = tracked_create
 
-        with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
-             patch("forge.core.events.EventEmitter"), \
-             patch.object(app, "push_screen"):
+        with (
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+            patch("forge.core.events.EventEmitter"),
+            patch.object(app, "push_screen"),
+        ):
             app._bus = MagicMock()
             app._source = MagicMock()
             app._source.connect = MagicMock()
-            with patch("forge.tui.app.EventBus", return_value=app._bus), \
-                 patch("forge.tui.app.EmbeddedSource", return_value=app._source):
+            with (
+                patch("forge.tui.app.EventBus", return_value=app._bus),
+                patch("forge.tui.app.EmbeddedSource", return_value=app._source),
+            ):
                 await app._run_plan("test task")
 
         assert len(create_calls) == 1
         assert create_calls[0]["project_path"] == tmp_project
         assert create_calls[0]["project_name"] == os.path.basename(tmp_project)
+
+        await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_keybindings_use_ctrl_prefix(tmp_project, central_db_dir):
+    """Screen switch bindings should use ctrl+N instead of bare numbers."""
+    from forge.tui.app import ForgeApp
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        binding_keys = [b.key for b in app.BINDINGS]
+        # ctrl+1 through ctrl+4 should be present
+        assert "ctrl+1" in binding_keys
+        assert "ctrl+2" in binding_keys
+        assert "ctrl+3" in binding_keys
+        assert "ctrl+4" in binding_keys
+        # bare 1-4 should NOT be present
+        assert "1" not in binding_keys
+        assert "2" not in binding_keys
+        assert "3" not in binding_keys
+        assert "4" not in binding_keys
+        # ctrl+q instead of bare q
+        assert "ctrl+q" in binding_keys
+        assert "q" not in binding_keys
+
+
+@pytest.mark.asyncio
+async def test_deferred_final_approval_when_overlay_active(tmp_project, central_db_dir):
+    """When a modal is active, final_approval should be deferred."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.review import ReviewScreen
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        await app._init_db()
+
+        # Wire up state change handler (normally done in on_mount)
+        app._state.on_change(app._on_state_change)
+
+        # Mock screen to be a ReviewScreen (overlay)
+        mock_screen = MagicMock(spec=ReviewScreen)
+        notifications = []
+        app.notify = lambda msg, **kw: notifications.append(msg)
+
+        with patch.object(type(app), "screen", new_callable=PropertyMock, return_value=mock_screen):
+            # Simulate phase change to final_approval
+            app._state.apply_event("pipeline:all_tasks_done", {})
+
+            # Should NOT push final approval yet
+            assert app._final_approval_pushed is False
+            # Should have deferred the phase
+            assert app._state.deferred_phase == "final_approval"
+            # Should have shown notification
+            assert any("complete" in n.lower() for n in notifications)
+
+        await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_on_screen_resume_applies_deferred(tmp_project, central_db_dir):
+    """on_screen_resume should apply deferred final_approval."""
+    from forge.tui.app import ForgeApp
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        await app._init_db()
+
+        # Set up deferred state
+        app._state.defer_phase("final_approval")
+        pushed_screens = []
+        app.push_screen = lambda s: pushed_screens.append(s)
+
+        app.on_screen_resume()
+
+        assert app._final_approval_pushed is True
+        assert app._state.deferred_phase is None
+        assert len(pushed_screens) == 1
+
+        await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_on_screen_resume_no_op_without_deferred(tmp_project, central_db_dir):
+    """on_screen_resume should do nothing when no deferred phase."""
+    from forge.tui.app import ForgeApp
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        await app._init_db()
+
+        pushed_screens = []
+        app.push_screen = lambda s: pushed_screens.append(s)
+
+        app.on_screen_resume()
+
+        assert app._final_approval_pushed is False
+        assert len(pushed_screens) == 0
 
         await app._db.close()

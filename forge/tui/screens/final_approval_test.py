@@ -68,6 +68,18 @@ def test_show_pr_url_handles_missing_widget():
     screen.show_pr_url("https://example.com/pull/1")
 
 
+def test_show_pr_url_sets_pr_created_flag():
+    """show_pr_url should set _pr_created and clear _pr_creating."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    screen.query_one = MagicMock(side_effect=Exception("no widget"))
+    screen._pr_creating = True
+
+    screen.show_pr_url("https://example.com/pull/1")
+
+    assert screen._pr_created is True
+    assert screen._pr_creating is False
+
+
 def test_action_view_diff_no_branch_notifies():
     """action_view_diff with no branch should notify a warning."""
     screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="")
@@ -161,10 +173,10 @@ def test_action_view_diff_with_branch_creates_task():
 
 
 def test_followup_binding_exists():
-    """FinalApprovalScreen should have 'f' binding for follow-up."""
+    """FinalApprovalScreen should have 'ctrl+f' binding for follow-up."""
     bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
-    assert "f" in bindings
-    assert "follow" in bindings["f"].description.lower()
+    assert "ctrl+f" in bindings
+    assert "follow" in bindings["ctrl+f"].description.lower()
 
 
 def test_ctrl_s_binding_exists():
@@ -236,7 +248,75 @@ def test_followup_message_fields():
 
 
 def test_help_text_includes_followup():
-    """The help text in the screen should mention follow up."""
-    # Check that our bindings include follow up
+    """The bindings should include follow up with ctrl+f."""
     bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
-    assert "f" in bindings
+    assert "ctrl+f" in bindings
+
+
+# --- PR double-creation guard tests ---
+
+
+def test_action_create_pr_posts_message():
+    """action_create_pr should post CreatePR message on first call."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    screen.post_message = MagicMock()
+
+    screen.action_create_pr()
+
+    screen.post_message.assert_called_once()
+    msg = screen.post_message.call_args[0][0]
+    assert isinstance(msg, FinalApprovalScreen.CreatePR)
+
+
+def test_action_create_pr_guard_prevents_double_press():
+    """action_create_pr should not post a second message if already creating."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    screen.post_message = MagicMock()
+
+    screen.action_create_pr()
+    screen.action_create_pr()  # second press
+
+    # Only one message should be posted
+    screen.post_message.assert_called_once()
+
+
+def test_action_create_pr_guard_prevents_after_created():
+    """action_create_pr should not post if PR already created."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    screen.post_message = MagicMock()
+    screen.query_one = MagicMock(side_effect=Exception("no widget"))
+
+    screen.action_create_pr()
+    screen.show_pr_url("https://example.com/pull/1")
+    screen.post_message.reset_mock()
+
+    screen.action_create_pr()  # should be blocked
+
+    screen.post_message.assert_not_called()
+
+
+def test_pr_creating_flag_initialized_false():
+    """New FinalApprovalScreen should have _pr_creating=False."""
+    screen = FinalApprovalScreen()
+    assert screen._pr_creating is False
+    assert screen._pr_created is False
+
+
+# --- Keybinding update tests ---
+
+
+def test_keybindings_use_ctrl_prefix():
+    """All single-key shortcuts (except enter/escape) should use ctrl+ prefix."""
+    bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
+    assert "ctrl+d" in bindings
+    assert "ctrl+r" in bindings
+    assert "ctrl+f" in bindings
+    assert "ctrl+n" in bindings
+    # These should NOT exist as single-key shortcuts
+    assert "d" not in bindings
+    assert "r" not in bindings
+    assert "f" not in bindings
+    assert "n" not in bindings
+    # Enter and escape should remain
+    assert "enter" in bindings
+    assert "escape" in bindings
