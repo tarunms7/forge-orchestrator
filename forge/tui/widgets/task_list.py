@@ -33,6 +33,11 @@ STATE_COLORS: dict[str, str] = {
 MAX_WIDTH = 40
 
 
+def _escape(text: str) -> str:
+    """Escape Rich markup characters in user-provided text."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 def format_task_line(task: dict, *, selected: bool) -> str:
     state = task.get("state", "todo")
     icon = STATE_ICONS.get(state, "?")
@@ -67,10 +72,11 @@ def format_task_line(task: dict, *, selected: bool) -> str:
 
     # Build the final line
     suffix_str = f" {suffix}" if suffix else ""
+    escaped_title = _escape(title)
     if selected:
-        return f"[bold on #1f2937] [{color}]{icon} [#c9d1d9]{title}{suffix_str} [/]"
+        return f"[bold on #1f2937] [{color}]{icon} [#c9d1d9]{escaped_title}{suffix_str} [/]"
     else:
-        return f" [{color}]{icon}[/] [#c9d1d9]{title}{suffix_str}[/]"
+        return f" [{color}]{icon}[/] [#c9d1d9]{escaped_title}{suffix_str}[/]"
 
 
 class TaskList(Widget):

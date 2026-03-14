@@ -570,7 +570,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         try:
             self._pipeline_id = str(uuid.uuid4())
             await db.create_pipeline(
-                id=self._pipeline_id, description=user_input[:200],
+                id=self._pipeline_id, description=user_input,
                 project_dir=self._project_dir, model_strategy=self._strategy,
                 budget_limit_usd=self._settings.budget_limit_usd,
             )
@@ -621,6 +621,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
+        try:
+            await self._execution_loop_inner(db, runtime, worktree_mgr, merge_worker, monitor, pipeline_id)
+        except Exception as e:
+            logger.error("Execution loop crashed: %s", e, exc_info=True)
+            try:
+                await self._emit("pipeline:error", {"error": f"Pipeline crashed: {e}"}, db=db, pipeline_id=pipeline_id or "")
+                await self._emit("pipeline:phase_changed", {"phase": "error"}, db=db, pipeline_id=pipeline_id or "")
+            except Exception:
+                pass
+            raise
+
+    async def _execution_loop_inner(
+        self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
+        merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
+    ) -> None:
+        """Inner execution loop body — wrapped by _execution_loop for error handling."""
         prefix = pipeline_id[:8] if pipeline_id else None
         start_time = asyncio.get_event_loop().time()
         timeout = self._settings.pipeline_timeout_seconds
@@ -780,5 +796,5 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         pass
                     try:
                         worktree_mgr.remove(task_id)
-                    except Exception:
-                        pass
+                    except Exception as cleanup_err:
+                        logger.warning("Failed to clean up worktree for task %s: %s", task_id, cleanup_err)

@@ -8,6 +8,7 @@ import os
 
 from textual.app import App
 from textual.binding import Binding
+from textual.widgets import TextArea, Input
 
 from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
 from forge.tui.state import TuiState
@@ -82,9 +83,14 @@ class ForgeApp(App):
     async def _init_db(self):
         """Initialize database connection."""
         from forge.storage.db import Database
-        os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
-        self._db = Database(f"sqlite+aiosqlite:///{self._db_path}")
-        await self._db.initialize()
+        try:
+            os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+            self._db = Database(f"sqlite+aiosqlite:///{self._db_path}")
+            await self._db.initialize()
+        except Exception as e:
+            logger.error("Failed to initialize database: %s", e, exc_info=True)
+            self.notify(f"Database initialization failed: {e}", severity="error")
+            self._db = None
 
     async def _load_recent_pipelines(self) -> list[dict]:
         """Load recent pipelines from DB for HomeScreen."""
@@ -266,6 +272,11 @@ class ForgeApp(App):
             pushed = await push_branch(project_dir, branch)
             if not pushed:
                 self._state.apply_event("pipeline:pr_failed", {"error": "git push failed"})
+                if self._db and self._pipeline_id:
+                    try:
+                        await self._db.update_pipeline_status(self._pipeline_id, "error")
+                    except Exception:
+                        pass
                 self.notify("PR creation failed: could not push branch.", severity="error")
                 return
 
@@ -293,10 +304,20 @@ class ForgeApp(App):
                     self.notify(f"PR created: {pr_url}", severity="information")
             else:
                 self._state.apply_event("pipeline:pr_failed", {"error": "gh pr create failed"})
+                if self._db and self._pipeline_id:
+                    try:
+                        await self._db.update_pipeline_status(self._pipeline_id, "error")
+                    except Exception:
+                        pass
                 self.notify("PR creation failed: check logs.", severity="error")
         except Exception as e:
             logger.error("PR creation error: %s", e, exc_info=True)
             self._state.apply_event("pipeline:pr_failed", {"error": str(e)})
+            if self._db and self._pipeline_id:
+                try:
+                    await self._db.update_pipeline_status(self._pipeline_id, "error")
+                except Exception:
+                    pass
             self.notify(f"PR creation error: {e}", severity="error")
 
     async def _get_pipeline_branch(self) -> str | None:
@@ -397,6 +418,10 @@ class ForgeApp(App):
 
     async def on_home_screen_task_submitted(self, event: HomeScreen.TaskSubmitted) -> None:
         """User submitted a task from HomeScreen."""
+        # Guard against double-submit
+        if self._daemon_task and not self._daemon_task.done():
+            self.notify("A pipeline is already running", severity="warning")
+            return
         task = event.task
         logger.info("Task submitted: %s", task)
         self._state.apply_event("pipeline:phase_changed", {"phase": "planning"})
@@ -436,7 +461,7 @@ class ForgeApp(App):
             return
         await self._db.create_pipeline(
             id=self._pipeline_id,
-            description=task[:200],
+            description=task,
             project_dir=self._project_dir,
             model_strategy=settings.model_strategy,
             budget_limit_usd=settings.budget_limit_usd,
@@ -522,7 +547,10 @@ class ForgeApp(App):
         if self._elapsed_timer:
             self._elapsed_timer.stop()
         if not task.cancelled() and task.exception():
-            logger.error("Daemon crashed: %s", task.exception())
+            error = task.exception()
+            logger.error("Daemon crashed: %s", error)
+            self._state.apply_event("pipeline:error", {"error": str(error)})
+            self.notify(f"Pipeline failed: {error}", severity="error", timeout=10)
 
     def _tick_elapsed(self) -> None:
         if self._pipeline_start_time:
@@ -567,19 +595,41 @@ class ForgeApp(App):
         except Exception:
             pass
 
+    def _is_input_focused(self) -> bool:
+        """Check if a text input widget has focus (typing guard)."""
+        try:
+            return bool(self.focused and isinstance(self.focused, (TextArea, Input)))
+        except Exception:
+            return False
+
+    def _is_modal_screen(self) -> bool:
+        """Check if the active screen is a modal that shouldn't be switched away from."""
+        try:
+            return isinstance(self.screen, (PlanApprovalScreen, FinalApprovalScreen))
+        except Exception:
+            return False
+
     def action_switch_home(self) -> None:
+        if self._is_input_focused() or self._is_modal_screen():
+            return
         while len(self.screen_stack) > 1:
             self.pop_screen()
         # Push a fresh HomeScreen
         asyncio.create_task(self._push_fresh_home())
 
     def action_switch_pipeline(self) -> None:
+        if self._is_input_focused() or self._is_modal_screen():
+            return
         self.push_screen(PipelineScreen(self._state))
 
     def action_switch_review(self) -> None:
+        if self._is_input_focused() or self._is_modal_screen():
+            return
         self.push_screen(ReviewScreen(self._state))
 
     def action_switch_settings(self) -> None:
+        if self._is_input_focused() or self._is_modal_screen():
+            return
         self.push_screen(SettingsScreen(self._settings))
 
     def action_quit_app(self) -> None:
@@ -627,7 +677,33 @@ class ForgeApp(App):
                 self.notify("Pipeline not found", severity="error")
                 return
 
-            # Load events and replay into a fresh TuiState
+            # Resume a planned pipeline — show plan approval screen
+            if pipeline.status == "planned" and pipeline.task_graph_json:
+                import json
+                graph_data = json.loads(pipeline.task_graph_json)
+                tasks_dict = graph_data.get("tasks", {})
+                plan_tasks = [
+                    {"id": tid, "title": t.get("title", ""), "description": t.get("description", ""),
+                     "files": t.get("files", []), "depends_on": t.get("depends_on", []),
+                     "complexity": t.get("complexity", "medium")}
+                    for tid, t in tasks_dict.items()
+                ]
+                if plan_tasks:
+                    # Set up state for this pipeline
+                    self._pipeline_id = pipeline_id
+                    self._state = TuiState()
+                    # Replay events to restore state
+                    events = await self._db.list_events(pipeline_id)
+                    for evt in events:
+                        self._state.apply_event(evt.event_type, evt.payload or {})
+                    # Push pipeline screen then plan approval
+                    pipeline_screen = PipelineScreen(self._state)
+                    self.push_screen(pipeline_screen)
+                    from forge.tui.screens.plan_approval import PlanApprovalScreen
+                    self.push_screen(PlanApprovalScreen(plan_tasks))
+                    return
+
+            # Load events and replay into a fresh TuiState (read-only history)
             events = await self._db.list_events(pipeline_id)
             replay_state = TuiState()
             replay_state._replay_date = pipeline.created_at or ""
@@ -635,7 +711,6 @@ class ForgeApp(App):
             for evt in events:
                 replay_state.apply_event(evt.event_type, evt.payload or {})
 
-            # Push PipelineScreen in read-only mode
             self.push_screen(PipelineScreen(replay_state, read_only=True))
 
         except Exception as e:

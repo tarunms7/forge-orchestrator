@@ -26,13 +26,18 @@ _SECTION_COLORS = {
 _ERROR_TAIL_LINES = 20
 
 
+def _escape(text: str) -> str:
+    """Escape Rich markup characters in user-provided text."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
+
 def format_header(task_id: str | None, title: str | None, state: str | None) -> str:
     if not task_id:
         return "[#8b949e]No task selected[/]"
     if task_id == "planner":
         return "[bold #a371f7]⚙ Planner[/] [#8b949e]exploring codebase & building task graph...[/]"
-    state_label = f" [{state}]" if state else ""
-    return f"[bold #58a6ff]{task_id}[/]: {title or 'Untitled'} [#8b949e]{state_label}[/]"
+    state_label = f" [{_escape(state)}]" if state else ""
+    return f"[bold #58a6ff]{_escape(task_id)}[/]: {_escape(title or 'Untitled')} [#8b949e]{state_label}[/]"
 
 
 def format_error_detail(task_id: str, task: dict, output_lines: list[str]) -> str:
@@ -43,15 +48,15 @@ def format_error_detail(task_id: str, task: dict, output_lines: list[str]) -> st
 
     parts: list[str] = []
     # Header
-    parts.append(f"[bold #f85149]✖ {title} — ERROR[/]")
+    parts.append(f"[bold #f85149]✖ {_escape(title)} — ERROR[/]")
     parts.append("[#30363d]" + "─" * 60 + "[/]")
     # Error message
-    parts.append(f"[#f85149]{error}[/]")
+    parts.append(f"[#f85149]{_escape(error)}[/]")
     # File list
     if files_changed:
         parts.append("")
         for f in files_changed:
-            parts.append(f"[#8b949e]  {f}[/]")
+            parts.append(f"[#8b949e]  {_escape(f)}[/]")
     # Separator and last output
     parts.append("")
     parts.append("[#8b949e]── Last output ──[/]")
@@ -168,7 +173,14 @@ class AgentOutput(Widget):
             yield Static("", id="agent-content")
 
     def on_mount(self) -> None:
-        self.set_interval(0.1, self._tick_spinner)
+        self._spinner_timer = self.set_interval(0.1, self._tick_spinner)
+
+    def on_unmount(self) -> None:
+        if hasattr(self, "_spinner_timer") and self._spinner_timer:
+            self._spinner_timer.stop()
+        if self._typing_timer is not None:
+            self._typing_timer.stop()
+            self._typing_timer = None
 
     def _tick_spinner(self) -> None:
         if self._lines or self._unified_entries:
@@ -462,7 +474,7 @@ class AgentOutput(Widget):
         rendered = format_error_detail(task_id, task, output_lines)
         try:
             self.query_one("#agent-header", Static).update(
-                f"[bold #f85149]✖ {task.get('title', 'Untitled')} — ERROR[/]"
+                f"[bold #f85149]✖ {_escape(task.get('title', 'Untitled'))} — ERROR[/]"
             )
             self.query_one("#agent-content", Static).update(rendered)
             self.call_after_refresh(self._scroll_to_end)

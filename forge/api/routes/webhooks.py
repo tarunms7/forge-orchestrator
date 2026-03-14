@@ -211,7 +211,7 @@ async def github_webhook(request: Request) -> Response:
 
     await forge_db.create_pipeline(
         id=pipeline_id,
-        description=task_description[:200],
+        description=task_description,
         project_dir=project_dir,
         model_strategy="auto",
         github_issue_url=issue_url,

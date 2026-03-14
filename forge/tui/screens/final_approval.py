@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from textual.screen import Screen
 from textual.binding import Binding
@@ -177,6 +178,13 @@ class FinalApprovalScreen(Screen):
             return
         asyncio.create_task(self._load_and_show_diff())
 
+    def _get_project_dir(self) -> str | None:
+        """Get the project directory from the app if available."""
+        try:
+            return getattr(self.app, "_project_dir", None) or os.getcwd()
+        except Exception:
+            return None
+
     async def _load_and_show_diff(self) -> None:
         """Run git diff and push a DiffScreen with the result."""
         try:
@@ -184,9 +192,12 @@ class FinalApprovalScreen(Screen):
                 "git", "diff", f"main...{self._pipeline_branch}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=self._get_project_dir(),
             )
             stdout, stderr = await proc.communicate()
             diff_text = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
         except Exception as e:
             diff_text = f"Error running git diff: {e}"
+        if not self.is_running:
+            return
         self.app.push_screen(DiffScreen(diff_text, branch=self._pipeline_branch))

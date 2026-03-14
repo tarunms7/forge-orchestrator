@@ -166,6 +166,11 @@ def get_suggestions(classification: ErrorClassification, task: dict) -> list[Err
 
 _ERROR_TAIL_LINES = 20
 
+
+def _escape(text: str) -> str:
+    """Escape Rich markup characters in user-provided text."""
+    return text.replace("[", "\\[").replace("]", "\\]")
+
 # Category display configuration
 _CATEGORY_ICONS: dict[str, str] = {
     "syntax_error": "🔴",
@@ -226,31 +231,31 @@ def format_error_panel(
     parts: list[str] = []
 
     # Header with classification
-    parts.append(f"[bold {color}]{icon} {title} — {classification.category.upper().replace('_', ' ')}[/]")
+    parts.append(f"[bold {color}]{icon} {_escape(title)} — {classification.category.upper().replace('_', ' ')}[/]")
     parts.append(f"[#30363d]{'─' * 60}[/]")
 
     # Root cause analysis
-    parts.append(f"[bold #c9d1d9]Root cause:[/] [{color}]{classification.root_cause}[/]")
+    parts.append(f"[bold #c9d1d9]Root cause:[/] [{color}]{_escape(classification.root_cause)}[/]")
 
     # File/line context
     if classification.file_path or classification.line_number:
         loc_parts: list[str] = []
         if classification.file_path:
-            loc_parts.append(classification.file_path)
+            loc_parts.append(_escape(classification.file_path))
         if classification.line_number:
             loc_parts.append(f"line {classification.line_number}")
         parts.append(f"[#8b949e]  📍 {' : '.join(loc_parts)}[/]")
 
     # Error message
     parts.append("")
-    parts.append(f"[#f85149]{error}[/]")
+    parts.append(f"[#f85149]{_escape(error)}[/]")
 
     # Files changed
     if files_changed:
         parts.append("")
         parts.append("[#8b949e]Files modified:[/]")
         for f in files_changed:
-            parts.append(f"[#8b949e]  {f}[/]")
+            parts.append(f"[#8b949e]  {_escape(f)}[/]")
 
     # Error history — show previous failures to help spot patterns
     if error_history:
@@ -260,7 +265,7 @@ def format_error_panel(
         for i, prev_error in enumerate(error_history[-3:], 1):
             # Truncate long messages
             display = prev_error[:120] + "..." if len(prev_error) > 120 else prev_error
-            parts.append(f"[#d29922]  {i}. {display}[/]")
+            parts.append(f"[#d29922]  {i}. {_escape(display)}[/]")
 
     # Last output
     parts.append("")
