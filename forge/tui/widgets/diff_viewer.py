@@ -25,7 +25,9 @@ def format_diff(diff_text: str) -> str:
     return "\n".join(lines)
 
 
-def _escape(text: str) -> str:
+def _escape(text: str | None) -> str:
+    if text is None:
+        return ""
     return text.replace("[", "\\[")
 
 

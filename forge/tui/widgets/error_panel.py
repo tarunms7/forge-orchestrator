@@ -167,8 +167,10 @@ def get_suggestions(classification: ErrorClassification, task: dict) -> list[Err
 _ERROR_TAIL_LINES = 20
 
 
-def _escape(text: str) -> str:
+def _escape(text: str | None) -> str:
     """Escape Rich markup characters in user-provided text."""
+    if text is None:
+        return ""
     return text.replace("[", "\\[").replace("]", "\\]")
 
 # Category display configuration
@@ -212,7 +214,7 @@ def format_error_panel(
     - Context-aware suggested actions
     """
     title = task.get("title", "Untitled")
-    error = task.get("error", "Unknown error")
+    error = task.get("error") or "Unknown error"
     files_changed = task.get("files_changed", [])
 
     # Classify the error

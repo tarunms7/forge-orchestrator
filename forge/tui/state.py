@@ -362,7 +362,7 @@ class TuiState:
         tid = data.get("task_id")
         if tid and tid in self.followup_tasks:
             self.followup_tasks[tid]["state"] = "error"
-            self.followup_tasks[tid]["error"] = data.get("error")
+            self.followup_tasks[tid]["error"] = data.get("error") or "Unknown error"
             self._notify("followup_tasks")
 
     def _on_followup_output(self, data: dict) -> None:
