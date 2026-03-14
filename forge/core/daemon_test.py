@@ -1,6 +1,7 @@
 """Tests for ForgeDaemon: pause tracking, all_tasks_done event, question timeout checker."""
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -628,3 +629,55 @@ class TestRetryTask:
         # State should still be reset
         db.update_task_state.assert_called_once_with("task-1", "todo")
         daemon._emit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests for run() using central DB path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestRunCentralDB:
+    """Tests that run() uses forge_db_url() instead of per-project DB."""
+
+    async def test_run_uses_forge_db_url(self, tmp_path):
+        """run() should call forge_db_url() to get the DB URL."""
+        daemon = _make_daemon(tmp_path)
+
+        mock_db = MagicMock()
+        mock_db.initialize = AsyncMock()
+        mock_db.create_pipeline = AsyncMock()
+        mock_db.close = AsyncMock()
+
+        with patch("forge.core.daemon.Database", return_value=mock_db) as MockDB, \
+             patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db") as mock_url, \
+             patch.object(daemon, "plan", new_callable=AsyncMock) as mock_plan, \
+             patch.object(daemon, "generate_contracts", new_callable=AsyncMock, return_value=MagicMock()), \
+             patch.object(daemon, "execute", new_callable=AsyncMock), \
+             patch("forge.core.daemon.check_budget", new_callable=AsyncMock):
+            mock_plan.return_value = MagicMock(tasks=[])
+            await daemon.run("test task")
+
+        mock_url.assert_called_once()
+        MockDB.assert_called_once_with("sqlite+aiosqlite:///central/forge.db")
+
+    async def test_run_passes_project_path_to_create_pipeline(self, tmp_path):
+        """run() should pass project_path and project_name to create_pipeline."""
+        daemon = _make_daemon(tmp_path)
+
+        mock_db = MagicMock()
+        mock_db.initialize = AsyncMock()
+        mock_db.create_pipeline = AsyncMock()
+        mock_db.close = AsyncMock()
+
+        with patch("forge.core.daemon.Database", return_value=mock_db), \
+             patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///test.db"), \
+             patch.object(daemon, "plan", new_callable=AsyncMock) as mock_plan, \
+             patch.object(daemon, "generate_contracts", new_callable=AsyncMock, return_value=MagicMock()), \
+             patch.object(daemon, "execute", new_callable=AsyncMock), \
+             patch("forge.core.daemon.check_budget", new_callable=AsyncMock):
+            mock_plan.return_value = MagicMock(tasks=[])
+            await daemon.run("test task")
+
+        call_kwargs = mock_db.create_pipeline.call_args.kwargs
+        assert call_kwargs["project_path"] == str(tmp_path)
+        assert call_kwargs["project_name"] == os.path.basename(str(tmp_path))

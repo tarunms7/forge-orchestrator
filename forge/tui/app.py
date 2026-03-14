@@ -74,7 +74,8 @@ class ForgeApp(App):
         self._daemon_task: asyncio.Task | None = None
         self._pipeline_start_time: float | None = None
         self._elapsed_timer = None
-        self._db_path = os.path.join(self._project_dir, ".forge", "forge.db")
+        from forge.core.paths import forge_db_path
+        self._db_path = forge_db_path()
         self._db = None
         self._graph = None
         self._pipeline_id = None
@@ -83,9 +84,9 @@ class ForgeApp(App):
     async def _init_db(self):
         """Initialize database connection."""
         from forge.storage.db import Database
+        from forge.core.paths import forge_db_url
         try:
-            os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
-            self._db = Database(f"sqlite+aiosqlite:///{self._db_path}")
+            self._db = Database(forge_db_url())
             await self._db.initialize()
         except Exception as e:
             logger.error("Failed to initialize database: %s", e, exc_info=True)
@@ -465,6 +466,8 @@ class ForgeApp(App):
             project_dir=self._project_dir,
             model_strategy=settings.model_strategy,
             budget_limit_usd=settings.budget_limit_usd,
+            project_path=self._project_dir,
+            project_name=os.path.basename(self._project_dir),
         )
 
         self._pipeline_start_time = asyncio.get_event_loop().time()

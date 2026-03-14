@@ -563,9 +563,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
     async def run(self, user_input: str) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
-        db_path = os.path.join(self._project_dir, ".forge", "forge.db")
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        db = Database(f"sqlite+aiosqlite:///{db_path}")
+        from forge.core.paths import forge_db_url
+        db = Database(forge_db_url())
         await db.initialize()
         try:
             self._pipeline_id = str(uuid.uuid4())
@@ -573,6 +572,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 id=self._pipeline_id, description=user_input,
                 project_dir=self._project_dir, model_strategy=self._strategy,
                 budget_limit_usd=self._settings.budget_limit_usd,
+                project_path=self._project_dir,
+                project_name=os.path.basename(self._project_dir),
             )
             graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
             # Contract generation phase

@@ -145,12 +145,10 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
     import subprocess
     import threading
 
-    # Resolve DB path relative to repo root (not CWD) so `forge serve`
-    # always uses the same database regardless of where it's invoked from.
+    # Use the central Forge database when no explicit DB URL is provided.
     if db_url is None:
-        repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        db_path = os.path.join(repo_root, "forge.db")
-        db_url = f"sqlite+aiosqlite:///{db_path}"
+        from forge.core.paths import forge_db_url
+        db_url = forge_db_url()
 
     app = create_app(db_url=db_url, jwt_secret=jwt_secret)
 
