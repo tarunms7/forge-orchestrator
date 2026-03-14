@@ -52,6 +52,7 @@ async def list_history(
             "test_cmd": getattr(p, "test_cmd", None),
             "github_issue_url": getattr(p, "github_issue_url", None),
             "github_issue_number": getattr(p, "github_issue_number", None),
+            "project_path": p.project_dir or "",
         })
     return results
 

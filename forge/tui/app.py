@@ -112,6 +112,7 @@ class ForgeApp(App):
                     "cost": p.total_cost_usd or 0.0,
                     "total_cost_usd": p.total_cost_usd or 0.0,
                     "task_count": 0,
+                    "project_dir": p.project_dir or "",
                 }
                 for p in pipelines[:10]
             ]

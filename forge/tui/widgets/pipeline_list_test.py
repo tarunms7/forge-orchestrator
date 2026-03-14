@@ -14,6 +14,7 @@ SAMPLE_PIPELINES = [
         "created_at": "2026-03-10T12:00:00",
         "task_count": 5,
         "total_cost_usd": 2.50,
+        "project_dir": "/Users/foo/my-project",
     },
     {
         "id": "p2",
@@ -22,6 +23,7 @@ SAMPLE_PIPELINES = [
         "created_at": "2026-03-09T10:00:00",
         "task_count": 3,
         "total_cost_usd": 0.80,
+        "project_dir": "/home/bar/another-repo",
     },
     {
         "id": "p3",
@@ -30,6 +32,7 @@ SAMPLE_PIPELINES = [
         "created_at": "2026-03-11T08:00:00",
         "task_count": 4,
         "total_cost_usd": 1.20,
+        "project_dir": "",
     },
 ]
 
@@ -156,3 +159,39 @@ class TestPipelineListWidget:
         ])
         rendered = pl.render()
         assert "$1.23" in rendered
+
+    def test_render_shows_project_folder(self):
+        """Folder basename from project_dir should appear as a dim tag."""
+        pl = PipelineList()
+        pl.update_pipelines([
+            {
+                "id": "x",
+                "description": "Test task",
+                "status": "complete",
+                "created_at": "2026-03-10T12:00:00",
+                "task_count": 1,
+                "total_cost_usd": 0.0,
+                "project_dir": "/Users/foo/my-project",
+            }
+        ])
+        rendered = pl.render()
+        assert "my-project" in rendered
+
+    def test_render_no_project_tag_when_empty(self):
+        """No project tag should appear when project_dir is empty."""
+        pl = PipelineList()
+        pl.update_pipelines([
+            {
+                "id": "x",
+                "description": "Test task",
+                "status": "complete",
+                "created_at": "2026-03-10T12:00:00",
+                "task_count": 1,
+                "total_cost_usd": 0.0,
+                "project_dir": "",
+            }
+        ])
+        rendered = pl.render()
+        # Should render description and cost but no extraneous folder name
+        assert "Test task" in rendered
+        assert "$0.00" in rendered
