@@ -88,7 +88,7 @@ def test_serve_uses_central_db_url_by_default():
 
     with patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db") as mock_url, \
          patch("forge.cli.main.create_app", create=True) as mock_create_app, \
-         patch("uvicorn.run") as mock_uvicorn:
+         patch("uvicorn.run"):
         # We need to handle the lazy import of uvicorn and create_app
         # The serve command tries to import uvicorn and create_app
 
@@ -98,7 +98,7 @@ def test_serve_uses_central_db_url_by_default():
         # Use CliRunner but mock out the actual server startup
         runner = CliRunner()
         with patch.dict("sys.modules", {"uvicorn": MagicMock()}):
-            with patch("forge.api.app.create_app", return_value=MagicMock()) as mock_ca:
+            with patch("forge.api.app.create_app", return_value=MagicMock()):
                 # Patch uvicorn at module level since it's imported inside serve()
                 import sys
                 mock_uv = MagicMock()
