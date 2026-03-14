@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import builtins
 import os
-import sqlite3
 import subprocess
-import sys
 from collections import namedtuple
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner

@@ -7,7 +7,6 @@ import os
 
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch
 
 from forge.cli.main import cli
 from forge.storage.db import Database
