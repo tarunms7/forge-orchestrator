@@ -798,3 +798,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         worktree_mgr.remove(task_id)
                     except Exception as cleanup_err:
                         logger.warning("Failed to clean up worktree for task %s: %s", task_id, cleanup_err)
+
+                    # Emit pipeline:error if all remaining tasks are now terminal
+                    if pipeline_id:
+                        try:
+                            remaining = await db.list_tasks_by_pipeline(pipeline_id)
+                            terminal = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
+                            if all(t.state in terminal for t in remaining):
+                                await self._emit("pipeline:error", {
+                                    "error": f"Pipeline failed: task {task_id} crashed",
+                                }, db=db, pipeline_id=pipeline_id)
+                        except Exception:
+                            logger.exception("Failed to check pipeline state after task %s crash", task_id)
