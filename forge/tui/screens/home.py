@@ -53,6 +53,7 @@ _PIPELINE_STATUS_ICONS = {
 
 
 def format_recent_pipelines(pipelines: list[dict]) -> str:
+    import os
     if not pipelines:
         return "[#8b949e]No recent pipelines[/]"
     lines = []
@@ -62,7 +63,13 @@ def format_recent_pipelines(pipelines: list[dict]) -> str:
         desc = p.get("description", "Untitled")[:50]
         cost = p.get("cost", 0.0)
         date = p.get("created_at", "")[:10]
-        lines.append(f"  [{color}]{icon}[/] {desc}  [#8b949e]{date} \u00b7 ${cost:.2f}[/]")
+        project_dir = p.get("project_dir", "") or ""
+        project_tag = ""
+        if project_dir:
+            folder = os.path.basename(project_dir.rstrip("/"))[:20]
+            if folder:
+                project_tag = f"[#8b949e]{folder}[/]  "
+        lines.append(f"  [{color}]{icon}[/] {desc}  {project_tag}[#8b949e]{date} \u00b7 ${cost:.2f}[/]")
     return "\n".join(lines)
 
 

@@ -1,5 +1,7 @@
 """Tests for the history endpoints."""
 
+from __future__ import annotations
+
 import uuid
 
 import pytest
@@ -137,6 +139,7 @@ class TestListHistory:
             assert "pipeline_id" in item
             assert "phase" in item
             assert "task_count" in item
+            assert "project_path" in item
 
     async def test_history_list_duration_in_items(self, client):
         """GET /history should include a correctly computed duration in each list item.

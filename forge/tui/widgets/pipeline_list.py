@@ -82,14 +82,22 @@ class PipelineList(Widget, can_focus=True):
             date = str(p.get("created_at", ""))[:10]
             is_selected = i == self._selected_index
 
+            project_dir = p.get("project_dir", "") or ""
+            project_tag = ""
+            if project_dir:
+                import os
+                folder = os.path.basename(project_dir.rstrip("/"))[:20]
+                if folder:
+                    project_tag = f"[#8b949e]{folder}[/]  "
+
             if is_selected:
                 lines.append(
                     f"[bold on #1f2937] [{color}]{icon}[/] {desc}  "
-                    f"[#8b949e]{date} · ${cost:.2f}[/] [/]"
+                    f"{project_tag}[#8b949e]{date} · ${cost:.2f}[/] [/]"
                 )
             else:
                 lines.append(
-                    f"  [{color}]{icon}[/] {desc}  [#8b949e]{date} · ${cost:.2f}[/]"
+                    f"  [{color}]{icon}[/] {desc}  {project_tag}[#8b949e]{date} · ${cost:.2f}[/]"
                 )
 
         return "\n".join(lines)
