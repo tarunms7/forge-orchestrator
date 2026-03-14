@@ -560,19 +560,18 @@ class ReviewMixin:
         if not py_files:
             return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
 
-        # Check if ruff is available before trying to use it.
-        # ruff is a dev dependency — it may not be installed in the uv tool
-        # environment or production installs.  Skip gracefully instead of
-        # hard-failing the entire review pipeline.
+        # Verify ruff is available — it's a core dependency, so this should
+        # never fail.  If it does, fail the gate loudly rather than silently
+        # passing unreviewed code.
         ruff_check = subprocess.run(
             [sys.executable, "-m", "ruff", "--version"],
             capture_output=True, text=True,
         )
         if ruff_check.returncode != 0:
-            logger.warning("ruff not installed — skipping lint gate")
+            logger.error("ruff not found — this should not happen (ruff is a core dependency)")
             return GateResult(
-                passed=True, gate="gate1_auto_check",
-                details="Lint skipped — ruff not installed (install with: pip install ruff)",
+                passed=False, gate="gate1_auto_check",
+                details="Lint failed — ruff not available (reinstall forge: pip install forge-orchestrator)",
             )
 
         # Auto-fix trivial lint issues (unused imports, etc.) before checking.
