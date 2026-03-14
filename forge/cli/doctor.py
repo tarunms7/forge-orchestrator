@@ -1,5 +1,7 @@
 """Forge CLI doctor command. Checks environment health and prints diagnostics."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import sqlite3
@@ -176,6 +178,39 @@ def _check_db_connectivity() -> tuple[str, str, str]:
         return "fail", "Database", f"connection failed: {exc}"
 
 
+def _check_central_data_dir() -> tuple[str, str, str]:
+    """Check that the central Forge data directory exists and is writable."""
+    from forge.core.paths import forge_data_dir
+
+    try:
+        data_dir = forge_data_dir()
+        if not os.path.isdir(data_dir):
+            return "fail", "Central data dir", f"not found: {data_dir}"
+        if not os.access(data_dir, os.W_OK):
+            return "fail", "Central data dir", f"not writable: {data_dir}"
+        return "ok", "Central data dir", data_dir
+    except Exception as exc:
+        return "fail", "Central data dir", f"error: {exc}"
+
+
+def _check_central_db() -> tuple[str, str, str]:
+    """Check that the central SQLite database is accessible."""
+    from forge.core.paths import forge_db_path
+
+    db_path = forge_db_path()
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute("SELECT 1").fetchone()
+            if row and row[0] == 1:
+                return "ok", "Central DB", db_path
+            return "fail", "Central DB", f"query returned unexpected result at {db_path}"
+        finally:
+            conn.close()
+    except Exception as exc:
+        return "fail", "Central DB", f"cannot connect: {exc}"
+
+
 def _web_extras_installed() -> bool:
     """Check if web extras (fastapi, uvicorn, etc.) are installed."""
     try:
@@ -212,6 +247,8 @@ def doctor() -> None:
         _check_gh(),
         _check_disk_space(),
         _check_db_connectivity(),
+        _check_central_data_dir(),
+        _check_central_db(),
     ]
     if _web_extras_installed():
         checks.insert(4, _check_node_version())

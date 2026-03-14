@@ -77,7 +77,7 @@ async def _fetch_events(db_path: str, pipeline_id: str) -> list[dict]:
     "--db",
     "db_path",
     default=None,
-    help="Path to forge.db (default: .forge/forge.db)",
+    help="Path to forge.db (default: central data dir)",
 )
 def logs(pipeline_id: str, db_path: str | None) -> None:
     """Display a colored timeline of events for a pipeline.
@@ -85,7 +85,9 @@ def logs(pipeline_id: str, db_path: str | None) -> None:
     PIPELINE_ID is the pipeline to show logs for.
     """
     if db_path is None:
-        db_path = os.path.join(".forge", "forge.db")
+        from forge.core.paths import forge_db_path
+
+        db_path = forge_db_path()
 
     if not os.path.isfile(db_path):
         click.echo(f"Database not found at {db_path}", err=True)
