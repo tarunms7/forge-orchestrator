@@ -26,9 +26,11 @@ class ForgeSettings(BaseSettings):
     # Agent sandboxing
     allowed_dirs: list[str] = []  # Extra directories agents can access
 
-    # Build & test verification
+    # Build, test & lint verification
     build_cmd: str | None = None
     test_cmd: str | None = None
+    lint_cmd: str | None = None       # Override auto-detected linter check command
+    lint_fix_cmd: str | None = None   # Override auto-detected linter fix command
 
     # Resource thresholds
     cpu_threshold: float = 80.0
