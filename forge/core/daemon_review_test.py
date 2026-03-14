@@ -668,6 +668,7 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.shutil.which", return_value=None),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
@@ -711,6 +712,7 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.shutil.which", return_value=None),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
@@ -744,6 +746,7 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.shutil.which", return_value=None),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
@@ -789,6 +792,7 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.shutil.which", return_value=None),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
@@ -816,6 +820,7 @@ class TestGate1AutoFixDiff:
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch("forge.core.daemon_review.shutil.which", return_value=None),
             patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
         ):
             # ruff --version returns non-zero (not installed)

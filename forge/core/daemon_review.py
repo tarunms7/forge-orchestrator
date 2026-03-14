@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shlex
+import shutil
 import subprocess
 import sys
-import logging
 import time
 
 from rich.console import Console
@@ -156,9 +157,24 @@ class ReviewMixin:
 
         Runs *cmd* inside *worktree_path* with a timeout.  Captures stdout+stderr,
         truncated to the last 5000 characters so logs stay manageable.
+
+        If the project has a pyproject.toml and ``uv`` is available, commands are
+        automatically prefixed with ``uv run`` so they execute in the project's
+        virtual environment (correct pydantic version, etc.) rather than the
+        system Python.
         """
         def _run() -> subprocess.CompletedProcess:
-            parts = shlex.split(cmd)
+            effective_cmd = cmd
+            # Auto-prefix with "uv run" when the project is uv-managed and the
+            # command doesn't already use uv.  This ensures tests/lint run in
+            # the project venv (with correct pydantic, etc.) instead of the
+            # system Python.
+            if not cmd.startswith("uv "):
+                pyproject = os.path.join(worktree_path, "pyproject.toml")
+                if os.path.isfile(pyproject) and shutil.which("uv"):
+                    effective_cmd = f"uv run {cmd}"
+                    logger.info("Auto-prefixed gate command with 'uv run': %s", effective_cmd)
+            parts = shlex.split(effective_cmd)
             return subprocess.run(
                 parts,
                 shell=False,
@@ -560,15 +576,28 @@ class ReviewMixin:
         if not py_files:
             return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
 
-        # Check if ruff is available before trying to use it.
-        # ruff is a dev dependency — it may not be installed in the uv tool
-        # environment or production installs.  Skip gracefully instead of
-        # hard-failing the entire review pipeline.
-        ruff_check = subprocess.run(
-            [sys.executable, "-m", "ruff", "--version"],
-            capture_output=True, text=True,
-        )
-        if ruff_check.returncode != 0:
+        # Determine the ruff command.  Prefer "uv run ruff" when the project
+        # has a pyproject.toml and uv is available — this ensures we use the
+        # project venv's ruff (dev dependency) rather than the system Python.
+        # Falls back to "sys.executable -m ruff" and then to skipping.
+        ruff_cmd: list[str] | None = None
+        pyproject = os.path.join(worktree_path, "pyproject.toml")
+        if os.path.isfile(pyproject) and shutil.which("uv"):
+            uv_check = subprocess.run(
+                ["uv", "run", "ruff", "--version"],
+                cwd=worktree_path, capture_output=True, text=True,
+            )
+            if uv_check.returncode == 0:
+                ruff_cmd = ["uv", "run", "ruff"]
+        if ruff_cmd is None:
+            sys_check = subprocess.run(
+                [sys.executable, "-m", "ruff", "--version"],
+                capture_output=True, text=True,
+            )
+            if sys_check.returncode == 0:
+                ruff_cmd = [sys.executable, "-m", "ruff"]
+
+        if ruff_cmd is None:
             logger.warning("ruff not installed — skipping lint gate")
             return GateResult(
                 passed=True, gate="gate1_auto_check",
@@ -579,7 +608,7 @@ class ReviewMixin:
         # Agents commonly add `import pytest` or unused imports — ruff can fix
         # these automatically, avoiding wasted retries on mechanical issues.
         subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "--fix"] + py_files,
+            ruff_cmd + ["check", "--fix"] + py_files,
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -606,9 +635,8 @@ class ReviewMixin:
                 cwd=worktree_path, check=False, description="commit lint fixes",
             )
 
-        # Use sys.executable so we get the same Python (and venv) as forge itself
         lint_result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check"] + py_files,
+            ruff_cmd + ["check"] + py_files,
             cwd=worktree_path,
             capture_output=True,
             text=True,
