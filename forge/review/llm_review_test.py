@@ -62,7 +62,7 @@ class TestBuildReviewPrompt:
         )
         assert "PRIOR REVIEW CONTEXT" in prompt
         assert "Missing error handling in line 42" in prompt
-        assert "PRIMARY job" in prompt
+        assert "Prior feedback is context" in prompt
 
     def test_includes_prior_diff_on_retry(self):
         """Prior diff appears alongside prior feedback."""
@@ -93,7 +93,7 @@ class TestBuildReviewPrompt:
         )
         assert "CHANGES SINCE LAST REVIEW (DELTA)" in prompt
         assert "delta changes only" in prompt
-        assert "Focus your review on these delta changes" in prompt
+        assert "shown for context" in prompt
 
     def test_no_delta_when_none(self):
         """No delta section when delta_diff is None."""
@@ -274,3 +274,72 @@ class TestDeadCodeRemoval:
         """get_diff should no longer exist in llm_review."""
         with pytest.raises(ImportError):
             from forge.review.llm_review import get_diff  # noqa: F401
+
+
+class TestReviewSystemPrompt:
+    """Verify the system prompt has the comprehensive review checklist."""
+
+    def test_prompt_has_checklist_categories(self):
+        from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+        assert "CORRECTNESS" in REVIEW_SYSTEM_PROMPT
+        assert "ERROR HANDLING" in REVIEW_SYSTEM_PROMPT
+        assert "SECURITY" in REVIEW_SYSTEM_PROMPT
+        assert "CONCURRENCY & STATE" in REVIEW_SYSTEM_PROMPT
+        assert "DESIGN QUALITY" in REVIEW_SYSTEM_PROMPT
+
+    def test_prompt_has_strict_framing(self):
+        from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+        assert "senior code reviewer" in REVIEW_SYSTEM_PROMPT
+        assert "production incidents" in REVIEW_SYSTEM_PROMPT
+
+    def test_prompt_forbids_style_nitpicking(self):
+        from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+        assert "Do NOT nitpick pure style preferences" in REVIEW_SYSTEM_PROMPT
+
+
+class TestRetryPromptNoSuppression:
+    """Retry prompt no longer suppresses thorough review."""
+
+    def test_retry_prompt_no_suppression_language(self):
+        prompt = _build_review_prompt("T", "D", "diff", prior_feedback="Bug in line 42")
+        assert "PRIMARY job" not in prompt
+        assert "Do NOT invent new stylistic complaints" not in prompt
+        assert "focus on the prior feedback" not in prompt
+
+    def test_retry_prompt_allows_new_issues(self):
+        prompt = _build_review_prompt("T", "D", "diff", prior_feedback="Bug in line 42")
+        assert "full review" in prompt.lower() or "full review" in prompt
+        assert "not a ceiling" in prompt or "Prior feedback is context" in prompt
+
+    def test_delta_diff_neutral_framing(self):
+        prompt = _build_review_prompt("T", "D", "full diff", delta_diff="delta changes")
+        assert "shown for context" in prompt
+        assert "Focus your review on these delta changes" not in prompt
+
+
+class TestCustomReviewFocusSeparator:
+    """custom_review_focus gets proper separator from system prompt."""
+
+    @pytest.mark.asyncio
+    async def test_custom_focus_has_separator(self):
+        mock_result = MagicMock()
+        mock_result.result = "PASS: ok"
+        mock_result.cost_usd = 0.0
+        mock_result.input_tokens = 0
+        mock_result.output_tokens = 0
+
+        captured_options = []
+
+        async def capture_sdk_query(*, prompt, options, on_message=None):
+            captured_options.append(options)
+            return mock_result
+
+        with patch("forge.review.llm_review.sdk_query", side_effect=capture_sdk_query):
+            await gate2_llm_review(
+                "T", "D", "diff",
+                custom_review_focus="Focus on error handling paths.",
+            )
+
+        assert len(captured_options) == 1
+        system_prompt = captured_options[0].system_prompt
+        assert "\n\nFocus on error handling paths." in system_prompt
