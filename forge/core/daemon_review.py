@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import logging
 import time
+from dataclasses import dataclass, field
 
 from rich.console import Console
 
@@ -25,6 +28,226 @@ from forge.review.pipeline import GateResult
 
 logger = logging.getLogger("forge.daemon")
 console = Console()
+
+
+# ---------------------------------------------------------------------------
+# LintStrategy — language-agnostic lint gate
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LintStrategy:
+    """Describes how to lint a project or set of changed files."""
+
+    name: str                           # "ruff", "eslint", "pre-commit", etc.
+    check_cmd: list[str]                # Always required
+    fix_cmd: list[str] | None = None    # None = skip fix pass
+    supports_file_args: bool = False    # True = append changed files to commands
+    commit_msg: str = "fix: auto-fix lint issues"
+    tool_check: str | None = None       # Binary to verify exists via shutil.which()
+    check_via_output: bool = False      # True = non-empty stdout means failure
+
+
+# Language fallbacks — ordered by priority for tiebreaking
+_LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
+    (
+        {".py"},
+        LintStrategy(
+            name="ruff",
+            check_cmd=[sys.executable, "-m", "ruff", "check"],
+            fix_cmd=[sys.executable, "-m", "ruff", "check", "--fix"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (ruff)",
+            # ruff is a core dependency — no tool_check needed
+        ),
+    ),
+    (
+        {".js", ".jsx", ".ts", ".tsx"},
+        LintStrategy(
+            name="eslint",
+            check_cmd=["npx", "eslint", "--no-error-on-unmatched-pattern"],
+            fix_cmd=["npx", "eslint", "--fix", "--no-error-on-unmatched-pattern"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (eslint)",
+            tool_check="npx",
+        ),
+    ),
+    (
+        {".go"},
+        LintStrategy(
+            name="gofmt",
+            check_cmd=["gofmt", "-l"],
+            fix_cmd=["gofmt", "-w"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (gofmt)",
+            tool_check="gofmt",
+            check_via_output=True,
+        ),
+    ),
+    (
+        {".rs"},
+        LintStrategy(
+            name="cargo-clippy",
+            check_cmd=["cargo", "clippy", "--", "-D", "warnings"],
+            fix_cmd=["cargo", "clippy", "--fix", "--allow-dirty"],
+            supports_file_args=False,
+            commit_msg="fix: auto-fix lint issues (clippy)",
+            tool_check="cargo",
+        ),
+    ),
+    (
+        {".rb"},
+        LintStrategy(
+            name="rubocop",
+            check_cmd=["rubocop", "--format", "simple"],
+            fix_cmd=["rubocop", "-a"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (rubocop)",
+            tool_check="rubocop",
+        ),
+    ),
+    (
+        {".kt"},
+        LintStrategy(
+            name="ktlint",
+            check_cmd=["ktlint"],
+            fix_cmd=["ktlint", "-F"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (ktlint)",
+            tool_check="ktlint",
+        ),
+    ),
+    (
+        {".swift"},
+        LintStrategy(
+            name="swiftlint",
+            check_cmd=["swiftlint", "lint", "--quiet"],
+            fix_cmd=["swiftlint", "lint", "--fix", "--quiet"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (swiftlint)",
+            tool_check="swiftlint",
+        ),
+    ),
+    (
+        {".sh", ".bash"},
+        LintStrategy(
+            name="shellcheck",
+            check_cmd=["shellcheck"],
+            fix_cmd=None,
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (shellcheck)",
+            tool_check="shellcheck",
+        ),
+    ),
+]
+
+
+def _detect_makefile_target(makefile_path: str, target: str) -> bool:
+    """Check if a Makefile contains a given target (e.g. 'lint:')."""
+    try:
+        with open(makefile_path) as f:
+            for line in f:
+                if line.startswith(f"{target}:"):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def detect_lint_strategy(
+    worktree_path: str,
+    changed_files: list[str],
+    lint_cmd_override: str | None = None,
+    lint_fix_cmd_override: str | None = None,
+) -> LintStrategy | None:
+    """Detect the best lint strategy for the given worktree and changed files.
+
+    Detection order:
+    1. User override (lint_cmd / lint_fix_cmd settings)
+    2. .pre-commit-config.yaml
+    3. package.json with lint script
+    4. Makefile with lint target
+    5. Language fallback based on file extensions
+    6. None (no linter found)
+    """
+    if not changed_files:
+        return None
+
+    # 1. User override
+    if lint_cmd_override:
+        fix = shlex.split(lint_fix_cmd_override) if lint_fix_cmd_override else None
+        return LintStrategy(
+            name="custom",
+            check_cmd=shlex.split(lint_cmd_override),
+            fix_cmd=fix,
+            supports_file_args=False,
+            commit_msg="fix: auto-fix lint issues (custom)",
+        )
+
+    # 2. .pre-commit-config.yaml
+    pre_commit_cfg = os.path.join(worktree_path, ".pre-commit-config.yaml")
+    if os.path.isfile(pre_commit_cfg) and shutil.which("pre-commit"):
+        return LintStrategy(
+            name="pre-commit",
+            check_cmd=["pre-commit", "run", "--files"],
+            fix_cmd=["pre-commit", "run", "--files"],
+            supports_file_args=True,
+            commit_msg="fix: auto-fix lint issues (pre-commit)",
+            tool_check="pre-commit",
+        )
+
+    # 3. package.json with lint script
+    pkg_json_path = os.path.join(worktree_path, "package.json")
+    if os.path.isfile(pkg_json_path) and shutil.which("npm"):
+        try:
+            with open(pkg_json_path) as f:
+                pkg = json.load(f)
+            scripts = pkg.get("scripts", {})
+            if "lint" in scripts:
+                fix = ["npm", "run", "lint:fix"] if "lint:fix" in scripts else None
+                return LintStrategy(
+                    name="npm-lint",
+                    check_cmd=["npm", "run", "lint"],
+                    fix_cmd=fix,
+                    supports_file_args=False,
+                    commit_msg="fix: auto-fix lint issues (npm lint)",
+                    tool_check="npm",
+                )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 4. Makefile with lint target
+    makefile_path = os.path.join(worktree_path, "Makefile")
+    if os.path.isfile(makefile_path):
+        if _detect_makefile_target(makefile_path, "lint"):
+            fix = ["make", "lint-fix"] if _detect_makefile_target(makefile_path, "lint-fix") else None
+            return LintStrategy(
+                name="make-lint",
+                check_cmd=["make", "lint"],
+                fix_cmd=fix,
+                supports_file_args=False,
+                commit_msg="fix: auto-fix lint issues (make lint)",
+            )
+
+    # 5. Language fallback — pick dominant language
+    ext_counts: dict[str, int] = {}
+    for f in changed_files:
+        _, ext = os.path.splitext(f)
+        if ext:
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+    for extensions, strategy in _LANGUAGE_FALLBACKS:
+        count = sum(ext_counts.get(ext, 0) for ext in extensions)
+        if count > 0:
+            if strategy.tool_check and not shutil.which(strategy.tool_check):
+                logger.info(
+                    "No linter available for %s (install %s)",
+                    strategy.name, strategy.tool_check,
+                )
+                continue
+            return strategy
+
+    # 6. No linter found
+    return None
 
 
 def _summarize_auto_fix(diff_text: str) -> str:
@@ -110,6 +333,22 @@ class ReviewMixin:
             val = template_config["test_cmd"]
             return val if val else None
         return getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
+
+    def _resolve_lint_cmd(self) -> str | None:
+        """Return the lint check command: template override → settings fallback."""
+        template_config = getattr(self, "_template_config", None)
+        if template_config and "lint_cmd" in template_config:
+            val = template_config["lint_cmd"]
+            return val if val else None
+        return getattr(self._settings, 'lint_cmd', None)
+
+    def _resolve_lint_fix_cmd(self) -> str | None:
+        """Return the lint fix command: template override → settings fallback."""
+        template_config = getattr(self, "_template_config", None)
+        if template_config and "lint_fix_cmd" in template_config:
+            val = template_config["lint_fix_cmd"]
+            return val if val else None
+        return getattr(self._settings, 'lint_fix_cmd', None)
 
     # -- shell gate helpers ------------------------------------------------
 
@@ -335,7 +574,7 @@ class ReviewMixin:
         await self._emit("review:gate_started", {
             "task_id": task.id, "gate": "gate1_lint",
         }, db=db, pipeline_id=pipeline_id)
-        gate1_result = await self._gate1(worktree_path, pipeline_branch=pipeline_branch)
+        gate1_result = await self._run_lint_gate(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit(
             "review:gate_passed" if gate1_result.passed else "review:gate_failed",
             {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details},
@@ -545,74 +784,96 @@ class ReviewMixin:
         console.print("[dim]  Gate 3 (merge readiness): deferred to merge step[/dim]")
         return True, None
 
-    async def _gate1(self, worktree_path: str, *, pipeline_branch: str | None = None) -> GateResult:
-        """Gate 1: Lint check on the worktree. Simple and fast."""
+    async def _run_lint_gate(self, worktree_path: str, *, pipeline_branch: str | None = None) -> GateResult:
+        """Gate 1: Language-agnostic lint check on the worktree.
 
-        # Only run ruff on changed files vs main.
-        # Filter out deleted files — they appear in `git diff --name-only`
-        # but no longer exist on disk, causing ruff E902 errors.
+        Uses LintStrategy detection to support any language/toolchain.
+        Two-pass model: fix + commit, then verify clean.
+        """
+        # Get changed files and filter out deleted ones
         changed = _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
-        py_files = [
+        changed_files = [
             f for f in changed
-            if f.endswith(".py") and os.path.isfile(os.path.join(worktree_path, f))
+            if os.path.isfile(os.path.join(worktree_path, f))
         ]
 
-        if not py_files:
-            return GateResult(passed=True, gate="gate1_auto_check", details="No Python files changed")
+        if not changed_files:
+            return GateResult(passed=True, gate="gate1_auto_check", details="No files changed")
 
-        # Verify ruff is available — it's a core dependency, so this should
-        # never fail.  If it does, fail the gate loudly rather than silently
-        # passing unreviewed code.
-        ruff_check = subprocess.run(
-            [sys.executable, "-m", "ruff", "--version"],
-            capture_output=True, text=True,
+        # Resolve overrides
+        lint_cmd_override = self._resolve_lint_cmd()
+        lint_fix_cmd_override = self._resolve_lint_fix_cmd()
+
+        strategy = detect_lint_strategy(
+            worktree_path, changed_files,
+            lint_cmd_override=lint_cmd_override,
+            lint_fix_cmd_override=lint_fix_cmd_override,
         )
-        if ruff_check.returncode != 0:
-            logger.error("ruff not found — this should not happen (ruff is a core dependency)")
+
+        if strategy is None:
+            return GateResult(passed=True, gate="gate1_auto_check", details="No linter detected")
+
+        # Verify tool is installed
+        if strategy.tool_check and not shutil.which(strategy.tool_check):
             return GateResult(
-                passed=False, gate="gate1_auto_check",
-                details="Lint failed — ruff not available (reinstall forge: pip install forge-orchestrator)",
+                passed=True, gate="gate1_auto_check",
+                details=f"No linter available for {strategy.name} (install {strategy.tool_check})",
             )
 
-        # Auto-fix trivial lint issues (unused imports, etc.) before checking.
-        # Agents commonly add `import pytest` or unused imports — ruff can fix
-        # these automatically, avoiding wasted retries on mechanical issues.
-        subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "--fix"] + py_files,
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-        # Capture what ruff changed (unstaged diff) before staging
+        # Build final commands
+        fix_cmd = list(strategy.fix_cmd) if strategy.fix_cmd else None
+        check_cmd = list(strategy.check_cmd)
+        if strategy.supports_file_args:
+            if fix_cmd is not None:
+                fix_cmd += changed_files
+            check_cmd += changed_files
+
+        # PASS 1: Fix
         auto_fix_diff = ""
-        diff_result = _run_git(["diff"], cwd=worktree_path, check=False, description="capture ruff auto-fix diff")
-        if diff_result.stdout.strip():
-            diff_lines = diff_result.stdout.splitlines()
-            if len(diff_lines) > 30:
-                auto_fix_diff = "\n".join(diff_lines[:30]) + "\n... (truncated)"
-            else:
-                auto_fix_diff = diff_result.stdout.strip()
-        # Commit any auto-fixes so they're included in the diff
-        _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
-        # Only commit if there are staged changes
-        staged = _run_git(
-            ["diff", "--cached", "--name-only"],
-            cwd=worktree_path, check=False, description="check staged lint fixes",
-        )
-        if staged.stdout.strip():
-            _run_git(
-                ["commit", "-m", "fix: auto-fix lint issues (ruff)"],
-                cwd=worktree_path, check=False, description="commit lint fixes",
+        if fix_cmd is not None:
+            subprocess.run(
+                fix_cmd,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
             )
+            # Capture what changed
+            diff_result = _run_git(
+                ["diff"], cwd=worktree_path, check=False,
+                description=f"capture {strategy.name} auto-fix diff",
+            )
+            if diff_result.stdout.strip():
+                diff_lines = diff_result.stdout.splitlines()
+                if len(diff_lines) > 30:
+                    auto_fix_diff = "\n".join(diff_lines[:30]) + "\n... (truncated)"
+                else:
+                    auto_fix_diff = diff_result.stdout.strip()
 
-        # Use sys.executable so we get the same Python (and venv) as forge itself
+            # Stage and commit auto-fixes
+            _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
+            staged = _run_git(
+                ["diff", "--cached", "--name-only"],
+                cwd=worktree_path, check=False, description="check staged lint fixes",
+            )
+            if staged.stdout.strip():
+                _run_git(
+                    ["commit", "-m", strategy.commit_msg],
+                    cwd=worktree_path, check=False, description="commit lint fixes",
+                )
+
+        # PASS 2: Verify
         lint_result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check"] + py_files,
+            check_cmd,
             cwd=worktree_path,
             capture_output=True,
             text=True,
         )
-        lint_clean = lint_result.returncode == 0
+
+        # Determine pass/fail
+        if strategy.check_via_output:
+            lint_clean = not lint_result.stdout.strip()
+        else:
+            lint_clean = lint_result.returncode == 0
 
         if lint_clean:
             if auto_fix_diff:
@@ -623,7 +884,7 @@ class ReviewMixin:
                 )
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
-        # Include both stdout and stderr — ruff errors may go to either
+        # Failed — include output
         output = (lint_result.stdout or lint_result.stderr or "Unknown error")[:500]
         return GateResult(
             passed=False,
