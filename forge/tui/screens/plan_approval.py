@@ -79,7 +79,9 @@ def _format_task_line(task: dict, index: int, selected: bool, modified: bool, re
     """Format a single task line for the interactive list."""
     if removed:
         title = task.get("title", "Untitled")
-        return f"  [#484f58 strike]{index}. {title}[/]  [#484f58][removed — press z to undo][/]"
+        return (
+            f"  [#484f58 strike]{index}. {title}[/]  [#484f58][removed — press Ctrl+Z to undo][/]"
+        )
 
     title = task.get("title", "Untitled")
     desc = task.get("description", "")
@@ -176,17 +178,17 @@ class PlanApprovalScreen(Screen):
     BINDINGS = [
         Binding("enter", "approve", "Approve & Execute", show=True, priority=True),
         Binding("escape", "cancel_or_close", "Cancel", show=True, priority=True),
-        Binding("j", "cursor_down", "Next task", show=False),
-        Binding("k", "cursor_up", "Prev task", show=False),
-        Binding("e", "edit_task", "Edit description", show=False),
-        Binding("f", "edit_files", "Edit files", show=False),
-        Binding("x", "remove_task", "Remove task", show=False),
-        Binding("z", "undo_remove", "Undo remove", show=False),
-        Binding("a", "add_task", "Add task", show=False),
-        Binding("J", "move_down", "Move down", show=False),
-        Binding("K", "move_up", "Move up", show=False),
-        Binding("c", "cycle_complexity", "Cycle complexity", show=False),
-        Binding("n", "add_note", "Add note", show=False),
+        Binding("ctrl+j", "cursor_down", "Next task", show=False),
+        Binding("ctrl+k", "cursor_up", "Prev task", show=False),
+        Binding("ctrl+e", "edit_task", "Edit description", show=False),
+        Binding("ctrl+f", "edit_files", "Edit files", show=False),
+        Binding("ctrl+x", "remove_task", "Remove task", show=False),
+        Binding("ctrl+z", "undo_remove", "Undo remove", show=False),
+        Binding("ctrl+a", "add_task", "Add task", show=False),
+        Binding("ctrl+down", "move_down", "Move down", show=False),
+        Binding("ctrl+up", "move_up", "Move up", show=False),
+        Binding("ctrl+l", "cycle_complexity", "Cycle complexity", show=False),
+        Binding("ctrl+n", "add_note", "Add note", show=False),
     ]
 
     class PlanApproved(Message):
@@ -240,7 +242,7 @@ class PlanApprovalScreen(Screen):
                 )
                 yield Static("")
         yield Static(
-            "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [Esc] cancel",
+            "[Enter] approve  [^E] edit  [^F] files  [^X] remove  [^A] add  [^↑/↓] reorder  [^L] complexity  [^N] note  [Esc] cancel",
             id="plan-footer",
         )
 
@@ -254,9 +256,7 @@ class PlanApprovalScreen(Screen):
             widget.update(_format_task_line(task, i + 1, selected, modified, removed))
 
         summary = format_plan_summary(self._active_tasks, self._estimated_cost)
-        self.query_one("#plan-header", Static).update(
-            f"[bold #58a6ff]PLAN REVIEW[/]  {summary}"
-        )
+        self.query_one("#plan-header", Static).update(f"[bold #58a6ff]PLAN REVIEW[/]  {summary}")
 
     def _clamp_cursor(self) -> None:
         """Ensure cursor is within bounds."""
@@ -293,7 +293,9 @@ class PlanApprovalScreen(Screen):
         task = self._tasks[self._cursor]
         self._editing = "description"
         label = self.query_one("#edit-label", Static)
-        label.update(f"[#d29922]Editing task {self._cursor + 1} — title | description (Ctrl+S to save, Esc to cancel)[/]")
+        label.update(
+            f"[#d29922]Editing task {self._cursor + 1} — title | description (Ctrl+S to save, Esc to cancel)[/]"
+        )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
         area.text = f"{task.get('title', '')}\n{task.get('description', '')}"
@@ -307,7 +309,9 @@ class PlanApprovalScreen(Screen):
         task = self._tasks[self._cursor]
         self._editing = "files"
         label = self.query_one("#edit-label", Static)
-        label.update(f"[#d29922]Editing files for task {self._cursor + 1} — comma-separated (Ctrl+S to save, Esc to cancel)[/]")
+        label.update(
+            f"[#d29922]Editing files for task {self._cursor + 1} — comma-separated (Ctrl+S to save, Esc to cancel)[/]"
+        )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
         area.text = ", ".join(task.get("files", []))
@@ -321,7 +325,9 @@ class PlanApprovalScreen(Screen):
         task = self._tasks[self._cursor]
         self._editing = "note"
         label = self.query_one("#edit-label", Static)
-        label.update(f"[#d29922]Agent note for task {self._cursor + 1} (Ctrl+S to save, Esc to cancel)[/]")
+        label.update(
+            f"[#d29922]Agent note for task {self._cursor + 1} (Ctrl+S to save, Esc to cancel)[/]"
+        )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
         area.text = task.get("agent_notes", "")

@@ -27,6 +27,7 @@ class PromptTextArea(TextArea):
 
     class Submitted(Message):
         """Fired when user presses Ctrl+S."""
+
         def __init__(self, text: str) -> None:
             self.text = text
             super().__init__()

@@ -9,10 +9,24 @@ from forge.tui.widgets.pipeline_list import PipelineList
 
 
 SAMPLE_PIPELINES = [
-    {"id": "abc", "description": "Build auth system", "status": "complete",
-     "created_at": "2026-03-10", "cost": 2.50, "total_cost_usd": 2.50, "task_count": 3},
-    {"id": "def", "description": "Fix login bug", "status": "error",
-     "created_at": "2026-03-09", "cost": 0.80, "total_cost_usd": 0.80, "task_count": 2},
+    {
+        "id": "abc",
+        "description": "Build auth system",
+        "status": "complete",
+        "created_at": "2026-03-10",
+        "cost": 2.50,
+        "total_cost_usd": 2.50,
+        "task_count": 3,
+    },
+    {
+        "id": "def",
+        "description": "Fix login bug",
+        "status": "error",
+        "created_at": "2026-03-09",
+        "cost": 0.80,
+        "total_cost_usd": 0.80,
+        "task_count": 2,
+    },
 ]
 
 
@@ -35,8 +49,20 @@ async def test_home_screen_mounts():
 
 def test_format_recent_pipelines():
     pipelines = [
-        {"id": "abc", "description": "Build auth system", "status": "complete", "created_at": "2026-03-10", "cost": 2.50},
-        {"id": "def", "description": "Fix login bug", "status": "error", "created_at": "2026-03-09", "cost": 0.80},
+        {
+            "id": "abc",
+            "description": "Build auth system",
+            "status": "complete",
+            "created_at": "2026-03-10",
+            "cost": 2.50,
+        },
+        {
+            "id": "def",
+            "description": "Fix login bug",
+            "status": "error",
+            "created_at": "2026-03-09",
+            "cost": 0.80,
+        },
     ]
     result = format_recent_pipelines(pipelines)
     assert "Build auth system" in result
