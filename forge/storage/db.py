@@ -140,6 +140,9 @@ class PipelineRow(Base):
     contracts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     paused_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     paused_duration: Mapped[float] = mapped_column(default=0.0)
+    # Cross-project tracking
+    project_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    project_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 class UserTemplateRow(Base):
@@ -560,6 +563,8 @@ class Database:
         budget_limit_usd: float = 0.0,
         github_issue_url: str | None = None,
         github_issue_number: int | None = None,
+        project_path: str | None = None,
+        project_name: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
@@ -570,6 +575,8 @@ class Database:
                 budget_limit_usd=budget_limit_usd,
                 github_issue_url=github_issue_url,
                 github_issue_number=github_issue_number,
+                project_path=project_path,
+                project_name=project_name,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)
@@ -652,13 +659,42 @@ class Database:
         pipeline = await self.get_pipeline(pipeline_id)
         return getattr(pipeline, "contracts_json", None) if pipeline else None
 
-    async def list_pipelines(self, user_id: str | None = None) -> list[PipelineRow]:
+    async def list_pipelines(
+        self, user_id: str | None = None, project_path: str | None = None,
+    ) -> list[PipelineRow]:
         async with self._session_factory() as session:
             query = select(PipelineRow)
             if user_id:
                 query = query.where(PipelineRow.user_id == user_id)
+            if project_path is not None:
+                query = query.where(PipelineRow.project_path == project_path)
             result = await session.execute(query.order_by(PipelineRow.created_at.desc()))
             return list(result.scalars().all())
+
+    async def list_projects(self) -> list[dict]:
+        """Return unique projects with pipeline counts and latest timestamps."""
+        async with self._session_factory() as session:
+            stmt = (
+                select(
+                    PipelineRow.project_path,
+                    PipelineRow.project_name,
+                    func.count(PipelineRow.id).label("pipeline_count"),
+                    func.max(PipelineRow.created_at).label("latest_pipeline_at"),
+                )
+                .where(PipelineRow.project_path.isnot(None))
+                .group_by(PipelineRow.project_path, PipelineRow.project_name)
+                .order_by(func.max(PipelineRow.created_at).desc())
+            )
+            result = await session.execute(stmt)
+            return [
+                {
+                    "project_path": row.project_path,
+                    "project_name": row.project_name,
+                    "pipeline_count": row.pipeline_count,
+                    "latest_pipeline_at": row.latest_pipeline_at,
+                }
+                for row in result.all()
+            ]
 
     async def restart_pipeline(self, pipeline_id: str) -> dict:
         """Reset a pipeline for a fresh restart.

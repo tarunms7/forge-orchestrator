@@ -12,7 +12,7 @@
 set -e
 
 # ── Configuration ────────────────────────────────────────────────────
-TOTAL_STEPS=4
+TOTAL_STEPS=6
 
 # ── Color helpers ────────────────────────────────────────────────────
 if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
@@ -82,39 +82,75 @@ FORGE_VERSION="$(forge --version 2>/dev/null || echo 'unknown')"
 success "forge-orchestrator installed (${FORGE_VERSION})"
 
 # ══════════════════════════════════════════════════════════════════════
-#  Step 3 — Verify tools (non-blocking)
+#  Step 3 — Create central data directory
 # ══════════════════════════════════════════════════════════════════════
-step 3 "Checking recommended tools..."
+step 3 "Setting up central data directory..."
+
+FORGE_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/forge"
+
+# Ensure parent directory exists first
+mkdir -p "$(dirname "$FORGE_DATA_DIR")"
+mkdir -p "$FORGE_DATA_DIR"
+
+success "Central data directory ready: ${FORGE_DATA_DIR}"
+info "Pipeline history and settings are stored here"
+info "Override location with FORGE_DATA_DIR or FORGE_DB_URL"
+
+# ══════════════════════════════════════════════════════════════════════
+#  Step 4 — Verify tools (non-blocking)
+# ══════════════════════════════════════════════════════════════════════
+step 4 "Checking recommended tools..."
 
 if command -v git >/dev/null 2>&1; then
     GIT_VER="$(git --version | sed 's/git version //')"
-    success "✓ git ${GIT_VER}"
+    success "git ${GIT_VER}"
 else
-    warn "⚠ git not found — required for forge to manage repositories"
+    warn "git not found — required for forge to manage repositories"
 fi
 
 if command -v claude >/dev/null 2>&1; then
-    success "✓ claude CLI found"
+    success "claude CLI found"
 else
-    warn "⚠ claude CLI not found — required for agent execution"
+    warn "claude CLI not found — required for agent execution"
 fi
 
 if command -v gh >/dev/null 2>&1; then
-    success "✓ gh CLI found"
+    success "gh CLI found"
 else
-    warn "⚠ gh CLI not found (optional) — install from https://cli.github.com"
+    warn "gh CLI not found (optional) — install from https://cli.github.com"
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-#  Step 4 — Quickstart
+#  Step 5 — Run forge doctor
 # ══════════════════════════════════════════════════════════════════════
-step 4 "You're all set!"
+step 5 "Running forge doctor to verify installation..."
+
+if command -v forge >/dev/null 2>&1; then
+    if forge doctor 2>/dev/null; then
+        success "forge doctor passed — environment is healthy"
+    else
+        warn "forge doctor reported issues — run 'forge doctor' for details"
+    fi
+else
+    warn "forge not found on PATH — you may need to open a new terminal"
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+#  Step 6 — Quickstart
+# ══════════════════════════════════════════════════════════════════════
+step 6 "You're all set!"
 
 printf "\n${GREEN}${BOLD}Forge installed successfully!${RESET}\n\n"
 info "Get started:"
+info "  cd your-project"
 info "  forge tui          — launch the interactive TUI"
+info "  forge run \"task\"   — run a task from the command line"
 info "  forge doctor       — verify your environment"
+info "  forge status --all — view pipeline history across all projects"
 info "  forge --help       — see all commands"
+printf "\n"
+info "Central database: ${FORGE_DATA_DIR}/forge.db"
+info "Pipeline history persists across all your projects."
 printf "\n"
 info "You may need to open a new terminal or run:"
 info "  source ~/.bashrc   (bash)"

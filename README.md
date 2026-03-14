@@ -9,9 +9,9 @@
 [![Next.js](https://img.shields.io/badge/dashboard-Next.js-000?logo=next.js)](https://nextjs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Forge is a multi-agent orchestration engine that takes a natural-language task, decomposes it into a parallel task graph, **generates cross-task interface contracts**, dispatches isolated Claude agents to write the code, reviews every change through a multi-gate pipeline, and merges everything into a clean PR — automatically.
+The only AI coding tool that generates **interface contracts** before agents write a single line — so your backend and frontend always agree on API shapes, field names, and types. No copy-paste. No pray-and-merge.
 
-[Install](#-install) &#8226; [Quick Start](#-quick-start) &#8226; [How It Works](#-how-it-works) &#8226; [Contract Builder](#-contract-builder) &#8226; [Web Dashboard](#-web-dashboard) &#8226; [Configuration](#%EF%B8%8F-configuration)
+[Install](#install) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Contract Builder](#contract-builder) · [Central Database](#central-database) · [Web Dashboard](#web-dashboard) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -59,7 +59,18 @@ Writing code with an AI assistant is powerful — but you're still the bottlenec
 curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
 ```
 
-Four steps: (1) installs [uv](https://docs.astral.sh/uv/) if not present, (2) installs `forge-orchestrator` from PyPI via `uv tool install` (uv auto-provisions Python 3.12 if your system doesn't have it), (3) verifies git, Claude Code CLI, and gh CLI, (4) prints quickstart. Safe to re-run — the installer is idempotent and upgrades Forge if a newer version is on PyPI.
+That single command:
+
+1. Installs [uv](https://docs.astral.sh/uv/) if not present
+2. Installs `forge-orchestrator` from PyPI via `uv tool install` — **uv auto-provisions Python 3.12** if your system doesn't have it
+3. Creates the [central data directory](#central-database) at `~/.local/share/forge/`
+4. Verifies git, Claude Code CLI, and gh CLI
+5. Runs `forge doctor` to verify the installation
+6. Prints quickstart instructions
+
+**No virtual environment activation required — ever.** Forge is installed as a global tool via `uv tool`. It works from any directory, any project, immediately.
+
+The installer is idempotent and safe to re-run — it upgrades Forge if a newer version is on PyPI.
 
 ### Manual install
 
@@ -72,6 +83,12 @@ uv tool install forge-orchestrator
 # Alternatives
 pipx install forge-orchestrator
 pip install forge-orchestrator          # inside any venv
+```
+
+After installing, create the central data directory:
+
+```bash
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/forge"
 ```
 
 **From source:**
@@ -91,23 +108,33 @@ After any install method, verify your setup:
 forge doctor
 ```
 
-### Uninstall
-
-```bash
-uv tool uninstall forge-orchestrator
-```
-
 ---
 
 ## Quick Start
 
 ```bash
-# Launch the interactive TUI (recommended for first-time users)
-forge tui
+# One-time install
+curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
 
-# Or run a task directly from the command line
-cd your-project   # no init required — Forge auto-creates .forge/ on first run
+# Go to any project — no init required
+cd your-project
+
+# Launch the interactive TUI
+forge tui
+```
+
+That's the entire workflow. Forge auto-creates `.forge/` in your project on first run. Your pipeline history is stored in the [central database](#central-database) and follows you across every project.
+
+Or run a task directly from the command line:
+
+```bash
 forge run "Add input validation to all API endpoints"
+```
+
+View pipelines across all your projects:
+
+```bash
+forge status --all
 ```
 
 ---
@@ -186,6 +213,41 @@ Contracts degrade gracefully — if generation fails, agents proceed without the
 
 ---
 
+## Central Database
+
+Forge stores all pipeline data in a central location that persists across projects:
+
+```
+~/.local/share/forge/forge.db     # Pipeline history, task results, cost data
+```
+
+This means:
+
+- **Pipeline history follows you everywhere** — switch projects and still see your full history with `forge status --all`
+- **No per-project database setup** — Forge works immediately in any directory
+- **Per-project `.forge/` still exists** — worktrees, local config, and build artifacts live in each project's `.forge/` directory
+
+### Customizing the data location
+
+| Method | Example |
+|---|---|
+| `FORGE_DATA_DIR` env var | `FORGE_DATA_DIR=/path/to/data forge run "..."` |
+| `FORGE_DB_URL` env var | `FORGE_DB_URL=postgresql://... forge run "..."` |
+| XDG convention | Set `XDG_DATA_HOME` and Forge follows it automatically |
+
+### Data split
+
+```
+~/.local/share/forge/          # Central (shared across all projects)
+  forge.db                     #   Pipeline history, task state, cost tracking
+
+your-project/.forge/           # Project-local
+  worktrees/                   #   Isolated git worktrees for each task
+  config/                      #   Project-specific settings
+```
+
+---
+
 ## Web Dashboard
 
 Forge includes a real-time web UI for monitoring and controlling pipelines:
@@ -240,6 +302,8 @@ Build and test commands (`FORGE_BUILD_CMD`, `FORGE_TEST_CMD`) are **auto-detecte
 
 | Setting | Default | Description |
 |---|---|---|
+| `FORGE_DATA_DIR` | `~/.local/share/forge` | Central data directory for pipeline DB and shared state |
+| `FORGE_DB_URL` | *(sqlite in data dir)* | Database URL — override to use PostgreSQL or custom path |
 | `FORGE_MAX_AGENTS` | 4 | Max concurrent agent sessions |
 | `FORGE_AGENT_TIMEOUT_SECONDS` | 600 | Per-task timeout (10 min) |
 | `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
@@ -262,7 +326,7 @@ FORGE_BUILD_CMD="npm run build" FORGE_TEST_CMD="pytest -x" FORGE_BUDGET_LIMIT_US
 
 Your generated code arrives as a **pull request** — not pushed directly to `main`:
 
-1. Each task works in an isolated git worktree (`/.forge/worktrees/task-N/`)
+1. Each task works in an isolated git worktree (`your-project/.forge/worktrees/task-N/`)
 2. After passing review + contract compliance, each task branch is rebased and fast-forward merged into the working branch
 3. When all tasks complete, Forge runs `gh pr create` automatically
 4. You review and merge through your normal workflow
@@ -274,40 +338,47 @@ Worktrees are cleaned up after merge. Only the merged commits remain.
 ## Architecture
 
 ```
+Central data (~/.local/share/forge/)
+  forge.db                   Pipeline history, task state, cost tracking
+
+Project-local (.forge/)
+  worktrees/                 Isolated git worktrees per task
+  config/                    Project-specific overrides
+
 forge/
-  cli/                 CLI entry (forge init, run, serve)
+  cli/                       CLI entry (forge run, tui, serve, status, doctor)
   config/
-    settings.py        Pydantic settings (FORGE_ env prefix)
+    settings.py              Pydantic settings (FORGE_ env prefix)
   core/
-    daemon.py           Async orchestration loop
-    planner.py          Task decomposition + integration hint extraction
-    contract_builder.py Contract generation with validation & retry
-    contracts.py        Contract models (API, Type, IntegrationHint, ContractSet)
-    scheduler.py        DAG-aware scheduling + resource gating
-    state.py            Task state machine
-    model_router.py     Strategy-based model selection (includes contract_builder stage)
-    monitor.py          CPU/memory/disk resource monitoring
-    sdk_helpers.py      Claude Code SDK wrapper
+    daemon.py                Async orchestration loop
+    planner.py               Task decomposition + integration hint extraction
+    contract_builder.py      Contract generation with validation & retry
+    contracts.py             Contract models (API, Type, IntegrationHint, ContractSet)
+    scheduler.py             DAG-aware scheduling + resource gating
+    state.py                 Task state machine
+    model_router.py          Strategy-based model selection
+    monitor.py               CPU/memory/disk resource monitoring
+    sdk_helpers.py           Claude Code SDK wrapper
   agents/
-    adapter.py          ClaudeAdapter (agent interface + contract injection)
-    runtime.py          Timeout-wrapped execution
+    adapter.py               ClaudeAdapter (agent interface + contract injection)
+    runtime.py               Timeout-wrapped execution
   review/
-    pipeline.py         Multi-gate review orchestration
-    auto_check.py       Gate 1: ruff lint
-    llm_review.py       Gate 2: LLM diff review + contract compliance
-    merge_check.py      Gate 3: merge readiness
+    pipeline.py              Multi-gate review orchestration
+    auto_check.py            Gate 1: ruff lint
+    llm_review.py            Gate 2: LLM diff review + contract compliance
+    merge_check.py           Gate 3: merge readiness
   merge/
-    worktree.py         Git worktree lifecycle
-    worker.py           Rebase + fast-forward merge
+    worktree.py              Git worktree lifecycle
+    worker.py                Rebase + fast-forward merge
   storage/
-    db.py               Async SQLAlchemy (SQLite/Postgres)
+    db.py                    Async SQLAlchemy (SQLite/Postgres)
   api/
-    routes/tasks.py     REST + WebSocket endpoints (includes /contracts API)
-    models/schemas.py   Pydantic response models
+    routes/tasks.py          REST + WebSocket endpoints
+    models/schemas.py        Pydantic response models
 web/
-  src/                  Next.js + TypeScript + Zustand
+  src/                       Next.js + TypeScript + Zustand
     components/task/
-      ContractsPanel.tsx  Contract viewer (API & type contracts with task linkage)
+      ContractsPanel.tsx     Contract viewer (API & type contracts with task linkage)
 ```
 
 ### Task State Machine
@@ -321,6 +392,62 @@ TODO --> IN_PROGRESS --> IN_REVIEW --> AWAITING_APPROVAL --> MERGING --> DONE
 ```
 
 > `AWAITING_APPROVAL` is only entered when `FORGE_REQUIRE_APPROVAL=true`. Otherwise tasks go straight from `IN_REVIEW` to `MERGING`.
+
+---
+
+## Troubleshooting
+
+### `forge: command not found`
+
+The `forge` binary is installed to `~/.local/bin/`. Make sure it's on your PATH:
+
+```bash
+# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Or re-run the installer, which handles this automatically
+curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
+```
+
+### Database not found or corrupt
+
+Run `forge doctor` to diagnose and repair:
+
+```bash
+forge doctor
+```
+
+If the central database is missing, Forge creates it automatically on next run. You can also recreate it manually:
+
+```bash
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/forge"
+```
+
+### Claude CLI not authenticated
+
+Forge requires the Claude Code CLI to be installed and authenticated:
+
+```bash
+claude login
+```
+
+### Migrating from per-project databases
+
+Older versions of Forge stored the database in each project's `.forge/forge.db`. After upgrading, pipeline history is stored centrally in `~/.local/share/forge/forge.db`. Old per-project `.forge/forge.db` files can be safely deleted — they are no longer used.
+
+### `gh: command not found` (PR creation fails)
+
+Install the GitHub CLI to enable automatic PR creation:
+
+```bash
+# macOS
+brew install gh
+
+# Linux
+# See https://cli.github.com for install instructions
+
+gh auth login
+```
 
 ---
 
@@ -346,6 +473,26 @@ cd web && npx tsc --noEmit
 
 ---
 
+## Uninstall
+
+Remove Forge and all its data:
+
+```bash
+# Remove the forge tool
+uv tool uninstall forge-orchestrator
+
+# Remove the central data directory (pipeline history)
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/forge"
+
+# Optionally remove per-project data
+# In each project directory:
+rm -rf .forge/
+```
+
+To remove Forge but keep your pipeline history, skip the `rm -rf` step.
+
+---
+
 ## Requirements
 
 **Core (TUI + `forge run`):**
@@ -357,9 +504,9 @@ cd web && npx tsc --noEmit
 **Optional:**
 
 - `gh` CLI — for auto-PR creation ([install](https://cli.github.com))
-- Node.js 18+ — only needed for the [web dashboard](#-web-dashboard)
+- Node.js 18+ — only needed for the [web dashboard](#web-dashboard)
 
-The [one-command installer](#-install) installs uv and Forge, then verifies git, Claude CLI, and gh. Run `forge doctor` to check your setup manually.
+The [one-command installer](#install) installs uv and Forge, then verifies git, Claude CLI, and gh. Run `forge doctor` to check your setup manually.
 
 ---
 

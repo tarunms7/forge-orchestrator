@@ -1,17 +1,20 @@
+
 import pytest
 from pydantic import ValidationError
 
 from forge.config.settings import ForgeSettings
 
 
-def test_default_settings():
+def test_default_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
     s = ForgeSettings()
     assert s.max_agents == 2
     assert s.cpu_threshold == 80.0
     assert s.memory_threshold_pct == 10.0
     assert s.agent_timeout_seconds == 600
     assert s.max_retries == 5
-    assert s.db_url == "sqlite+aiosqlite:///forge.db"
+    assert s.db_url == f"sqlite+aiosqlite:///{tmp_path}/forge.db"
+    assert s.data_dir == str(tmp_path)
     assert s.context_rotation_tokens == 80_000
 
 
@@ -96,3 +99,33 @@ def test_autonomy_valid_values():
     for val in ("full", "balanced", "supervised"):
         s = ForgeSettings(autonomy=val)
         assert s.autonomy == val
+
+
+def test_db_url_uses_centralized_path(tmp_path, monkeypatch):
+    """db_url defaults to centralized forge_db_url() path."""
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    s = ForgeSettings()
+    expected = f"sqlite+aiosqlite:///{tmp_path}/forge.db"
+    assert s.db_url == expected
+
+
+def test_db_url_override(tmp_path, monkeypatch):
+    """db_url can still be overridden via constructor or env var."""
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    s = ForgeSettings(db_url="postgresql+asyncpg://localhost/forge")
+    assert s.db_url == "postgresql+asyncpg://localhost/forge"
+
+
+def test_data_dir_default(tmp_path, monkeypatch):
+    """data_dir defaults to forge_data_dir()."""
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    s = ForgeSettings()
+    assert s.data_dir == str(tmp_path)
+
+
+def test_data_dir_override(tmp_path, monkeypatch):
+    """data_dir can be overridden."""
+    custom = str(tmp_path / "custom")
+    monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
+    s = ForgeSettings(data_dir=custom)
+    assert s.data_dir == custom

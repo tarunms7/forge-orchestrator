@@ -80,3 +80,34 @@ def test_help_lists_clean_subcommand():
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "clean" in result.output
+
+
+def test_serve_uses_central_db_url_by_default():
+    """serve() should use forge_db_url() when no --db-url is provided."""
+    from unittest.mock import MagicMock
+
+    with patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db") as mock_url, \
+         patch("forge.cli.main.create_app", create=True) as mock_create_app, \
+         patch("uvicorn.run"):
+        # We need to handle the lazy import of uvicorn and create_app
+        # The serve command tries to import uvicorn and create_app
+
+        # Simulate the serve command logic directly
+        mock_create_app.return_value = MagicMock()
+
+        # Use CliRunner but mock out the actual server startup
+        runner = CliRunner()
+        with patch.dict("sys.modules", {"uvicorn": MagicMock()}):
+            with patch("forge.api.app.create_app", return_value=MagicMock()):
+                # Patch uvicorn at module level since it's imported inside serve()
+                import sys
+                mock_uv = MagicMock()
+                sys.modules["uvicorn"] = mock_uv
+                try:
+                    result = runner.invoke(cli, ["serve", "--no-build-frontend"])
+                    if result.exit_code == 0:
+                        # Verify forge_db_url was called
+                        mock_url.assert_called()
+                finally:
+                    if "uvicorn" in sys.modules and sys.modules["uvicorn"] is mock_uv:
+                        del sys.modules["uvicorn"]

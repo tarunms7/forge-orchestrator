@@ -1,17 +1,19 @@
 """Tests for forge doctor CLI command."""
 
+from __future__ import annotations
+
 import builtins
 import os
-import sqlite3
 import subprocess
-import sys
 from collections import namedtuple
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from forge.cli.doctor import (
+    _check_central_data_dir,
+    _check_central_db,
     _check_db_connectivity,
     _check_node_version,
     _parse_node_version,
@@ -58,6 +60,15 @@ def _make_subprocess_run(*, git=None, node=None):
 @pytest.fixture()
 def runner():
     return CliRunner()
+
+
+@pytest.fixture()
+def central_db(tmp_path, monkeypatch):
+    """Point FORGE_DATA_DIR to a temp dir for isolated central DB checks."""
+    data_dir = tmp_path / "forge-data"
+    data_dir.mkdir()
+    monkeypatch.setenv("FORGE_DATA_DIR", str(data_dir))
+    return data_dir
 
 
 # ── Python check ──────────────────────────────────────────────────────
@@ -128,6 +139,8 @@ def test_claude_cli_ok(runner):
         patch("forge.cli.doctor.shutil.which",
               side_effect=lambda c: "/usr/bin/claude" if c == "claude" else None),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "Claude CLI" in result.output
@@ -136,7 +149,11 @@ def test_claude_cli_ok(runner):
 
 def test_claude_cli_missing(runner):
     """Claude CLI not on PATH."""
-    with patch("forge.cli.doctor.shutil.which", return_value=None):
+    with (
+        patch("forge.cli.doctor.shutil.which", return_value=None),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+    ):
         result = runner.invoke(doctor)
     assert "not found" in result.output
 
@@ -149,6 +166,8 @@ def test_claude_cli_no_auth(runner):
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=False),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "claude login" in result.output
@@ -157,11 +176,19 @@ def test_claude_cli_no_auth(runner):
 # ── gh CLI check ──────────────────────────────────────────────────────
 
 
+_CENTRAL_OK = [
+    patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+    patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+]
+
+
 def test_gh_present(runner):
     """gh CLI found shows success."""
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "GitHub CLI" in result.output
@@ -175,6 +202,8 @@ def test_gh_missing(runner):
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "PR creation won't work" in result.output
@@ -188,6 +217,8 @@ def test_node_npm_present(runner):
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "Node/npm" in result.output
@@ -203,6 +234,8 @@ def test_node_npm_missing(runner):
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "Web UI won't work" in result.output
@@ -216,6 +249,8 @@ def test_node_missing_npm_present(runner):
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "Web UI won't work" in result.output
@@ -229,6 +264,8 @@ def test_npm_missing_node_present(runner):
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
     ):
         result = runner.invoke(doctor)
     assert "Web UI won't work" in result.output
@@ -387,6 +424,67 @@ def test_db_connectivity_connection_failure():
     assert "connection failed" in detail
 
 
+# ── Central data directory check ──────────────────────────────────────
+
+
+def test_central_data_dir_ok(central_db):
+    """Central data dir exists and is writable."""
+    status, label, detail = _check_central_data_dir()
+    assert status == "ok"
+    assert "Central data dir" == label
+    assert str(central_db) in detail
+
+
+def test_central_data_dir_not_writable(central_db):
+    """Central data dir not writable returns fail."""
+    with patch("forge.cli.doctor.os.access", return_value=False):
+        status, label, detail = _check_central_data_dir()
+    assert status == "fail"
+    assert "not writable" in detail
+
+
+def test_central_data_dir_error(monkeypatch):
+    """Error resolving data dir returns fail."""
+    with patch("forge.core.paths.forge_data_dir", side_effect=OSError("boom")):
+        status, label, detail = _check_central_data_dir()
+    assert status == "fail"
+    assert "error" in detail
+
+
+# ── Central DB check ──────────────────────────────────────────────────
+
+
+def test_central_db_accessible(central_db):
+    """Central DB is accessible and queryable."""
+    status, label, detail = _check_central_db()
+    assert status == "ok"
+    assert "Central DB" == label
+    assert str(central_db) in detail
+
+
+def test_central_db_connection_failure(central_db):
+    """Central DB connection failure returns fail."""
+    with patch("forge.cli.doctor.sqlite3.connect", side_effect=RuntimeError("locked")):
+        status, label, detail = _check_central_db()
+    assert status == "fail"
+    assert "cannot connect" in detail
+
+
+# ── Central checks in doctor output ──────────────────────────────────
+
+
+def test_doctor_shows_central_data_dir(runner, central_db):
+    """Doctor output includes central data directory check."""
+    result = runner.invoke(doctor)
+    assert "Central data dir" in result.output
+
+
+def test_doctor_shows_central_db(runner, central_db):
+    """Doctor output includes central DB check."""
+    result = runner.invoke(doctor)
+    assert "Central DB" in result.output
+
+
 # ── Overall exit code ────────────────────────────────────────────────
 
 
@@ -401,6 +499,8 @@ def test_all_pass_exit_zero(runner):
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
         patch("forge.cli.doctor.shutil.disk_usage", return_value=usage),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
         patch.dict(os.environ, {"FORGE_JWT_SECRET": "s3cret"}),
     ):
         result = runner.invoke(doctor)
@@ -423,6 +523,8 @@ def test_failure_exit_nonzero(runner):
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
         patch("forge.cli.doctor.shutil.disk_usage", return_value=usage),
+        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
+        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
         patch.dict(os.environ, {"FORGE_JWT_SECRET": "s3cret"}),
     ):
         result = runner.invoke(doctor)

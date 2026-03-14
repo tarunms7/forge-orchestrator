@@ -209,3 +209,20 @@ def test_clean_help():
     result = runner.invoke(cli, ["clean", "--help"])
     assert result.exit_code == 0
     assert "clean" in result.output.lower()
+
+
+def test_clean_works_with_project_local_forge(forge_project):
+    """Clean operates on project-local .forge/worktrees correctly."""
+    worktrees_dir = forge_project / ".forge" / "worktrees"
+    worktrees_dir.mkdir()
+
+    # Verify .forge dir is project-local
+    forge_dir = forge_project / ".forge"
+    assert forge_dir.is_dir()
+    assert worktrees_dir.is_dir()
+
+    from forge.cli.main import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["clean", "--project-dir", str(forge_project)])
+    assert result.exit_code == 0
