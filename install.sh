@@ -70,12 +70,14 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 step 2 "Installing forge-orchestrator..."
 
+FORGE_REPO="git+https://github.com/tarunms7/forge-orchestrator.git"
+
 if uv tool list 2>/dev/null | grep -q forge-orchestrator; then
     info "forge-orchestrator already installed — upgrading..."
-    uv tool upgrade forge-orchestrator
+    uv tool install --upgrade --force "$FORGE_REPO"
 else
     info "Installing forge-orchestrator..."
-    uv tool install forge-orchestrator
+    uv tool install "$FORGE_REPO"
 fi
 
 FORGE_VERSION="$(forge --version 2>/dev/null || echo 'unknown')"
