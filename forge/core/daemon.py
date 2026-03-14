@@ -617,6 +617,70 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     "Failed to auto-answer question %s for task %s", q.id, q.task_id
                 )
 
+    async def _safe_execute_task(
+        self, db, runtime, worktree_mgr, merge_worker,
+        task_id: str, agent_id: str, pipeline_id: str | None = None,
+    ) -> None:
+        """Wrapper ensuring cleanup on cancellation or crash."""
+        try:
+            await self._execute_task(
+                db, runtime, worktree_mgr, merge_worker,
+                task_id, agent_id, pipeline_id=pipeline_id,
+            )
+        except asyncio.CancelledError:
+            logger.info("Task %s was cancelled (shutdown)", task_id)
+            raise
+        except Exception:
+            raise
+        finally:
+            try:
+                await db.release_agent(agent_id)
+            except Exception:
+                logger.warning("Failed to release agent %s for task %s", agent_id, task_id)
+
+    async def _handle_task_exception(
+        self, task_id: str, exc: BaseException,
+        db, worktree_mgr, pipeline_id: str | None,
+    ) -> None:
+        """Handle a task that raised an unhandled exception in the pool."""
+        logger.error("Task %s raised unhandled exception: %s", task_id, exc, exc_info=exc)
+        try:
+            await db.update_task_state(task_id, TaskState.ERROR.value)
+            await self._emit("task:state_changed", {
+                "task_id": task_id, "state": "error", "error": str(exc),
+            }, db=db, pipeline_id=pipeline_id or "")
+        except Exception:
+            logger.exception("Failed to mark crashed task %s as error", task_id)
+        try:
+            task_rec = await db.get_task(task_id)
+            if task_rec and task_rec.assigned_agent:
+                await db.release_agent(task_rec.assigned_agent)
+        except Exception:
+            pass
+        try:
+            worktree_mgr.remove(task_id)
+        except Exception as cleanup_err:
+            logger.warning("Failed to clean up worktree for task %s: %s", task_id, cleanup_err)
+        if pipeline_id:
+            try:
+                remaining = await db.list_tasks_by_pipeline(pipeline_id)
+                terminal = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
+                if all(t.state in terminal for t in remaining):
+                    await self._emit("pipeline:error", {
+                        "error": f"Pipeline failed: task {task_id} crashed",
+                    }, db=db, pipeline_id=pipeline_id)
+            except Exception:
+                logger.exception("Failed to check pipeline state after task %s crash", task_id)
+
+    async def _shutdown_active_tasks(self) -> None:
+        """Cancel all active tasks in the pool and wait for cleanup."""
+        active = getattr(self, "_active_tasks", {})
+        for atask in active.values():
+            atask.cancel()
+        if active:
+            await asyncio.gather(*active.values(), return_exceptions=True)
+        active.clear()
+
     async def _execution_loop(
         self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
         merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
@@ -632,6 +696,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             except Exception:
                 pass
             raise
+        finally:
+            await self._shutdown_active_tasks()
 
     async def _execution_loop_inner(
         self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
@@ -645,7 +711,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         _all_paused_since: float | None = None
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
+        self._active_tasks: dict[str, asyncio.Task] = {}
         while True:
+            # Reap completed tasks from the pool
+            done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
+            for tid in done_ids:
+                atask = self._active_tasks.pop(tid)
+                exc = atask.exception() if not atask.cancelled() else None
+                if exc:
+                    await self._handle_task_exception(tid, exc, db, worktree_mgr, pipeline_id)
+
             # Watchdog: check elapsed time
             elapsed = asyncio.get_event_loop().time() - start_time
             if timeout > 0 and elapsed > timeout:
@@ -759,55 +834,49 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._settings.max_agents)
 
             if not dispatch_plan:
-                if not any(t.state == TaskState.IN_PROGRESS.value for t in tasks):
-                    # If tasks are awaiting approval or awaiting input, keep polling
+                if not self._active_tasks:
                     if any(t.state in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value) for t in tasks):
                         await asyncio.sleep(self._settings.scheduler_poll_interval)
                         continue
                     console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
                     break
-                # Use shorter poll when tasks are actively running
-                poll = 0.1 if any(t.state == TaskState.IN_PROGRESS.value for t in tasks) else self._settings.scheduler_poll_interval
-                await asyncio.sleep(poll)
+                _done, _pending = await asyncio.wait(
+                    self._active_tasks.values(),
+                    timeout=self._settings.scheduler_poll_interval,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
                 continue
 
+            # Guard: skip tasks already in pool
+            dispatch_plan = [
+                (tid, aid) for tid, aid in dispatch_plan
+                if tid not in self._active_tasks
+            ]
+
+            # Cap to actual free slots (pool is authoritative)
+            available_slots = max(0, self._settings.max_agents - len(self._active_tasks))
+            dispatch_plan = dispatch_plan[:available_slots]
+
+            # Launch into pool
             for task_id, agent_id in dispatch_plan:
                 await db.assign_task(task_id, agent_id)
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
+                atask = asyncio.create_task(
+                    self._safe_execute_task(db, runtime, worktree_mgr, merge_worker,
+                                            task_id, agent_id, pipeline_id=pipeline_id),
+                    name=f"forge-task-{task_id}",
+                )
+                self._active_tasks[task_id] = atask
 
-            results = await asyncio.gather(*[
-                self._execute_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id, pipeline_id=pipeline_id)
-                for task_id, agent_id in dispatch_plan
-            ], return_exceptions=True)
+            # Wait efficiently
+            if self._active_tasks:
+                _done, _pending = await asyncio.wait(
+                    self._active_tasks.values(),
+                    timeout=self._settings.scheduler_poll_interval,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            else:
+                await asyncio.sleep(self._settings.scheduler_poll_interval)
 
-            # Handle per-task exceptions that would otherwise crash the loop
-            for (task_id, agent_id), result in zip(dispatch_plan, results):
-                if isinstance(result, BaseException):
-                    logger.error("Task %s raised unhandled exception: %s", task_id, result, exc_info=result)
-                    try:
-                        await db.update_task_state(task_id, TaskState.ERROR.value)
-                        await self._emit("task:state_changed", {
-                            "task_id": task_id, "state": "error", "error": str(result),
-                        }, db=db, pipeline_id=pipeline_id or "")
-                    except Exception:
-                        logger.exception("Failed to mark crashed task %s as error", task_id)
-                    try:
-                        await db.release_agent(agent_id)
-                    except Exception:
-                        pass
-                    try:
-                        worktree_mgr.remove(task_id)
-                    except Exception as cleanup_err:
-                        logger.warning("Failed to clean up worktree for task %s: %s", task_id, cleanup_err)
-
-                    # Emit pipeline:error if all remaining tasks are now terminal
-                    if pipeline_id:
-                        try:
-                            remaining = await db.list_tasks_by_pipeline(pipeline_id)
-                            terminal = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
-                            if all(t.state in terminal for t in remaining):
-                                await self._emit("pipeline:error", {
-                                    "error": f"Pipeline failed: task {task_id} crashed",
-                                }, db=db, pipeline_id=pipeline_id)
-                        except Exception:
-                            logger.exception("Failed to check pipeline state after task %s crash", task_id)
+        # Normal exit: shutdown active tasks
+        await self._shutdown_active_tasks()
