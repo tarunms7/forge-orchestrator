@@ -129,11 +129,11 @@ async def gate2_llm_review(
 
     options = ClaudeCodeOptions(
         system_prompt=system_prompt,
-        # max_turns=2 gives the model one turn to respond + buffer for
-        # rate_limit_event recovery.  The reviewer reads the diff from
-        # the prompt — it doesn't need filesystem tools.  Restricting
-        # tools prevents wasted turns and permission hangs.
-        max_turns=2,
+        # max_turns=4 gives headroom: 1 turn for review + up to 3 for
+        # rate_limit_event recovery / tool use.  max_turns=2 was too
+        # tight — a single rate-limit event consumed both turns, leaving
+        # no room for the actual review and causing empty responses.
+        max_turns=4,
         model=model,
         allowed_tools=["Read", "Glob", "Grep"],
         permission_mode="acceptEdits",
@@ -144,7 +144,7 @@ async def gate2_llm_review(
     # Retry the SDK call up to 3 times if the result is empty.
     # Empty results are transient SDK issues (rate limits, timeouts) —
     # retrying the review is much cheaper than retrying the entire task.
-    review_timeout_seconds = 120  # 2 min — review is a short, focused task
+    review_timeout_seconds = 180  # 3 min — gives headroom for slow SDK responses
     max_review_attempts = 3
     for attempt in range(1, max_review_attempts + 1):
         try:
@@ -157,8 +157,9 @@ async def gate2_llm_review(
             if attempt == max_review_attempts:
                 return (
                     GateResult(
-                        passed=True, gate="gate2_llm_review",
-                        details=f"Review timed out after {max_review_attempts} attempts — auto-passing to unblock pipeline",
+                        passed=False, gate="gate2_llm_review",
+                        details=f"Review timed out after {max_review_attempts} attempts",
+                        retriable=True,
                     ),
                     cost_info,
                 )
