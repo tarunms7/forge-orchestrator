@@ -375,6 +375,33 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             graph = planning_result.task_graph
 
+            # Save CodebaseMap to cache for incremental scouting
+            if planning_result.codebase_map:
+                from forge.core.planning.cache import CodebaseMapCache
+                try:
+                    forge_dir = os.path.join(self._project_dir, ".forge")
+                    cache = CodebaseMapCache(forge_dir)
+                    # Get current git state for cache metadata
+                    commit_result = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=self._project_dir, capture_output=True, text=True,
+                    )
+                    branch_result = subprocess.run(
+                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                        cwd=self._project_dir, capture_output=True, text=True,
+                    )
+                    current_commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
+                    current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
+                    cache.save(
+                        planning_result.codebase_map,
+                        git_commit=current_commit,
+                        git_branch=current_branch,
+                        file_hashes={},
+                    )
+                    console.print("[dim]CodebaseMap cached for incremental scouting[/dim]")
+                except Exception as e:
+                    logger.warning("Failed to cache CodebaseMap: %s", e)
+
             # Track costs
             if pipeline_id and planning_result.total_cost_usd > 0:
                 await db.add_pipeline_cost(pipeline_id, planning_result.total_cost_usd)

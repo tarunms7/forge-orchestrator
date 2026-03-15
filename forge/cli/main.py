@@ -43,6 +43,12 @@ def init(project_dir: str) -> None:
     _write_if_missing(os.path.join(forge_dir, "decisions.md"), "# Architectural Decisions\n")
     _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
 
+    gitignore_path = os.path.join(forge_dir, ".gitignore")
+    _ensure_gitignore_entries(gitignore_path, [
+        "codebase_map.json",
+        "codebase_map_meta.json",
+    ])
+
     click.echo(f"Forge initialized in {forge_dir}")
 
 
@@ -213,3 +219,19 @@ def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
         with open(path, "w") as f:
             f.write(content)
+
+
+def _ensure_gitignore_entries(gitignore_path: str, entries: list[str]) -> None:
+    """Ensure specific entries exist in a .gitignore file."""
+    existing = set()
+    if os.path.exists(gitignore_path):
+        with open(gitignore_path, "r") as f:
+            existing = {line.strip() for line in f if line.strip() and not line.startswith("#")}
+
+    new_entries = [e for e in entries if e not in existing]
+    if new_entries:
+        with open(gitignore_path, "a") as f:
+            if existing:  # Add newline separator if file already had content
+                f.write("\n")
+            for entry in new_entries:
+                f.write(f"{entry}\n")
