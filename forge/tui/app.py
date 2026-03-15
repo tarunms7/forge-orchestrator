@@ -652,6 +652,7 @@ class ForgeApp(App):
             self._state.apply_event("pipeline:error", {"error": str(e)})
 
     def _on_daemon_done(self, task: asyncio.Task) -> None:
+        self._force_quit = False  # Reset so next pipeline gets the warning on first q press
         if self._elapsed_timer:
             self._elapsed_timer.stop()
         if not task.cancelled() and task.exception():
@@ -774,6 +775,9 @@ class ForgeApp(App):
 
             await self._db.update_pipeline_status(self._pipeline_id, "interrupted")
             await self._db.clear_executor_info(self._pipeline_id)
+
+            # Re-fetch tasks after reset so the summary reflects current state
+            tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
 
             try:
                 await self._daemon._emit("pipeline:interrupted", {
