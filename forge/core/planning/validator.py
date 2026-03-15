@@ -8,8 +8,20 @@ from forge.core.models import TaskGraph
 from forge.core.planning.models import CodebaseMap, MinorFix, ValidationIssue, ValidationResult
 
 
+_MAX_FILES_PER_TASK = 10
+_MIN_DESCRIPTION_LENGTH = 50
+
+
 def validate_plan(graph: TaskGraph, codebase_map: CodebaseMap, spec_text: str = "") -> ValidationResult:
+    """Run all structural checks and return a ValidationResult.
+
+    ``codebase_map`` and ``spec_text`` are accepted for future semantic
+    checks (e.g. verifying plan files exist in the codebase) but are not
+    used by the current structural checks.
+    """
     issues: list[ValidationIssue] = []
+    # Structural checks cannot auto-fix issues (that requires LLM reasoning).
+    # The minor_fixes list is populated by the LLM validator stage downstream.
     minor_fixes: list[MinorFix] = []
     issues.extend(_check_file_ownership(graph))
     issues.extend(_check_dependency_validity(graph))
@@ -154,7 +166,7 @@ def _check_task_granularity(graph: TaskGraph) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
     for task in graph.tasks:
-        if len(task.files) > 10:
+        if len(task.files) > _MAX_FILES_PER_TASK:
             issues.append(
                 ValidationIssue(
                     severity="major",
@@ -168,7 +180,7 @@ def _check_task_granularity(graph: TaskGraph) -> list[ValidationIssue]:
                 )
             )
 
-        if len(task.description) < 50:
+        if len(task.description) < _MIN_DESCRIPTION_LENGTH:
             issues.append(
                 ValidationIssue(
                     severity="minor",

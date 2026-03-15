@@ -39,6 +39,7 @@ class CodebaseMapCache:
             with open(self._map_path) as f:
                 return CodebaseMap.model_validate_json(f.read())
         except Exception:
+            logger.warning("Failed to load cached CodebaseMap from %s", self._map_path)
             return None
 
     def load_meta(self) -> CodebaseMapMeta | None:
@@ -48,6 +49,7 @@ class CodebaseMapCache:
             with open(self._meta_path) as f:
                 return CodebaseMapMeta.model_validate_json(f.read())
         except Exception:
+            logger.warning("Failed to load cache metadata from %s", self._meta_path)
             return None
 
     def check_freshness(self, *, current_commit: str, current_branch: str, total_files: int, changed_files: list[str]) -> str:
