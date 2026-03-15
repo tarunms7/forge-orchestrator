@@ -12,6 +12,8 @@ from textual.containers import VerticalScroll
 from textual.binding import Binding
 from textual.message import Message
 
+from forge.tui.widgets.shortcut_bar import ShortcutBar
+
 
 _COMPLEXITY_COLORS = {
     "low": "#3fb950",
@@ -243,6 +245,11 @@ class PlanApprovalScreen(Screen):
             "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [Esc] cancel",
             id="plan-footer",
         )
+        yield ShortcutBar([
+            ("Enter", "Approve Plan"),
+            ("↑↓", "Scroll"),
+            ("Esc", "Cancel"),
+        ])
 
     def _refresh_task_list(self) -> None:
         """Re-render all task widgets and the header summary."""

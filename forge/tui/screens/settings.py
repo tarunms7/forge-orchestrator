@@ -9,8 +9,10 @@ from typing import Any
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.binding import Binding
+
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _DISPLAY_GROUPS = {
     "Model": ["model_strategy"],
@@ -148,6 +150,11 @@ class SettingsScreen(Screen):
             "[↑↓] navigate  [←→] change  [Enter] edit config  [Esc] close",
             id="settings-footer",
         )
+        yield ShortcutBar([
+            ("Enter", "Save"),
+            ("Tab", "Next Field"),
+            ("Esc", "Back"),
+        ])
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -160,7 +167,6 @@ class SettingsScreen(Screen):
     def _persist(self) -> None:
         """Write changed values back to ForgeSettings if possible."""
         try:
-            from forge.config.settings import ForgeSettings  # type: ignore[import]
             # ForgeSettings is pydantic-based; reconstruct with overrides.
             current = self._settings
             overrides: dict[str, Any] = {}

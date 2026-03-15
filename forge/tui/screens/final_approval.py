@@ -95,6 +95,10 @@ class DiffScreen(Screen):
         viewer = DiffViewer()
         viewer.update_diff("pipeline", f"diff main...{self._branch}", self._diff_text)
         yield viewer
+        yield ShortcutBar([
+            ("↑↓", "Scroll"),
+            ("Esc", "Back"),
+        ])
         yield Footer()
 
 
