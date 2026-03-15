@@ -474,7 +474,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     files=task_def.files, depends_on=task_def.depends_on,
                     complexity=task_def.complexity.value, pipeline_id=pid,
                 )
-            for i in range(self._settings.max_agents):
+            # Auto-scale agent pool: create enough agents to saturate
+            # parallelism.  The max width of the DAG (tasks with no deps
+            # or all deps satisfied at t=0) determines how many agents
+            # can usefully run in parallel.  We cap at max_agents to
+            # respect the user's resource budget.
+            independent_count = sum(
+                1 for t in graph.tasks if not t.depends_on
+            )
+            self._effective_max_agents = min(
+                max(independent_count, self._settings.max_agents),
+                len(graph.tasks),  # never more agents than tasks
+            )
+            for i in range(self._effective_max_agents):
                 await db.create_agent(f"{prefix}-agent-{i}")
 
         monitor = ResourceMonitor(
@@ -731,6 +743,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
         self._active_tasks: dict[str, asyncio.Task] = {}
+        self._effective_max_agents = self._settings.max_agents
         self._executor_token = str(_uuid_mod.uuid4())
         if pipeline_id:
             await db.set_executor_info(pipeline_id, pid=os.getpid(), token=self._executor_token)
@@ -874,7 +887,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             agents = await db.list_agents(prefix=prefix)
             from forge.core.engine import _row_to_agent
             agent_records = [_row_to_agent(a) for a in agents]
-            dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._settings.max_agents)
+            dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._effective_max_agents)
 
             if not dispatch_plan:
                 if not self._active_tasks:
@@ -897,7 +910,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             ]
 
             # Cap to actual free slots (pool is authoritative)
-            available_slots = max(0, self._settings.max_agents - len(self._active_tasks))
+            available_slots = max(0, self._effective_max_agents - len(self._active_tasks))
             dispatch_plan = dispatch_plan[:available_slots]
 
             # Launch into pool
