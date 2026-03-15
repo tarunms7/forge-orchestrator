@@ -7,7 +7,6 @@ from forge.tui.screens.settings import (
     SettingsScreen,
     format_settings,
     _render_autonomy,
-    _AUTONOMY_MODES,
 )
 
 

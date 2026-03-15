@@ -94,6 +94,36 @@ class MergeMixin:
         return result.success
 
     # ------------------------------------------------------------------
+    # Dependency cascade
+    # ------------------------------------------------------------------
+
+    async def _cascade_blocked(
+        self, db: Database, failed_task_id: str, pipeline_id: str,
+    ) -> None:
+        """Mark all transitive dependents of a failed task as BLOCKED."""
+        from collections import deque
+        all_tasks = await db.list_tasks_by_pipeline(pipeline_id)
+        newly_blocked: set[str] = set()
+        queue: deque[str] = deque([failed_task_id])
+
+        while queue:
+            current_id = queue.popleft()
+            for task in all_tasks:
+                if task.id in newly_blocked:
+                    continue
+                if task.state not in ("todo", "blocked"):
+                    continue
+                if current_id in (task.depends_on or []):
+                    await db.update_task_state(task.id, "blocked")
+                    await self._emit("task:state_changed", {
+                        "task_id": task.id,
+                        "state": "blocked",
+                        "error": f"Blocked: dependency {current_id} failed",
+                    }, db=db, pipeline_id=pipeline_id)
+                    newly_blocked.add(task.id)
+                    queue.append(task.id)
+
+    # ------------------------------------------------------------------
     # Retry logic (general)
     # ------------------------------------------------------------------
 
@@ -141,6 +171,7 @@ class MergeMixin:
             )
             await db.update_task_state(task_id, TaskState.ERROR.value)
             if pipeline_id:
+                await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
                     "task:state_changed",
                     {"task_id": task_id, "state": "error"},
@@ -209,6 +240,7 @@ class MergeMixin:
             )
             await db.update_task_state(task_id, TaskState.ERROR.value)
             if pipeline_id:
+                await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
                     "task:state_changed",
                     {"task_id": task_id, "state": "error"},

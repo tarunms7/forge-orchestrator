@@ -1,4 +1,4 @@
-from forge.tui.widgets.suggestion_chips import SuggestionChips, format_chips
+from forge.tui.widgets.suggestion_chips import format_chips
 
 
 def test_format_chips_renders_all():

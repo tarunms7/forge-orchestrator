@@ -26,20 +26,42 @@ async def push_branch(project_dir: str, branch: str) -> bool:
 
 
 def generate_pr_body(
-    *, tasks: list[dict], time: str, cost: float, questions: list[dict],
+    *,
+    tasks: list[dict],
+    failed_tasks: list[dict] | None = None,
+    time: str,
+    cost: float,
+    questions: list[dict],
 ) -> str:
-    lines = [f"## Summary", f"Built by Forge pipeline • {len(tasks)} tasks • {time} • ${cost:.2f}", ""]
-    lines.append("## Tasks")
+    total = len(tasks) + (len(failed_tasks) if failed_tasks else 0)
+    completed = len(tasks)
+
+    if failed_tasks:
+        lines = ["## Summary", f"Built by Forge pipeline • {total} tasks • {completed}/{total} completed • {time} • ${cost:.2f}", ""]
+        lines.append("## Completed Tasks")
+    else:
+        lines = ["## Summary", f"Built by Forge pipeline • {total} tasks • {time} • ${cost:.2f}", ""]
+        lines.append("## Tasks")
+
     for t in tasks:
         added = t.get("added", 0)
         removed = t.get("removed", 0)
         files = t.get("files", 0)
         lines.append(f"- \u2705 **{t['title']}** — +{added}/-{removed}, {files} files")
+
+    if failed_tasks:
+        lines.append("")
+        lines.append("## Failed Tasks (not included in this PR)")
+        for t in failed_tasks:
+            error = t.get("error", "failed")
+            lines.append(f"- \u274c **{t['title']}** — {error}")
+
     if questions:
         lines.append("")
         lines.append("## Human Decisions")
         for q in questions:
             lines.append(f"- **Q:** {q['question']} → **A:** {q['answer']}")
+
     lines.extend(["", "\U0001f916 Built with [Forge](https://github.com/tarunms7/forge-orchestrator)"])
     return "\n".join(lines)
 

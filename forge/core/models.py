@@ -21,6 +21,7 @@ class TaskState(str, Enum):
     DONE = "done"
     CANCELLED = "cancelled"
     ERROR = "error"
+    BLOCKED = "blocked"
 
 
 class AgentState(str, Enum):
