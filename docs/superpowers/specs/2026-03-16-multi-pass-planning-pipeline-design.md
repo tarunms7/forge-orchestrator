@@ -76,6 +76,8 @@ Deep LLM-powered exploration of the codebase. Produces a structured `CodebaseMap
 
 ### Output: CodebaseMap
 
+The `CodebaseMap` is validated via a Pydantic model (defined in `forge/core/planning/models.py`) to ensure the scout's LLM output is structurally valid, similar to how `TaskGraph` is validated today. Fields in `existing_patterns` are optional — the scout only populates keys where it found clear evidence in the codebase.
+
 ```json
 {
   "architecture_summary": "Monorepo with Python backend (FastAPI + SQLAlchemy) and Next.js frontend. CLI entry at forge/cli/main.py, core orchestration in forge/core/, API in forge/api/.",
@@ -94,10 +96,7 @@ Deep LLM-powered exploration of the codebase. Produces a structured `CodebaseMap
   "existing_patterns": {
     "error_handling": "Custom exception hierarchy in forge/core/errors.py",
     "testing": "pytest + pytest-asyncio, colocated *_test.py files",
-    "state_management": "Pydantic models in models.py, state machine in state.py",
-    "styling": "...",
-    "naming": "...",
-    "imports": "..."
+    "state_management": "Pydantic models in models.py, state machine in state.py"
   },
   "relevant_interfaces": [
     {
@@ -142,18 +141,28 @@ Decompose the spec into a task graph using the CodebaseMap as context. This is t
 Same schema as current `TaskGraph` (tasks with IDs, titles, descriptions, files, dependencies, complexity, integration_hints). Descriptions are moderate detail — not implementation-ready yet, but clear enough for the validator to check.
 
 ### FORGE_QUESTION Integration
-The architect's prompt instructs it to identify spec ambiguities BEFORE producing the task graph:
 
-1. Read the spec and CodebaseMap
-2. Identify ambiguities (technology choices, unclear requirements, missing details)
-3. Emit FORGE_QUESTIONs for high-impact ambiguities
-4. Wait for user answers
-5. Produce TaskGraph incorporating the answers
+**Important:** The current FORGE_QUESTION infrastructure lives in `daemon_executor.py` and `agents/adapter.py` — it only works during task execution, not planning. The planning pipeline must implement its own question mechanism from scratch.
 
-Question budget: same as `question_limit` setting (default 3). Autonomy levels apply:
+**Implementation approach:** The architect session uses the same `FORGE_QUESTION:` JSON output format that task agents use (defined in `adapter.py:_build_question_protocol()`). The `PlanningPipeline` orchestrator monitors the architect's SDK streaming output for this pattern:
+
+1. Architect emits `FORGE_QUESTION:` JSON in its output
+2. `PlanningPipeline._run_architect()` detects the pattern (same regex as `daemon_executor.py:_parse_forge_question`)
+3. Pipeline pauses the architect by saving the SDK `session_id` from the response
+4. Pipeline emits a `planning:question` event (see TUI Events section) with the question payload
+5. TUI/API surfaces the question to the user (reuses existing `FollowUpScreen` in TUI)
+6. User answers via TUI
+7. Pipeline resumes the architect session using `ClaudeCodeOptions(resume=session_id)` with the user's answer appended as a new user message
+8. Architect continues, now with the answer in context, and produces the TaskGraph
+
+**This is new code** — it does NOT reuse `daemon_executor._handle_agent_question()` because that function is tightly coupled to task state management (AWAITING_INPUT state, agent slot release, task DB updates). The planning pipeline handles questions at the pipeline level, not the task level.
+
+**Question budget:** Same as `question_limit` setting (default 3). Autonomy levels apply:
 - `full`: never ask, decide autonomously
 - `balanced`: ask about architecture/technology decisions only
 - `supervised`: ask about everything unclear
+
+**Question timeout:** Same as `question_timeout` setting (default 1800s / 30 min). If the user doesn't answer, the architect auto-decides and logs the assumption in the task descriptions.
 
 ### Why the Architect Doesn't Read Files
 The CodebaseMap contains everything the architect needs about existing code. This means the architect can spend all its turns (20) on decomposition reasoning instead of wasting turns on file I/O. This is the key scalability insight — separating "understand the code" from "plan the work."
@@ -185,7 +194,7 @@ The task with a fully detailed description. Example:
 > "Create forge/api/middleware/rate_limit.py with a RateLimitMiddleware class following the pattern in forge/api/middleware/auth.py. Use sliding window algorithm with Redis (or in-memory dict for dev). Config via FORGE_RATE_LIMIT_RPM setting (default 60). Add to middleware stack in forge/api/app.py:create_app(). Write tests in forge/api/middleware/rate_limit_test.py covering: normal request, rate exceeded (429), window reset, concurrent requests."
 
 ### Parallelism
-All detailers run concurrently, throttled by `max_agents` setting. A 30-task plan with `max_agents=4` runs ~8 batches of detailers.
+All detailers run concurrently, throttled by `max_agents` setting. This intentionally reuses the same setting as task execution — during planning, no task agents are running, so the full agent budget is available for detailers. A 30-task plan with `max_agents=4` runs ~8 batches of detailers. No separate `max_detailers` setting is needed because planning and execution never overlap.
 
 ### Model
 Sonnet (focused task, doesn't need opus-level reasoning).
@@ -220,8 +229,21 @@ Review the complete enriched task graph for consistency issues. Catches problems
       "suggested_fix": "Add depends_on: task-3 → task-7"
     }
   ],
-  "minor_fixes_applied": [
-    "task-5: added missing test file to files list"
+  "minor_fixes": [
+    {
+      "task_id": "task-5",
+      "field": "files",
+      "reason": "Missing test file for new module",
+      "original_value": ["forge/api/middleware/rate_limit.py"],
+      "fixed_value": ["forge/api/middleware/rate_limit.py", "forge/api/middleware/rate_limit_test.py"]
+    },
+    {
+      "task_id": "task-8",
+      "field": "description",
+      "reason": "Description too vague — added test requirements",
+      "original_value": "Add error handling",
+      "fixed_value": "Add error handling to forge/core/daemon.py:_execution_loop_inner() for SDK timeout errors. Catch asyncio.TimeoutError, transition task to FAILED state, and emit pipeline event. Test: verify timeout triggers FAILED state and event emission."
+    }
   ]
 }
 ```
@@ -230,7 +252,7 @@ Review the complete enriched task graph for consistency issues. Catches problems
 
 | Category | Examples | Action |
 |----------|----------|--------|
-| **MINOR** | Vague description, missing test mention, incomplete edge case list | Auto-fix in-process — validator rewrites the task description |
+| **MINOR** | Vague description, missing test mention, incomplete edge case list | Auto-fix in-process — validator produces `minor_fixes` array with original + fixed values per task field. The pipeline applies these fixes directly to the TaskGraph without re-running the architect. |
 | **MAJOR** | File ownership conflict, missing dependency, task too large, integration gap, spec requirement not covered | Loop back to architect for scoped re-plan |
 | **FATAL** | Circular dependency, spec requirement completely missing, fundamentally wrong decomposition | Human escalation — stop and surface to user |
 
@@ -346,10 +368,14 @@ When <20% of files changed:
 5. Merge into existing map: update changed, add new, remove deleted
 6. Save updated map + meta
 
-### Cost Savings
+### Cost Savings (approximate, will vary by codebase size)
 - Full scout: ~$0.12 (sonnet, 30 turns)
 - Incremental scout (10 files changed): ~$0.02 (sonnet, 5 turns)
 - Cached (no changes): $0.00
+
+### Gitignore
+
+`.forge/codebase_map.json` and `.forge/codebase_map_meta.json` should be added to `.gitignore` (or `.forge/.gitignore`). They contain machine-specific analysis and should not be committed.
 
 ## Integration with Existing Daemon
 
@@ -398,13 +424,40 @@ task_graph = await planning_pipeline.run(
 )
 ```
 
+### Callback Signatures
+
+```python
+# Called when a planning stage emits streaming output (for TUI display)
+# stage: "scout" | "architect" | "detailer" | "validator"
+# message: raw text from the Claude session
+async def on_message(stage: str, message: str) -> None: ...
+
+# Called when the architect emits a FORGE_QUESTION
+# Returns the user's answer string (blocks until user responds or timeout)
+# question: parsed ForgeQuestion dataclass (question text + suggestions)
+# This is NOT the same as daemon_executor's question handler — it operates
+# at the pipeline level, not the task level
+async def on_question(question: ForgeQuestion) -> str | None: ...
+```
+
+The daemon wires these callbacks to the existing event system:
+- `on_message` → emits `pipeline_events` with type `planning:stage_output`
+- `on_question` → emits `pipeline_events` with type `planning:question`, then awaits answer via `asyncio.Event` (same pattern as `daemon_executor._handle_question_flow`)
+
 ### Backward Compatibility
 
 The existing `Planner` class stays. `PlanningPipeline` is used when:
-- A spec file is provided (`forge run --spec docs/spec.md "..."`)
-- Input is large (>500 chars heuristic)
-- User explicitly requests it (`forge run --deep-plan "..."`)
+- A spec file is provided (`forge run --spec docs/spec.md "..."`) — always deep
+- User explicitly requests it (`forge run --deep-plan "..."`) — always deep
 - Setting: `planning_mode = "auto" | "simple" | "deep"` (default: "auto")
+
+**Auto-mode heuristic:** When `planning_mode="auto"`, deep planning is selected if ANY of:
+1. A `--spec` file is provided
+2. The user request contains markdown structure (headers, lists, multiple paragraphs) indicating a structured feature description
+3. The user request explicitly mentions multiple features/components (detected via keywords: "and", numbered lists, semicolons separating requirements)
+4. The existing `ProjectSnapshot` shows >200 tracked files (larger codebase = more value from deep scouting)
+
+If none of these trigger, the simple single-shot planner is used. This avoids the "501 characters for a simple task" problem — length alone is not sufficient.
 
 ### Model Selection Per Stage
 
@@ -436,14 +489,29 @@ Configurable via settings but these defaults are optimized for accuracy vs cost.
 
 ### New Planning Sub-States
 
-The TUI's `state.py` gets new planning sub-states:
+The TUI's `state.py` gets new planning sub-states (these are values of the existing `phase: str` field):
 - `planning_scout` — Scout stage running
 - `planning_architect` — Architect stage running (may pause for FORGE_QUESTION)
 - `planning_detailing` — Detailers running in parallel
 - `planning_validating` — Validator running
 - `planning_replan` — Validator found issues, architect re-planning
 
-Each stage emits progress events via the existing `pipeline_events` system.
+### TUI Events
+
+The planning pipeline emits events via the existing `pipeline_events` table. Each event has a `type` and JSON `payload`:
+
+| Event Type | Payload | Triggers Transition |
+|------------|---------|---------------------|
+| `planning:stage_started` | `{"stage": "scout"}` | `planning` → `planning_scout` |
+| `planning:stage_completed` | `{"stage": "scout", "duration_s": 12.3}` | `planning_scout` → `planning_architect` |
+| `planning:stage_output` | `{"stage": "architect", "text": "Reading spec..."}` | (no transition, updates output display) |
+| `planning:question` | `{"question": "...", "suggestions": [...]}` | (pauses architect, shows follow-up screen) |
+| `planning:question_answered` | `{"answer": "Use JWT"}` | (resumes architect) |
+| `planning:validation_result` | `{"status": "fail", "issues": [...]}` | `planning_validating` → `planning_replan` |
+| `planning:complete` | `{"task_count": 12, "cost_usd": 1.01}` | `planning_*` → `planned` |
+| `planning:failed` | `{"error": "...", "stage": "architect"}` | `planning_*` → `error` |
+
+The TUI's `app.py` message handler maps these events to UI updates. The existing `PlannerCard` widget is replaced by a new `PlanningPipelineCard` that shows per-stage progress bars.
 
 ## Error Handling
 
@@ -499,7 +567,7 @@ Real SDK calls too slow/expensive for CI. Existing e2e test covers full daemon f
 ## CLI Changes
 
 New flag for `forge run`:
-- `--spec <path>` — Path to spec document (markdown, PDF, text). Triggers deep planning.
+- `--spec <path>` — Path to spec document (markdown or text file). Triggers deep planning. PDF support is out of scope for this spec.
 - `--deep-plan` — Force deep planning even without a spec file.
 
 New setting:
