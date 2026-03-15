@@ -136,7 +136,12 @@ async def _cascade_blocked(self, db, failed_task_id, pipeline_id):
                 queue.append(task.id)  # Cascade transitively
 ```
 
-**Where to call:** In `_handle_retry()` inside `daemon_merge.py`, when `task.retry_count >= max_retries` (the else branch that marks the task as ERROR). After setting ERROR, call `_cascade_blocked()`.
+**Where to call:** There are TWO code paths that mark a task as ERROR on max retries. Both must call `_cascade_blocked()`:
+
+1. `_handle_retry()` in `daemon_merge.py` (line ~142) — agent/review failures
+2. `_handle_merge_retry()` in `daemon_merge.py` (line ~210) — merge failures that exhaust retries
+
+Both have the same pattern: `if task.retry_count >= max_retries: mark ERROR`. Add `await self._cascade_blocked(db, task_id, pipeline_id)` immediately after the ERROR state update in both branches.
 
 #### BLOCKED Behavior
 
@@ -183,7 +188,7 @@ When user presses `q` during an active pipeline:
 **Second press:**
 1. Cancel `self._daemon_task` (triggers the `finally` block in `_execution_loop` which calls `_shutdown_active_tasks()`)
 2. Wait briefly (up to 2s) for active agent subprocesses to be killed
-3. Reset any tasks still in IN_PROGRESS/IN_REVIEW/MERGING → TODO in DB
+3. Reset any tasks in non-terminal in-flight states → TODO in DB. Specifically: IN_PROGRESS, IN_REVIEW, MERGING, AWAITING_INPUT, AWAITING_APPROVAL. All five states represent work that cannot continue without an active process.
 4. Release all agents → IDLE
 5. Update pipeline status → `"interrupted"`
 6. Write event: `pipeline:interrupted` with summary of task states at time of quit
@@ -239,6 +244,8 @@ ALTER TABLE pipelines ADD COLUMN executor_pid INTEGER;
 ALTER TABLE pipelines ADD COLUMN executor_token VARCHAR;
 ```
 
+**Migration:** These columns are added via `ALTER TABLE` with NULL defaults. Existing pipelines get NULL for both columns, which is correct — NULL means "no active executor." The migration runs at DB initialization time in `db.py`'s `_ensure_schema()` method, same pattern used for previous schema additions (e.g. `paused_at`, `contracts_json`).
+
 #### Lifecycle
 
 ```
@@ -256,14 +263,12 @@ Graceful quit / execution complete:
 #### Concurrent Access
 
 When a second TUI instance tries to resume a pipeline that has an active executor:
-1. Read `executor_pid` from DB
+1. Read `executor_pid` and `executor_token` from DB
 2. Check if PID is alive: `os.kill(pid, 0)`
-3. If alive → show "Pipeline running in another session (PID {pid})" → read-only mode only
-4. If dead → orphan flow (treat as interrupted)
+3. If PID is alive, verify it's actually a Forge process by checking `executor_token` is non-NULL and was set recently (within the last `pipeline_timeout_seconds`). If both conditions hold → show "Pipeline running in another session (PID {pid})" → read-only mode only.
+4. If PID is dead, OR if PID is alive but token verification fails (PID reuse by unrelated process) → orphan flow (treat as interrupted).
 
-#### Why PID + Token
-
-PID alone is insufficient — the OS can reuse PIDs. The UUID token ensures that even if a PID is reused by an unrelated process, we don't falsely detect it as "active Forge executor."
+**Why both PID and token are checked together:** `os.kill(pid, 0)` only confirms a process exists — the OS can reuse PIDs. A stale PID that now belongs to an unrelated process would have no knowledge of the `executor_token`. By requiring both PID alive AND token non-NULL with a reasonable timestamp, we avoid false positives from PID reuse. On hard kill, the token remains set but the PID is dead, correctly triggering orphan detection.
 
 ---
 
@@ -364,10 +369,16 @@ When retries finish:
 Retried tasks merge to the same pipeline branch. Push new commits to remote. The open PR auto-updates. Pipeline → `complete`, show "PR updated with retry results."
 
 **Case 2: PR already merged when retries finish.**
-Before pushing retry commits, check: `gh pr view {pr_url} --json state`. If merged → create a NEW follow-up PR. Title: `"Forge: [original title] — retry results"`. Show new PR URL.
+Before pushing retry commits, check: `gh pr view {pr_url} --json state`. If merged:
+1. The retried tasks already merged their work to the pipeline branch (e.g. `forge/roadmap-implementation-plans`).
+2. The pipeline branch now has commits beyond what was in the merged PR.
+3. Rebase the pipeline branch onto `main` (which now contains the merged PR's squash commit) to get a clean diff.
+4. Create a NEW follow-up PR from the pipeline branch → `main`. Title: `"Forge: [original title] — retry results"`.
+5. The follow-up PR's diff contains ONLY the retried tasks' work, not the already-merged work.
+6. Show new PR URL. Store it on the pipeline record (replaces the old `pr_url`).
 
 **Case 3: User merged PR, quit, resumed, retried.**
-Same as Case 2 — detect merged PR, create follow-up PR.
+Same as Case 2 — detect merged PR, rebase pipeline branch, create follow-up PR.
 
 **Case 4: User created PR, didn't retry, didn't merge, quit.**
 On resume: partial_success screen shows existing PR URL + retry/skip options. No data loss.
@@ -583,5 +594,8 @@ The shortcut bar updates reactively when:
 | Q | hard kill | — | orphaned "executing" | — |
 | R | orphaned | resume from history | interrupted → executing | PipelineScreen |
 | S | any | second TUI instance | read-only | "Running in another session" |
+| T | partial_success | Create PR → quit → PR merged externally → resume → Retry | retrying → complete (follow-up PR) | PipelineScreen → FinalApproval |
+| U | FinalApproval | press f → type text → Escape | partial_success (textarea unfocused) | FinalApproval (screen bindings restored) |
+| V | FinalApproval | press f → type text → Ctrl+S | executing (follow-up task created) | PipelineScreen |
 
 Every non-terminal state has a forward action and a back/escape action. No dead ends.
