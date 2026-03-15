@@ -129,3 +129,19 @@ def test_data_dir_override(tmp_path, monkeypatch):
     monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
     s = ForgeSettings(data_dir=custom)
     assert s.data_dir == custom
+
+
+def test_planning_mode_default():
+    s = ForgeSettings()
+    assert s.planning_mode == "auto"
+
+
+def test_planning_mode_valid_values():
+    for val in ("auto", "simple", "deep"):
+        s = ForgeSettings(planning_mode=val)
+        assert s.planning_mode == val
+
+
+def test_planning_mode_invalid_raises():
+    with pytest.raises(ValidationError, match="planning_mode must be"):
+        ForgeSettings(planning_mode="invalid")

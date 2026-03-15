@@ -82,6 +82,48 @@ def test_help_lists_clean_subcommand():
     assert "clean" in result.output
 
 
+def test_run_help_shows_spec_option():
+    """--spec option must appear in run --help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--spec" in result.output
+
+
+def test_run_help_shows_deep_plan_option():
+    """--deep-plan option must appear in run --help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--deep-plan" in result.output
+
+
+def test_run_passes_spec_and_deep_plan(tmp_path):
+    """run command should forward spec and deep_plan to daemon.run()."""
+    from unittest.mock import MagicMock, AsyncMock
+
+    spec_file = tmp_path / "spec.md"
+    spec_file.write_text("# Spec\nDo stuff")
+
+    mock_daemon = MagicMock()
+    mock_daemon.run = MagicMock(return_value=None)
+
+    with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
+         patch("forge.cli.main.asyncio") as mock_asyncio:
+        mock_asyncio.run = MagicMock(return_value=None)
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "run", "Build it",
+            "--spec", str(spec_file),
+            "--deep-plan",
+            "--project-dir", str(tmp_path),
+        ])
+        # asyncio.run should have been called with daemon.run(...)
+        mock_daemon.run.assert_called_once_with(
+            "Build it", spec_path=str(spec_file), deep_plan=True
+        )
+
+
 def test_serve_uses_central_db_url_by_default():
     """serve() should use forge_db_url() when no --db-url is provided."""
     from unittest.mock import MagicMock

@@ -14,6 +14,9 @@ class ForgeSettings(BaseSettings):
     # Model routing strategy
     model_strategy: str = "auto"  # "auto", "fast", "quality"
 
+    # Planning mode
+    planning_mode: str = "auto"  # "auto", "simple", "deep"
+
     # Agent limits — each agent spawns a Claude CLI subprocess consuming
     # ~300-500 MB.  Default 4 balances parallelism with memory pressure.
     # The resource monitor provides backpressure if the machine is
@@ -130,6 +133,13 @@ class ForgeSettings(BaseSettings):
     def timeout_minimum(cls, v: int) -> int:
         if v < 30:
             raise ValueError("agent_timeout_seconds must be >= 30")
+        return v
+
+    @field_validator("planning_mode")
+    @classmethod
+    def planning_mode_valid(cls, v: str) -> str:
+        if v not in ("auto", "simple", "deep"):
+            raise ValueError("planning_mode must be 'auto', 'simple', or 'deep'")
         return v
 
     @model_validator(mode="after")

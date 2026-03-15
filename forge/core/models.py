@@ -1,5 +1,7 @@
 """Pydantic models for Forge. All data flows through typed schemas."""
 
+from __future__ import annotations
+
 from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator

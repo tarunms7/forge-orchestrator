@@ -380,6 +380,14 @@ class TuiState:
     def _on_slot_queued(self, data: dict) -> None:
         logger.debug("Slot queued event received")
 
+    def _on_planning_stage_output(self, data: dict) -> None:
+        """Handle streaming output from planning pipeline stages."""
+        line = data.get("line", "")
+        self.planner_output.append(line)
+        if len(self.planner_output) > self._max_output_lines:
+            del self.planner_output[: len(self.planner_output) - self._max_output_lines]
+        self._notify("planner_output")
+
     def _on_all_tasks_done(self, data: dict) -> None:
         summary = data.get("summary", {})
         result = summary.get("result", "complete")
@@ -465,6 +473,10 @@ class TuiState:
         "task:merge_result": _on_merge_result,
         "task:awaiting_approval": _on_awaiting_approval,
         "planner:output": _on_planner_output,
+        "planning:scout": _on_planning_stage_output,
+        "planning:architect": _on_planning_stage_output,
+        "planning:detailer": _on_planning_stage_output,
+        "planning:validator": _on_planning_stage_output,
         "task:question": _on_task_question,
         "task:answer": _on_task_answer,
         "task:resumed": _on_task_resumed,
