@@ -225,9 +225,9 @@ Same as executing resume. Stuck retry tasks were reset to TODO on quit. On resum
 
 No cleanup runs. Pipeline stays `"executing"` in DB.
 
-On next `forge tui`, detect orphaned pipelines:
-- For every pipeline with status `"executing"` or `"retrying"`, check if the stored `executor_pid` is alive via `os.kill(pid, 0)`.
-- If PID is dead (or NULL) → orphan detected.
+On next `forge tui`, detect orphaned pipelines (see Section 4 for full PID+token detection logic):
+- For every pipeline with status `"executing"` or `"retrying"`, run the concurrent access check from Section 4 (PID alive + token verification).
+- If detection determines no active executor → orphan detected.
 - Show in history with `"interrupted"` badge (orange).
 - On select: reset stuck tasks → TODO, release agents, update status → `"interrupted"`, then normal resume.
 
@@ -265,10 +265,10 @@ Graceful quit / execution complete:
 When a second TUI instance tries to resume a pipeline that has an active executor:
 1. Read `executor_pid` and `executor_token` from DB
 2. Check if PID is alive: `os.kill(pid, 0)`
-3. If PID is alive, verify it's actually a Forge process by checking `executor_token` is non-NULL and was set recently (within the last `pipeline_timeout_seconds`). If both conditions hold → show "Pipeline running in another session (PID {pid})" → read-only mode only.
+3. If PID is alive, verify it's actually a Forge process by checking `executor_token` is non-NULL. If both conditions hold → show "Pipeline running in another session (PID {pid})" → read-only mode only.
 4. If PID is dead, OR if PID is alive but token verification fails (PID reuse by unrelated process) → orphan flow (treat as interrupted).
 
-**Why both PID and token are checked together:** `os.kill(pid, 0)` only confirms a process exists — the OS can reuse PIDs. A stale PID that now belongs to an unrelated process would have no knowledge of the `executor_token`. By requiring both PID alive AND token non-NULL with a reasonable timestamp, we avoid false positives from PID reuse. On hard kill, the token remains set but the PID is dead, correctly triggering orphan detection.
+**Why both PID and token are checked together:** `os.kill(pid, 0)` only confirms a process exists — the OS can reuse PIDs. A stale PID that now belongs to an unrelated process would have no knowledge of the `executor_token`. By requiring both PID alive AND token non-NULL, we avoid false positives from PID reuse. On hard kill, the token remains set but the PID is dead, correctly triggering orphan detection.
 
 ---
 
@@ -557,7 +557,7 @@ The shortcut bar updates reactively when:
 |------|--------|
 | `forge/core/models.py` | Add `BLOCKED = "blocked"` to TaskState enum |
 | `forge/core/daemon.py` | Execution loop exit: differentiate complete/partial_success/error. Emit `pipeline:interrupted` on quit. Add `executor_pid`/`executor_token` management. |
-| `forge/core/daemon_merge.py` | After marking task ERROR in `_handle_retry()`, call `_cascade_blocked()` |
+| `forge/core/daemon_merge.py` | After marking task ERROR in BOTH `_handle_retry()` and `_handle_merge_retry()`, call `_cascade_blocked()` |
 | `forge/core/daemon_executor.py` | Complexity-scaled timeout: `_COMPLEXITY_MULTIPLIERS` dict, select timeout from `task.complexity` |
 | `forge/storage/db.py` | Add `executor_pid`, `executor_token` columns to pipelines. Add `BLOCKED` handling in task queries. |
 | `forge/tui/state.py` | `_on_all_tasks_done`: check summary for errors, set phase to `partial_success` when mixed. Add `"partial_success"` and `"retrying"` phase handling. |
