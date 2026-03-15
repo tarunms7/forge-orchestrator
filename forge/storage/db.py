@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, String, Text, JSON, func, select, text
+from sqlalchemy import DateTime, Integer, String, Text, JSON, func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -143,6 +143,9 @@ class PipelineRow(Base):
     # Cross-project tracking
     project_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     project_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    # Executor tracking for orphan detection
+    executor_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    executor_token: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 class UserTemplateRow(Base):
@@ -588,6 +591,24 @@ class Database:
                 select(PipelineRow).where(PipelineRow.id == pipeline_id)
             )
             return result.scalar_one_or_none()
+
+    async def set_executor_info(self, pipeline_id: str, pid: int, token: str) -> None:
+        """Record the PID and session token of the executor process for orphan detection."""
+        async with self._session_factory() as session:
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if pipeline:
+                pipeline.executor_pid = pid
+                pipeline.executor_token = token
+                await session.commit()
+
+    async def clear_executor_info(self, pipeline_id: str) -> None:
+        """Clear executor tracking fields when a pipeline finishes cleanly."""
+        async with self._session_factory() as session:
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if pipeline:
+                pipeline.executor_pid = None
+                pipeline.executor_token = None
+                await session.commit()
 
     async def update_pipeline_status(self, pipeline_id: str, status: str) -> None:
         async with self._session_factory() as session:
