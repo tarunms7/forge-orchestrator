@@ -1,7 +1,7 @@
 import subprocess
 import pytest
 
-from forge.merge.worker import MergeWorker, MergeResult
+from forge.merge.worker import MergeWorker, MergeResult, _parse_conflict_files_from_stderr
 
 
 @pytest.fixture
@@ -413,3 +413,39 @@ def test_find_conflicts_without_worktree_path_uses_repo(git_repo):
     # because the rebase runs in the main repo itself
     assert len(result.conflicting_files) > 0
     assert "compat.py" in result.conflicting_files
+
+
+# ---------------------------------------------------------------------------
+# _parse_conflict_files_from_stderr tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_conflict_files_from_stderr_content_conflict():
+    stderr = (
+        "Auto-merging shared.py\n"
+        "CONFLICT (content): Merge conflict in shared.py\n"
+        "error: could not apply abc1234... task change\n"
+    )
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert files == ["shared.py"]
+
+
+def test_parse_conflict_files_from_stderr_multiple_conflicts():
+    stderr = (
+        "CONFLICT (content): Merge conflict in src/app.py\n"
+        "CONFLICT (add/add): Merge conflict in docs/plan.md\n"
+        "CONFLICT (content): Merge conflict in tests/test_app.py\n"
+    )
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert files == ["src/app.py", "docs/plan.md", "tests/test_app.py"]
+
+
+def test_parse_conflict_files_from_stderr_no_conflicts():
+    stderr = "error: could not apply abc1234... some commit\n"
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert files == []
+
+
+def test_parse_conflict_files_from_stderr_empty():
+    assert _parse_conflict_files_from_stderr("") == []
+    assert _parse_conflict_files_from_stderr(None) == []
