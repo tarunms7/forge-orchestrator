@@ -71,12 +71,12 @@ Rules:
 - If there are NO cross-task interfaces (all tasks are independent), omit integration_hints entirely.
 - IMPORTANT: Integration hints enable PARALLEL execution. When you add integration hints, the system can generate contracts so both producer and consumer tasks run simultaneously. Without hints, consumer tasks must wait for producer tasks. PREFER adding hints over adding depends_on for API integration tasks.
 - Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object.
-- IMPORTANT: You have a LIMITED number of turns. Follow this budget strictly:
-  * Turns 1-5: Read files to understand the project. Do NOT re-read files you have already seen.
-  * Turn 6+: STOP READING. Produce the TaskGraph JSON IMMEDIATELY with whatever context you have.
-  * If you find yourself reading the same file twice, STOP and output JSON now.
-  * Do NOT loop through directories. Do NOT explore exhaustively. Read only the files most relevant to the task.
-  * A good-enough plan produced on time beats a perfect plan that never arrives.
+- IMPORTANT: You have LIMITED turns. Read as many files as you need to build an accurate plan, but follow these rules strictly:
+  * NEVER re-read a file you have already seen. Keep a mental list of files read.
+  * NEVER glob or grep the same directory twice.
+  * If you catch yourself in a loop (reading the same files again), STOP IMMEDIATELY and produce JSON with whatever context you have.
+  * Once you understand the codebase well enough to decompose the task, produce the JSON. Do not keep exploring "just in case."
+  * A thorough plan that finishes beats a perfect plan that loops forever.
 - Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object."""
 
 
