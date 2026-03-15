@@ -99,15 +99,21 @@ class ExecutorMixin:
             return
 
         # Strip out-of-scope changes before review
-        has_in_scope_changes = self._enforce_file_scope(task, worktree_path, pipeline_branch)
+        has_in_scope_changes, reverted_files = self._enforce_file_scope(
+            task, worktree_path, pipeline_branch,
+        )
         if not has_in_scope_changes:
             console.print(f"[red]{task_id}: all changes were outside file scope[/red]")
+            reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
                 db, task_id, worktree_mgr,
                 review_feedback=(
-                    "ALL your changes were to files outside your allowed scope.\n"
-                    f"You are ONLY allowed to modify: {', '.join(task.files)}\n"
-                    "Do NOT touch any other files — changes outside scope are automatically reverted."
+                    "ALL your changes were to files outside your allowed scope "
+                    "and have been REVERTED by the system.\n\n"
+                    f"Files you modified that were REVERTED:\n{reverted_list}\n\n"
+                    f"You are ONLY allowed to modify these files:\n"
+                    + "\n".join(f"  - {f}" for f in task.files)
+                    + "\n\nDo NOT touch any other files. Focus ONLY on the files listed above."
                 ),
                 pipeline_id=pid,
             )
@@ -382,15 +388,21 @@ class ExecutorMixin:
             return
 
         # Agent finished — proceed to review
-        has_in_scope_changes = self._enforce_file_scope(task, worktree_path, pipeline_branch)
+        has_in_scope_changes, reverted_files = self._enforce_file_scope(
+            task, worktree_path, pipeline_branch,
+        )
         if not has_in_scope_changes:
             console.print(f"[red]{task_id}: all changes were outside file scope (after resume)[/red]")
+            reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
                 db, task_id, worktree_mgr,
                 review_feedback=(
-                    "ALL your changes were to files outside your allowed scope.\n"
-                    f"You are ONLY allowed to modify: {', '.join(task.files)}\n"
-                    "Do NOT touch any other files — changes outside scope are automatically reverted."
+                    "ALL your changes were to files outside your allowed scope "
+                    "and have been REVERTED by the system.\n\n"
+                    f"Files you modified that were REVERTED:\n{reverted_list}\n\n"
+                    f"You are ONLY allowed to modify these files:\n"
+                    + "\n".join(f"  - {f}" for f in task.files)
+                    + "\n\nDo NOT touch any other files. Focus ONLY on the files listed above."
                 ),
                 pipeline_id=pid,
             )
@@ -408,21 +420,23 @@ class ExecutorMixin:
 
     def _enforce_file_scope(
         self, task, worktree_path: str, pipeline_branch: str | None,
-    ) -> bool:
+    ) -> tuple[bool, list[str]]:
         """Strip changes to files outside the task's allowed scope.
 
         Runs after the agent finishes, before review.  Reverts any modified
         files not in ``task.files`` back to the pipeline branch state.
 
-        Returns ``True`` if in-scope changes remain, ``False`` if nothing
-        is left (agent only made out-of-scope changes).
+        Returns a tuple of (has_in_scope_changes, reverted_files).
+        ``has_in_scope_changes`` is True if in-scope changes remain,
+        False if nothing is left.  ``reverted_files`` lists the files
+        that were reverted (empty if nothing was out of scope).
         """
         if not pipeline_branch:
-            return True  # Can't enforce without a base ref
+            return True, []  # Can't enforce without a base ref
 
         allowed = set(task.files or [])
         if not allowed:
-            return True  # No file list = no enforcement (safety valve)
+            return True, []  # No file list = no enforcement (safety valve)
 
         # Get all files changed by the agent vs pipeline branch
         result = _run_git(
@@ -433,7 +447,7 @@ class ExecutorMixin:
         out_of_scope = [f for f in changed if f not in allowed]
 
         if not out_of_scope:
-            return True  # All changes are in scope
+            return True, []  # All changes are in scope
 
         console.print(
             f"[yellow]  Scope enforcement: reverting {len(out_of_scope)} "
@@ -471,7 +485,7 @@ class ExecutorMixin:
             ["diff", "--name-only", pipeline_branch, "HEAD"],
             cwd=worktree_path, check=False, description="check remaining",
         )
-        return bool(remaining.stdout.strip())
+        return bool(remaining.stdout.strip()), out_of_scope
 
     # -- post-review merge with Tier 1/Tier 2 --------------------------
 

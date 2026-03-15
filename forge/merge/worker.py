@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 from forge.core.daemon_helpers import _run_git
@@ -52,7 +53,12 @@ class MergeWorker:
             self._rebase(branch, worktree_path)
         except _RebaseConflict as e:
             self._abort_rebase(worktree_path)
-            conflict_desc = ", ".join(e.files) if e.files else "unknown files"
+            if e.files:
+                conflict_desc = ", ".join(e.files)
+            elif e.stderr:
+                conflict_desc = f"(stderr) {e.stderr[:200]}"
+            else:
+                conflict_desc = "unknown files"
             return MergeResult(
                 success=False,
                 conflicting_files=e.files,
@@ -89,7 +95,12 @@ class MergeWorker:
             self._rebase(branch, worktree_path)
         except _RebaseConflict as e:
             # DON'T abort — leave rebase paused so the resolver can work
-            conflict_desc = ", ".join(e.files) if e.files else "unknown files"
+            if e.files:
+                conflict_desc = ", ".join(e.files)
+            elif e.stderr:
+                conflict_desc = f"(stderr) {e.stderr[:200]}"
+            else:
+                conflict_desc = "unknown files"
             return MergeResult(
                 success=False,
                 conflicting_files=e.files,
@@ -114,7 +125,14 @@ class MergeWorker:
             )
         if result.returncode != 0:
             conflicts = self._find_conflicts(worktree_path)
-            raise _RebaseConflict(files=conflicts)
+            if not conflicts:
+                # git diff --diff-filter=U found nothing — parse stderr
+                # for conflict file names as fallback
+                conflicts = _parse_conflict_files_from_stderr(result.stderr)
+            stderr_snippet = result.stderr.strip()[:300] if result.stderr else ""
+            raise _RebaseConflict(
+                files=conflicts, stderr=stderr_snippet,
+            )
 
     def _abort_rebase(self, worktree_path: str | None = None) -> None:
         cwd = worktree_path or self._repo
@@ -145,6 +163,25 @@ class MergeWorker:
         return [f for f in result.stdout.strip().split("\n") if f]
 
 
+def _parse_conflict_files_from_stderr(stderr: str) -> list[str]:
+    """Extract conflicting file paths from git rebase stderr output.
+
+    Git rebase stderr contains lines like:
+        CONFLICT (content): Merge conflict in path/to/file.py
+        CONFLICT (add/add): Merge conflict in path/to/other.py
+    """
+    if not stderr:
+        return []
+    pattern = re.compile(r"CONFLICT\s*\([^)]*\):\s*Merge conflict in\s+(.+)")
+    files: list[str] = []
+    for line in stderr.splitlines():
+        m = pattern.search(line)
+        if m:
+            files.append(m.group(1).strip())
+    return files
+
+
 class _RebaseConflict(Exception):
-    def __init__(self, files: list[str]) -> None:
+    def __init__(self, files: list[str], stderr: str = "") -> None:
         self.files = files
+        self.stderr = stderr
