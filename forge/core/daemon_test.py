@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.config.settings import ForgeSettings
-from forge.core.daemon import ForgeDaemon
+from forge.core.daemon import ForgeDaemon, _classify_pipeline_result
 from forge.core.models import TaskState
 
 
@@ -170,6 +170,7 @@ def _make_minimal_execution_loop_mocks(tasks: list[MagicMock]):
     db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
     db.log_event = AsyncMock()
     db.get_expired_questions = AsyncMock(return_value=[])
+    db.update_pipeline_status = AsyncMock()
 
     monitor = MagicMock()
     snapshot = MagicMock()
@@ -324,6 +325,7 @@ class TestPipelinePauseTracking:
         db.get_expired_questions = AsyncMock(return_value=[])
         db.set_pipeline_paused_at = AsyncMock()
         db.add_pipeline_paused_duration = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
 
         monitor = MagicMock()
         snapshot = MagicMock()
@@ -376,6 +378,7 @@ class TestPipelinePauseTracking:
         db.get_expired_questions = AsyncMock(return_value=[])
         db.set_pipeline_paused_at = AsyncMock()
         db.add_pipeline_paused_duration = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
 
         monitor = MagicMock()
         snapshot = MagicMock()
@@ -433,6 +436,7 @@ class TestPipelinePauseTracking:
         db.get_expired_questions = AsyncMock(return_value=[])
         db.set_pipeline_paused_at = AsyncMock()
         db.add_pipeline_paused_duration = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
 
         daemon._emit = AsyncMock()
 
@@ -517,6 +521,7 @@ class TestPipelinePauseTracking:
         db.get_expired_questions = AsyncMock(return_value=[])
         db.set_pipeline_paused_at = AsyncMock()
         db.add_pipeline_paused_duration = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
 
         monitor = MagicMock()
         monitor.take_snapshot = MagicMock(return_value=MagicMock())
@@ -681,3 +686,29 @@ class TestRunCentralDB:
         call_kwargs = mock_db.create_pipeline.call_args.kwargs
         assert call_kwargs["project_path"] == str(tmp_path)
         assert call_kwargs["project_name"] == os.path.basename(str(tmp_path))
+
+
+class TestClassifyPipelineResult:
+    def test_classify_all_done(self):
+        states = ["done", "done", "done"]
+        assert _classify_pipeline_result(states) == "complete"
+
+    def test_classify_all_error(self):
+        states = ["error", "error"]
+        assert _classify_pipeline_result(states) == "error"
+
+    def test_classify_mixed(self):
+        states = ["done", "done", "error", "blocked"]
+        assert _classify_pipeline_result(states) == "partial_success"
+
+    def test_classify_with_cancelled_excluded(self):
+        states = ["done", "done", "cancelled"]
+        assert _classify_pipeline_result(states) == "complete"
+
+    def test_classify_done_and_blocked(self):
+        states = ["done", "blocked"]
+        assert _classify_pipeline_result(states) == "partial_success"
+
+    def test_classify_all_cancelled(self):
+        states = ["cancelled", "cancelled"]
+        assert _classify_pipeline_result(states) == "complete"
