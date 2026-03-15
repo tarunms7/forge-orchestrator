@@ -126,6 +126,30 @@ async def _generate_branch_name(description: str) -> str:
     return _sanitize_branch_name(description)
 
 
+def _should_use_deep_planning(
+    planning_mode: str,
+    spec_path: str | None,
+    user_input: str,
+    total_files: int,
+) -> bool:
+    """Decide whether to use multi-pass deep planning."""
+    if planning_mode == "deep":
+        return True
+    if planning_mode == "simple":
+        return False
+    # Auto mode heuristics
+    if spec_path:
+        return True
+    if total_files > 200:
+        return True
+    # Check for structured input (markdown headers, numbered lists)
+    if re.search(r"^#{1,3}\s", user_input, re.MULTILINE):
+        return True
+    if re.search(r"^\d+\.\s", user_input, re.MULTILINE):
+        return True
+    return False
+
+
 class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     """Main orchestration loop. Ties all components together."""
 
@@ -290,23 +314,96 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._snapshot = await asyncio.get_event_loop().run_in_executor(
             None, gather_project_snapshot, self._project_dir,
         )
-        graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
 
-        # Persist planner-discovered conventions
-        if pipeline_id and graph.conventions is not None:
-            await db.update_pipeline_conventions(pipeline_id, json.dumps(graph.conventions))
+        # Decide planning mode
+        spec_text = ""
+        if spec_path:
+            with open(spec_path, "r") as f:
+                spec_text = f.read()
 
-        # Track planner cost
-        if pipeline_id and planner_llm._last_sdk_result:
-            sdk_result = planner_llm._last_sdk_result
-            if sdk_result.cost_usd > 0:
-                await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
-                await db.set_pipeline_planner_cost(pipeline_id, sdk_result.cost_usd)
+        use_deep = deep_plan or _should_use_deep_planning(
+            planning_mode=self._settings.planning_mode,
+            spec_path=spec_path,
+            user_input=user_input,
+            total_files=self._snapshot.total_files if self._snapshot else 0,
+        )
+
+        if use_deep:
+            from forge.core.planning.pipeline import PlanningPipeline
+            from forge.core.planning.scout import Scout
+            from forge.core.planning.architect import Architect
+            from forge.core.planning.detailer import DetailerFactory
+
+            scout_model = select_model(strategy, "planner", "medium")
+            architect_model = planner_model  # Same high-quality model
+            detailer_model = select_model(strategy, "planner", "low")
+
+            console.print(f"[dim]Deep planning: Scout({scout_model}) → Architect({architect_model}) → Detailers({detailer_model})[/dim]")
+
+            scout = Scout(model=scout_model, cwd=self._project_dir)
+            architect = Architect(
+                model=architect_model, cwd=self._project_dir,
+                autonomy=self._settings.autonomy,
+                question_limit=self._settings.question_limit,
+            )
+            detailer_factory = DetailerFactory(
+                model=detailer_model, cwd=self._project_dir,
+                max_concurrent=self._settings.max_agents,
+            )
+
+            async def _on_pipeline_msg(stage, msg):
+                if pipeline_id:
+                    await self._emit(f"planning:{stage}", {"line": str(msg)}, db=db, pipeline_id=pipeline_id)
+                else:
+                    await self._events.emit(f"planning:{stage}", {"line": str(msg)})
+
+            pipeline = PlanningPipeline(
+                scout=scout, architect=architect,
+                detailer_factory=detailer_factory,
+                on_message=_on_pipeline_msg,
+            )
+
+            planning_result = await pipeline.run(
+                user_input=user_input,
+                spec_text=spec_text,
+                snapshot_text=self._snapshot.format_for_planner() if self._snapshot else "",
+                conventions=planner_prompt_modifier,
+            )
+
+            if planning_result.task_graph is None:
+                raise RuntimeError("Deep planning pipeline failed to produce a TaskGraph")
+
+            graph = planning_result.task_graph
+
+            # Track costs
+            if pipeline_id and planning_result.total_cost_usd > 0:
+                await db.add_pipeline_cost(pipeline_id, planning_result.total_cost_usd)
+                await db.set_pipeline_planner_cost(pipeline_id, planning_result.total_cost_usd)
                 total_cost = await db.get_pipeline_cost(pipeline_id)
                 await self._emit("pipeline:cost_update", {
-                    "planner_cost_usd": sdk_result.cost_usd,
+                    "planner_cost_usd": planning_result.total_cost_usd,
                     "total_cost_usd": total_cost,
+                    "cost_breakdown": planning_result.cost_breakdown,
                 }, db=db, pipeline_id=pipeline_id)
+        else:
+            # Existing simple planner path
+            graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
+
+            # Persist planner-discovered conventions
+            if pipeline_id and graph.conventions is not None:
+                await db.update_pipeline_conventions(pipeline_id, json.dumps(graph.conventions))
+
+            # Track planner cost
+            if pipeline_id and planner_llm._last_sdk_result:
+                sdk_result = planner_llm._last_sdk_result
+                if sdk_result.cost_usd > 0:
+                    await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
+                    await db.set_pipeline_planner_cost(pipeline_id, sdk_result.cost_usd)
+                    total_cost = await db.get_pipeline_cost(pipeline_id)
+                    await self._emit("pipeline:cost_update", {
+                        "planner_cost_usd": sdk_result.cost_usd,
+                        "total_cost_usd": total_cost,
+                    }, db=db, pipeline_id=pipeline_id)
 
         # Emit pipeline cost estimate
         if pipeline_id and graph.tasks:
