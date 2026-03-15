@@ -14,11 +14,11 @@ class ForgeSettings(BaseSettings):
     # Model routing strategy
     model_strategy: str = "auto"  # "auto", "fast", "quality"
 
-    # Agent limits — default 2 to avoid memory exhaustion (each agent
-    # spawns a Claude CLI subprocess consuming ~300-500 MB).  With 4
-    # concurrent agents the total easily exceeds 2-4 GB, which can
-    # crash other apps (e.g. Cursor) on 16 GB machines.
-    max_agents: int = 2
+    # Agent limits — each agent spawns a Claude CLI subprocess consuming
+    # ~300-500 MB.  Default 4 balances parallelism with memory pressure.
+    # The resource monitor provides backpressure if the machine is
+    # overloaded (CPU, memory, disk thresholds).  Override via FORGE_MAX_AGENTS.
+    max_agents: int = 4
     agent_timeout_seconds: int = 600  # lowered from 1800
     context_rotation_tokens: int = 80_000
     max_retries: int = 5
