@@ -240,3 +240,19 @@ def test_help_text_includes_followup():
     # Check that our bindings include follow up
     bindings = {b.key: b for b in FinalApprovalScreen.BINDINGS}
     assert "f" in bindings
+
+
+def test_format_task_table_partial_mode():
+    from forge.tui.screens.final_approval import format_task_table
+    tasks = [
+        {"title": "Auth", "state": "done", "added": 100, "removed": 10},
+        {"title": "API", "state": "error", "error": "timed out (5 attempts)"},
+        {"title": "Tests", "state": "blocked", "error": "blocked by API"},
+    ]
+    result = format_task_table(tasks)
+    assert "✅" in result  # done task
+    assert "❌" in result  # error task
+    assert "⚠️" in result or "⚠" in result  # blocked task
+    assert "Auth" in result
+    assert "timed out" in result
+    assert "blocked by API" in result

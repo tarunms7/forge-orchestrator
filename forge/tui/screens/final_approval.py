@@ -13,6 +13,7 @@ from textual.message import Message
 
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.followup_input import FollowUpInput
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 
 def format_summary_stats(stats: dict) -> str:
@@ -30,18 +31,46 @@ def format_summary_stats(stats: dict) -> str:
 
 
 def format_task_table(tasks: list[dict]) -> str:
+    """Format task table with status icons based on task state."""
     if not tasks:
         return "[#484f58]No tasks[/]"
-    lines = []
+    lines: list[str] = []
     for t in tasks:
         title = t.get("title", "?")
-        added = t.get("added", 0)
-        removed = t.get("removed", 0)
-        tp = t.get("tests_passed", 0)
-        tt = t.get("tests_total", 0)
-        review = t.get("review", "?")
-        review_icon = "[#3fb950]✓[/]" if review == "passed" else "[#f85149]✗[/]"
-        lines.append(f"  {review_icon} [bold]{title}[/]  [#8b949e]+{added}/-{removed}  tests: {tp}/{tt}[/]")
+        state = t.get("state", t.get("review", "?"))
+
+        if state == "done":
+            added = t.get("added", 0)
+            removed = t.get("removed", 0)
+            files = t.get("files", 0)
+            tp = t.get("tests_passed", 0)
+            tt = t.get("tests_total", 0)
+            stats = f"+{added}/-{removed}"
+            if tt > 0:
+                stats += f"  tests: {tp}/{tt}"
+            if files > 0:
+                stats += f"  {files} files"
+            lines.append(f"  [#3fb950]✅[/] [bold]{title}[/]  [#8b949e]{stats}[/]")
+        elif state == "error":
+            error = t.get("error", "failed")
+            lines.append(f"  [#f85149]❌[/] [bold]{title}[/]  [#f85149]{error}[/]")
+        elif state == "blocked":
+            error = t.get("error", "blocked by dependency")
+            lines.append(f"  [#d29922]⚠️[/] [bold]{title}[/]  [#d29922]{error}[/]")
+        elif state == "cancelled":
+            lines.append(f"  [#8b949e]✘[/] [bold]{title}[/]  [#8b949e]cancelled[/]")
+        else:
+            # Legacy: review-based display
+            review = t.get("review", "?")
+            icon = "[#3fb950]✓[/]" if review == "passed" else "[#f85149]✗[/]"
+            added = t.get("added", 0)
+            removed = t.get("removed", 0)
+            tp = t.get("tests_passed", 0)
+            tt = t.get("tests_total", 0)
+            stats = f"+{added}/-{removed}"
+            if tt > 0:
+                stats += f"  tests: {tp}/{tt}"
+            lines.append(f"  {icon} [bold]{title}[/]  [#8b949e]{stats}[/]")
     return "\n".join(lines)
 
 
@@ -76,6 +105,9 @@ class FinalApprovalScreen(Screen):
     class ReRun(Message):
         pass
 
+    class SkipFailed(Message):
+        pass
+
     class FollowUp(Message):
         """Emitted when user submits a follow-up prompt."""
 
@@ -89,6 +121,7 @@ class FinalApprovalScreen(Screen):
         Binding("enter", "create_pr", "Create PR", show=True, priority=True),
         Binding("d", "view_diff", "View Diff", show=True),
         Binding("r", "rerun", "Re-run Failed", show=True),
+        Binding("s", "skip_failed", "Skip & Finish", show=True),
         Binding("f", "focus_followup", "Follow Up", show=True),
         Binding("n", "new_task", "New Task", show=True),
         Binding("ctrl+s", "submit_followup", "Submit Follow-up", show=False),
@@ -106,18 +139,35 @@ class FinalApprovalScreen(Screen):
         stats: dict | None = None,
         tasks: list[dict] | None = None,
         pipeline_branch: str = "",
+        partial: bool = False,
+        **kwargs,
     ) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
         self._stats = stats or {}
         self._tasks = tasks or []
         self._pipeline_branch = pipeline_branch
+        self._partial = partial
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Dynamically enable/disable actions based on partial mode."""
+        if action in ("rerun", "skip_failed"):
+            return self._partial  # only available in partial mode
+        if action == "new_task":
+            return not self._partial  # only available in full mode
+        return True
 
     def compose(self):
         files_count = self._stats.get("files", 0)
+        if self._partial:
+            done = sum(1 for t in self._tasks if t.get("state") == "done")
+            total = len(self._tasks)
+            header = f"Pipeline Partial — {done}/{total} Tasks Completed"
+        else:
+            header = "Pipeline Complete — Final Approval"
         with VerticalScroll():
             with Center():
                 with Vertical(id="approval-container"):
-                    yield Static("[bold #58a6ff]Pipeline Complete — Final Approval[/]\n", id="header")
+                    yield Static(f"[bold #58a6ff]{header}[/]\n", id="header")
                     yield Static(format_summary_stats(self._stats), id="stats")
                     yield Static("", id="pr-url")
                     yield Static("\n[bold]Tasks:[/]", id="tasks-header")
@@ -130,6 +180,23 @@ class FinalApprovalScreen(Screen):
                         branch=self._pipeline_branch,
                         files_changed=files_count,
                     )
+        if self._partial:
+            yield ShortcutBar([
+                ("Enter", "Create PR (completed only)"),
+                ("r", "Retry Failed"),
+                ("s", "Skip & Finish"),
+                ("d", "View Diff"),
+                ("f", "Follow Up"),
+                ("Esc", "Back"),
+            ])
+        else:
+            yield ShortcutBar([
+                ("Enter", "Create PR"),
+                ("d", "View Diff"),
+                ("f", "Follow Up"),
+                ("n", "New Task"),
+                ("Esc", "Back"),
+            ])
         yield Footer()
 
     def show_pr_url(self, url: str) -> None:
@@ -149,6 +216,10 @@ class FinalApprovalScreen(Screen):
 
     def action_rerun(self) -> None:
         self.post_message(self.ReRun())
+
+    def action_skip_failed(self) -> None:
+        """Skip all failed tasks and finish the pipeline."""
+        self.post_message(self.SkipFailed())
 
     def action_focus_followup(self) -> None:
         """Focus the follow-up input area."""
