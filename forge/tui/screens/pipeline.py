@@ -40,6 +40,9 @@ _PHASE_BANNER: dict[str, tuple[str, str]] = {
     "error":          ("✖ Error",           "#f85149"),
     "cancelled":      ("✘ Cancelled",       "#8b949e"),
     "paused":         ("⏸ Paused",          "#d29922"),
+    "partial_success": ("⚠ Partial Success", "#d29922"),
+    "retrying":        ("⟳ Retrying Failed",  "#f0883e"),
+    "interrupted":     ("⏸ Interrupted",      "#d29922"),
 }
 
 _VIEW_NAMES = ("output", "chat", "diff")
