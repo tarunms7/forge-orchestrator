@@ -449,3 +449,49 @@ def test_parse_conflict_files_from_stderr_no_conflicts():
 def test_parse_conflict_files_from_stderr_empty():
     assert _parse_conflict_files_from_stderr("") == []
     assert _parse_conflict_files_from_stderr(None) == []
+
+
+def test_parse_conflict_files_from_stderr_modify_delete():
+    """modify/delete conflicts don't use 'Merge conflict in' format."""
+    stderr = (
+        "CONFLICT (modify/delete): src/api.py deleted in HEAD "
+        "and modified in abc1234... task change\n"
+    )
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert files == ["src/api.py"]
+
+
+def test_parse_conflict_files_from_stderr_rename_delete():
+    """rename/delete conflicts use yet another format."""
+    stderr = (
+        "CONFLICT (rename/delete): old_name.py renamed to "
+        "new_name.py in HEAD, deleted in abc1234\n"
+    )
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert files == ["old_name.py"]
+
+
+def test_parse_conflict_files_from_stderr_mixed_types():
+    """Multiple conflict types in one rebase should all be captured."""
+    stderr = (
+        "CONFLICT (content): Merge conflict in shared.py\n"
+        "CONFLICT (modify/delete): removed.py deleted in HEAD "
+        "and modified in abc1234\n"
+        "CONFLICT (rename/delete): old.py renamed to new.py "
+        "in HEAD, deleted in def5678\n"
+    )
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert "shared.py" in files
+    assert "removed.py" in files
+    assert "old.py" in files
+    assert len(files) == 3
+
+
+def test_parse_conflict_files_from_stderr_no_duplicates():
+    """Same file mentioned twice should appear only once."""
+    stderr = (
+        "CONFLICT (content): Merge conflict in shared.py\n"
+        "CONFLICT (content): Merge conflict in shared.py\n"
+    )
+    files = _parse_conflict_files_from_stderr(stderr)
+    assert files == ["shared.py"]

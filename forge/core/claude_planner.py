@@ -71,7 +71,13 @@ Rules:
 - If there are NO cross-task interfaces (all tasks are independent), omit integration_hints entirely.
 - IMPORTANT: Integration hints enable PARALLEL execution. When you add integration hints, the system can generate contracts so both producer and consumer tasks run simultaneously. Without hints, consumer tasks must wait for producer tasks. PREFER adding hints over adding depends_on for API integration tasks.
 - Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object.
-- IMPORTANT: You have a LIMITED number of turns. Spend at most 3 turns reading files. After that, produce the TaskGraph JSON IMMEDIATELY. Do NOT re-read files you have already seen. Do NOT loop through the same directories. Once you have enough context, OUTPUT THE JSON."""
+- IMPORTANT: You have a LIMITED number of turns. Follow this budget strictly:
+  * Turns 1-5: Read files to understand the project. Do NOT re-read files you have already seen.
+  * Turn 6+: STOP READING. Produce the TaskGraph JSON IMMEDIATELY with whatever context you have.
+  * If you find yourself reading the same file twice, STOP and output JSON now.
+  * Do NOT loop through directories. Do NOT explore exhaustively. Read only the files most relevant to the task.
+  * A good-enough plan produced on time beats a perfect plan that never arrives.
+- Output ONLY valid JSON. No markdown fences, no explanation, just the JSON object."""
 
 
 class ClaudePlannerLLM(PlannerLLM):
@@ -95,10 +101,12 @@ class ClaudePlannerLLM(PlannerLLM):
 
         options = ClaudeCodeOptions(
             system_prompt=system_prompt,
-            # Give the planner enough turns to read project files before
-            # producing JSON.  Opus typically needs 3-5 turns to explore
-            # the codebase, then 1 turn to output the TaskGraph.
-            max_turns=6,
+            # Give the planner enough headroom for large tasks.  When the
+            # user request references an implementation plan doc + many
+            # source files, 6 turns is too few — the agent spends all turns
+            # reading and never produces JSON.  15 turns gives ~10 turns of
+            # exploration + 5 turns of safety margin.
+            max_turns=15,
             model=self._model,
             # Read-only tools: planner explores the codebase but must NOT
             # write files — its only output is the TaskGraph JSON in the
@@ -148,7 +156,7 @@ class ClaudePlannerLLM(PlannerLLM):
 
         if feedback:
             parts.append(f"Previous attempt feedback:\n{feedback}")
-        parts.append("Respond with ONLY the TaskGraph JSON. You have very few turns — do NOT waste them re-reading files. Output JSON as soon as you have enough context.")
+        parts.append("Respond with ONLY the TaskGraph JSON. CRITICAL: Do NOT re-read any file you have already seen. If you have read the main files, OUTPUT THE JSON NOW. Do not explore further.")
         return "\n\n".join(parts)
 
 
