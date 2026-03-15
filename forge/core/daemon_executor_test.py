@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, call, patch
 
-from forge.core.daemon_executor import ExecutorMixin
+from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 
 
 def _make_proc(stdout: str = "", returncode: int = 0) -> MagicMock:
@@ -115,3 +115,25 @@ class TestBuildPrompt:
         prompt = mixin._build_prompt(task)
 
         assert "RETRY" not in prompt
+
+
+class TestComplexityTimeout:
+    """_complexity_timeout() scales base timeout by task complexity."""
+
+    def test_complexity_timeout_low(self):
+        assert _complexity_timeout(600, "low") == 600
+
+    def test_complexity_timeout_medium(self):
+        assert _complexity_timeout(600, "medium") == 900
+
+    def test_complexity_timeout_high(self):
+        assert _complexity_timeout(600, "high") == 1200
+
+    def test_complexity_timeout_unknown_defaults_to_medium(self):
+        assert _complexity_timeout(600, "unknown") == 900
+
+    def test_complexity_timeout_none_defaults_to_medium(self):
+        assert _complexity_timeout(600, None) == 900
+
+    def test_complexity_timeout_respects_base(self):
+        assert _complexity_timeout(300, "high") == 600

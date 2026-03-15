@@ -28,6 +28,18 @@ from forge.core.models import TaskState
 logger = logging.getLogger("forge")
 console = Console()
 
+_COMPLEXITY_MULTIPLIERS: dict[str, float] = {
+    "low": 1.0,
+    "medium": 1.5,
+    "high": 2.0,
+}
+
+
+def _complexity_timeout(base_seconds: int, complexity: str | None) -> int:
+    """Scale agent timeout by task complexity."""
+    multiplier = _COMPLEXITY_MULTIPLIERS.get(complexity or "medium", 1.5)
+    return int(base_seconds * multiplier)
+
 
 class ExecutorMixin:
     """Mixin providing the decomposed ``_execute_task`` pipeline.
@@ -728,6 +740,10 @@ class ExecutorMixin:
             task_contracts = contract_set.contracts_for_task(task_id)
             contracts_block = task_contracts.format_for_agent()
 
+        task_timeout = _complexity_timeout(
+            self._settings.agent_timeout_seconds,
+            getattr(task, "complexity", None),
+        )
         result = await runtime.run_task(
             agent_id, prompt, worktree_path, task.files,
             allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
@@ -739,6 +755,7 @@ class ExecutorMixin:
             resume=resume,
             autonomy=self._settings.autonomy,
             questions_remaining=self._settings.question_limit,
+            timeout_seconds=task_timeout,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)

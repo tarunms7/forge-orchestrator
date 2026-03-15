@@ -27,13 +27,15 @@ class AgentRuntime:
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
+        timeout_seconds: int | None = None,
     ) -> AgentResult:
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         try:
             return await self._adapter.run(
                 task_prompt=task_prompt,
                 worktree_path=worktree_path,
                 allowed_files=allowed_files,
-                timeout_seconds=self._timeout,
+                timeout_seconds=effective_timeout,
                 allowed_dirs=allowed_dirs,
                 model=model,
                 on_message=on_message,
@@ -50,8 +52,8 @@ class AgentRuntime:
             return AgentResult(
                 success=False,
                 files_changed=[],
-                summary=f"Agent '{agent_id}' timed out after {self._timeout}s",
-                error=f"Timeout after {self._timeout}s",
+                summary=f"Agent '{agent_id}' timed out after {effective_timeout}s",
+                error=f"Timeout after {effective_timeout}s",
             )
         except Exception as e:
             return AgentResult(
