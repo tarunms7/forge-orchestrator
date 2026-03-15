@@ -241,7 +241,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             return False
         return True
 
-    async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None) -> TaskGraph:
+    async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None, spec_path: str | None = None, deep_plan: bool = False) -> TaskGraph:
         """Run planning only. Returns the TaskGraph for user approval.
 
         Args:
@@ -586,7 +586,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         )
         logger.info("Task %s reset to 'todo' for retry", task_id)
 
-    async def run(self, user_input: str) -> None:
+    async def run(self, user_input: str, spec_path: str | None = None, deep_plan: bool = False) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
         from forge.core.paths import forge_db_url
         db = Database(forge_db_url())
@@ -600,7 +600,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 project_path=self._project_dir,
                 project_name=os.path.basename(self._project_dir),
             )
-            graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id)
+            graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id, spec_path=spec_path, deep_plan=deep_plan)
             # Contract generation phase
             self._contracts = await self.generate_contracts(graph, db, self._pipeline_id)
             try:

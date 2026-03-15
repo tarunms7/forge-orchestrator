@@ -55,7 +55,9 @@ def init(project_dir: str) -> None:
     envvar="FORGE_MODEL_STRATEGY",
     help="Model routing: auto, fast, quality (default: auto, or $FORGE_MODEL_STRATEGY)",
 )
-def run(task: str, project_dir: str, strategy: str | None) -> None:
+@click.option("--spec", default=None, type=click.Path(exists=True), help="Path to spec document (markdown or text)")
+@click.option("--deep-plan", is_flag=True, default=False, help="Force multi-pass deep planning")
+def run(task: str, project_dir: str, strategy: str | None, spec: str | None, deep_plan: bool) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -78,7 +80,7 @@ def run(task: str, project_dir: str, strategy: str | None) -> None:
 
     daemon = ForgeDaemon(project_dir, settings=settings)
     try:
-        asyncio.run(daemon.run(task))
+        asyncio.run(daemon.run(task, spec_path=spec, deep_plan=deep_plan))
     except KeyboardInterrupt:
         click.echo("\nForge interrupted by user.")
     except Exception as e:
