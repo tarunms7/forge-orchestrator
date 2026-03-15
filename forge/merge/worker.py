@@ -58,7 +58,7 @@ class MergeWorker:
             elif e.stderr:
                 conflict_desc = f"(stderr) {e.stderr[:200]}"
             else:
-                conflict_desc = "unknown files"
+                conflict_desc = f"unknown files (raw: {e.stderr[:150]})" if e.stderr else "unknown files (no stderr)"
             return MergeResult(
                 success=False,
                 conflicting_files=e.files,
@@ -100,7 +100,7 @@ class MergeWorker:
             elif e.stderr:
                 conflict_desc = f"(stderr) {e.stderr[:200]}"
             else:
-                conflict_desc = "unknown files"
+                conflict_desc = f"unknown files (raw: {e.stderr[:150]})" if e.stderr else "unknown files (no stderr)"
             return MergeResult(
                 success=False,
                 conflicting_files=e.files,
@@ -166,18 +166,39 @@ class MergeWorker:
 def _parse_conflict_files_from_stderr(stderr: str) -> list[str]:
     """Extract conflicting file paths from git rebase stderr output.
 
-    Git rebase stderr contains lines like:
+    Git outputs several CONFLICT formats depending on the type:
         CONFLICT (content): Merge conflict in path/to/file.py
         CONFLICT (add/add): Merge conflict in path/to/other.py
+        CONFLICT (modify/delete): file.py deleted in HEAD and modified in <sha>
+        CONFLICT (rename/delete): old.py renamed ... in HEAD, deleted in <sha>
+        CONFLICT (rename/rename): file.py renamed to a.py in ... and to b.py in ...
+
+    We use multiple patterns to catch all variants.
     """
     if not stderr:
         return []
-    pattern = re.compile(r"CONFLICT\s*\([^)]*\):\s*Merge conflict in\s+(.+)")
+
+    patterns = [
+        # "Merge conflict in <path>"  (content, add/add)
+        re.compile(r"CONFLICT\s*\([^)]*\):\s*Merge conflict in\s+(.+)"),
+        # "modify/delete: <path> deleted in ..."
+        re.compile(r"CONFLICT\s*\(modify/delete\):\s+(\S+)\s+deleted in"),
+        # "rename/delete: <path> renamed ..."
+        re.compile(r"CONFLICT\s*\(rename/delete\):\s+(\S+)"),
+        # "rename/rename: <path> renamed to ..."
+        re.compile(r"CONFLICT\s*\(rename/rename\):\s+(\S+)"),
+    ]
     files: list[str] = []
+    seen: set[str] = set()
     for line in stderr.splitlines():
-        m = pattern.search(line)
-        if m:
-            files.append(m.group(1).strip())
+        for pattern in patterns:
+            m = pattern.search(line)
+            if m:
+                path = m.group(1).strip()
+                if path not in seen:
+                    seen.add(path)
+                    files.append(path)
+                break  # one match per line
     return files
 
 
