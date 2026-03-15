@@ -34,6 +34,10 @@ class ShortcutBar(Widget):
         super().__init__(**kwargs)
         self.shortcuts = shortcuts or []
 
+    def watch_shortcuts(self, _old: list, _new: list) -> None:
+        """Trigger re-render when shortcuts change."""
+        self.refresh()
+
     def render(self) -> Text:
         if not self.shortcuts:
             return Text("")
