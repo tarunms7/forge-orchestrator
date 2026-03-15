@@ -16,7 +16,6 @@ from forge.core.models import TaskGraph
 from forge.core.planning.models import CodebaseMap, PlanFeedback
 from forge.core.planning.prompts import build_architect_system_prompt
 from forge.core.sdk_helpers import sdk_query
-from forge.core.validator import validate_task_graph
 
 logger = logging.getLogger("forge.planning.architect")
 
@@ -102,9 +101,12 @@ class Architect:
             resume_session = None
             graph, error = self._parse(raw)
             if graph is not None:
+                logger.info("Architect succeeded on attempt %d (%d tasks)", attempt + 1, len(graph.tasks))
                 return ArchitectResult(task_graph=graph, cost_usd=total_cost, input_tokens=total_input, output_tokens=total_output, session_id=result.session_id)
             val_feedback = f"Invalid output: {error}"
+            logger.warning("Architect attempt %d parse failed: %s", attempt + 1, error)
 
+        logger.error("Architect failed after %d retries", self._max_retries)
         return ArchitectResult(task_graph=None, cost_usd=total_cost, input_tokens=total_input, output_tokens=total_output)
 
     def _build_prompt(self, user_input, spec_text, codebase_map, conventions, feedback, validation_feedback):
@@ -143,8 +145,17 @@ class Architect:
             graph = TaskGraph.model_validate(data)
         except PydanticValidationError as e:
             return None, f"Schema validation failed: {e}"
-        try:
-            validate_task_graph(graph)
-        except Exception as e:
-            return None, str(e)
+        # Basic structural checks only (duplicate IDs, invalid dep refs, cycles).
+        # File-conflict validation is handled by the pipeline's dependency-aware
+        # validator — the old validate_task_graph() rejects ANY shared file even
+        # when tasks are properly chained via depends_on.
+        task_ids = {t.id for t in graph.tasks}
+        seen: set[str] = set()
+        for t in graph.tasks:
+            if t.id in seen:
+                return None, f"Duplicate task id: '{t.id}'"
+            seen.add(t.id)
+            for dep in t.depends_on:
+                if dep not in task_ids:
+                    return None, f"Task '{t.id}' depends on unknown task '{dep}'"
         return graph, None
