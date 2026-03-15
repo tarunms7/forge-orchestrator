@@ -16,6 +16,7 @@ from textual.message import Message
 from forge.tui.state import TuiState
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.search_overlay import SearchOverlay
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
 
@@ -86,6 +87,13 @@ class ReviewScreen(Screen):
         yield DiffViewer()
         yield SearchOverlay()
         yield Static("[a] approve  [x] reject  [e] editor  [j/k] scroll  [/] search  [1-9] jump task", id="review-status")
+        yield ShortcutBar([
+            ("a", "Approve"),
+            ("x", "Reject"),
+            ("e", "Open in Editor"),
+            ("↑↓", "Scroll"),
+            ("Esc", "Back"),
+        ])
 
     def on_mount(self) -> None:
         self._state.on_change(self._on_state_change)

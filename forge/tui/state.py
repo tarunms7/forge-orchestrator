@@ -381,7 +381,18 @@ class TuiState:
         logger.debug("Slot queued event received")
 
     def _on_all_tasks_done(self, data: dict) -> None:
-        self.phase = "final_approval"
+        summary = data.get("summary", {})
+        result = summary.get("result", "complete")
+        if result == "partial_success":
+            self.phase = "partial_success"
+        elif result == "error":
+            self.phase = "error"
+        else:
+            self.phase = "final_approval"
+        self._notify("phase")
+
+    def _on_interrupted(self, data: dict) -> None:
+        self.phase = "interrupted"
         self._notify("phase")
 
     def _on_pr_creating(self, data: dict) -> None:
@@ -464,6 +475,7 @@ class TuiState:
         "review:llm_feedback": _on_review_llm_feedback,
         "review:llm_output": _on_review_llm_output,
         "pipeline:all_tasks_done": _on_all_tasks_done,
+        "pipeline:interrupted": _on_interrupted,
         "pipeline:pr_creating": _on_pr_creating,
         "pipeline:pr_created": _on_pr_created,
         "pipeline:pr_failed": _on_pr_failed,

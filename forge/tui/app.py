@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 from textual.app import App
 from textual.binding import Binding
@@ -144,6 +145,9 @@ class ForgeApp(App):
             if phase == "final_approval" and not self._final_approval_pushed:
                 self._final_approval_pushed = True
                 self._push_final_approval()
+            elif phase == "partial_success" and not self._final_approval_pushed:
+                self._final_approval_pushed = True
+                self._push_final_approval(partial=True)
 
     def _auto_screenshot(self, label: str) -> None:
         """Automatically save a screenshot for README."""
@@ -156,7 +160,7 @@ class ForgeApp(App):
         except Exception:
             logger.debug("Auto-screenshot failed for %s", label)
 
-    def _push_final_approval(self) -> None:
+    def _push_final_approval(self, partial: bool = False) -> None:
         """Build stats/tasks summary and push FinalApprovalScreen."""
         state = self._state
         tasks_list = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
@@ -186,11 +190,14 @@ class ForgeApp(App):
         task_summaries = [
             {
                 "title": t.get("title", ""),
+                "state": t.get("state", "done"),
                 "added": t.get("merge_result", {}).get("linesAdded", 0),
                 "removed": t.get("merge_result", {}).get("linesRemoved", 0),
+                "files": t.get("merge_result", {}).get("filesChanged", 0),
                 "tests_passed": t.get("tests_passed", 0),
                 "tests_total": t.get("tests_total", 0),
                 "review": "passed" if t.get("state") == "done" else "failed",
+                "error": t.get("error", ""),
             }
             for t in tasks_list
         ]
@@ -199,6 +206,7 @@ class ForgeApp(App):
         pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
         self.push_screen(FinalApprovalScreen(
             stats=stats, tasks=task_summaries, pipeline_branch=pipeline_branch,
+            partial=partial,
         ))
         # If no cached branch, fetch async and update the screen
         if not pipeline_branch:
@@ -325,6 +333,98 @@ class ForgeApp(App):
                 except Exception:
                     pass
             self.notify(f"PR creation error: {e}", severity="error")
+
+    async def on_final_approval_screen_follow_up(self, event) -> None:
+        """User submitted a follow-up prompt from FinalApprovalScreen."""
+        if not self._db or not self._pipeline_id:
+            self.notify("No pipeline context for follow-up.", severity="error")
+            return
+
+        prompt = event.prompt
+        if not prompt.strip():
+            return
+
+        tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+        followup_n = sum(1 for t in tasks if "-followup-" in t.id) + 1
+        prefix = self._pipeline_id[:8]
+        task_id = f"{prefix}-followup-{followup_n}"
+
+        done_ids = [t.id for t in tasks if t.state == "done"]
+
+        await self._db.create_task(
+            id=task_id,
+            title=prompt[:80],
+            description=prompt,
+            files=[],
+            depends_on=done_ids,
+            complexity="medium",
+            pipeline_id=self._pipeline_id,
+        )
+
+        self._state.phase = "executing"
+        self._state._notify("phase")
+        self._final_approval_pushed = False
+
+        while len(self.screen_stack) > 2:
+            self.pop_screen()
+
+        await self._resume_execution()
+
+    async def on_final_approval_screen_rerun(self, event) -> None:
+        """User wants to retry failed tasks."""
+        if not self._db or not self._pipeline_id:
+            return
+
+        tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+        reset_count = 0
+        for t in tasks:
+            if t.state in ("error", "blocked"):
+                await self._db.update_task_state(t.id, "todo")
+                reset_count += 1
+
+        if reset_count == 0:
+            self.notify("No failed tasks to retry.", severity="warning")
+            return
+
+        await self._db.update_pipeline_status(self._pipeline_id, "retrying")
+        self._state.phase = "retrying"
+        self._state._notify("phase")
+        self._final_approval_pushed = False
+
+        while len(self.screen_stack) > 2:
+            self.pop_screen()
+
+        await self._resume_execution()
+
+    async def on_final_approval_screen_skip_failed(self, event) -> None:
+        """User wants to skip failed tasks and finish."""
+        if not self._db or not self._pipeline_id:
+            return
+
+        tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+        for t in tasks:
+            if t.state in ("error", "blocked"):
+                await self._db.update_task_state(t.id, "cancelled")
+
+        await self._db.update_pipeline_status(self._pipeline_id, "complete")
+        self._state.phase = "final_approval"
+        self._state._notify("phase")
+
+        self._final_approval_pushed = False
+        while len(self.screen_stack) > 2:
+            self.pop_screen()
+        self._push_final_approval()
+
+    async def _resume_execution(self) -> None:
+        """Re-enter the daemon execution loop for remaining TODO tasks."""
+        if not self._daemon or not self._graph or not self._db:
+            self.notify("Cannot resume: missing context.", severity="error")
+            return
+
+        self._daemon_task = asyncio.create_task(
+            self._daemon.execute(self._graph, self._db, pipeline_id=self._pipeline_id, resume=True)
+        )
+        self._daemon_task.add_done_callback(self._on_daemon_done)
 
     async def _get_pipeline_branch(self) -> str | None:
         """Return the pipeline branch name from DB (the branch where task work was merged)."""
@@ -552,6 +652,7 @@ class ForgeApp(App):
             self._state.apply_event("pipeline:error", {"error": str(e)})
 
     def _on_daemon_done(self, task: asyncio.Task) -> None:
+        self._force_quit = False  # Reset so next pipeline gets the warning on first q press
         if self._elapsed_timer:
             self._elapsed_timer.stop()
         if not task.cancelled() and task.exception():
@@ -642,14 +743,50 @@ class ForgeApp(App):
 
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():
-            self.notify("Pipeline running. Press q again to force quit.", severity="warning")
-            # Replace binding to force quit on second press
-            self._force_quit = getattr(self, "_force_quit", False)
-            if self._force_quit:
-                self.exit()
-            self._force_quit = True
+            if getattr(self, "_force_quit", False):
+                asyncio.create_task(self._graceful_quit())
+            else:
+                self.notify("Pipeline running. Press q again to quit (tasks will be saved).", severity="warning")
+                self._force_quit = True
         else:
             self.exit()
+
+    async def _graceful_quit(self) -> None:
+        """Gracefully shut down: cancel daemon, reset stuck tasks, mark interrupted."""
+        if self._daemon_task and not self._daemon_task.done():
+            self._daemon_task.cancel()
+            try:
+                await self._daemon_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if self._db and self._pipeline_id:
+            tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+            non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
+            for t in tasks:
+                if t.state in non_terminal:
+                    await self._db.update_task_state(t.id, "todo")
+
+            prefix = self._pipeline_id[:8]
+            agents = await self._db.list_agents(prefix=prefix)
+            for a in agents:
+                if a.state != "idle":
+                    await self._db.release_agent(a.id)
+
+            await self._db.update_pipeline_status(self._pipeline_id, "interrupted")
+            await self._db.clear_executor_info(self._pipeline_id)
+
+            # Re-fetch tasks after reset so the summary reflects current state
+            tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+
+            try:
+                await self._daemon._emit("pipeline:interrupted", {
+                    "summary": {t.id: t.state for t in tasks},
+                }, db=self._db, pipeline_id=self._pipeline_id)
+            except Exception:
+                pass
+
+        self.exit()
 
     def action_clear_input(self) -> None:
         """Clear the currently focused text input widget."""
@@ -710,6 +847,64 @@ class ForgeApp(App):
                     from forge.tui.screens.plan_approval import PlanApprovalScreen
                     self.push_screen(PlanApprovalScreen(plan_tasks))
                     return
+
+            if pipeline.status in ("interrupted", "partial_success"):
+                events = await self._db.list_events(pipeline_id)
+                state = TuiState()
+                for evt in events:
+                    state.apply_event(evt.event_type, evt.payload or {})
+
+                self._state = state
+                self._pipeline_id = pipeline_id
+                self._pipeline_start_time = time.time()
+
+                graph_json = pipeline.task_graph_json
+                if graph_json:
+                    import json
+                    from forge.core.models import TaskGraph
+                    self._graph = TaskGraph.model_validate_json(graph_json)
+
+                from forge.core.daemon import ForgeDaemon
+                from forge.core.events import EventEmitter
+                from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
+                from forge.config.settings import ForgeSettings
+
+                settings = self._settings or ForgeSettings()
+                emitter = EventEmitter()
+                self._bus = EventBus()
+                self._source = EmbeddedSource(emitter, self._bus)
+                self._source.connect()
+
+                for evt_type in TUI_EVENT_TYPES:
+                    async def _handler(data, _type=evt_type):
+                        self._state.apply_event(_type, data)
+                    self._bus.subscribe(evt_type, _handler)
+
+                self._daemon = ForgeDaemon(
+                    project_dir=pipeline.project_dir,
+                    settings=settings,
+                    event_emitter=emitter,
+                )
+
+                self.push_screen(PipelineScreen(state))
+
+                if pipeline.status == "interrupted":
+                    tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+                    non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
+                    for t in tasks:
+                        if t.state in non_terminal:
+                            await self._db.update_task_state(t.id, "todo")
+                    tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+
+                    await self._db.update_pipeline_status(pipeline_id, "executing")
+                    await self._resume_execution()
+                    self.notify(f"Resumed pipeline — {sum(1 for t in tasks if t.state == 'done')}/{len(tasks)} tasks done", severity="information")
+
+                elif pipeline.status == "partial_success":
+                    self._final_approval_pushed = True
+                    self._push_final_approval(partial=True)
+
+                return
 
             # Load events and replay into a fresh TuiState (read-only history)
             events = await self._db.list_events(pipeline_id)

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from rich.console import Console
 

@@ -113,3 +113,10 @@ class TestTaskState:
 
     def test_awaiting_input_distinct_from_awaiting_approval(self):
         assert TaskState.AWAITING_INPUT != TaskState.AWAITING_APPROVAL
+
+    def test_blocked_state_exists(self):
+        assert TaskState.BLOCKED == "blocked"
+        assert TaskState.BLOCKED.value == "blocked"
+
+    def test_blocked_is_distinct_from_error(self):
+        assert TaskState.BLOCKED != TaskState.ERROR

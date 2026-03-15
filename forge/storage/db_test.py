@@ -611,3 +611,20 @@ async def test_add_pipeline_cost_accumulates(db: Database):
 
     cost = await db.get_pipeline_cost("pipe-cost")
     assert abs(cost - 0.35) < 0.001
+
+
+async def test_executor_tracking_columns(db: Database):
+    """executor_pid and executor_token can be set and cleared on a pipeline."""
+    await db.create_pipeline(
+        id="pipe-exec", description="test", project_dir="/tmp",
+        model_strategy="balanced", budget_limit_usd=10,
+    )
+    await db.set_executor_info("pipe-exec", pid=12345, token="abc-123")
+    p = await db.get_pipeline("pipe-exec")
+    assert p.executor_pid == 12345
+    assert p.executor_token == "abc-123"
+
+    await db.clear_executor_info("pipe-exec")
+    p = await db.get_pipeline("pipe-exec")
+    assert p.executor_pid is None
+    assert p.executor_token is None

@@ -20,6 +20,7 @@ from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.search_overlay import SearchOverlay
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 logger = logging.getLogger("forge.tui.screens.pipeline")
 
@@ -40,6 +41,9 @@ _PHASE_BANNER: dict[str, tuple[str, str]] = {
     "error":          ("✖ Error",           "#f85149"),
     "cancelled":      ("✘ Cancelled",       "#8b949e"),
     "paused":         ("⏸ Paused",          "#d29922"),
+    "partial_success": ("⚠ Partial Success", "#d29922"),
+    "retrying":        ("⟳ Retrying Failed",  "#f0883e"),
+    "interrupted":     ("⏸ Interrupted",      "#d29922"),
 }
 
 _VIEW_NAMES = ("output", "chat", "diff")
@@ -253,6 +257,11 @@ class PipelineScreen(Screen):
                 yield ChatThread()
                 yield DiffViewer()
         yield SearchOverlay()
+        yield ShortcutBar([
+            ("d", "View Diff"),
+            ("↑↓", "Select Task"),
+            ("q", "Quit (tasks saved)"),
+        ])
         yield PipelineProgress()
 
     def on_mount(self) -> None:
@@ -295,6 +304,9 @@ class PipelineScreen(Screen):
             # On task state changes, also update streaming lifecycle
             self._update_streaming_lifecycle()
             self._refresh_all()
+            # Update shortcut bar hints based on pipeline phase
+            if field == "phase":
+                self._update_shortcut_bar(self._state.phase)
 
             # Notify user when task enters review (press 'r' to open)
             if field == "tasks" and not self._read_only:
@@ -304,6 +316,31 @@ class PipelineScreen(Screen):
             error = self._state.error
             if error:
                 self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
+
+    def _update_shortcut_bar(self, phase: str) -> None:
+        """Update shortcut bar based on current pipeline phase."""
+        try:
+            bar = self.query_one(ShortcutBar)
+        except Exception:
+            return
+        if phase == "awaiting_input":
+            bar.shortcuts = [
+                ("Enter", "Answer Question"),
+                ("d", "View Diff"),
+                ("↑↓", "Select Task"),
+                ("q", "Quit (tasks saved)"),
+            ]
+        elif phase in ("partial_success", "retrying"):
+            bar.shortcuts = [
+                ("Enter", "View Results"),
+                ("q", "Quit (tasks saved)"),
+            ]
+        else:
+            bar.shortcuts = [
+                ("d", "View Diff"),
+                ("↑↓", "Select Task"),
+                ("q", "Quit (tasks saved)"),
+            ]
 
     def _check_review_notification(self) -> None:
         """Notify user when a task enters review — they can press 'r' to open ReviewScreen."""

@@ -37,16 +37,21 @@ def format_followup_history(history: list[str]) -> str:
 
 
 class FollowUpTextArea(TextArea):
-    """TextArea subclass with clear-input binding for follow-up input."""
+    """TextArea subclass with escape-to-unfocus and clear-input bindings."""
 
     BINDINGS = [
         Binding("ctrl+u", "clear_input", "Clear", show=False, priority=True),
+        Binding("escape", "unfocus", "Back", show=False, priority=True),
     ]
 
     def action_clear_input(self) -> None:
         """Clear the text area content and reset cursor."""
         self.text = ""
         self.move_cursor((0, 0))
+
+    def action_unfocus(self) -> None:
+        """Return focus to the parent screen so keybindings work again."""
+        self.screen.focus()
 
 
 class FollowUpInput(Widget):

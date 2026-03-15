@@ -11,6 +11,7 @@ from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
 from forge.tui.widgets.pipeline_list import PipelineList
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 
 class PromptTextArea(TextArea):
@@ -147,6 +148,12 @@ class HomeScreen(Screen):
                     yield Static(shortcuts_text, id="shortcuts-panel")
                 yield Static("Recent pipelines", id="recent-label")
                 yield PipelineList()
+        yield ShortcutBar([
+            ("Ctrl+S", "Submit Task"),
+            ("↑↓", "History"),
+            ("Enter", "Resume Selected"),
+            ("q", "Quit"),
+        ])
 
     def on_mount(self) -> None:
         pipeline_list = self.query_one(PipelineList)

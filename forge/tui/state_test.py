@@ -625,3 +625,36 @@ def test_restarted_clears_unified_log():
     state.apply_event("task:agent_output", {"task_id": "t1", "line": "x"})
     state.apply_event("pipeline:restarted", {})
     assert state.unified_log == {}
+
+
+# --- Task 5: partial_success / retrying / interrupted phases ---
+
+def test_all_tasks_done_partial_success():
+    state = TuiState()
+    state.apply_event("pipeline:all_tasks_done", {
+        "summary": {"done": 3, "error": 1, "blocked": 1, "cancelled": 0, "total": 5, "result": "partial_success"}
+    })
+    assert state.phase == "partial_success"
+
+
+def test_all_tasks_done_complete():
+    state = TuiState()
+    state.apply_event("pipeline:all_tasks_done", {
+        "summary": {"done": 5, "error": 0, "blocked": 0, "cancelled": 0, "total": 5, "result": "complete"}
+    })
+    assert state.phase == "final_approval"
+
+
+def test_all_tasks_done_all_error():
+    state = TuiState()
+    state.apply_event("pipeline:all_tasks_done", {
+        "summary": {"done": 0, "error": 5, "blocked": 0, "cancelled": 0, "total": 5, "result": "error"}
+    })
+    assert state.phase == "error"
+
+
+def test_pipeline_interrupted_event():
+    state = TuiState()
+    state.phase = "executing"
+    state.apply_event("pipeline:interrupted", {"summary": {"done": 2, "todo": 3}})
+    assert state.phase == "interrupted"

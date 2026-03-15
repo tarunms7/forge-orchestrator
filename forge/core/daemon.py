@@ -55,6 +55,19 @@ logger = logging.getLogger("forge")
 console = Console()
 
 
+def _classify_pipeline_result(task_states: list[str]) -> str:
+    """Classify pipeline outcome from terminal task states."""
+    active_states = [s for s in task_states if s != "cancelled"]
+    if not active_states:
+        return "complete"
+    done_count = sum(1 for s in active_states if s == "done")
+    if done_count == len(active_states):
+        return "complete"
+    if done_count == 0:
+        return "error"
+    return "partial_success"
+
+
 def _sanitize_branch_name(raw: str) -> str:
     """Sanitize a string into a valid git branch name.
 
@@ -698,12 +711,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             raise
         finally:
             await self._shutdown_active_tasks()
+            if pipeline_id:
+                try:
+                    await db.clear_executor_info(pipeline_id)
+                except Exception:
+                    logger.debug("Failed to clear executor info for pipeline %s", pipeline_id)
 
     async def _execution_loop_inner(
         self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
         merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
     ) -> None:
         """Inner execution loop body — wrapped by _execution_loop for error handling."""
+        import uuid as _uuid_mod
         prefix = pipeline_id[:8] if pipeline_id else None
         start_time = asyncio.get_event_loop().time()
         timeout = self._settings.pipeline_timeout_seconds
@@ -712,6 +731,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
         self._active_tasks: dict[str, asyncio.Task] = {}
+        self._executor_token = str(_uuid_mod.uuid4())
+        if pipeline_id:
+            await db.set_executor_info(pipeline_id, pid=os.getpid(), token=self._executor_token)
         while True:
             # Reap completed tasks from the pool
             done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
@@ -753,8 +775,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     _last_timeout_check = now
                     await self._check_question_timeouts(db, pipeline_id)
 
-            # AWAITING_APPROVAL and CANCELLED count as "parked" — not blocking the loop
-            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value, TaskState.CANCELLED.value)
+            # AWAITING_APPROVAL, BLOCKED, and CANCELLED count as "parked" — not blocking the loop
+            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value, TaskState.CANCELLED.value, TaskState.BLOCKED.value)
             all_parked = all(t.state in parked_states for t in tasks)
             if all_parked:
                 # If any tasks are still awaiting approval, sleep and poll
@@ -763,12 +785,24 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if has_awaiting:
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
-                # All tasks are truly terminal (done/error/cancelled)
+                # All tasks are truly terminal (done/error/blocked/cancelled)
                 done_count = sum(1 for t in tasks if t.state == TaskState.DONE.value)
                 error_count = sum(1 for t in tasks if t.state == TaskState.ERROR.value)
+                blocked_count = sum(1 for t in tasks if t.state == TaskState.BLOCKED.value)
                 cancelled_count = sum(1 for t in tasks if t.state == TaskState.CANCELLED.value)
                 total_count = len(tasks)
-                console.print(f"\n[bold green]Complete: {done_count} done, {error_count} errors[/bold green]")
+
+                result = _classify_pipeline_result([t.state for t in tasks])
+                if result == "complete":
+                    console.print(f"\n[bold green]Complete: {done_count}/{total_count} done[/bold green]")
+                elif result == "partial_success":
+                    console.print(
+                        f"\n[bold yellow]Partial: {done_count} done, {error_count} errors, "
+                        f"{blocked_count} blocked[/bold yellow]"
+                    )
+                else:
+                    console.print(f"\n[bold red]Failed: all {error_count} tasks errored[/bold red]")
+
                 if pipeline_id:
                     # If we were tracking a pause window, close it out now
                     if _all_paused_since is not None:
@@ -776,12 +810,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         _all_paused_since = None
                         await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
                         await db.set_pipeline_paused_at(pipeline_id, None)
+                    await db.update_pipeline_status(pipeline_id, result)
                     await self._emit("pipeline:all_tasks_done", {
                         "summary": {
                             "done": done_count,
                             "error": error_count,
+                            "blocked": blocked_count,
                             "cancelled": cancelled_count,
                             "total": total_count,
+                            "result": result,
                         },
                     }, db=db, pipeline_id=pipeline_id)
                 break
@@ -826,6 +863,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 console.print(f"[yellow]Backpressure: {', '.join(monitor.blocked_reasons(snapshot))}[/yellow]")
                 await asyncio.sleep(self._settings.scheduler_poll_interval)
                 continue
+
+            if pipeline_id:
+                pipeline_rec = await db.get_pipeline(pipeline_id)
+                if pipeline_rec and pipeline_rec.executor_token and pipeline_rec.executor_token != self._executor_token:
+                    console.print("[yellow]Pipeline taken over by another session. Exiting.[/yellow]")
+                    break
 
             task_records = [_row_to_record(t) for t in tasks]
             agents = await db.list_agents(prefix=prefix)
