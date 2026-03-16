@@ -673,7 +673,13 @@ def _is_pytest_cmd(cmd: str) -> bool:
     return "pytest" in cmd.lower()
 
 
-def _find_related_test_files(worktree_path: str, changed_files: list[str]) -> list[str]:
+def _find_related_test_files(
+    worktree_path: str,
+    changed_files: list[str],
+    *,
+    allowed_files: list[str] | None = None,
+    base_ref: str | None = None,
+) -> list[str] | tuple[list[str], list[str]]:
     """Find test files related to the changed source files.
 
     Handles two common Python test naming conventions:
@@ -681,6 +687,12 @@ def _find_related_test_files(worktree_path: str, changed_files: list[str]) -> li
     - Test directory: ``src/foo.py`` → ``tests/test_foo.py``
 
     Changed files that ARE test files are included directly.
+
+    When *allowed_files* is provided, returns ``(in_scope, out_of_scope)``
+    tuple. A test is in-scope if it appears in *allowed_files* OR was
+    newly created (not on *base_ref*).
+
+    When *allowed_files* is None (default), returns a flat list for backward compat.
     """
     test_files: set[str] = set()
     for f in changed_files:
@@ -688,29 +700,52 @@ def _find_related_test_files(worktree_path: str, changed_files: list[str]) -> li
             continue
         basename = os.path.basename(f)
 
-        # If the changed file IS a test file, include it directly
         if basename.startswith("test_") or basename.endswith("_test.py"):
             if os.path.isfile(os.path.join(worktree_path, f)):
                 test_files.add(f)
             continue
 
-        # Co-located convention: foo.py → foo_test.py
         co_located = f"{f[:-3]}_test.py"
         if os.path.isfile(os.path.join(worktree_path, co_located)):
             test_files.add(co_located)
 
-        # Test directory convention: src/foo.py → src/tests/test_foo.py
         dirname = os.path.dirname(f)
         test_dir_path = os.path.join(dirname, "tests", f"test_{basename}")
         if os.path.isfile(os.path.join(worktree_path, test_dir_path)):
             test_files.add(test_dir_path)
 
-        # Root tests/ convention: src/foo.py → tests/test_foo.py
         root_test_path = os.path.join("tests", f"test_{basename}")
         if os.path.isfile(os.path.join(worktree_path, root_test_path)):
             test_files.add(root_test_path)
 
-    return sorted(test_files)
+    all_tests = sorted(test_files)
+
+    if allowed_files is None:
+        return all_tests
+
+    allowed_set = set(allowed_files)
+
+    new_files: set[str] = set()
+    if base_ref:
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=A", f"{base_ref}...HEAD"],
+                capture_output=True, text=True, cwd=worktree_path, timeout=10,
+            )
+            if result.returncode == 0:
+                new_files = set(result.stdout.strip().splitlines())
+        except Exception:
+            logger.warning("Failed to detect newly created files for scope filtering")
+
+    in_scope: list[str] = []
+    out_of_scope: list[str] = []
+    for tf in all_tests:
+        if tf in allowed_set or tf in new_files:
+            in_scope.append(tf)
+        else:
+            out_of_scope.append(tf)
+
+    return in_scope, out_of_scope
 
 
 def _run_git(
