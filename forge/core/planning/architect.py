@@ -59,7 +59,7 @@ class Architect:
 
             options = ClaudeCodeOptions(
                 system_prompt=system_prompt, max_turns=20, model=self._model,
-                allowed_tools=["Read", "Glob", "Grep"], permission_mode="acceptEdits",
+                allowed_tools=["Read"], permission_mode="acceptEdits",
             )
             if self._cwd:
                 options.cwd = self._cwd
@@ -129,33 +129,48 @@ class Architect:
 
     def _parse(self, raw: str) -> tuple[TaskGraph | None, str | None]:
         raw = raw.strip()
-        match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw, re.DOTALL)
-        if match:
-            raw = match.group(1)
-        else:
+
+        # Find ALL fenced JSON blocks (non-greedy) and try each.
+        # When the model produces multiple blocks, the last one is usually
+        # the refined version, so we iterate in reverse.
+        blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if not blocks:
+            # Fallback: extract from first { to last }
             start = raw.find("{")
             end = raw.rfind("}")
             if start != -1 and end != -1:
-                raw = raw[start : end + 1]
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            return None, f"Invalid JSON: {e}"
-        try:
-            graph = TaskGraph.model_validate(data)
-        except PydanticValidationError as e:
-            return None, f"Schema validation failed: {e}"
-        # Basic structural checks only (duplicate IDs, invalid dep refs, cycles).
-        # File-conflict validation is handled by the pipeline's dependency-aware
-        # validator — the old validate_task_graph() rejects ANY shared file even
-        # when tasks are properly chained via depends_on.
-        task_ids = {t.id for t in graph.tasks}
-        seen: set[str] = set()
-        for t in graph.tasks:
-            if t.id in seen:
-                return None, f"Duplicate task id: '{t.id}'"
-            seen.add(t.id)
-            for dep in t.depends_on:
-                if dep not in task_ids:
-                    return None, f"Task '{t.id}' depends on unknown task '{dep}'"
-        return graph, None
+                blocks = [raw[start : end + 1]]
+
+        last_error: str | None = None
+        for candidate in reversed(blocks):
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_error = f"Invalid JSON: {e}"
+                continue
+            try:
+                graph = TaskGraph.model_validate(data)
+            except PydanticValidationError as e:
+                last_error = f"Schema validation failed: {e}"
+                continue
+            # Basic structural checks (duplicate IDs, invalid dep refs).
+            task_ids = {t.id for t in graph.tasks}
+            seen: set[str] = set()
+            valid = True
+            for t in graph.tasks:
+                if t.id in seen:
+                    last_error = f"Duplicate task id: '{t.id}'"
+                    valid = False
+                    break
+                seen.add(t.id)
+                for dep in t.depends_on:
+                    if dep not in task_ids:
+                        last_error = f"Task '{t.id}' depends on unknown task '{dep}'"
+                        valid = False
+                        break
+                if not valid:
+                    break
+            if valid:
+                return graph, None
+
+        return None, last_error or "No JSON found in output"
