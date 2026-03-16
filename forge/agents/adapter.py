@@ -129,7 +129,7 @@ Rules:
 - If Interface Contracts are provided above, you MUST implement them EXACTLY as specified. Do NOT rename fields, change types, or alter response shapes.
 - Follow existing code style and patterns — see the conventions section above
 - Write tests for any new functionality
-- Commit your changes with a SHORT conventional commit message (max 72 chars) — use feat/fix/refactor/test/docs/chore prefix and describe WHAT changed, not the task title
+- Do NOT run git add, git commit, or any git write commands — the system handles commits automatically after you finish. Just edit the files and stop.
 - If you encounter an error, fix it rather than giving up
 - If image file paths are mentioned in the task description, use the Read tool to view them (images are readable)"""
 
@@ -322,8 +322,8 @@ class ClaudeAdapter(AgentAdapter):
   Follow them. Don't introduce new conventions.
 - If you're unsure about something, explore first. Grep the codebase.
   Read related files. Build understanding before making changes.
-- Commit your work when you reach a stable point. Small, focused commits
-  are better than one giant commit at the end."""
+- Do NOT run git commands (add, commit, push, etc). The orchestrator
+  handles all git operations automatically after you finish."""
 
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
