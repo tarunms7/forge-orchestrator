@@ -74,7 +74,7 @@ class TestResumeTaskSdkOptions:
         """ClaudeCodeOptions resume defaults to None."""
         from claude_code_sdk import ClaudeCodeOptions
         opts = ClaudeCodeOptions(
-            allowed_tools=["Read"],
+            permission_mode="acceptEdits",
         )
         assert opts.resume is None
 
