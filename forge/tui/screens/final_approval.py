@@ -7,7 +7,7 @@ import os
 
 from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Static, Footer
+from textual.widgets import Static
 from textual.containers import Vertical, VerticalScroll, Center
 from textual.message import Message
 
@@ -96,10 +96,10 @@ class DiffScreen(Screen):
         viewer.update_diff("pipeline", f"diff main...{self._branch}", self._diff_text)
         yield viewer
         yield ShortcutBar([
-            ("↑↓", "Scroll"),
+            ("j/k", "Scroll"),
+            ("g/G", "Top/Bottom"),
             ("Esc", "Back"),
         ])
-        yield Footer()
 
 
 class FinalApprovalScreen(Screen):
@@ -123,11 +123,11 @@ class FinalApprovalScreen(Screen):
 
     BINDINGS = [
         Binding("enter", "create_pr", "Create PR", show=True, priority=True),
-        Binding("d", "view_diff", "View Diff", show=True),
-        Binding("r", "rerun", "Re-run Failed", show=True),
-        Binding("s", "skip_failed", "Skip & Finish", show=True),
+        Binding("d", "view_diff", "View Diff", show=True, priority=True),
+        Binding("r", "rerun", "Re-run Failed", show=True, priority=True),
+        Binding("s", "skip_failed", "Skip & Finish", show=True, priority=True),
         Binding("f", "focus_followup", "Follow Up", show=True),
-        Binding("n", "new_task", "New Task", show=True),
+        Binding("n", "new_task", "New Task", show=True, priority=True),
         Binding("ctrl+s", "submit_followup", "Submit Follow-up", show=False),
         Binding("escape", "app.pop_screen", "Cancel", show=True),
     ]
@@ -160,6 +160,41 @@ class FinalApprovalScreen(Screen):
             return not self._partial  # only available in full mode
         return True
 
+    def on_mount(self) -> None:
+        asyncio.create_task(self._check_behind_main())
+
+    async def _check_behind_main(self) -> None:
+        """Check if pipeline branch is behind origin/main and show warning."""
+        project_dir = self._get_project_dir()
+        if not project_dir:
+            return
+        try:
+            fetch = await asyncio.create_subprocess_exec(
+                "git", "fetch", "origin", "main", "--quiet",
+                cwd=project_dir,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(fetch.wait(), timeout=15)
+
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-list", "--count", "HEAD..origin/main",
+                cwd=project_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            count = int(stdout.decode().strip()) if stdout else 0
+
+            if count > 0:
+                warning = self.query_one("#behind-main-warning", Static)
+                warning.update(
+                    f"[bold #d29922]⚠ Branch is {count} commit{'s' if count != 1 else ''} "
+                    f"behind main. PR may have merge conflicts.[/]"
+                )
+        except Exception:
+            pass  # Non-critical — silently skip if git fails
+
     def compose(self):
         files_count = self._stats.get("files", 0)
         if self._partial:
@@ -172,6 +207,7 @@ class FinalApprovalScreen(Screen):
             with Center():
                 with Vertical(id="approval-container"):
                     yield Static(f"[bold #58a6ff]{header}[/]\n", id="header")
+                    yield Static("", id="behind-main-warning")  # populated by _check_behind_main
                     yield Static(format_summary_stats(self._stats), id="stats")
                     yield Static("", id="pr-url")
                     yield Static("\n[bold]Tasks:[/]", id="tasks-header")
@@ -201,7 +237,6 @@ class FinalApprovalScreen(Screen):
                 ("n", "New Task"),
                 ("Esc", "Back"),
             ])
-        yield Footer()
 
     def show_pr_url(self, url: str) -> None:
         """Display the PR URL inline in the stats area."""
