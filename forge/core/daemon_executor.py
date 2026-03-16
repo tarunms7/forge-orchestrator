@@ -269,6 +269,13 @@ class ExecutorMixin:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return None
+
+        # Safety net: commit any uncommitted changes left by the agent.
+        # The agent is instructed to commit, but may fail to do so if the
+        # SDK session was sandboxed or the agent simply forgot. Without
+        # this, uncommitted changes are invisible to the merge pipeline.
+        self._auto_commit_if_needed(worktree_path, task_id)
+
         diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         if not diff.strip():
             # A FORGE_QUESTION with no diff is valid — the agent stopped to ask.
@@ -282,6 +289,69 @@ class ExecutorMixin:
         if result.files_changed:
             await self._emit("task:files_changed", {"task_id": task_id, "files": result.files_changed}, db=db, pipeline_id=pid)
         return result
+
+    # -- auto-commit safety net -------------------------------------------
+
+    @staticmethod
+    def _auto_commit_if_needed(worktree_path: str, task_id: str) -> bool:
+        """Commit any uncommitted agent changes as a safety net.
+
+        The agent is instructed to commit its own work, but may fail to if:
+        - The SDK session was sandboxed and Bash commands were blocked
+        - The agent ran out of turns before committing
+        - The agent simply forgot
+
+        Without this, uncommitted changes are invisible to the entire merge
+        pipeline (diff, review, rebase, fast-forward) and the task silently
+        produces nothing.
+
+        Returns True if a commit was made, False otherwise.
+        """
+        # Check for uncommitted changes (staged + unstaged + untracked new files)
+        status = _run_git(
+            ["status", "--porcelain"],
+            cwd=worktree_path, check=False,
+            description="check uncommitted changes",
+        )
+        if status.returncode != 0 or not status.stdout.strip():
+            return False
+
+        # There are uncommitted changes — commit them
+        logger.info(
+            "%s: agent left uncommitted changes, auto-committing", task_id,
+        )
+        console.print(
+            f"[yellow]{task_id}: auto-committing uncommitted agent changes[/yellow]",
+        )
+
+        # Stage everything (including new files the agent created)
+        add_result = _run_git(
+            ["add", "-A"],
+            cwd=worktree_path, check=False,
+            description="auto-stage agent changes",
+        )
+        if add_result.returncode != 0:
+            logger.warning(
+                "%s: git add failed during auto-commit: %s",
+                task_id, add_result.stderr.strip(),
+            )
+            return False
+
+        # Commit with a clear message indicating this was auto-committed
+        commit_result = _run_git(
+            ["commit", "-m", f"feat({task_id}): auto-commit agent changes"],
+            cwd=worktree_path, check=False,
+            description="auto-commit agent changes",
+        )
+        if commit_result.returncode != 0:
+            logger.warning(
+                "%s: git commit failed during auto-commit: %s",
+                task_id, commit_result.stderr.strip(),
+            )
+            return False
+
+        logger.info("%s: auto-commit succeeded", task_id)
+        return True
 
     # -- question handling (pause / resume) --------------------------------
 

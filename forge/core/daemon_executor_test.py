@@ -140,6 +140,68 @@ class TestComplexityTimeout:
         assert _complexity_timeout(300, "high") == 600
 
 
+class TestAutoCommitIfNeeded:
+    """ExecutorMixin._auto_commit_if_needed() commits uncommitted agent changes."""
+
+    def test_no_uncommitted_changes(self):
+        """Clean worktree returns False without committing."""
+        with patch("forge.core.daemon_executor._run_git") as mock_git:
+            mock_git.return_value = _make_proc(stdout="", returncode=0)
+            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+
+        assert result is False
+        # Only status check, no add/commit
+        assert mock_git.call_count == 1
+
+    def test_uncommitted_changes_committed(self):
+        """Uncommitted changes are staged and committed."""
+        status_result = _make_proc(stdout="M  src/main.py\n?? src/new.py", returncode=0)
+        add_result = _make_proc(returncode=0)
+        commit_result = _make_proc(returncode=0)
+
+        with patch("forge.core.daemon_executor._run_git", side_effect=[status_result, add_result, commit_result]) as mock_git:
+            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+
+        assert result is True
+        assert mock_git.call_count == 3
+        # Verify: status, add -A, commit
+        calls = mock_git.call_args_list
+        assert calls[0].args[0] == ["status", "--porcelain"]
+        assert calls[1].args[0] == ["add", "-A"]
+        assert calls[2].args[0][0] == "commit"
+
+    def test_git_add_failure_returns_false(self):
+        """If git add fails, no commit is attempted."""
+        status_result = _make_proc(stdout="M  src/main.py", returncode=0)
+        add_fail = _make_proc(returncode=1, stdout="error: ...")
+
+        with patch("forge.core.daemon_executor._run_git", side_effect=[status_result, add_fail]) as mock_git:
+            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+
+        assert result is False
+        assert mock_git.call_count == 2  # status + add, no commit
+
+    def test_git_commit_failure_returns_false(self):
+        """If git commit fails, returns False."""
+        status_result = _make_proc(stdout="M  src/main.py", returncode=0)
+        add_ok = _make_proc(returncode=0)
+        commit_fail = _make_proc(returncode=1, stdout="error: ...")
+
+        with patch("forge.core.daemon_executor._run_git", side_effect=[status_result, add_ok, commit_fail]) as mock_git:
+            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+
+        assert result is False
+        assert mock_git.call_count == 3
+
+    def test_status_command_failure_returns_false(self):
+        """If git status fails (not a git repo), returns False."""
+        with patch("forge.core.daemon_executor._run_git") as mock_git:
+            mock_git.return_value = _make_proc(returncode=128, stdout="")
+            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+
+        assert result is False
+
+
 class TestDeliverInterjections:
     """ExecutorMixin._deliver_interjections() delivers pending human messages."""
 

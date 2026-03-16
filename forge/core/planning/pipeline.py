@@ -35,27 +35,69 @@ class PlanningPipeline:
         self._on_message = on_message
         self._on_question = on_question
 
+    async def _emit(self, stage: str, message: str) -> None:
+        """Emit a stage progress event via on_message callback."""
+        if self._on_message:
+            try:
+                await self._on_message(stage, message)
+            except Exception:
+                pass
+
+    def _stage_on_message(self, stage: str) -> Callable | None:
+        """Create a per-stage on_message callback for forwarding SDK streaming events.
+
+        The pipeline's on_message takes (stage, msg) but sdk_query calls
+        on_message(msg) with a single param. This adapter bridges the gap.
+        """
+        if self._on_message is None:
+            return None
+
+        async def _adapter(msg):
+            try:
+                await self._on_message(stage, str(msg))
+            except Exception:
+                pass
+
+        return _adapter
+
     async def run(self, *, user_input: str, spec_text: str, snapshot_text: str, conventions: str = "") -> PlanningResult:
         cost_breakdown: dict[str, float] = {}
 
         # Stage 1: Scout
-        scout_result = await self._scout.run(user_input=user_input, spec_text=spec_text, snapshot_text=snapshot_text)
+        await self._emit("scout", "Starting codebase exploration...")
+        scout_result = await self._scout.run(
+            user_input=user_input, spec_text=spec_text, snapshot_text=snapshot_text,
+            on_message=self._stage_on_message("scout"),
+        )
         cost_breakdown["scout"] = scout_result.cost_usd
         codebase_map = scout_result.codebase_map
         if codebase_map is None:
             codebase_map = CodebaseMap(architecture_summary="(Scout failed — no deep analysis available)", key_modules=[])
+        await self._emit("scout", f"Scout complete (cost: ${scout_result.cost_usd:.4f})")
 
         # Stage 2: Architect
-        architect_result = await self._architect.run(user_input=user_input, spec_text=spec_text, codebase_map=codebase_map, conventions=conventions, on_question=self._on_question)
+        await self._emit("architect", "Decomposing into tasks...")
+        architect_result = await self._architect.run(
+            user_input=user_input, spec_text=spec_text, codebase_map=codebase_map,
+            conventions=conventions, on_question=self._on_question,
+            on_message=self._stage_on_message("architect"),
+        )
         cost_breakdown["architect"] = architect_result.cost_usd
         if architect_result.task_graph is None:
+            await self._emit("architect", "Architect failed to produce a TaskGraph")
             return PlanningResult(task_graph=None, codebase_map=codebase_map, cost_breakdown=cost_breakdown, total_cost_usd=sum(cost_breakdown.values()))
 
         task_graph = architect_result.task_graph
+        await self._emit("architect", f"Architect produced {len(task_graph.tasks)} tasks (cost: ${architect_result.cost_usd:.4f})")
 
         # Stage 3: Detailers
-        detailer_results = await self._detailer_factory.run_all(tasks=task_graph.tasks, codebase_map=codebase_map, conventions=conventions)
+        await self._emit("detailer", f"Enriching {len(task_graph.tasks)} tasks...")
+        detailer_results = await self._detailer_factory.run_all(
+            tasks=task_graph.tasks, codebase_map=codebase_map, conventions=conventions,
+            on_message=self._stage_on_message("detailer"),
+        )
         cost_breakdown["detailers"] = sum(r.cost_usd for r in detailer_results)
+        await self._emit("detailer", f"Enrichment complete (cost: ${sum(r.cost_usd for r in detailer_results):.4f})")
 
         # Apply enriched descriptions
         enriched_map = {r.task_id: r.enriched_description for r in detailer_results}
@@ -95,9 +137,11 @@ class PlanningPipeline:
                 replan_scope=f"Replan tasks: {', '.join(sorted(affected_task_ids))}."
             )
 
+            await self._emit("validator", f"Re-planning {len(affected_task_ids)} tasks (iteration {iteration + 1})...")
             architect_result = await self._architect.run(
                 user_input=user_input, spec_text=spec_text, codebase_map=codebase_map,
                 conventions=conventions, feedback=plan_feedback, on_question=self._on_question,
+                on_message=self._stage_on_message("architect"),
             )
             cost_breakdown["architect"] += architect_result.cost_usd
             if architect_result.task_graph is None:
@@ -106,7 +150,7 @@ class PlanningPipeline:
 
             changed_tasks = [t for t in task_graph.tasks if t.id in affected_task_ids]
             if changed_tasks:
-                new_details = await self._detailer_factory.run_all(tasks=changed_tasks, codebase_map=codebase_map, conventions=conventions)
+                new_details = await self._detailer_factory.run_all(tasks=changed_tasks, codebase_map=codebase_map, conventions=conventions, on_message=self._stage_on_message("detailer"))
                 cost_breakdown["detailers"] += sum(r.cost_usd for r in new_details)
                 new_enriched = {r.task_id: r.enriched_description for r in new_details}
                 for task in task_graph.tasks:
