@@ -56,6 +56,7 @@ TUI_EVENT_TYPES = [
     "planning:answer",
     "task:resumed",
     "task:auto_decided",
+    "task:interjection",
     "pipeline:all_tasks_done",
     "pipeline:interrupted",
     "pipeline:pr_creating",

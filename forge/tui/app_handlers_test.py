@@ -254,3 +254,72 @@ async def test_task_answer_does_not_emit_planning_event():
     assert len(emitted) == 1
     assert emitted[0][0] == "task:answer"
     assert emitted[0][1]["task_id"] == "t1"
+
+
+@pytest.mark.asyncio
+async def test_interjection_creates_db_record():
+    """InterjectionSubmitted should create a DB interjection record."""
+    from forge.tui.app import ForgeApp
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.message = "Use factory pattern"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.create_interjection = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._state = MagicMock()
+
+    await app.on_chat_thread_interjection_submitted(event)
+
+    app._db.create_interjection.assert_called_once_with(
+        task_id="t1",
+        pipeline_id="pipe1",
+        message="Use factory pattern",
+    )
+    app._state.apply_event.assert_called_once_with("task:interjection", {
+        "task_id": "t1",
+        "message": "Use factory pattern",
+    })
+
+
+@pytest.mark.asyncio
+async def test_interjection_skipped_without_db():
+    """InterjectionSubmitted should do nothing if DB or pipeline_id is missing."""
+    from forge.tui.app import ForgeApp
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.message = "Use factory pattern"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = None
+    app._pipeline_id = None
+    app._state = MagicMock()
+
+    await app.on_chat_thread_interjection_submitted(event)
+
+    app._state.apply_event.assert_not_called()
+
+
+def test_chat_thread_interjection_mode():
+    """ChatThread in interjection mode should have correct mode."""
+    from forge.tui.widgets.chat_thread import ChatThread
+    chat = ChatThread(task_id="t1", mode="interjection")
+    assert chat._mode == "interjection"
+    assert chat.task_id == "t1"
+
+
+def test_chat_thread_default_mode():
+    """ChatThread should default to answer mode."""
+    from forge.tui.widgets.chat_thread import ChatThread
+    chat = ChatThread(task_id="t2")
+    assert chat._mode == "answer"
+    assert chat.task_id == "t2"
+
+
+def test_chat_thread_interjection_event_type():
+    """task:interjection should be in TUI_EVENT_TYPES."""
+    from forge.tui.bus import TUI_EVENT_TYPES
+    assert "task:interjection" in TUI_EVENT_TYPES

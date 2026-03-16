@@ -265,6 +265,26 @@ class ForgeApp(App):
                 except Exception:
                     logger.error("Failed to emit task:answer to daemon", exc_info=True)
 
+    async def on_chat_thread_interjection_submitted(self, event) -> None:
+        """Create an interjection record for a running agent."""
+        task_id = event.task_id
+        message = event.message
+        if not self._db or not self._pipeline_id:
+            logger.warning("Cannot create interjection: DB or pipeline_id not set")
+            return
+        try:
+            await self._db.create_interjection(
+                task_id=task_id,
+                pipeline_id=self._pipeline_id,
+                message=message,
+            )
+            self._state.apply_event("task:interjection", {
+                "task_id": task_id,
+                "message": message,
+            })
+        except Exception:
+            logger.error("Failed to create interjection", exc_info=True)
+
     async def on_final_approval_screen_create_pr(self, event) -> None:
         """User confirmed PR creation from FinalApprovalScreen."""
         from forge.tui.pr_creator import push_branch, create_pr, generate_pr_body
