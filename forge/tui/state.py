@@ -64,6 +64,8 @@ class TuiState:
         # Error history: maps task_id → list of previous error messages (across retries)
         self.error_history: dict[str, list[str]] = defaultdict(list)
 
+        self.planning_stage: str = ""
+
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
@@ -380,8 +382,24 @@ class TuiState:
     def _on_slot_queued(self, data: dict) -> None:
         logger.debug("Slot queued event received")
 
-    def _on_planning_stage_output(self, data: dict) -> None:
-        """Handle streaming output from planning pipeline stages."""
+    def _on_planning_scout(self, data: dict) -> None:
+        self._handle_planning_output("Scout", data)
+
+    def _on_planning_architect(self, data: dict) -> None:
+        self._handle_planning_output("Architect", data)
+
+    def _on_planning_detailer(self, data: dict) -> None:
+        self._handle_planning_output("Detailer", data)
+
+    def _on_planning_validator(self, data: dict) -> None:
+        self._handle_planning_output("Validator", data)
+
+    def _handle_planning_output(self, stage: str, data: dict) -> None:
+        """Handle streaming output from a planning pipeline stage."""
+        if self.planning_stage != stage:
+            self.planning_stage = stage
+            self.planner_output.append(f"─── {stage} ───")
+            self._notify("planning_stage")
         line = data.get("line", "")
         self.planner_output.append(line)
         if len(self.planner_output) > self._max_output_lines:
@@ -473,10 +491,10 @@ class TuiState:
         "task:merge_result": _on_merge_result,
         "task:awaiting_approval": _on_awaiting_approval,
         "planner:output": _on_planner_output,
-        "planning:scout": _on_planning_stage_output,
-        "planning:architect": _on_planning_stage_output,
-        "planning:detailer": _on_planning_stage_output,
-        "planning:validator": _on_planning_stage_output,
+        "planning:scout": _on_planning_scout,
+        "planning:architect": _on_planning_architect,
+        "planning:detailer": _on_planning_detailer,
+        "planning:validator": _on_planning_validator,
         "task:question": _on_task_question,
         "task:answer": _on_task_answer,
         "task:resumed": _on_task_resumed,
