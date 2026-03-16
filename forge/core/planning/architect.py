@@ -59,7 +59,8 @@ class Architect:
 
             options = ClaudeCodeOptions(
                 system_prompt=system_prompt, max_turns=20, model=self._model,
-                allowed_tools=["Read"], permission_mode="acceptEdits",
+                disallowed_tools=["Bash", "Glob", "Grep", "Edit", "Write"],
+                permission_mode="acceptEdits",
             )
             if self._cwd:
                 options.cwd = self._cwd
