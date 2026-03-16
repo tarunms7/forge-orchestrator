@@ -359,25 +359,48 @@ class ReviewMixin:
     async def _gate_test(
         self, worktree_path: str, test_cmd: str, timeout: int,
         *, changed_files: list[str] | None = None,
+        allowed_files: list[str] | None = None,
+        pipeline_branch: str | None = None,
     ) -> GateResult:
         """Gate 1.5: Test gate — run the project test command.
 
-        When *changed_files* is provided and *test_cmd* is pytest-based, the
-        gate automatically scopes to test files related to the changed source
-        files.  This prevents pre-existing failures in unrelated tests from
-        blocking every task in the pipeline.
-
-        If no related test files are found, the gate passes with a "no
-        relevant tests" message rather than running the full suite.
+        When *allowed_files* is provided, only in-scope tests are run as blocking.
+        Out-of-scope tests are logged and skipped.
         """
         if changed_files and _is_pytest_cmd(test_cmd):
-            test_files = _find_related_test_files(worktree_path, changed_files)
-            if not test_files:
-                return GateResult(
-                    passed=True,
-                    gate="gate1_5_test",
-                    details="No test files found for changed files — skipped",
+            if allowed_files is not None:
+                result = _find_related_test_files(
+                    worktree_path, changed_files,
+                    allowed_files=allowed_files,
+                    base_ref=pipeline_branch or "main",
                 )
+                if isinstance(result, tuple):
+                    in_scope, out_of_scope = result
+                else:
+                    in_scope, out_of_scope = result, []
+
+                for skipped in out_of_scope:
+                    logger.info(
+                        "Skipping out-of-scope test: %s (not in task files)", skipped,
+                    )
+
+                if not in_scope:
+                    return GateResult(
+                        passed=True,
+                        gate="gate1_5_test",
+                        details="No in-scope test files found — skipped"
+                        + (f" (skipped {len(out_of_scope)} out-of-scope)" if out_of_scope else ""),
+                    )
+                test_files = in_scope
+            else:
+                test_files = _find_related_test_files(worktree_path, changed_files)
+                if not test_files:
+                    return GateResult(
+                        passed=True,
+                        gate="gate1_5_test",
+                        details="No test files found for changed files — skipped",
+                    )
+
             scoped_cmd = f"{test_cmd} {' '.join(test_files)}"
             logger.info(
                 "Test gate scoped to %d test file(s): %s",
@@ -606,7 +629,10 @@ class ReviewMixin:
                 "task_id": task.id, "gate": "gate1_5_test",
             }, db=db, pipeline_id=pipeline_id)
             test_result = await self._gate_test(
-                worktree_path, test_cmd, gate_timeout, changed_files=changed_files,
+                worktree_path, test_cmd, gate_timeout,
+                changed_files=changed_files,
+                allowed_files=getattr(task, 'files', None),
+                pipeline_branch=pipeline_branch,
             )
             await self._emit(
                 "review:gate_passed" if test_result.passed else "review:gate_failed",
