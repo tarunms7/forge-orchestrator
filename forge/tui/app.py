@@ -624,6 +624,7 @@ class ForgeApp(App):
         try:
             self._graph = await self._daemon.plan(
                 task, self._db, pipeline_id=self._pipeline_id,
+                deep_plan=True,
             )
             plan_tasks = [
                 {"id": t.id, "title": t.title, "description": t.description,

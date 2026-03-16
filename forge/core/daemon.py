@@ -132,7 +132,12 @@ def _should_use_deep_planning(
     user_input: str,
     total_files: int,
 ) -> bool:
-    """Decide whether to use multi-pass deep planning."""
+    """Decide whether to use multi-pass deep planning.
+
+    Returns True when the task likely benefits from the Scout → Architect →
+    Detailer → Validator pipeline. The heuristics here intentionally lean
+    towards deep planning for any non-trivial request.
+    """
     if planning_mode == "deep":
         return True
     if planning_mode == "simple":
@@ -140,12 +145,17 @@ def _should_use_deep_planning(
     # Auto mode heuristics
     if spec_path:
         return True
-    if total_files > 200:
+    if total_files > 100:
         return True
-    # Check for structured input (markdown headers, numbered lists)
+    # Structured input (markdown headers, numbered lists, bullet lists)
     if re.search(r"^#{1,3}\s", user_input, re.MULTILINE):
         return True
     if re.search(r"^\d+\.\s", user_input, re.MULTILINE):
+        return True
+    if re.search(r"^[-*]\s", user_input, re.MULTILINE):
+        return True
+    # Long/complex input (>100 words suggests a non-trivial request)
+    if len(user_input.split()) > 100:
         return True
     return False
 
@@ -352,10 +362,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
 
             async def _on_pipeline_msg(stage, msg):
+                # msg may be a raw SDK message object or a plain string
+                text = _extract_activity(msg) if not isinstance(msg, str) else msg
+                if not text:
+                    return
                 if pipeline_id:
-                    await self._emit(f"planning:{stage}", {"line": str(msg)}, db=db, pipeline_id=pipeline_id)
+                    await self._emit(f"planning:{stage}", {"line": text}, db=db, pipeline_id=pipeline_id)
                 else:
-                    await self._events.emit(f"planning:{stage}", {"line": str(msg)})
+                    await self._events.emit(f"planning:{stage}", {"line": text})
 
             # Planning question support via asyncio.Event synchronization
             pending_planning_answer: dict[str, asyncio.Event] = {}
