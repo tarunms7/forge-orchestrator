@@ -226,7 +226,9 @@ def _build_review_prompt(
     if allowed_files:
         parts.append(
             f"File scope: This task is ONLY allowed to modify: {', '.join(allowed_files)}.\n"
-            "If the diff contains changes to files outside this list, "
+            "Test files that correspond to in-scope source files "
+            "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed.\n"
+            "If the diff contains changes to files outside this list (excluding related test files), "
             "FAIL immediately with 'OUT OF SCOPE' and list the violating files.\n\n"
         )
     parts.append(

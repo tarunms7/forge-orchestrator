@@ -15,6 +15,7 @@ from forge.core.daemon_helpers import (
     _build_retry_prompt,
     _extract_implementation_summary,
     _extract_text,
+    _find_related_test_files,
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
@@ -688,7 +689,17 @@ class ExecutorMixin:
             cwd=worktree_path, check=False, description="scope diff",
         )
         changed = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
-        out_of_scope = [f for f in changed if f not in allowed]
+
+        # Exempt test files that are related to in-scope source files.
+        # Agents often need to create/modify test files for the source files
+        # they're working on — those shouldn't be reverted.
+        related_tests = set(
+            _find_related_test_files(worktree_path, list(allowed))
+        )
+        out_of_scope = [
+            f for f in changed
+            if f not in allowed and f not in related_tests
+        ]
 
         if not out_of_scope:
             return True, []  # All changes are in scope

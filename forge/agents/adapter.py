@@ -125,7 +125,7 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 {working_effectively}
 
 Rules:
-- You MUST ONLY modify files listed in the File Scope section above. Changes to other files are automatically reverted by the system.
+- You MUST ONLY modify files listed in the File Scope section above (plus their related test files). Changes to other files are automatically reverted by the system.
 - If Interface Contracts are provided above, you MUST implement them EXACTLY as specified. Do NOT rename fields, change types, or alter response shapes.
 - Follow existing code style and patterns — see the conventions section above
 - Write tests for any new functionality
@@ -293,7 +293,10 @@ class ClaudeAdapter(AgentAdapter):
                 f"{files_list}\n\n"
                 "ANY changes to files outside this list will be AUTOMATICALLY REVERTED "
                 "before review. Do NOT modify, create, or delete any other files — "
-                "it wastes your time and tokens."
+                "it wastes your time and tokens.\n\n"
+                "**Exception**: Test files that correspond to the source files above "
+                "(e.g. `tests/test_<name>.py` or `<name>_test.py`) ARE allowed. "
+                "You may create or modify test files for your in-scope source files."
             )
         else:
             file_scope_block = ""
