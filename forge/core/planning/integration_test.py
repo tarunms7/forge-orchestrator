@@ -17,11 +17,33 @@ class TestShouldUseDeepPlanning:
             user_input="Fix a bug", total_files=250,
         ) is True
 
+    def test_medium_codebase(self):
+        """Projects with >100 files trigger deep planning."""
+        assert _should_use_deep_planning(
+            planning_mode="auto", spec_path=None,
+            user_input="Add a new feature", total_files=120,
+        ) is True
+
     def test_small_task(self):
         assert _should_use_deep_planning(
             planning_mode="auto", spec_path=None,
             user_input="Fix the typo in README", total_files=50,
         ) is False
+
+    def test_bullet_list_input(self):
+        assert _should_use_deep_planning(
+            planning_mode="auto", spec_path=None,
+            user_input="- Add user auth\n- Add RBAC\n- Add session management",
+            total_files=50,
+        ) is True
+
+    def test_long_input(self):
+        """Input with >100 words triggers deep planning."""
+        long_input = " ".join(["word"] * 120)
+        assert _should_use_deep_planning(
+            planning_mode="auto", spec_path=None,
+            user_input=long_input, total_files=50,
+        ) is True
 
     def test_force_deep(self):
         assert _should_use_deep_planning(
