@@ -25,6 +25,7 @@ class ScoutResult:
     cost_usd: float
     input_tokens: int
     output_tokens: int
+    session_id: str | None = None
 
 
 class Scout:
@@ -40,10 +41,16 @@ class Scout:
         total_input = 0
         total_output = 0
         feedback: str | None = None
+        session_id: str | None = None
 
         for attempt in range(self._max_retries):
             logger.info("Scout attempt %d/%d", attempt + 1, self._max_retries)
-            prompt = self._build_prompt(user_input, spec_text, snapshot_text, feedback)
+
+            if session_id:
+                prompt = f"Previous attempt feedback: {feedback}\n\nProduce ONLY the CodebaseMap JSON."
+            else:
+                prompt = self._build_prompt(user_input, spec_text, snapshot_text, feedback)
+
             options = ClaudeCodeOptions(
                 system_prompt=SCOUT_SYSTEM_PROMPT,
                 max_turns=30, model=self._model,
@@ -52,26 +59,43 @@ class Scout:
             )
             if self._cwd:
                 options.cwd = self._cwd
+            if session_id:
+                options.resume = session_id
 
             try:
                 result = await sdk_query(prompt=prompt, options=options, on_message=on_message)
             except Exception as e:
                 logger.warning("Scout SDK error on attempt %d: %s", attempt + 1, e)
                 feedback = f"SDK error: {e}"
+                session_id = None
                 continue
 
             if result:
                 total_cost += result.cost_usd
                 total_input += result.input_tokens
                 total_output += result.output_tokens
+                session_id = result.session_id
+
                 raw = result.result or ""
                 codebase_map, error = self._parse(raw)
                 if codebase_map is not None:
-                    return ScoutResult(codebase_map=codebase_map, cost_usd=total_cost, input_tokens=total_input, output_tokens=total_output)
+                    return ScoutResult(
+                        codebase_map=codebase_map,
+                        cost_usd=total_cost,
+                        input_tokens=total_input,
+                        output_tokens=total_output,
+                        session_id=session_id,
+                    )
                 feedback = f"Invalid output: {error}"
                 logger.warning("Scout attempt %d parse failed: %s", attempt + 1, error)
 
-        return ScoutResult(codebase_map=None, cost_usd=total_cost, input_tokens=total_input, output_tokens=total_output)
+        return ScoutResult(
+            codebase_map=None,
+            cost_usd=total_cost,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            session_id=session_id,
+        )
 
     def _build_prompt(self, user_input: str, spec_text: str, snapshot_text: str, feedback: str | None) -> str:
         parts = [f"User request: {user_input}"]

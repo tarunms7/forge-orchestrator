@@ -65,3 +65,28 @@ async def test_scout_returns_none_after_max_retries(monkeypatch):
     result = await scout.run(user_input="x", spec_text="x", snapshot_text="x")
     assert result.codebase_map is None
     assert result.cost_usd > 0
+
+
+@pytest.mark.asyncio
+async def test_scout_reuses_session_on_retry(monkeypatch):
+    """On retry, Scout should resume the previous session instead of starting fresh."""
+    call_count = 0
+    options_seen = []
+
+    async def mock_sdk_query(prompt, options, on_message=None):
+        nonlocal call_count
+        call_count += 1
+        options_seen.append(options)
+        if call_count == 1:
+            return FakeSdkResult("not json")  # Force retry
+        return FakeSdkResult('{"architecture_summary": "ok", "key_modules": []}')
+
+    monkeypatch.setattr("forge.core.planning.scout.sdk_query", mock_sdk_query)
+
+    scout = Scout(model="sonnet", cwd="/tmp/test")
+    result = await scout.run(user_input="x", spec_text="x", snapshot_text="x")
+    assert result.codebase_map is not None
+    assert call_count == 2
+    # Second call should have resume set to the session_id from first call
+    assert hasattr(options_seen[1], "resume")
+    assert options_seen[1].resume == "sess-1"

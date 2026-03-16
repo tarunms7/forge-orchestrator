@@ -567,3 +567,78 @@ class TestRunGit:
 
         assert result is proc
         assert "returned 1" in caplog.text
+
+
+class TestFindRelatedTestFilesScoped:
+    """Tests for _find_related_test_files with allowed_files filtering."""
+
+    def test_in_scope_test_included(self, tmp_path):
+        """Test file in allowed_files is included."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "auth.py").touch()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_auth.py").touch()
+
+        in_scope, out_of_scope = _find_related_test_files(
+            str(tmp_path),
+            changed_files=["src/auth.py"],
+            allowed_files=["src/auth.py", "tests/test_auth.py"],
+        )
+        assert "tests/test_auth.py" in in_scope
+        assert len(out_of_scope) == 0
+
+    def test_out_of_scope_test_excluded(self, tmp_path):
+        """Test file NOT in allowed_files is excluded."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "auth.py").touch()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_auth.py").touch()
+
+        in_scope, out_of_scope = _find_related_test_files(
+            str(tmp_path),
+            changed_files=["src/auth.py"],
+            allowed_files=["src/auth.py"],  # test_auth.py NOT listed
+        )
+        assert "tests/test_auth.py" not in in_scope
+        assert "tests/test_auth.py" in out_of_scope
+
+    def test_no_allowed_files_returns_all(self, tmp_path):
+        """When allowed_files is None, all discovered tests are in-scope."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "auth.py").touch()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_auth.py").touch()
+
+        result = _find_related_test_files(
+            str(tmp_path),
+            changed_files=["src/auth.py"],
+            allowed_files=None,
+        )
+        # Backward compat: returns flat list when allowed_files is None
+        assert "tests/test_auth.py" in result
+
+    def test_newly_created_test_is_in_scope(self, tmp_path):
+        """A test file created by the agent (not on base branch) is in-scope."""
+        # Set up a git repo to simulate new file detection
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_new.py").write_text("# new test")
+        (tmp_path / "new.py").write_text("# new module")
+
+        # Stage and commit the new test on a branch
+        subprocess.run(["git", "checkout", "-b", "work"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add new"], cwd=tmp_path, capture_output=True)
+
+        in_scope, out_of_scope = _find_related_test_files(
+            str(tmp_path),
+            changed_files=["new.py"],
+            allowed_files=["new.py"],  # test_new.py NOT in allowed list
+            base_ref="main",
+        )
+        # test_new.py was created by agent (not on main), so it's in-scope
+        assert "tests/test_new.py" in in_scope

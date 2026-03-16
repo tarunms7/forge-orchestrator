@@ -150,7 +150,7 @@ class HomeScreen(Screen):
                 yield PipelineList()
         yield ShortcutBar([
             ("Ctrl+S", "Submit Task"),
-            ("↑↓", "History"),
+            ("j/k", "History"),
             ("Enter", "Resume Selected"),
             ("q", "Quit"),
         ])
