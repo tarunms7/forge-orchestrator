@@ -578,7 +578,9 @@ class ForgeApp(App):
         self.push_screen(pipeline_screen)
         # CRITICAL: Use create_task, NOT await — planning is a long LLM call
         # that would block the Textual event loop and freeze the UI.
-        asyncio.create_task(self._run_plan(task))
+        # Store as _daemon_task so quit handler can cancel it gracefully.
+        self._daemon_task = asyncio.create_task(self._run_plan(task))
+        self._daemon_task.add_done_callback(self._on_daemon_done)
 
     async def _run_plan(self, task: str) -> None:
         """Run planning phase only, then show plan for approval."""
@@ -633,6 +635,16 @@ class ForgeApp(App):
                 for t in self._graph.tasks
             ]
             self.push_screen(PlanApprovalScreen(plan_tasks))
+        except asyncio.CancelledError:
+            logger.info("Planning was cancelled")
+            self._state.apply_event("pipeline:error", {"error": "Planning cancelled"})
+        except RuntimeError as e:
+            # SDK cancel scope errors during shutdown — not a real failure
+            if "cancel scope" in str(e):
+                logger.info("Planning interrupted during shutdown: %s", e)
+            else:
+                logger.error("Planning failed: %s", e, exc_info=True)
+                self._state.apply_event("pipeline:error", {"error": str(e)})
         except Exception as e:
             logger.error("Planning failed: %s", e, exc_info=True)
             self._state.apply_event("pipeline:error", {"error": str(e)})
@@ -801,7 +813,8 @@ class ForgeApp(App):
             self._daemon_task.cancel()
             try:
                 await self._daemon_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, RuntimeError, Exception):
+                # RuntimeError from SDK cancel scope mismatch during shutdown
                 pass
 
         if self._db and self._pipeline_id:
