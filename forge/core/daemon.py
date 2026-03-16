@@ -761,10 +761,49 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 logger.info(
                     "Auto-answered timed-out question %s for task %s", q.id, q.task_id
                 )
+                # Resume the task now that it has an answer
+                await self._on_task_answered(
+                    data={
+                        "task_id": q.task_id,
+                        "answer": "Proceed with your best judgment.",
+                        "pipeline_id": pipeline_id,
+                    },
+                    db=db,
+                )
             except Exception:
                 logger.exception(
                     "Failed to auto-answer question %s for task %s", q.id, q.task_id
                 )
+
+    async def _recover_answered_questions(self, db, pipeline_id: str) -> None:
+        """Resume tasks that were answered while daemon was down.
+
+        Called at the start of the execution loop. Skips __planning__ sentinel tasks.
+        """
+        try:
+            tasks = await db.get_tasks_by_state(pipeline_id, "awaiting_input")
+        except Exception:
+            logger.exception("Failed to query awaiting_input tasks for recovery")
+            return
+
+        for task in tasks:
+            if task.id == "__planning__":
+                continue
+            try:
+                questions = await db.get_task_questions(task.id)
+                answered = [q for q in questions if q.answer and q.answered_at]
+                if answered:
+                    latest = max(answered, key=lambda q: q.answered_at)
+                    await self._on_task_answered(
+                        data={
+                            "task_id": task.id,
+                            "answer": latest.answer,
+                            "pipeline_id": pipeline_id,
+                        },
+                        db=db,
+                    )
+            except Exception:
+                logger.exception("Failed to recover task %s", task.id)
 
     async def _safe_execute_task(
         self, db, runtime, worktree_mgr, merge_worker,
@@ -880,6 +919,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await self._on_task_answered(data=data, db=db)
 
         self._events.on("task:answer", _answer_handler)
+
+        # Recover tasks that were answered while daemon was down
+        if pipeline_id:
+            await self._recover_answered_questions(db, pipeline_id)
 
         if pipeline_id:
             await db.set_executor_info(pipeline_id, pid=os.getpid(), token=self._executor_token)

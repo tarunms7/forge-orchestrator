@@ -401,6 +401,15 @@ class Database:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
+    async def get_tasks_by_state(self, pipeline_id: str, state: str) -> list[TaskRow]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskRow)
+                .where(TaskRow.pipeline_id == pipeline_id)
+                .where(TaskRow.state == state)
+            )
+            return list(result.scalars().all())
+
     async def add_task_cost(self, task_id: str, cost: float) -> None:
         async with self._session_factory() as session:
             await session.execute(

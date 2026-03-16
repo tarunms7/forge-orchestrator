@@ -307,3 +307,89 @@ class TestOnTaskAnswered:
 
         await executor._on_task_answered(data={"answer": "x"}, db=mock_db)
         mock_db.get_task.assert_not_called()
+
+
+class TestRecoverAnsweredQuestions:
+    """Tests for crash recovery of answered questions on daemon startup."""
+
+    @pytest.mark.asyncio
+    async def test_recover_answered_questions_resumes_tasks(self):
+        """On startup, tasks in AWAITING_INPUT with answered questions should be resumed."""
+        from forge.core.daemon import ForgeDaemon
+
+        daemon = ForgeDaemon.__new__(ForgeDaemon)
+        daemon._settings = MagicMock()
+
+        mock_task = MagicMock()
+        mock_task.id = "t1"
+        mock_task.state = "awaiting_input"
+
+        mock_db = AsyncMock()
+        mock_db.get_tasks_by_state = AsyncMock(return_value=[mock_task])
+
+        mock_q = MagicMock()
+        mock_q.answer = "Use JWT"
+        mock_q.answered_at = "2026-03-16T00:00:00"
+        mock_q.id = "q1"
+        mock_db.get_task_questions = AsyncMock(return_value=[mock_q])
+
+        daemon._on_task_answered = AsyncMock()
+
+        await daemon._recover_answered_questions(mock_db, "pipe1")
+
+        daemon._on_task_answered.assert_called_once()
+        call_data = daemon._on_task_answered.call_args[1]["data"]
+        assert call_data["task_id"] == "t1"
+        assert call_data["answer"] == "Use JWT"
+
+    @pytest.mark.asyncio
+    async def test_recover_skips_planning_questions(self):
+        """Recovery should skip __planning__ sentinel tasks."""
+        from forge.core.daemon import ForgeDaemon
+
+        daemon = ForgeDaemon.__new__(ForgeDaemon)
+
+        mock_task = MagicMock()
+        mock_task.id = "__planning__"
+        mock_task.state = "awaiting_input"
+
+        mock_db = AsyncMock()
+        mock_db.get_tasks_by_state = AsyncMock(return_value=[mock_task])
+
+        daemon._on_task_answered = AsyncMock()
+
+        await daemon._recover_answered_questions(mock_db, "pipe1")
+
+        daemon._on_task_answered.assert_not_called()
+
+
+class TestCheckQuestionTimeoutsResume:
+    """Tests for timeout resume triggering _on_task_answered."""
+
+    @pytest.mark.asyncio
+    async def test_check_question_timeouts_triggers_resume(self):
+        """After auto-answering a timed-out question, _on_task_answered should be called."""
+        from forge.core.daemon import ForgeDaemon
+
+        daemon = ForgeDaemon.__new__(ForgeDaemon)
+        daemon._settings = MagicMock()
+        daemon._settings.question_timeout = 300
+
+        mock_q = MagicMock()
+        mock_q.id = "q1"
+        mock_q.task_id = "t1"
+        mock_q.pipeline_id = "pipe1"
+
+        mock_db = AsyncMock()
+        mock_db.get_expired_questions = AsyncMock(return_value=[mock_q])
+        mock_db.answer_question = AsyncMock()
+
+        daemon._emit = AsyncMock()
+        daemon._on_task_answered = AsyncMock()
+
+        await daemon._check_question_timeouts(mock_db, "pipe1")
+
+        mock_db.answer_question.assert_called_once_with(
+            "q1", "Proceed with your best judgment.", "timeout"
+        )
+        daemon._on_task_answered.assert_called_once()
