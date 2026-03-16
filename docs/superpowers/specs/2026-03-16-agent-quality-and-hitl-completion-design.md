@@ -40,10 +40,10 @@ The TUI's `ForgeApp.on_chat_thread_answer_submitted()` (app.py lines 228-243) st
    → verify state == AWAITING_INPUT
    → verify question has an answer
    → acquire execution slot
-   → call _resume_task(task_id, answer)
+   → call _resume_task(db, runtime, worktree_mgr, merge_worker, task_id, agent_id, answer, pipeline_id)
    ```
 
-3. This reuses the existing slot acquisition mechanism (`_acquire_slot` / agent pool). The resumed task competes for slots like any other task.
+3. This reuses the existing slot acquisition mechanism (`_acquire_slot` / agent pool). The resumed task competes for slots like any other task. Note: `_resume_task` is on `ExecutorMixin` (daemon_executor.py) and requires all executor dependencies as positional arguments. `ForgeDaemon` inherits from `ExecutorMixin`, so `self._resume_task()` is available in daemon.py methods.
 
 **Crash recovery path — startup scan:**
 
@@ -64,7 +64,10 @@ async def _recover_answered_questions(self, db, pipeline_id):
             # Acquire execution slot before resuming (same path as normal task scheduling)
             agent_id = await self._acquire_slot(db, pipeline_id)
             if agent_id:
-                await self._resume_task(task.id, latest.answer)
+                await self._resume_task(
+                    db, self._runtime, self._worktree_mgr, self._merge_worker,
+                    task.id, agent_id, latest.answer, pipeline_id,
+                )
             # If no slot available, task stays in AWAITING_INPUT and will be
             # picked up by the next scheduler cycle when a slot frees up
 ```
@@ -73,7 +76,7 @@ Call this at the start of the execution loop and after reconnecting to a running
 
 **Timeout path — already exists but disconnected:**
 
-`_check_question_timeouts()` exists (daemon.py lines 743-767) but only auto-answers expired questions. After auto-answering, it should also call `_resume_task()`. Add the resume call after the auto-answer DB write.
+`_check_question_timeouts()` exists (daemon.py lines 743-767) but only auto-answers expired questions. After auto-answering, it should also acquire a slot and call `_resume_task()` with full arguments (same pattern as recovery path above). Add the slot acquisition + resume call after the auto-answer DB write.
 
 ### Files Changed
 
@@ -201,7 +204,7 @@ async def _on_architect_question(question_data: dict) -> str:
         pipeline_id=pipeline_id,
         question=question_data["question"],
         suggestions=question_data.get("suggestions"),
-        context=question_data.get("context"),
+        context={"text": question_data.get("context", "")},  # wrap string in dict — create_task_question expects dict|None
         stage="planning",
     )
     await self._emit("planning:question", {
@@ -261,7 +264,7 @@ The planning screen (`pipeline.py`) already shows a `PlannerCard` during plannin
 | File | Change |
 |------|--------|
 | `forge/core/daemon.py` | `plan()`: construct `_on_architect_question` callback, pass to Architect; register `_on_planning_answer` listener; add `_recover_planning_questions()` |
-| `forge/storage/db.py` | Add `stage` column to `TaskQuestionRow`; add to `_add_missing_columns()` auto-migration |
+| `forge/storage/db.py` | Add `stage` column to `TaskQuestionRow`; update `create_task_question()` signature to accept and persist `stage: str | None = None`; add to `_add_missing_columns()` auto-migration; add `get_planning_questions(pipeline_id)` query method |
 | `forge/tui/state.py` | Add `_on_planning_question` and `_on_planning_answer` handlers to `_EVENT_MAP` |
 | `forge/tui/screens/pipeline.py` | Show `ChatThread` inline when planning question arrives; handle answer submission routing for planning vs execution questions |
 | `forge/tui/app.py` | Route planning answers through `planning:answer` event instead of `task:answer` |
@@ -314,6 +317,8 @@ class InterjectionRow(Base):
 Add to `_ALL_MODELS` for auto-migration.
 
 **Daemon-side delivery:**
+
+**Important limitation:** Interjections are NOT real-time interrupts. The `sdk_query()` call is a single blocking call that can run for several minutes. An interjection submitted during an active agent turn will only be delivered AFTER that turn completes naturally. The human sees a "message queued" indicator in the TUI; the agent receives it at the next turn boundary. This is a deliberate trade-off: real-time interruption would require cancelling the SDK call and losing the agent's in-progress work.
 
 The executor's `_execute_task` flow has a natural injection point. After `sdk_query()` returns (agent completed one full turn), before proceeding to review:
 
@@ -375,7 +380,7 @@ while True:
 
 2. **Multiple interjections queued** — Combine into one message block delivered together. Don't interrupt the agent once per message.
 
-3. **Task in AWAITING_INPUT** — If human uses interject on a task that's waiting for a question answer, treat the interjection as the answer. Route through existing `_resume_task` flow.
+3. **Task in AWAITING_INPUT** — If human uses interject on a task that's waiting for a question answer, treat the interjection text as the answer. Write it to the `TaskQuestionRow` via `db.answer_question(question_id, interjection.message)`, then route through existing `_resume_task` flow. The `InterjectionRow` is still created (for audit) but marked delivered immediately.
 
 4. **Agent asks question after receiving interjection** — Normal question flow. The interjection is already part of the conversation context via resume.
 
@@ -472,8 +477,8 @@ Wire it: `daemon_executor.py` reads `settings.autonomy` and passes to `ClaudeAda
 | File | Change |
 |------|--------|
 | `forge/agents/adapter.py` | Rewrite `_build_question_protocol()` balanced mode text; add thinking-out-loud section; add examples |
-| `forge/config/settings.py` | Verify `autonomy` field exists; add if not |
-| `forge/core/daemon_executor.py` | Pass `settings.autonomy` through to adapter |
+| `forge/config/settings.py` | No change needed — `autonomy` field already exists (line 77) |
+| `forge/core/daemon_executor.py` | No change needed — `settings.autonomy` already passed through (line 770) |
 
 ### Test Plan
 
