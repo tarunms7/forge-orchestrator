@@ -7,6 +7,7 @@ from forge.agents.adapter import (
     ClaudeAdapter,
     _build_conventions_block,
     _build_dependency_context,
+    _load_claude_md,
 )
 
 
@@ -409,3 +410,73 @@ async def test_claude_adapter_error_includes_cost():
     assert result.cost_usd == 0.07
     assert result.input_tokens == 500
     assert result.output_tokens == 200
+
+
+# --- _load_claude_md tests ---
+
+
+class TestLoadClaudeMd:
+    def test_loads_from_project_root(self, tmp_path):
+        (tmp_path / "CLAUDE.md").write_text("# Project Rules\nUse pytest.")
+        result = _load_claude_md(str(tmp_path))
+        assert result == "# Project Rules\nUse pytest."
+
+    def test_loads_from_dotclaude_dir(self, tmp_path):
+        dotclaude = tmp_path / ".claude"
+        dotclaude.mkdir()
+        (dotclaude / "CLAUDE.md").write_text("# Alt Rules")
+        result = _load_claude_md(str(tmp_path))
+        assert result == "# Alt Rules"
+
+    def test_prefers_project_root(self, tmp_path):
+        (tmp_path / "CLAUDE.md").write_text("root")
+        dotclaude = tmp_path / ".claude"
+        dotclaude.mkdir()
+        (dotclaude / "CLAUDE.md").write_text("dotclaude")
+        result = _load_claude_md(str(tmp_path))
+        assert result == "root"
+
+    def test_returns_none_when_missing(self, tmp_path):
+        result = _load_claude_md(str(tmp_path))
+        assert result is None
+
+
+# --- CLAUDE.md injection into system prompt tests ---
+
+
+def test_system_prompt_includes_claude_md(tmp_path):
+    """When CLAUDE.md exists, its content appears in the system prompt."""
+    (tmp_path / "CLAUDE.md").write_text("Always use type hints.")
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+        project_dir=str(tmp_path),
+    )
+    assert "Always use type hints." in options.system_prompt
+    assert "Project Instructions" in options.system_prompt
+
+
+def test_system_prompt_without_claude_md(tmp_path):
+    """When CLAUDE.md doesn't exist, prompt still works without it."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+        project_dir=str(tmp_path),
+    )
+    assert "Project Instructions" not in options.system_prompt
+
+
+# --- Working effectively guidance tests ---
+
+
+def test_system_prompt_includes_working_effectively(tmp_path):
+    """System prompt should include working-effectively guidance."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+    )
+    assert "Working Effectively" in options.system_prompt
+    assert "Use all available tools" in options.system_prompt

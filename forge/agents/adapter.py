@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 from abc import ABC, abstractmethod
@@ -14,6 +15,26 @@ from claude_code_sdk import ClaudeCodeOptions
 from forge.core.sdk_helpers import sdk_query
 
 logger = logging.getLogger("forge.agents")
+
+
+def _load_claude_md(project_dir: str) -> str | None:
+    """Load CLAUDE.md from standard locations.
+
+    Searches:
+      1. {project_dir}/CLAUDE.md
+      2. {project_dir}/.claude/CLAUDE.md
+
+    Returns content as string, or None if not found.
+    """
+    for rel_path in ("CLAUDE.md", os.path.join(".claude", "CLAUDE.md")):
+        full_path = os.path.join(project_dir, rel_path)
+        if os.path.isfile(full_path):
+            try:
+                with open(full_path, "r") as f:
+                    return f.read()
+            except OSError:
+                continue
+    return None
 
 
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
