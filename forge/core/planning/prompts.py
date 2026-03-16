@@ -120,11 +120,20 @@ When tasks have cross-task interfaces, add integration_hints:
 ## Workflow
 
 1. Use the CodebaseMap as your PRIMARY source of truth — it contains the full codebase analysis
-2. You may Read specific files ONLY to verify interfaces or check details not in the CodebaseMap
-3. Do NOT run Glob, Grep, or Bash to re-explore the codebase — Scout already did that
-4. If ambiguities exist and you have questions remaining, ask BEFORE planning
-5. Decompose into tasks with clear file ownership and dependencies
-6. Output ONLY valid JSON. No markdown, no explanation."""
+2. If ambiguities exist and you have questions remaining, ask BEFORE planning
+3. Decompose into tasks with clear file ownership and dependencies
+4. Output ONLY valid JSON. No markdown, no explanation.
+
+## CRITICAL: Do NOT re-explore the codebase
+
+The Scout stage has ALREADY explored the entire codebase and produced the CodebaseMap you received.
+You MUST NOT use Glob or Grep to search the codebase again — this wastes significant time and cost.
+You MUST NOT use Bash for any reason.
+You MAY use Read ONLY to check a specific function signature or interface detail that is missing
+from the CodebaseMap — but NEVER to broadly explore files.
+
+If you find yourself wanting to Glob or Grep, STOP — the answer is already in the CodebaseMap.
+Violating this rule is a critical failure."""
 
 
 DETAILER_SYSTEM_PROMPT = """You are a task enrichment specialist for Forge, a multi-agent coding orchestration system.
@@ -154,43 +163,8 @@ Return ONLY the enriched task description as plain text (not JSON). Include:
 - Do NOT search the codebase with Glob or Grep — all relevant modules are already provided"""
 
 
-VALIDATOR_LLM_SYSTEM_PROMPT = """You are a plan quality reviewer for Forge, a multi-agent coding orchestration system.
 
-You receive a complete TaskGraph and CodebaseMap. Your job: check for semantic issues that structural validation cannot catch.
-
-## What to Check
-
-1. **Spec coverage**: Does every requirement in the spec map to at least one task?
-2. **Convention compliance**: Do tasks reference correct patterns from the CodebaseMap?
-3. **Integration completeness**: Does every integration_hint have matching implementation in tasks?
-4. **Description quality**: Are descriptions specific enough to implement without guessing?
-
-## Output Schema
-
-{
-  "status": "pass" or "fail",
-  "issues": [
-    {
-      "severity": "minor" or "major" or "fatal",
-      "category": "category_name",
-      "affected_tasks": ["task-id"],
-      "description": "What's wrong",
-      "suggested_fix": "How to fix it"
-    }
-  ],
-  "minor_fixes": [
-    {
-      "task_id": "task-id",
-      "field": "description" or "files",
-      "reason": "Why this fix is needed",
-      "original_value": "original",
-      "fixed_value": "fixed"
-    }
-  ]
-}
-
-## Rules
-
-- Do NOT duplicate structural checks (file conflicts, cycles) — those are already done
-- Focus on SEMANTIC quality: is the plan complete? accurate? specific enough?
-- Output ONLY valid JSON."""
+# NOTE: A VALIDATOR_LLM_SYSTEM_PROMPT for semantic validation (spec coverage,
+# convention compliance, description quality) is not yet implemented.
+# The current validator in validator.py is purely structural.
+# When adding LLM-based semantic validation, define the prompt here.

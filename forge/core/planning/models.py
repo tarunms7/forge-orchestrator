@@ -37,15 +37,35 @@ class CodebaseMap(BaseModel):
     relevant_interfaces: list[RelevantInterface] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
 
+    @staticmethod
+    def _normalize_path(p: str) -> str:
+        """Normalize a file path for comparison (strip ./, trailing /, collapse //)."""
+        import posixpath
+
+        p = p.replace("\\", "/")
+        p = posixpath.normpath(p)
+        if p.startswith("./"):
+            p = p[2:]
+        return p
+
     def slice_for_files(self, file_paths: list[str]) -> CodebaseMap:
-        """Return a CodebaseMap containing only modules relevant to given files."""
-        relevant = [m for m in self.key_modules if m.path in file_paths]
+        """Return a CodebaseMap containing only modules relevant to given files.
+
+        Paths are normalized before comparison so that ``./src/foo.py`` and
+        ``src/foo.py`` match correctly.
+        """
+        normalized_paths = {self._normalize_path(p) for p in file_paths}
+        relevant = [
+            m for m in self.key_modules
+            if self._normalize_path(m.path) in normalized_paths
+        ]
         return CodebaseMap(
             architecture_summary=self.architecture_summary,
             key_modules=relevant,
             existing_patterns=self.existing_patterns,
             relevant_interfaces=[
-                i for i in self.relevant_interfaces if i.file in file_paths
+                i for i in self.relevant_interfaces
+                if self._normalize_path(i.file) in normalized_paths
             ],
             risks=[],
         )
