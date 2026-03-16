@@ -91,6 +91,8 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 
 {conventions_block}
 
+{claude_md_block}
+
 {contracts_block}
 
 {dependency_context}
@@ -98,6 +100,8 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 {file_scope_block}
 
 {question_protocol}
+
+{working_effectively}
 
 Rules:
 - You MUST ONLY modify files listed in the File Scope section above. Changes to other files are automatically reverted by the system.
@@ -249,6 +253,7 @@ class ClaudeAdapter(AgentAdapter):
         autonomy: str = "balanced",
         questions_remaining: int = 3,
         resume: str | None = None,
+        project_dir: str | None = None,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -272,6 +277,30 @@ class ClaudeAdapter(AgentAdapter):
         else:
             file_scope_block = ""
         question_protocol = _build_question_protocol(autonomy, questions_remaining)
+
+        # Load project instructions from CLAUDE.md
+        claude_md_block = ""
+        if project_dir:
+            claude_md_content = _load_claude_md(project_dir)
+            if claude_md_content:
+                claude_md_block = (
+                    "## Project Instructions (from CLAUDE.md)\n\n"
+                    f"{claude_md_content}"
+                )
+
+        working_effectively = """## Working Effectively
+
+- Use all available tools. If you need to look up API docs, use WebSearch.
+  If you need to understand a library, read its source. Be resourceful.
+- If tests fail, read the full error output. Diagnose the root cause.
+  Fix it. Re-run. Don't guess — verify.
+- Before editing a file, read it first. Understand the existing patterns.
+  Follow them. Don't introduce new conventions.
+- If you're unsure about something, explore first. Grep the codebase.
+  Read related files. Build understanding before making changes.
+- Commit your work when you reach a stable point. Small, focused commits
+  are better than one giant commit at the end."""
+
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
@@ -280,6 +309,8 @@ class ClaudeAdapter(AgentAdapter):
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
+            claude_md_block=claude_md_block,
+            working_effectively=working_effectively,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
