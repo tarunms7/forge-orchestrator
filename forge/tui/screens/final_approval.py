@@ -186,7 +186,7 @@ class FinalApprovalScreen(Screen):
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             count = int(stdout.decode().strip()) if stdout else 0
 
-            if count > 0:
+            if count > 0 and self.is_running:
                 warning = self.query_one("#behind-main-warning", Static)
                 warning.update(
                     f"[bold #d29922]⚠ Branch is {count} commit{'s' if count != 1 else ''} "

@@ -338,6 +338,7 @@ class TuiState:
         self.error_history.clear()
         self.error = None
         self.total_cost_usd = 0.0
+        self.planning_stage = ""
         self.phase = "planning"
         self._notify("phase")
 
@@ -455,6 +456,7 @@ class TuiState:
         self.pr_url = None
         self._pending_state_updates.clear()
         self.error_history.clear()
+        self.planning_stage = ""
 
     @property
     def done_count(self) -> int:
