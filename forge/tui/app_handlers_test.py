@@ -125,3 +125,40 @@ async def test_resume_refetches_tasks_after_reset():
     assert done_count == 1
     todo_count = sum(1 for t in tasks if t.state == "todo")
     assert todo_count == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_submission_emits_to_daemon_events():
+    """Answering a question should emit task:answer on the daemon's EventEmitter."""
+    from forge.tui.app import ForgeApp
+
+    emitted = []
+
+    class FakeEmitter:
+        async def emit(self, event_type, data):
+            emitted.append((event_type, data))
+
+    class FakeDaemon:
+        _events = FakeEmitter()
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.answer = "Use JWT"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(return_value=[
+        MagicMock(task_id="t1", answer=None, id="q1")
+    ])
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = FakeDaemon()
+    app._state = MagicMock()
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    assert len(emitted) == 1
+    assert emitted[0][0] == "task:answer"
+    assert emitted[0][1]["task_id"] == "t1"
+    assert emitted[0][1]["answer"] == "Use JWT"
+    assert emitted[0][1]["pipeline_id"] == "pipe1"

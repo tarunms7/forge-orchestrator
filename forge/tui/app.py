@@ -240,7 +240,17 @@ class ForgeApp(App):
         except Exception:
             logger.error("Failed to record answer to DB", exc_info=True)
         self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
-        # The daemon's execution loop detects the answered question and resumes the task.
+
+        # Notify daemon to resume the task
+        if self._daemon and hasattr(self._daemon, '_events'):
+            try:
+                await self._daemon._events.emit("task:answer", {
+                    "task_id": task_id,
+                    "answer": answer,
+                    "pipeline_id": self._pipeline_id,
+                })
+            except Exception:
+                logger.error("Failed to emit task:answer to daemon", exc_info=True)
 
     async def on_final_approval_screen_create_pr(self, event) -> None:
         """User confirmed PR creation from FinalApprovalScreen."""
