@@ -65,7 +65,6 @@ class TestResumeTaskSdkOptions:
         from claude_code_sdk import ClaudeCodeOptions
         opts = ClaudeCodeOptions(
             resume="sess_123",
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
             permission_mode="acceptEdits",
             max_turns=25,
         )
@@ -75,7 +74,7 @@ class TestResumeTaskSdkOptions:
         """ClaudeCodeOptions resume defaults to None."""
         from claude_code_sdk import ClaudeCodeOptions
         opts = ClaudeCodeOptions(
-            allowed_tools=["Read"],
+            permission_mode="acceptEdits",
         )
         assert opts.resume is None
 
@@ -211,3 +210,186 @@ class TestExecuteTaskQuestionDetection:
 
         # Should have stored the question
         db.create_task_question.assert_called_once()
+
+
+class TestOnTaskAnswered:
+    """Tests for _on_task_answered event-driven resume."""
+
+    @pytest.mark.asyncio
+    async def test_resumes_awaiting_input_task(self):
+        """When task:answer arrives for an awaiting_input task, daemon should assign and resume."""
+        from forge.core.daemon_executor import ExecutorMixin
+
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._project_dir = "/tmp/test"
+        executor._active_tasks = {}
+        executor._effective_max_agents = 4
+        executor._runtime = MagicMock()
+        executor._worktree_mgr = MagicMock()
+        executor._merge_worker = MagicMock()
+
+        mock_db = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.state = "awaiting_input"
+        mock_task.id = "t1"
+        mock_db.get_task = AsyncMock(return_value=mock_task)
+        mock_db.assign_task = AsyncMock()
+        mock_db.list_agents = AsyncMock(return_value=[MagicMock(id="agent-1")])
+        mock_db.list_tasks_by_pipeline = AsyncMock(return_value=[mock_task])
+
+        with patch("forge.core.scheduler.Scheduler") as MockSched:
+            MockSched.dispatch_plan.return_value = [("t1", "agent-1")]
+
+            # Mock engine helpers
+            with patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
+                with patch("forge.core.engine._row_to_record", side_effect=lambda t: t):
+                    # Mock _safe_execute_resume to avoid actual execution
+                    executor._safe_execute_resume = AsyncMock()
+
+                    await executor._on_task_answered(
+                        data={"task_id": "t1", "answer": "Use JWT", "pipeline_id": "pipe1"},
+                        db=mock_db,
+                    )
+
+        mock_db.assign_task.assert_called_once_with("t1", "agent-1")
+
+    @pytest.mark.asyncio
+    async def test_skips_non_awaiting_task(self):
+        """task:answer for a task not in AWAITING_INPUT should be a no-op."""
+        from forge.core.daemon_executor import ExecutorMixin
+
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._active_tasks = {}
+
+        mock_db = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.state = "in_progress"
+        mock_db.get_task = AsyncMock(return_value=mock_task)
+
+        executor._safe_execute_resume = AsyncMock()
+
+        await executor._on_task_answered(
+            data={"task_id": "t1", "answer": "x", "pipeline_id": "pipe1"},
+            db=mock_db,
+        )
+
+        executor._safe_execute_resume.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_already_active_task(self):
+        """task:answer for a task already in _active_tasks should be skipped."""
+        from forge.core.daemon_executor import ExecutorMixin
+
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._active_tasks = {"t1": MagicMock()}  # already active
+
+        mock_db = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.state = "awaiting_input"
+        mock_db.get_task = AsyncMock(return_value=mock_task)
+
+        executor._safe_execute_resume = AsyncMock()
+
+        await executor._on_task_answered(
+            data={"task_id": "t1", "answer": "x", "pipeline_id": "pipe1"},
+            db=mock_db,
+        )
+
+        executor._safe_execute_resume.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_noop_on_missing_task_id(self):
+        """task:answer with no task_id should return immediately."""
+        from forge.core.daemon_executor import ExecutorMixin
+
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        mock_db = AsyncMock()
+
+        await executor._on_task_answered(data={"answer": "x"}, db=mock_db)
+        mock_db.get_task.assert_not_called()
+
+
+class TestRecoverAnsweredQuestions:
+    """Tests for crash recovery of answered questions on daemon startup."""
+
+    @pytest.mark.asyncio
+    async def test_recover_answered_questions_resumes_tasks(self):
+        """On startup, tasks in AWAITING_INPUT with answered questions should be resumed."""
+        from forge.core.daemon import ForgeDaemon
+
+        daemon = ForgeDaemon.__new__(ForgeDaemon)
+        daemon._settings = MagicMock()
+
+        mock_task = MagicMock()
+        mock_task.id = "t1"
+        mock_task.state = "awaiting_input"
+
+        mock_db = AsyncMock()
+        mock_db.get_tasks_by_state = AsyncMock(return_value=[mock_task])
+
+        mock_q = MagicMock()
+        mock_q.answer = "Use JWT"
+        mock_q.answered_at = "2026-03-16T00:00:00"
+        mock_q.id = "q1"
+        mock_db.get_task_questions = AsyncMock(return_value=[mock_q])
+
+        daemon._on_task_answered = AsyncMock()
+
+        await daemon._recover_answered_questions(mock_db, "pipe1")
+
+        daemon._on_task_answered.assert_called_once()
+        call_data = daemon._on_task_answered.call_args[1]["data"]
+        assert call_data["task_id"] == "t1"
+        assert call_data["answer"] == "Use JWT"
+
+    @pytest.mark.asyncio
+    async def test_recover_skips_planning_questions(self):
+        """Recovery should skip __planning__ sentinel tasks."""
+        from forge.core.daemon import ForgeDaemon
+
+        daemon = ForgeDaemon.__new__(ForgeDaemon)
+
+        mock_task = MagicMock()
+        mock_task.id = "__planning__"
+        mock_task.state = "awaiting_input"
+
+        mock_db = AsyncMock()
+        mock_db.get_tasks_by_state = AsyncMock(return_value=[mock_task])
+
+        daemon._on_task_answered = AsyncMock()
+
+        await daemon._recover_answered_questions(mock_db, "pipe1")
+
+        daemon._on_task_answered.assert_not_called()
+
+
+class TestCheckQuestionTimeoutsResume:
+    """Tests for timeout resume triggering _on_task_answered."""
+
+    @pytest.mark.asyncio
+    async def test_check_question_timeouts_triggers_resume(self):
+        """After auto-answering a timed-out question, _on_task_answered should be called."""
+        from forge.core.daemon import ForgeDaemon
+
+        daemon = ForgeDaemon.__new__(ForgeDaemon)
+        daemon._settings = MagicMock()
+        daemon._settings.question_timeout = 300
+
+        mock_q = MagicMock()
+        mock_q.id = "q1"
+        mock_q.task_id = "t1"
+        mock_q.pipeline_id = "pipe1"
+
+        mock_db = AsyncMock()
+        mock_db.get_expired_questions = AsyncMock(return_value=[mock_q])
+        mock_db.answer_question = AsyncMock()
+
+        daemon._emit = AsyncMock()
+        daemon._on_task_answered = AsyncMock()
+
+        await daemon._check_question_timeouts(mock_db, "pipe1")
+
+        mock_db.answer_question.assert_called_once_with(
+            "q1", "Proceed with your best judgment.", "timeout"
+        )
+        daemon._on_task_answered.assert_called_once()

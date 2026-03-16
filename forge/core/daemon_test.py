@@ -722,3 +722,83 @@ class TestClassifyPipelineResult:
     def test_classify_all_cancelled(self):
         states = ["cancelled", "cancelled"]
         assert _classify_pipeline_result(states) == "complete"
+
+
+# ---------------------------------------------------------------------------
+# Tests for planning question wiring in daemon.plan()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestPlanningQuestionWiring:
+    """Tests for on_question callback wiring in daemon.plan()."""
+
+    async def test_planning_pipeline_receives_on_question(self, tmp_path):
+        """When deep planning is used, PlanningPipeline should receive on_question callback."""
+        daemon = _make_daemon(tmp_path, planning_mode="deep")
+
+        db = MagicMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(template_config_json=None))
+        db.create_task_question = AsyncMock(return_value=MagicMock(id="q-1"))
+        db.log_event = AsyncMock()
+
+        daemon._emit = AsyncMock()
+
+        with patch("forge.core.daemon.gather_project_snapshot", return_value=MagicMock(
+            total_files=100,
+            format_for_planner=MagicMock(return_value="snapshot"),
+        )), \
+             patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"), \
+             patch("forge.core.daemon._should_use_deep_planning", return_value=True), \
+             patch("forge.core.planning.pipeline.PlanningPipeline") as MockPipeline, \
+             patch("forge.core.planning.scout.Scout"), \
+             patch("forge.core.planning.architect.Architect"), \
+             patch("forge.core.planning.detailer.DetailerFactory"):
+
+            MockPipeline.return_value.run = AsyncMock(return_value=MagicMock(
+                task_graph=MagicMock(tasks=[]),
+                codebase_map=None,
+                cost_breakdown={},
+                total_cost_usd=0.0,
+            ))
+
+            graph = await daemon.plan("add auth", db, pipeline_id="pipe-1")
+
+        # Verify PlanningPipeline was constructed with on_question
+        init_kwargs = MockPipeline.call_args.kwargs
+        assert "on_question" in init_kwargs
+        assert init_kwargs["on_question"] is not None
+        assert callable(init_kwargs["on_question"])
+
+    async def test_planning_answer_listener_cleaned_up(self, tmp_path):
+        """After plan() completes, planning:answer listener should be removed."""
+        daemon = _make_daemon(tmp_path, planning_mode="deep")
+
+        db = MagicMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(template_config_json=None))
+        db.log_event = AsyncMock()
+
+        daemon._emit = AsyncMock()
+
+        with patch("forge.core.daemon.gather_project_snapshot", return_value=MagicMock(
+            total_files=100,
+            format_for_planner=MagicMock(return_value="snapshot"),
+        )), \
+             patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"), \
+             patch("forge.core.daemon._should_use_deep_planning", return_value=True), \
+             patch("forge.core.planning.pipeline.PlanningPipeline") as MockPipeline, \
+             patch("forge.core.planning.scout.Scout"), \
+             patch("forge.core.planning.architect.Architect"), \
+             patch("forge.core.planning.detailer.DetailerFactory"):
+
+            MockPipeline.return_value.run = AsyncMock(return_value=MagicMock(
+                task_graph=MagicMock(tasks=[]),
+                codebase_map=None,
+                cost_breakdown={},
+                total_cost_usd=0.0,
+            ))
+
+            await daemon.plan("add auth", db, pipeline_id="pipe-1")
+
+        # planning:answer handlers should be cleaned up
+        handlers = daemon._events._handlers.get("planning:answer", [])
+        assert len(handlers) == 0

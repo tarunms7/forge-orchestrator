@@ -1,6 +1,7 @@
 """ExecutorMixin — decomposed _execute_task extracted from ForgeDaemon."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -97,6 +98,21 @@ class ExecutorMixin:
                 session_id=agent_result.session_id,
             )
             return
+
+        # Check for pending human interjections before review
+        interjection_delivered, final_session = await self._deliver_interjections(
+            db=db, runtime=runtime, worktree_mgr=worktree_mgr,
+            task_id=task_id, task=task, agent_id=agent_id,
+            worktree_path=worktree_path, pipeline_id=pid,
+            session_id=agent_result.session_id,
+            pipeline_branch=pipeline_branch,
+        )
+        # If _deliver_interjections handled a question, the task is paused — stop here
+        if interjection_delivered and final_session != agent_result.session_id:
+            # Check if a question was asked (agent released inside _deliver_interjections)
+            task_after = await db.get_task(task_id)
+            if task_after and task_after.state == "awaiting_input":
+                return
 
         # Strip out-of-scope changes before review
         has_in_scope_changes, reverted_files = self._enforce_file_scope(
@@ -329,6 +345,64 @@ class ExecutorMixin:
         # Release the agent slot — no subprocess running while paused
         await db.release_agent(agent_id)
 
+    # -- interjection delivery --------------------------------------------
+
+    async def _deliver_interjections(
+        self, db, runtime, worktree_mgr, task_id: str, task, agent_id: str,
+        worktree_path: str, pipeline_id: str, session_id: str | None,
+        pipeline_branch: str | None = None,
+    ) -> tuple[bool, str | None]:
+        """Check for and deliver pending interjections to a running agent.
+
+        Returns (was_delivered, latest_session_id).
+        Must be called after _run_agent() returns and BEFORE _enforce_file_scope().
+        """
+        delivered_any = False
+        current_session = session_id
+        max_rounds = 5  # Prevent unbounded loop if interjections arrive faster than processing
+
+        for _round in range(max_rounds):
+            interjections = await db.get_pending_interjections(task_id)
+            if not interjections:
+                break
+
+            combined = "\n\n".join(
+                f"Human message: {ij.message}" for ij in interjections
+            )
+            prompt = (
+                f"The human has sent you a message while you were working:\n\n"
+                f"{combined}\n\n"
+                f"Read their input carefully. Adjust your approach if needed, "
+                f"then continue working on the task."
+            )
+
+            for ij in interjections:
+                await db.mark_interjection_delivered(ij.id)
+
+            agent_result = await self._run_agent(
+                db, runtime, worktree_mgr, task, task_id, agent_id,
+                worktree_path, pipeline_id, pipeline_branch=pipeline_branch,
+                resume=current_session, prompt_override=prompt,
+            )
+
+            if agent_result is None:
+                break
+
+            delivered_any = True
+            current_session = agent_result.session_id
+
+            # If agent asked a question in response, handle it and return
+            question_data = _parse_forge_question(agent_result.summary)
+            if question_data:
+                await self._handle_agent_question(
+                    db, task_id, agent_id, pipeline_id=pipeline_id,
+                    question_data=question_data,
+                    session_id=agent_result.session_id,
+                )
+                return True, current_session
+
+        return delivered_any, current_session
+
     async def _resume_task(
         self, db, runtime, worktree_mgr, merge_worker,
         task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
@@ -387,6 +461,19 @@ class ExecutorMixin:
             )
             return
 
+        # Check for pending human interjections before review
+        interjection_delivered, final_session = await self._deliver_interjections(
+            db=db, runtime=runtime, worktree_mgr=worktree_mgr,
+            task_id=task_id, task=task, agent_id=agent_id,
+            worktree_path=worktree_path, pipeline_id=pid,
+            session_id=agent_result.session_id,
+            pipeline_branch=pipeline_branch,
+        )
+        if interjection_delivered and final_session != agent_result.session_id:
+            task_after = await db.get_task(task_id)
+            if task_after and task_after.state == "awaiting_input":
+                return
+
         # Agent finished — proceed to review
         has_in_scope_changes, reverted_files = self._enforce_file_scope(
             task, worktree_path, pipeline_branch,
@@ -415,6 +502,93 @@ class ExecutorMixin:
             agent_model, pid, pipeline_branch=pipeline_branch,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+
+    # -- event-driven resume ------------------------------------------------
+
+    async def _on_task_answered(
+        self, data: dict, db,
+    ) -> None:
+        """Handle task:answer event -- resume a task after human answers a question."""
+        task_id = data.get("task_id")
+        answer = data.get("answer")
+        pipeline_id = data.get("pipeline_id", "")
+        if not task_id or not answer:
+            return
+
+        task = await db.get_task(task_id)
+        if not task or task.state != TaskState.AWAITING_INPUT.value:
+            logger.debug(
+                "_on_task_answered: task %s not awaiting_input (state=%s)",
+                task_id, getattr(task, "state", None),
+            )
+            return
+
+        # Skip if task is already being resumed (in active pool)
+        if task_id in getattr(self, "_active_tasks", {}):
+            logger.debug("_on_task_answered: task %s already active, skipping", task_id)
+            return
+
+        # Acquire an agent slot via Scheduler
+        from forge.core.scheduler import Scheduler
+        from forge.core.engine import _row_to_agent, _row_to_record
+
+        prefix = pipeline_id[:8] if pipeline_id else None
+        agents = await db.list_agents(prefix=prefix)
+        agent_records = [_row_to_agent(a) for a in agents]
+        tasks = await (
+            db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
+        )
+        task_records = [_row_to_record(t) for t in tasks]
+        dispatch_plan = Scheduler.dispatch_plan(
+            task_records, agent_records, self._effective_max_agents,
+        )
+
+        agent_id = None
+        for tid, aid in dispatch_plan:
+            if tid == task_id:
+                agent_id = aid
+                break
+
+        if not agent_id:
+            logger.info(
+                "_on_task_answered: no slot available for %s, will retry on next cycle",
+                task_id,
+            )
+            return
+
+        await db.assign_task(task_id, agent_id)
+        logger.info("Resuming task %s after human answer (agent=%s)", task_id, agent_id)
+
+        atask = asyncio.create_task(
+            self._safe_execute_resume(
+                db, self._runtime, self._worktree_mgr, self._merge_worker,
+                task_id, agent_id, answer, pipeline_id,
+            ),
+            name=f"forge-resume-{task_id}",
+        )
+        self._active_tasks[task_id] = atask
+
+    async def _safe_execute_resume(
+        self, db, runtime, worktree_mgr, merge_worker,
+        task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+    ) -> None:
+        """Safe wrapper around _resume_task with cleanup on error."""
+        try:
+            await self._resume_task(
+                db, runtime, worktree_mgr, merge_worker,
+                task_id, agent_id, answer, pipeline_id,
+            )
+        except asyncio.CancelledError:
+            logger.info("Resume of %s was cancelled", task_id)
+        except Exception as e:
+            logger.error("Resume of %s crashed: %s", task_id, e, exc_info=True)
+            try:
+                await db.update_task_state(task_id, TaskState.AWAITING_INPUT.value)
+                await db.release_agent(agent_id)
+            except Exception:
+                pass
+        finally:
+            self._active_tasks.pop(task_id, None)
 
     # -- file scope enforcement -------------------------------------------
 
@@ -770,6 +944,7 @@ class ExecutorMixin:
             autonomy=self._settings.autonomy,
             questions_remaining=self._settings.question_limit,
             timeout_seconds=task_timeout,
+            project_dir=self._project_dir,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
