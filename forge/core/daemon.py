@@ -944,12 +944,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 pass
             raise
         finally:
+            self._cleanup_answer_handler()
             await self._shutdown_active_tasks()
             if pipeline_id:
                 try:
                     await db.clear_executor_info(pipeline_id)
                 except Exception:
                     logger.debug("Failed to clear executor info for pipeline %s", pipeline_id)
+
+    def _cleanup_answer_handler(self) -> None:
+        """Remove the task:answer listener to prevent accumulation on re-entry."""
+        handler = getattr(self, "_current_answer_handler", None)
+        if handler:
+            handlers = self._events._handlers.get("task:answer", [])
+            if handler in handlers:
+                handlers.remove(handler)
+            self._current_answer_handler = None
 
     async def _execution_loop_inner(
         self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
@@ -985,6 +995,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         if pipeline_id:
             await db.set_executor_info(pipeline_id, pid=os.getpid(), token=self._executor_token)
+        self._current_answer_handler = _answer_handler
         while True:
             # Reap completed tasks from the pool
             done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
@@ -1174,3 +1185,5 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         # Normal exit: shutdown active tasks
         await self._shutdown_active_tasks()
+
+        self._cleanup_answer_handler()

@@ -222,6 +222,14 @@ class TuiState:
             self.tasks[task_id]["state"] = "in_progress"
             self._notify("tasks")
 
+    def _on_task_interjection(self, data: dict) -> None:
+        """Human sent a message to a running agent."""
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            history = self.tasks[task_id].setdefault("interjections", [])
+            history.append(data.get("message", ""))
+            self._notify("tasks")
+
     def _on_task_auto_decided(self, data: dict) -> None:
         task_id = data.get("task_id")
         if task_id:
@@ -513,6 +521,7 @@ class TuiState:
         "task:answer": _on_task_answer,
         "task:resumed": _on_task_resumed,
         "task:auto_decided": _on_task_auto_decided,
+        "task:interjection": _on_task_interjection,
         "review:gate_started": _on_review_gate_started,
         "review:gate_passed": _on_review_gate_passed,
         "review:gate_failed": _on_review_gate_failed,

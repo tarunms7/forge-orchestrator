@@ -359,8 +359,9 @@ class ExecutorMixin:
         """
         delivered_any = False
         current_session = session_id
+        max_rounds = 5  # Prevent unbounded loop if interjections arrive faster than processing
 
-        while True:
+        for _round in range(max_rounds):
             interjections = await db.get_pending_interjections(task_id)
             if not interjections:
                 break
