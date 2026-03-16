@@ -54,7 +54,7 @@ class PlanningPipeline:
 
         async def _adapter(msg):
             try:
-                await self._on_message(stage, str(msg))
+                await self._on_message(stage, msg)
             except Exception:
                 pass
 
