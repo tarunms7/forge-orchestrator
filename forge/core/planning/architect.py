@@ -58,7 +58,7 @@ class Architect:
             system_prompt = build_architect_system_prompt(question_protocol)
 
             options = ClaudeCodeOptions(
-                system_prompt=system_prompt, max_turns=10, model=self._model,
+                system_prompt=system_prompt, max_turns=20, model=self._model,
                 allowed_tools=["Read", "Glob", "Grep"], permission_mode="acceptEdits",
             )
             if self._cwd:
