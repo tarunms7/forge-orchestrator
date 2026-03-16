@@ -1,6 +1,7 @@
 """Tests for daemon_executor — worktree rebase and prompt selection."""
 
-from unittest.mock import MagicMock, call, patch
+import pytest
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 
@@ -137,3 +138,60 @@ class TestComplexityTimeout:
 
     def test_complexity_timeout_respects_base(self):
         assert _complexity_timeout(300, "high") == 600
+
+
+class TestDeliverInterjections:
+    """ExecutorMixin._deliver_interjections() delivers pending human messages."""
+
+    @pytest.mark.asyncio
+    async def test_deliver_interjections_resumes_agent(self):
+        """Pending interjections should be delivered via agent resume."""
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+
+        mock_db = AsyncMock()
+        mock_ij = MagicMock()
+        mock_ij.id = "ij1"
+        mock_ij.message = "Use factory pattern"
+        mock_db.get_pending_interjections = AsyncMock(
+            side_effect=[[mock_ij], []]  # First call returns interjection, second empty
+        )
+        mock_db.mark_interjection_delivered = AsyncMock()
+
+        agent_result = MagicMock()
+        agent_result.session_id = "sess-2"
+        agent_result.summary = "Adjusted to use factory pattern"
+
+        executor._run_agent = AsyncMock(return_value=agent_result)
+
+        delivered, session_id = await executor._deliver_interjections(
+            db=mock_db, runtime=MagicMock(), worktree_mgr=MagicMock(),
+            task_id="t1", task=MagicMock(), agent_id="a1",
+            worktree_path="/tmp/wt", pipeline_id="pipe1",
+            session_id="sess-1", pipeline_branch="main",
+        )
+
+        assert delivered is True
+        assert session_id == "sess-2"
+        mock_db.mark_interjection_delivered.assert_called_once_with("ij1")
+        # Verify _run_agent was called with resume=sess-1 and prompt_override
+        call_kwargs = executor._run_agent.call_args.kwargs
+        assert call_kwargs.get("resume") == "sess-1"
+        assert "Human message:" in call_kwargs.get("prompt_override", "")
+
+    @pytest.mark.asyncio
+    async def test_no_interjections_returns_false(self):
+        """No pending interjections should return (False, original_session)."""
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+
+        mock_db = AsyncMock()
+        mock_db.get_pending_interjections = AsyncMock(return_value=[])
+
+        delivered, session_id = await executor._deliver_interjections(
+            db=mock_db, runtime=MagicMock(), worktree_mgr=MagicMock(),
+            task_id="t1", task=MagicMock(), agent_id="a1",
+            worktree_path="/tmp/wt", pipeline_id="pipe1",
+            session_id="sess-1",
+        )
+
+        assert delivered is False
+        assert session_id == "sess-1"

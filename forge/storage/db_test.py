@@ -678,3 +678,37 @@ async def test_get_planning_questions(db: Database):
     assert len(questions) == 2
     assert questions[0].question == "Auth approach?"
     assert questions[1].question == "DB choice?"
+
+
+# ── InterjectionRow tests ─────────────────────────────────────────────
+
+
+async def test_create_interjection(db):
+    """Should create an interjection row with delivered=False."""
+    row = await db.create_interjection(
+        task_id="t1", pipeline_id="pipe1", message="Use the factory pattern instead"
+    )
+    assert row.task_id == "t1"
+    assert row.message == "Use the factory pattern instead"
+    assert row.delivered is False
+    assert row.delivered_at is None
+
+
+async def test_get_pending_interjections(db):
+    """Should return only undelivered interjections for a task."""
+    await db.create_interjection(task_id="t1", pipeline_id="pipe1", message="msg1")
+    await db.create_interjection(task_id="t1", pipeline_id="pipe1", message="msg2")
+    await db.create_interjection(task_id="t2", pipeline_id="pipe1", message="other")
+
+    pending = await db.get_pending_interjections("t1")
+    assert len(pending) == 2
+    assert all(p.task_id == "t1" for p in pending)
+
+
+async def test_mark_interjection_delivered(db):
+    """Marking delivered should set delivered=True and delivered_at."""
+    row = await db.create_interjection(task_id="t1", pipeline_id="pipe1", message="msg")
+    await db.mark_interjection_delivered(row.id)
+
+    pending = await db.get_pending_interjections("t1")
+    assert len(pending) == 0

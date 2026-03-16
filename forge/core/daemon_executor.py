@@ -99,6 +99,21 @@ class ExecutorMixin:
             )
             return
 
+        # Check for pending human interjections before review
+        interjection_delivered, final_session = await self._deliver_interjections(
+            db=db, runtime=runtime, worktree_mgr=worktree_mgr,
+            task_id=task_id, task=task, agent_id=agent_id,
+            worktree_path=worktree_path, pipeline_id=pid,
+            session_id=agent_result.session_id,
+            pipeline_branch=pipeline_branch,
+        )
+        # If _deliver_interjections handled a question, the task is paused — stop here
+        if interjection_delivered and final_session != agent_result.session_id:
+            # Check if a question was asked (agent released inside _deliver_interjections)
+            task_after = await db.get_task(task_id)
+            if task_after and task_after.state == "awaiting_input":
+                return
+
         # Strip out-of-scope changes before review
         has_in_scope_changes, reverted_files = self._enforce_file_scope(
             task, worktree_path, pipeline_branch,
@@ -330,6 +345,63 @@ class ExecutorMixin:
         # Release the agent slot — no subprocess running while paused
         await db.release_agent(agent_id)
 
+    # -- interjection delivery --------------------------------------------
+
+    async def _deliver_interjections(
+        self, db, runtime, worktree_mgr, task_id: str, task, agent_id: str,
+        worktree_path: str, pipeline_id: str, session_id: str | None,
+        pipeline_branch: str | None = None,
+    ) -> tuple[bool, str | None]:
+        """Check for and deliver pending interjections to a running agent.
+
+        Returns (was_delivered, latest_session_id).
+        Must be called after _run_agent() returns and BEFORE _enforce_file_scope().
+        """
+        delivered_any = False
+        current_session = session_id
+
+        while True:
+            interjections = await db.get_pending_interjections(task_id)
+            if not interjections:
+                break
+
+            combined = "\n\n".join(
+                f"Human message: {ij.message}" for ij in interjections
+            )
+            prompt = (
+                f"The human has sent you a message while you were working:\n\n"
+                f"{combined}\n\n"
+                f"Read their input carefully. Adjust your approach if needed, "
+                f"then continue working on the task."
+            )
+
+            for ij in interjections:
+                await db.mark_interjection_delivered(ij.id)
+
+            agent_result = await self._run_agent(
+                db, runtime, worktree_mgr, task, task_id, agent_id,
+                worktree_path, pipeline_id, pipeline_branch=pipeline_branch,
+                resume=current_session, prompt_override=prompt,
+            )
+
+            if agent_result is None:
+                break
+
+            delivered_any = True
+            current_session = agent_result.session_id
+
+            # If agent asked a question in response, handle it and return
+            question_data = _parse_forge_question(agent_result.summary)
+            if question_data:
+                await self._handle_agent_question(
+                    db, task_id, agent_id, pipeline_id=pipeline_id,
+                    question_data=question_data,
+                    session_id=agent_result.session_id,
+                )
+                return True, current_session
+
+        return delivered_any, current_session
+
     async def _resume_task(
         self, db, runtime, worktree_mgr, merge_worker,
         task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
@@ -387,6 +459,19 @@ class ExecutorMixin:
                 session_id=agent_result.session_id,
             )
             return
+
+        # Check for pending human interjections before review
+        interjection_delivered, final_session = await self._deliver_interjections(
+            db=db, runtime=runtime, worktree_mgr=worktree_mgr,
+            task_id=task_id, task=task, agent_id=agent_id,
+            worktree_path=worktree_path, pipeline_id=pid,
+            session_id=agent_result.session_id,
+            pipeline_branch=pipeline_branch,
+        )
+        if interjection_delivered and final_session != agent_result.session_id:
+            task_after = await db.get_task(task_id)
+            if task_after and task_after.state == "awaiting_input":
+                return
 
         # Agent finished — proceed to review
         has_in_scope_changes, reverted_files = self._enforce_file_scope(

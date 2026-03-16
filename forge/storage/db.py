@@ -206,8 +206,26 @@ class TaskQuestionRow(Base):
     stage: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
+class InterjectionRow(Base):
+    """Human message sent to a running agent."""
+
+    __tablename__ = "task_interjections"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+    )
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    pipeline_id: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    delivered: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[str] = mapped_column(
+        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+    delivered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+
+
 # ── All model classes (used by _add_missing_columns) ──────────────────
-_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow, TaskQuestionRow)
+_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow, TaskQuestionRow, InterjectionRow)
 
 
 class Database:
@@ -1082,3 +1100,35 @@ class Database:
                 .where(TaskQuestionRow.created_at < cutoff_iso)
             )
             return list(result.scalars().all())
+
+    # ── Task interjections ─────────────────────────────────────────────
+
+    async def create_interjection(
+        self, *, task_id: str, pipeline_id: str, message: str,
+    ) -> InterjectionRow:
+        async with self._session_factory() as session:
+            row = InterjectionRow(
+                task_id=task_id, pipeline_id=pipeline_id, message=message,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
+
+    async def get_pending_interjections(self, task_id: str) -> list[InterjectionRow]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(InterjectionRow)
+                .where(InterjectionRow.task_id == task_id)
+                .where(InterjectionRow.delivered == False)  # noqa: E712
+                .order_by(InterjectionRow.created_at)
+            )
+            return list(result.scalars().all())
+
+    async def mark_interjection_delivered(self, interjection_id: str) -> None:
+        async with self._session_factory() as session:
+            row = await session.get(InterjectionRow, interjection_id)
+            if row:
+                row.delivered = True
+                row.delivered_at = datetime.now(timezone.utc).isoformat()
+                await session.commit()
