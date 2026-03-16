@@ -203,6 +203,7 @@ class TaskQuestionRow(Base):
         String, default=lambda: datetime.now(timezone.utc).isoformat(),
     )
     answered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    stage: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 # ── All model classes (used by _add_missing_columns) ──────────────────
@@ -1014,6 +1015,7 @@ class Database:
         question: str,
         suggestions: list[str] | None = None,
         context: dict | None = None,
+        stage: str | None = None,
     ) -> TaskQuestionRow:
         async with self._session_factory() as session:
             row = TaskQuestionRow(
@@ -1022,6 +1024,7 @@ class Database:
                 question=question,
                 suggestions=json.dumps(suggestions) if suggestions else None,
                 context=json.dumps(context) if context else None,
+                stage=stage,
             )
             session.add(row)
             await session.commit()
@@ -1054,6 +1057,17 @@ class Database:
             result = await session.execute(
                 select(TaskQuestionRow)
                 .where(TaskQuestionRow.task_id == task_id)
+                .order_by(TaskQuestionRow.created_at)
+            )
+            return list(result.scalars().all())
+
+    async def get_planning_questions(self, pipeline_id: str) -> list[TaskQuestionRow]:
+        """Get all planning-phase questions for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskQuestionRow)
+                .where(TaskQuestionRow.pipeline_id == pipeline_id)
+                .where(TaskQuestionRow.stage == "planning")
                 .order_by(TaskQuestionRow.created_at)
             )
             return list(result.scalars().all())

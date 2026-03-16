@@ -52,6 +52,8 @@ TUI_EVENT_TYPES = [
     "followup:agent_output",
     "task:question",
     "task:answer",
+    "planning:question",
+    "planning:answer",
     "task:resumed",
     "task:auto_decided",
     "pipeline:all_tasks_done",

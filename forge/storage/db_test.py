@@ -628,3 +628,53 @@ async def test_executor_tracking_columns(db: Database):
     p = await db.get_pipeline("pipe-exec")
     assert p.executor_pid is None
     assert p.executor_token is None
+
+
+# ── TaskQuestionRow stage column tests ────────────────────────────────
+
+
+async def test_create_task_question_with_stage(db: Database):
+    """create_task_question should accept and persist a stage parameter."""
+    q = await db.create_task_question(
+        task_id="__planning__",
+        pipeline_id="pipe-stage",
+        question="JWT or session?",
+        stage="planning",
+    )
+    assert q.stage == "planning"
+
+
+async def test_create_task_question_stage_defaults_none(db: Database):
+    """stage should default to None for backward compatibility."""
+    q = await db.create_task_question(
+        task_id="t1",
+        pipeline_id="pipe-stage2",
+        question="Which pattern?",
+    )
+    assert q.stage is None
+
+
+async def test_get_planning_questions(db: Database):
+    """get_planning_questions should return only planning-stage questions."""
+    await db.create_task_question(
+        task_id="__planning__",
+        pipeline_id="pipe-pq",
+        question="Auth approach?",
+        stage="planning",
+    )
+    await db.create_task_question(
+        task_id="t1",
+        pipeline_id="pipe-pq",
+        question="File format?",
+        stage=None,
+    )
+    await db.create_task_question(
+        task_id="__planning__",
+        pipeline_id="pipe-pq",
+        question="DB choice?",
+        stage="planning",
+    )
+    questions = await db.get_planning_questions("pipe-pq")
+    assert len(questions) == 2
+    assert questions[0].question == "Auth approach?"
+    assert questions[1].question == "DB choice?"

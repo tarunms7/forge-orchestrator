@@ -357,18 +357,77 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 else:
                     await self._events.emit(f"planning:{stage}", {"line": str(msg)})
 
+            # Planning question support via asyncio.Event synchronization
+            pending_planning_answer: dict[str, asyncio.Event] = {}
+            planning_answers: dict[str, str] = {}
+
+            async def _on_architect_question(question_data: dict) -> str:
+                """Called by Architect when it has a question. Blocks until human answers."""
+                q = await db.create_task_question(
+                    task_id="__planning__",
+                    pipeline_id=pipeline_id or "",
+                    question=question_data["question"],
+                    suggestions=question_data.get("suggestions"),
+                    context={"text": question_data.get("context", "")},
+                    stage="planning",
+                )
+                if pipeline_id:
+                    await self._emit("planning:question", {
+                        "question_id": q.id,
+                        "question": question_data,
+                    }, db=db, pipeline_id=pipeline_id)
+                else:
+                    await self._events.emit("planning:question", {
+                        "question_id": q.id,
+                        "question": question_data,
+                    })
+
+                event = asyncio.Event()
+                pending_planning_answer[q.id] = event
+                try:
+                    timeout = self._settings.question_timeout
+                    await asyncio.wait_for(event.wait(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    pending_planning_answer.pop(q.id, None)
+                    logger.info("Planning question %s timed out after %ds", q.id, timeout)
+                    return "Proceed with your best judgment."
+                except asyncio.CancelledError:
+                    pending_planning_answer.pop(q.id, None)
+                    return "Proceed with your best judgment."
+                return planning_answers.pop(q.id, "Proceed with your best judgment.")
+
+            async def _on_planning_answer(data: dict):
+                """Handle planning:answer event — resolve the waiting asyncio.Event."""
+                q_id = data.get("question_id")
+                answer = data.get("answer")
+                if q_id and answer:
+                    planning_answers[q_id] = answer
+                    event = pending_planning_answer.pop(q_id, None)
+                    if event:
+                        event.set()
+
+            # Register listener for planning answers
+            self._events.on("planning:answer", _on_planning_answer)
+
             pipeline = PlanningPipeline(
                 scout=scout, architect=architect,
                 detailer_factory=detailer_factory,
                 on_message=_on_pipeline_msg,
+                on_question=_on_architect_question,
             )
 
-            planning_result = await pipeline.run(
-                user_input=user_input,
-                spec_text=spec_text,
-                snapshot_text=self._snapshot.format_for_planner() if self._snapshot else "",
-                conventions=planner_prompt_modifier,
-            )
+            try:
+                planning_result = await pipeline.run(
+                    user_input=user_input,
+                    spec_text=spec_text,
+                    snapshot_text=self._snapshot.format_for_planner() if self._snapshot else "",
+                    conventions=planner_prompt_modifier,
+                )
+            finally:
+                # Clean up listener to prevent accumulation
+                handlers = self._events._handlers.get("planning:answer", [])
+                if _on_planning_answer in handlers:
+                    handlers.remove(_on_planning_answer)
 
             if planning_result.task_graph is None:
                 raise RuntimeError("Deep planning pipeline failed to produce a TaskGraph")
