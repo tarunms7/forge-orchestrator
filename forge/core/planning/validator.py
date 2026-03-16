@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import deque
 
 from forge.core.models import TaskGraph
@@ -27,6 +28,7 @@ def validate_plan(graph: TaskGraph, codebase_map: CodebaseMap, spec_text: str = 
     issues.extend(_check_dependency_validity(graph))
     issues.extend(_check_cycles(graph))
     issues.extend(_check_task_granularity(graph))
+    issues.extend(_check_file_completeness(graph))
     has_major_or_fatal = any(i.severity in ("major", "fatal") for i in issues)
     status = "fail" if has_major_or_fatal else "pass"
     return ValidationResult(status=status, issues=issues, minor_fixes=minor_fixes)
@@ -191,6 +193,77 @@ def _check_task_granularity(graph: TaskGraph) -> list[ValidationIssue]:
                         "Provide more detail."
                     ),
                     suggested_fix="Expand the description to include what changes are needed and why.",
+                )
+            )
+
+    return issues
+
+
+# Regex to find file-path-like strings in task descriptions.
+# Matches paths like src/foo.py, ./tests/test_bar.ts, review_bot/server/api.py, etc.
+_FILE_PATH_RE = re.compile(
+    r"""(?<![a-zA-Z0-9_/\\])"""        # not preceded by path-like chars
+    r"""(?:\.?/)?"""                     # optional leading ./ or /
+    r"""(?:[a-zA-Z0-9_\-]+/)+"""        # one or more directory segments ending in /
+    r"""[a-zA-Z0-9_\-]+"""             # filename stem
+    r"""\.[a-zA-Z]{1,10}"""            # file extension (.py, .ts, .json, etc.)
+    r"""(?![a-zA-Z0-9_/\\])"""         # not followed by path-like chars
+)
+
+
+def _normalize_path(p: str) -> str:
+    """Normalize a file path for comparison."""
+    import posixpath
+
+    p = p.replace("\\", "/")
+    p = posixpath.normpath(p)
+    if p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _check_file_completeness(graph: TaskGraph) -> list[ValidationIssue]:
+    """Detect when a task description mentions files not in its files list.
+
+    If the description references a file path (e.g. ``src/api.py``) but that
+    file isn't in the task's ``files`` array, the agent won't be able to edit
+    it at runtime due to file-scope enforcement.  This causes infinite review
+    loops where the reviewer keeps asking the agent to modify a file it can't
+    touch.
+    """
+    # Build a set of ALL files owned by ANY task for reference
+    all_task_files: set[str] = set()
+    for task in graph.tasks:
+        for f in task.files:
+            all_task_files.add(_normalize_path(f))
+
+    issues: list[ValidationIssue] = []
+
+    for task in graph.tasks:
+        owned_files = {_normalize_path(f) for f in task.files}
+        mentioned_paths = _FILE_PATH_RE.findall(task.description)
+
+        for mentioned in mentioned_paths:
+            norm = _normalize_path(mentioned)
+            if norm in owned_files:
+                continue
+            # Only flag if this looks like a real project file (has a directory component)
+            # and the description implies modification (not just referencing for context).
+            # We flag it as major since it will cause runtime failures.
+            issues.append(
+                ValidationIssue(
+                    severity="major",
+                    category="missing_file_in_scope",
+                    affected_tasks=[task.id],
+                    description=(
+                        f"Task '{task.id}' description mentions '{mentioned}' but this file "
+                        f"is not in the task's files list. Agents can only edit files in their "
+                        f"scope — this will cause the task to fail at runtime."
+                    ),
+                    suggested_fix=(
+                        f"Add '{norm}' to task '{task.id}' files list, or remove the "
+                        f"reference from the description if the file is owned by another task."
+                    ),
                 )
             )
 

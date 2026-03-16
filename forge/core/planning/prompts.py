@@ -96,6 +96,9 @@ Your job: decompose the work into a TaskGraph as valid JSON.
 - complexity: "low", "medium", or "high".
 - Keep tasks focused: each does ONE thing well.
 - MINIMIZE dependencies — independent tasks run in parallel.
+- COMPLETE file lists: if a task's description says to modify a file, that file MUST be in the
+  task's "files" array. Agents can ONLY edit files listed in their task's "files" — any file
+  mentioned in the description but missing from "files" will cause the task to fail at runtime.
 
 ## Task Descriptions — Be Specific
 
