@@ -7,6 +7,7 @@ from forge.agents.adapter import (
     ClaudeAdapter,
     _build_conventions_block,
     _build_dependency_context,
+    _build_question_protocol,
     _load_claude_md,
 )
 
@@ -466,6 +467,33 @@ def test_system_prompt_without_claude_md(tmp_path):
         project_dir=str(tmp_path),
     )
     assert "Project Instructions" not in options.system_prompt
+
+
+# --- _build_question_protocol tests ---
+
+
+class TestQuestionProtocol:
+    def test_balanced_contains_80_percent_threshold(self):
+        result = _build_question_protocol("balanced", 3)
+        assert "80% confident" in result
+
+    def test_balanced_contains_examples(self):
+        result = _build_question_protocol("balanced", 3)
+        assert "caching" in result.lower()
+        assert "ASK" in result
+        assert "DON'T ASK" in result
+
+    def test_balanced_contains_thinking_out_loud(self):
+        result = _build_question_protocol("balanced", 3)
+        assert "What you're working on" in result or "working on" in result
+
+    def test_full_says_never(self):
+        result = _build_question_protocol("full", 3)
+        assert "NEVER" in result
+
+    def test_supervised_says_any(self):
+        result = _build_question_protocol("supervised", 3)
+        assert "ANY" in result
 
 
 # --- Working effectively guidance tests ---

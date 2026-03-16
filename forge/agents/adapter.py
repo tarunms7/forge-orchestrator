@@ -48,11 +48,23 @@ def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> 
         )
     else:  # balanced
         when_to_ask = (
-            "Ask ONLY for high-impact decisions:\n"
-            "- Architecture patterns (which auth strategy, which ORM)\n"
-            "- Ambiguous requirements (spec says X but codebase does Y)\n"
-            "- Destructive changes (deleting files, dropping columns)\n"
-            "Do NOT ask about: naming conventions, formatting, minor style choices."
+            "Ask when you are less than 80% confident about a decision that\n"
+            "affects correctness. It is always better to pause for 30 seconds\n"
+            "than to build the wrong thing for 10 minutes.\n\n"
+            "ASK when:\n"
+            "- The spec is ambiguous and you see multiple valid interpretations\n"
+            "- You're about to make an architectural choice the spec doesn't specify\n"
+            "- You found conflicting patterns in the codebase and aren't sure which to follow\n"
+            "- You're about to delete, rename, or restructure something that other code depends on\n\n"
+            "DON'T ASK when:\n"
+            "- The spec is clear and you know exactly what to do\n"
+            "- It's a naming, formatting, or minor style choice\n"
+            "- You can verify your assumption by reading existing code\n\n"
+            "EXAMPLES:\n"
+            "- Spec says \"add caching\" but doesn't mention TTL or eviction strategy → ASK\n"
+            "- Spec says \"add a login button to the nav bar\" and you can see the nav component → DON'T ASK\n"
+            "- You're about to change a function signature that 12 other files import → ASK\n"
+            "- You need to pick between two equivalent testing patterns → DON'T ASK"
         )
 
     return f"""## Human Interaction Protocol
@@ -61,6 +73,15 @@ Autonomy level: {autonomy} | Questions remaining: {remaining}
 
 ### When to ask:
 {when_to_ask}
+
+### Before asking:
+Before emitting a question, briefly explain:
+1. What you're working on
+2. What you found that created the uncertainty
+3. What options you see
+
+Then ask your specific question with concrete suggestions.
+This context helps the human give you a useful answer.
 
 ### How to ask:
 When you need human input, output this JSON block as your FINAL message, then STOP:
