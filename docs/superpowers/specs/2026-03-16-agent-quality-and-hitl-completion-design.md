@@ -54,11 +54,19 @@ async def _recover_answered_questions(self, db, pipeline_id):
     """Resume tasks that were answered while daemon was down."""
     tasks = await db.get_tasks_by_state(pipeline_id, "awaiting_input")
     for task in tasks:
+        # Skip planning-phase questions (handled separately by Fix 3)
+        if task.id == "__planning__":
+            continue
         questions = await db.get_task_questions(task.id)
         answered = [q for q in questions if q.answer and q.answered_at]
         if answered:
             latest = max(answered, key=lambda q: q.answered_at)
-            await self._resume_task(task.id, latest.answer)
+            # Acquire execution slot before resuming (same path as normal task scheduling)
+            agent_id = await self._acquire_slot(db, pipeline_id)
+            if agent_id:
+                await self._resume_task(task.id, latest.answer)
+            # If no slot available, task stays in AWAITING_INPUT and will be
+            # picked up by the next scheduler cycle when a slot frees up
 ```
 
 Call this at the start of the execution loop and after reconnecting to a running pipeline.
@@ -107,7 +115,7 @@ Planning and review agents KEEP their restrictions:
 - Architect: `["Read", "Glob", "Grep", "Bash"]` — explores, doesn't edit
 - Reviewer: `["Read", "Glob", "Grep"]` — reads for review, doesn't edit
 
-Only task execution agents (the ones in `ClaudeAdapter`) get full access.
+Only task execution agents (the ones in `ClaudeAdapter`) get full access. Note: `_resume_task()` delegates through `_run_agent()` → `ClaudeAdapter._build_options()`, so removing `allowed_tools` there automatically applies to resumed sessions too. No separate change needed for the resume path.
 
 **2B: Load and inject CLAUDE.md**
 
@@ -167,7 +175,7 @@ This gives agents the behavioral guidance that makes normal Claude Code sessions
 
 ### Problem
 
-`Architect.__init__()` accepts `on_question` callback (architect.py line 40). `Architect.run()` detects FORGE_QUESTION in output, calls `on_question` if provided, resumes session with the answer (lines 87-99). But `daemon.plan()` (daemon.py lines 344-348) constructs the Architect without passing `on_question`. Planning questions have nowhere to go.
+`Architect.run()` accepts an `on_question` callback parameter (architect.py line 43). When the Architect detects FORGE_QUESTION in output, it calls `on_question` if provided and resumes the session with the answer (lines 87-99). The wiring gap: `daemon.plan()` constructs `PlanningPipeline` (daemon.py line 360) without passing `on_question`. `PlanningPipeline.__init__` already accepts `on_question` and propagates it to `Architect.run()` — so the fix is simply passing the callback when constructing the pipeline.
 
 ### Design
 
@@ -230,7 +238,9 @@ stage: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None
 # Values: "planning", "execution", None (backward compat)
 ```
 
-Planning questions use `task_id="__planning__"` as a sentinel since there's no task yet during planning. The `stage` column distinguishes them from execution questions.
+Planning questions use `task_id="__planning__"` as a sentinel since there's no task yet during planning. This value is reserved and must never be used as a real task ID (Forge task IDs use the format `{pipeline_short_id}-task-{n}`). The `stage` column distinguishes them from execution questions.
+
+**Query isolation:** Existing DB methods that query `TaskQuestionRow` by `task_id` (e.g., `get_pending_questions`, `get_task_questions`) naturally exclude planning questions because no real task has `id="__planning__"`. The new `planning:question` / `planning:answer` event flow uses its own query path (`get_planning_questions(pipeline_id)`) that filters by `stage="planning"`.
 
 **TUI display:**
 
@@ -243,6 +253,8 @@ The planning screen (`pipeline.py`) already shows a `PlannerCard` during plannin
 5. Planning output continues streaming after the Architect resumes
 
 **Timeout:** Planning questions get the same timeout as execution questions (`settings.question_timeout`). If human doesn't answer, auto-proceed.
+
+**Cancellation:** If the planning phase is cancelled while waiting for a human answer (user presses Esc, daemon shuts down), the `asyncio.Event` must be cleaned up. Wrap `await event.wait()` in a try/except `asyncio.CancelledError` that returns the fallback answer `"Proceed with your best judgment."` and cleans up `pending_planning_answer`. The daemon's shutdown handler should cancel any pending planning tasks to trigger this path.
 
 ### Files Changed
 
@@ -331,7 +343,31 @@ if interjections:
     ...
 ```
 
-**Multi-turn interjection:** After the agent processes an interjection and continues, check for new interjections again. This allows ongoing dialogue — human sends "use approach X", agent adjusts, human sends "looks good, but also handle edge case Y", agent adjusts again.
+**Multi-turn interjection loop:** After the agent processes an interjection and continues, check for new interjections again in a loop. Structure:
+
+```python
+# After initial agent turn completes:
+while True:
+    interjections = await db.get_pending_interjections(task_id)
+    if not interjections:
+        break  # No more human messages — proceed to review
+
+    # Deliver interjections (combine, resume, mark delivered — as above)
+    agent_result = await self._run_agent(..., resume=session_id, prompt_override=prompt)
+
+    # If agent asked a question in response, break to question flow
+    question_data = _parse_forge_question(agent_result.summary)
+    if question_data:
+        await self._handle_agent_question(...)
+        return
+
+    # Otherwise loop to check for more interjections
+    session_id = agent_result.session_id
+
+# Proceed to review gates
+```
+
+**Precise insertion point:** This interjection-check loop goes in `_execute_task()` after `_run_agent()` returns and BEFORE `_enforce_file_scope()`. The agent has finished its work, interjections are checked, then file scope enforcement and review gates proceed as normal.
 
 **Edge cases:**
 
