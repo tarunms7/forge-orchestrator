@@ -10,6 +10,7 @@ from textual.screen import Screen
 from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 from textual.widget import Widget
+from textual.widgets import Input
 
 from forge.tui.state import TuiState
 from forge.tui.widgets.task_list import TaskList
@@ -17,6 +18,7 @@ from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.progress_bar import PipelineProgress
 from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.chat_thread import ChatThread
+from forge.tui.widgets.suggestion_chips import SuggestionChips
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.search_overlay import SearchOverlay
@@ -217,6 +219,7 @@ class PipelineScreen(Screen):
         Binding("c", "copy_mode", "Copy", show=True),
         Binding("t", "view_chat", "Chat", show=True),
         Binding("d", "view_diff", "Diff", show=True),
+        Binding("i", "interject", "Interject", show=True),
         Binding("r", "open_review", "Review", show=True),
         Binding("R", "retry_task", "Retry", show=False),
         Binding("s", "skip_task", "Skip", show=False),
@@ -301,7 +304,7 @@ class PipelineScreen(Screen):
             self._handle_review_output_fast()
             return
         if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
-                     "contracts_output"):
+                     "contracts_output", "planning"):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
             if field == "tasks":
                 for cache_tid in list(self._diff_cache):
@@ -469,6 +472,10 @@ class PipelineScreen(Screen):
         elif state.phase == "planning" and state.planner_output:
             agent_output.clear_error_detail()
             agent_output.update_output("planner", "Planning", "planning", state.planner_output)
+            # Auto-switch to chat view when a planning question is pending
+            planning_q = state.pending_questions.get("__planning__")
+            if planning_q:
+                self._auto_switch_planning_chat(planning_q)
         elif state.phase == "contracts":
             agent_output.clear_error_detail()
             if state.contracts_output:
@@ -598,6 +605,22 @@ class PipelineScreen(Screen):
             w = self.query_one(cls)
             w.display = (name == view)
 
+    def _auto_switch_planning_chat(self, question: dict) -> None:
+        """Switch to chat view for a planning question from the Architect."""
+        state = self._state
+        chat = self.query_one(ChatThread)
+        chat.task_id = "__planning__"
+        work_lines = state.planner_output
+        history = state.question_history.get("__planning__", [])
+        chat.update_question(question, work_lines, history)
+
+        if self._active_view != "chat":
+            self._set_view("chat")
+            try:
+                self.query_one("#chat-input").focus()
+            except Exception:
+                pass
+
     def _auto_switch_chat(self, task_id: str, task: dict) -> None:
         """Switch to chat view and populate question when task needs input."""
         state = self._state
@@ -640,6 +663,10 @@ class PipelineScreen(Screen):
         """Forward answer to the TUI app for dispatch to the daemon."""
         # Bubble up — the main App should handle sending the answer back.
         # We post as a regular message so the App can catch it.
+        self.post_message(event)
+
+    def on_chat_thread_interjection_submitted(self, event: ChatThread.InterjectionSubmitted) -> None:
+        """Forward interjection to the TUI app for DB persistence."""
         self.post_message(event)
 
     def on_copy_overlay_copy_complete(self, event: CopyOverlay.CopyComplete) -> None:
@@ -766,6 +793,41 @@ class PipelineScreen(Screen):
             self.app.push_screen(ReviewScreen(self._state))
         except Exception:
             logger.debug("Failed to push ReviewScreen", exc_info=True)
+
+    def action_interject(self) -> None:
+        """Open chat thread in interjection mode for the selected task."""
+        if self._read_only:
+            return
+        tid = self._state.selected_task_id
+        if not tid or tid not in self._state.tasks:
+            self.notify("No task selected", severity="warning")
+            return
+        task = self._state.tasks[tid]
+        state = task.get("state", "")
+        if state not in ("in_progress", "awaiting_input"):
+            self.notify(f"Cannot interject — task is {state}", severity="warning")
+            return
+        # Replace the existing ChatThread with one in interjection mode
+        chat = self.query_one(ChatThread)
+        chat.task_id = tid
+        chat._mode = "interjection"
+        # Update the input placeholder and hide suggestion chips
+        try:
+            inp = chat.query_one("#chat-input", Input)
+            inp.placeholder = "Type a message to the agent..."
+            inp.value = ""
+        except Exception:
+            pass
+        try:
+            chips = chat.query_one(SuggestionChips)
+            chips.display = False
+        except Exception:
+            pass
+        self._set_view("chat")
+        try:
+            self.query_one("#chat-input").focus()
+        except Exception:
+            pass
 
     def action_retry_task(self) -> None:
         """Retry the selected task (only active for error-state tasks)."""

@@ -5,7 +5,7 @@ def test_balanced_autonomy_protocol():
     protocol = _build_question_protocol(autonomy="balanced", remaining=3)
     assert "balanced" in protocol
     assert "3" in protocol
-    assert "high-impact decisions" in protocol.lower() or "high-impact" in protocol.lower()
+    assert "80% confident" in protocol
     assert "FORGE_QUESTION:" in protocol
 
 

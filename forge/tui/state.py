@@ -222,6 +222,14 @@ class TuiState:
             self.tasks[task_id]["state"] = "in_progress"
             self._notify("tasks")
 
+    def _on_task_interjection(self, data: dict) -> None:
+        """Human sent a message to a running agent."""
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            history = self.tasks[task_id].setdefault("interjections", [])
+            history.append(data.get("message", ""))
+            self._notify("tasks")
+
     def _on_task_auto_decided(self, data: dict) -> None:
         task_id = data.get("task_id")
         if task_id:
@@ -383,6 +391,16 @@ class TuiState:
     def _on_slot_queued(self, data: dict) -> None:
         logger.debug("Slot queued event received")
 
+    def _on_planning_question(self, data: dict) -> None:
+        """Architect has a question during planning."""
+        self.pending_questions["__planning__"] = data.get("question", {})
+        self._notify("planning")
+
+    def _on_planning_answer(self, data: dict) -> None:
+        """Planning question was answered."""
+        self.pending_questions.pop("__planning__", None)
+        self._notify("planning")
+
     def _on_planning_scout(self, data: dict) -> None:
         self._handle_planning_output("Scout", data)
 
@@ -493,6 +511,8 @@ class TuiState:
         "task:merge_result": _on_merge_result,
         "task:awaiting_approval": _on_awaiting_approval,
         "planner:output": _on_planner_output,
+        "planning:question": _on_planning_question,
+        "planning:answer": _on_planning_answer,
         "planning:scout": _on_planning_scout,
         "planning:architect": _on_planning_architect,
         "planning:detailer": _on_planning_detailer,
@@ -501,6 +521,7 @@ class TuiState:
         "task:answer": _on_task_answer,
         "task:resumed": _on_task_resumed,
         "task:auto_decided": _on_task_auto_decided,
+        "task:interjection": _on_task_interjection,
         "review:gate_started": _on_review_gate_started,
         "review:gate_passed": _on_review_gate_passed,
         "review:gate_failed": _on_review_gate_failed,

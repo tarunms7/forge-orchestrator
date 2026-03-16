@@ -628,3 +628,87 @@ async def test_executor_tracking_columns(db: Database):
     p = await db.get_pipeline("pipe-exec")
     assert p.executor_pid is None
     assert p.executor_token is None
+
+
+# ── TaskQuestionRow stage column tests ────────────────────────────────
+
+
+async def test_create_task_question_with_stage(db: Database):
+    """create_task_question should accept and persist a stage parameter."""
+    q = await db.create_task_question(
+        task_id="__planning__",
+        pipeline_id="pipe-stage",
+        question="JWT or session?",
+        stage="planning",
+    )
+    assert q.stage == "planning"
+
+
+async def test_create_task_question_stage_defaults_none(db: Database):
+    """stage should default to None for backward compatibility."""
+    q = await db.create_task_question(
+        task_id="t1",
+        pipeline_id="pipe-stage2",
+        question="Which pattern?",
+    )
+    assert q.stage is None
+
+
+async def test_get_planning_questions(db: Database):
+    """get_planning_questions should return only planning-stage questions."""
+    await db.create_task_question(
+        task_id="__planning__",
+        pipeline_id="pipe-pq",
+        question="Auth approach?",
+        stage="planning",
+    )
+    await db.create_task_question(
+        task_id="t1",
+        pipeline_id="pipe-pq",
+        question="File format?",
+        stage=None,
+    )
+    await db.create_task_question(
+        task_id="__planning__",
+        pipeline_id="pipe-pq",
+        question="DB choice?",
+        stage="planning",
+    )
+    questions = await db.get_planning_questions("pipe-pq")
+    assert len(questions) == 2
+    assert questions[0].question == "Auth approach?"
+    assert questions[1].question == "DB choice?"
+
+
+# ── InterjectionRow tests ─────────────────────────────────────────────
+
+
+async def test_create_interjection(db):
+    """Should create an interjection row with delivered=False."""
+    row = await db.create_interjection(
+        task_id="t1", pipeline_id="pipe1", message="Use the factory pattern instead"
+    )
+    assert row.task_id == "t1"
+    assert row.message == "Use the factory pattern instead"
+    assert row.delivered is False
+    assert row.delivered_at is None
+
+
+async def test_get_pending_interjections(db):
+    """Should return only undelivered interjections for a task."""
+    await db.create_interjection(task_id="t1", pipeline_id="pipe1", message="msg1")
+    await db.create_interjection(task_id="t1", pipeline_id="pipe1", message="msg2")
+    await db.create_interjection(task_id="t2", pipeline_id="pipe1", message="other")
+
+    pending = await db.get_pending_interjections("t1")
+    assert len(pending) == 2
+    assert all(p.task_id == "t1" for p in pending)
+
+
+async def test_mark_interjection_delivered(db):
+    """Marking delivered should set delivered=True and delivered_at."""
+    row = await db.create_interjection(task_id="t1", pipeline_id="pipe1", message="msg")
+    await db.mark_interjection_delivered(row.id)
+
+    pending = await db.get_pending_interjections("t1")
+    assert len(pending) == 0

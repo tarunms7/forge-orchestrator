@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 from abc import ABC, abstractmethod
@@ -16,6 +17,26 @@ from forge.core.sdk_helpers import sdk_query
 logger = logging.getLogger("forge.agents")
 
 
+def _load_claude_md(project_dir: str) -> str | None:
+    """Load CLAUDE.md from standard locations.
+
+    Searches:
+      1. {project_dir}/CLAUDE.md
+      2. {project_dir}/.claude/CLAUDE.md
+
+    Returns content as string, or None if not found.
+    """
+    for rel_path in ("CLAUDE.md", os.path.join(".claude", "CLAUDE.md")):
+        full_path = os.path.join(project_dir, rel_path)
+        if os.path.isfile(full_path):
+            try:
+                with open(full_path, "r") as f:
+                    return f.read()
+            except OSError:
+                continue
+    return None
+
+
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
     """Build the human interaction protocol section for agent system prompts."""
     if autonomy == "full":
@@ -27,11 +48,23 @@ def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> 
         )
     else:  # balanced
         when_to_ask = (
-            "Ask ONLY for high-impact decisions:\n"
-            "- Architecture patterns (which auth strategy, which ORM)\n"
-            "- Ambiguous requirements (spec says X but codebase does Y)\n"
-            "- Destructive changes (deleting files, dropping columns)\n"
-            "Do NOT ask about: naming conventions, formatting, minor style choices."
+            "Ask when you are less than 80% confident about a decision that\n"
+            "affects correctness. It is always better to pause for 30 seconds\n"
+            "than to build the wrong thing for 10 minutes.\n\n"
+            "ASK when:\n"
+            "- The spec is ambiguous and you see multiple valid interpretations\n"
+            "- You're about to make an architectural choice the spec doesn't specify\n"
+            "- You found conflicting patterns in the codebase and aren't sure which to follow\n"
+            "- You're about to delete, rename, or restructure something that other code depends on\n\n"
+            "DON'T ASK when:\n"
+            "- The spec is clear and you know exactly what to do\n"
+            "- It's a naming, formatting, or minor style choice\n"
+            "- You can verify your assumption by reading existing code\n\n"
+            "EXAMPLES:\n"
+            "- Spec says \"add caching\" but doesn't mention TTL or eviction strategy → ASK\n"
+            "- Spec says \"add a login button to the nav bar\" and you can see the nav component → DON'T ASK\n"
+            "- You're about to change a function signature that 12 other files import → ASK\n"
+            "- You need to pick between two equivalent testing patterns → DON'T ASK"
         )
 
     return f"""## Human Interaction Protocol
@@ -40,6 +73,15 @@ Autonomy level: {autonomy} | Questions remaining: {remaining}
 
 ### When to ask:
 {when_to_ask}
+
+### Before asking:
+Before emitting a question, briefly explain:
+1. What you're working on
+2. What you found that created the uncertainty
+3. What options you see
+
+Then ask your specific question with concrete suggestions.
+This context helps the human give you a useful answer.
 
 ### How to ask:
 When you need human input, output this JSON block as your FINAL message, then STOP:
@@ -70,6 +112,8 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 
 {conventions_block}
 
+{claude_md_block}
+
 {contracts_block}
 
 {dependency_context}
@@ -77,6 +121,8 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 {file_scope_block}
 
 {question_protocol}
+
+{working_effectively}
 
 Rules:
 - You MUST ONLY modify files listed in the File Scope section above. Changes to other files are automatically reverted by the system.
@@ -228,6 +274,7 @@ class ClaudeAdapter(AgentAdapter):
         autonomy: str = "balanced",
         questions_remaining: int = 3,
         resume: str | None = None,
+        project_dir: str | None = None,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -251,6 +298,30 @@ class ClaudeAdapter(AgentAdapter):
         else:
             file_scope_block = ""
         question_protocol = _build_question_protocol(autonomy, questions_remaining)
+
+        # Load project instructions from CLAUDE.md
+        claude_md_block = ""
+        if project_dir:
+            claude_md_content = _load_claude_md(project_dir)
+            if claude_md_content:
+                claude_md_block = (
+                    "## Project Instructions (from CLAUDE.md)\n\n"
+                    f"{claude_md_content}"
+                )
+
+        working_effectively = """## Working Effectively
+
+- Use all available tools. If you need to look up API docs, use WebSearch.
+  If you need to understand a library, read its source. Be resourceful.
+- If tests fail, read the full error output. Diagnose the root cause.
+  Fix it. Re-run. Don't guess — verify.
+- Before editing a file, read it first. Understand the existing patterns.
+  Follow them. Don't introduce new conventions.
+- If you're unsure about something, explore first. Grep the codebase.
+  Read related files. Build understanding before making changes.
+- Commit your work when you reach a stable point. Small, focused commits
+  are better than one giant commit at the end."""
+
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
@@ -259,10 +330,11 @@ class ClaudeAdapter(AgentAdapter):
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
+            claude_md_block=claude_md_block,
+            working_effectively=working_effectively,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
             permission_mode="acceptEdits",
             cwd=worktree_path,
             model=model,
@@ -287,6 +359,7 @@ class ClaudeAdapter(AgentAdapter):
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
+        project_dir: str | None = None,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -299,6 +372,7 @@ class ClaudeAdapter(AgentAdapter):
             autonomy=autonomy,
             questions_remaining=questions_remaining,
             resume=resume,
+            project_dir=project_dir,
         )
 
         try:

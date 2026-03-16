@@ -42,23 +42,38 @@ class ChatThread(Widget):
             self.answer = answer
             super().__init__()
 
+    class InterjectionSubmitted(Message):
+        def __init__(self, task_id: str, message: str) -> None:
+            super().__init__()
+            self.task_id = task_id
+            self.message = message
+
     DEFAULT_CSS = """
     ChatThread { height: 1fr; }
     ChatThread VerticalScroll { height: 1fr; }
     ChatThread Input { dock: bottom; margin: 0 1; }
     """
 
-    def __init__(self, task_id: str = "") -> None:
+    def __init__(self, task_id: str = "", mode: str = "answer") -> None:
         super().__init__()
         self.task_id = task_id
+        self._mode = mode  # "answer" or "interjection"
         self._work_lines: list[str] = []
         self._question: dict | None = None
         self._history: list[dict] = []
 
     def compose(self):
         yield VerticalScroll(id="chat-scroll")
-        yield SuggestionChips()
-        yield Input(placeholder="Type your answer or click a suggestion...", id="chat-input")
+        chips = SuggestionChips()
+        if self._mode == "interjection":
+            chips.display = False
+        yield chips
+        placeholder = (
+            "Type a message to the agent..."
+            if self._mode == "interjection"
+            else "Type your answer or click a suggestion..."
+        )
+        yield Input(placeholder=placeholder, id="chat-input")
 
     def update_question(self, question: dict, work_lines: list[str], history: list[dict] | None = None) -> None:
         self._question = question
@@ -78,7 +93,10 @@ class ChatThread(Widget):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.value.strip():
-            self.post_message(self.AnswerSubmitted(self.task_id, event.value.strip()))
+            if self._mode == "interjection":
+                self.post_message(self.InterjectionSubmitted(self.task_id, event.value.strip()))
+            else:
+                self.post_message(self.AnswerSubmitted(self.task_id, event.value.strip()))
             event.input.value = ""
 
     def on_suggestion_chips_selected(self, event: SuggestionChips.Selected) -> None:
