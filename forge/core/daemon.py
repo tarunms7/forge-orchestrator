@@ -869,6 +869,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._effective_max_agents = self._settings.max_agents
         self._executor_token = str(_uuid_mod.uuid4())
+
+        # Store dependencies for event-driven resume
+        self._runtime = runtime
+        self._worktree_mgr = worktree_mgr
+        self._merge_worker = merge_worker
+
+        # Register task:answer listener for event-driven resume
+        async def _answer_handler(data):
+            await self._on_task_answered(data=data, db=db)
+
+        self._events.on("task:answer", _answer_handler)
+
         if pipeline_id:
             await db.set_executor_info(pipeline_id, pid=os.getpid(), token=self._executor_token)
         while True:

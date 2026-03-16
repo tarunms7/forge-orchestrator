@@ -1,6 +1,7 @@
 """ExecutorMixin — decomposed _execute_task extracted from ForgeDaemon."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -415,6 +416,93 @@ class ExecutorMixin:
             agent_model, pid, pipeline_branch=pipeline_branch,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+
+    # -- event-driven resume ------------------------------------------------
+
+    async def _on_task_answered(
+        self, data: dict, db,
+    ) -> None:
+        """Handle task:answer event -- resume a task after human answers a question."""
+        task_id = data.get("task_id")
+        answer = data.get("answer")
+        pipeline_id = data.get("pipeline_id", "")
+        if not task_id or not answer:
+            return
+
+        task = await db.get_task(task_id)
+        if not task or task.state != TaskState.AWAITING_INPUT.value:
+            logger.debug(
+                "_on_task_answered: task %s not awaiting_input (state=%s)",
+                task_id, getattr(task, "state", None),
+            )
+            return
+
+        # Skip if task is already being resumed (in active pool)
+        if task_id in getattr(self, "_active_tasks", {}):
+            logger.debug("_on_task_answered: task %s already active, skipping", task_id)
+            return
+
+        # Acquire an agent slot via Scheduler
+        from forge.core.scheduler import Scheduler
+        from forge.core.engine import _row_to_agent, _row_to_record
+
+        prefix = pipeline_id[:8] if pipeline_id else None
+        agents = await db.list_agents(prefix=prefix)
+        agent_records = [_row_to_agent(a) for a in agents]
+        tasks = await (
+            db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
+        )
+        task_records = [_row_to_record(t) for t in tasks]
+        dispatch_plan = Scheduler.dispatch_plan(
+            task_records, agent_records, self._effective_max_agents,
+        )
+
+        agent_id = None
+        for tid, aid in dispatch_plan:
+            if tid == task_id:
+                agent_id = aid
+                break
+
+        if not agent_id:
+            logger.info(
+                "_on_task_answered: no slot available for %s, will retry on next cycle",
+                task_id,
+            )
+            return
+
+        await db.assign_task(task_id, agent_id)
+        logger.info("Resuming task %s after human answer (agent=%s)", task_id, agent_id)
+
+        atask = asyncio.create_task(
+            self._safe_execute_resume(
+                db, self._runtime, self._worktree_mgr, self._merge_worker,
+                task_id, agent_id, answer, pipeline_id,
+            ),
+            name=f"forge-resume-{task_id}",
+        )
+        self._active_tasks[task_id] = atask
+
+    async def _safe_execute_resume(
+        self, db, runtime, worktree_mgr, merge_worker,
+        task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+    ) -> None:
+        """Safe wrapper around _resume_task with cleanup on error."""
+        try:
+            await self._resume_task(
+                db, runtime, worktree_mgr, merge_worker,
+                task_id, agent_id, answer, pipeline_id,
+            )
+        except asyncio.CancelledError:
+            logger.info("Resume of %s was cancelled", task_id)
+        except Exception as e:
+            logger.error("Resume of %s crashed: %s", task_id, e, exc_info=True)
+            try:
+                await db.update_task_state(task_id, TaskState.AWAITING_INPUT.value)
+                await db.release_agent(agent_id)
+            except Exception:
+                pass
+        finally:
+            self._active_tasks.pop(task_id, None)
 
     # -- file scope enforcement -------------------------------------------
 
