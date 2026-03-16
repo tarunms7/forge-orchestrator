@@ -338,6 +338,7 @@ class ClaudeAdapter(AgentAdapter):
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
+        project_dir: str | None = None,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -350,6 +351,7 @@ class ClaudeAdapter(AgentAdapter):
             autonomy=autonomy,
             questions_remaining=questions_remaining,
             resume=resume,
+            project_dir=project_dir,
         )
 
         try:

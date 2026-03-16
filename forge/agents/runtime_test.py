@@ -43,6 +43,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         resume=None,
         autonomy="balanced",
         questions_remaining=3,
+        project_dir=None,
     )
 
 
@@ -184,6 +185,7 @@ async def test_runtime_passes_all_new_params_together():
         resume=None,
         autonomy="balanced",
         questions_remaining=3,
+        project_dir=None,
     )
 
 

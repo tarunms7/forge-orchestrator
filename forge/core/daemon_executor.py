@@ -770,6 +770,7 @@ class ExecutorMixin:
             autonomy=self._settings.autonomy,
             questions_remaining=self._settings.question_limit,
             timeout_seconds=task_timeout,
+            project_dir=self._project_dir,
         )
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
