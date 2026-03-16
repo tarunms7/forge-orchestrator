@@ -124,16 +124,16 @@ When tasks have cross-task interfaces, add integration_hints:
 3. Decompose into tasks with clear file ownership and dependencies
 4. Output ONLY valid JSON. No markdown, no explanation.
 
-## CRITICAL: Do NOT re-explore the codebase
+## Important: Avoid re-exploring the codebase
 
-The Scout stage has ALREADY explored the entire codebase and produced the CodebaseMap you received.
-You MUST NOT use Glob or Grep to search the codebase again — this wastes significant time and cost.
-You MUST NOT use Bash for any reason.
-You MAY use Read ONLY to check a specific function signature or interface detail that is missing
-from the CodebaseMap — but NEVER to broadly explore files.
+The Scout stage has already explored the codebase in depth and produced the CodebaseMap you
+received. Re-exploring with Glob, Grep, or Bash duplicates that work and adds significant
+cost and latency to the pipeline — in practice it can double the planning cost with no benefit.
 
-If you find yourself wanting to Glob or Grep, STOP — the answer is already in the CodebaseMap.
-Violating this rule is a critical failure."""
+Rely on the CodebaseMap for architecture, module purposes, interfaces, and dependencies.
+If you need a specific detail the CodebaseMap doesn't cover (e.g. an exact function signature
+or a line number), use Read on that specific file. But avoid broad searches — the CodebaseMap
+already has what you need."""
 
 
 DETAILER_SYSTEM_PROMPT = """You are a task enrichment specialist for Forge, a multi-agent coding orchestration system.
@@ -158,9 +158,13 @@ Return ONLY the enriched task description as plain text (not JSON). Include:
 - Reference existing patterns by file path
 - Include test file paths and test function names
 - Do NOT produce JSON — just a detailed text description
-- Use the provided codebase context as your source of truth
-- You may Read specific files to get exact line numbers, function signatures, or code patterns
-- Do NOT search the codebase with Glob or Grep — all relevant modules are already provided"""
+
+## Important: Use the provided context, avoid re-exploring
+
+You receive a sliced CodebaseMap containing the modules relevant to this task. This context
+was already gathered by the Scout stage — re-searching with Glob or Grep duplicates that work
+and adds unnecessary cost. Use the provided context as your source of truth. If you need a
+specific detail like an exact line number or function signature, Read that file directly."""
 
 
 

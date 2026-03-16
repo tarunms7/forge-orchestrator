@@ -44,7 +44,7 @@ class Detailer:
             options = ClaudeCodeOptions(
                 system_prompt=DETAILER_SYSTEM_PROMPT,
                 max_turns=10, model=self._model,
-                allowed_tools=["Read"],
+                allowed_tools=["Read", "Glob", "Grep"],
                 permission_mode="acceptEdits",
             )
             if self._cwd:
