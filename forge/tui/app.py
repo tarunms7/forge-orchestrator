@@ -231,26 +231,39 @@ class ForgeApp(App):
         if not self._db or not self._pipeline_id:
             logger.warning("Cannot record answer: DB or pipeline_id not set")
             return
+
+        # Planning questions use __planning__ sentinel
+        is_planning = task_id == "__planning__"
+
         try:
             pending = await self._db.get_pending_questions(self._pipeline_id)
             for q in pending:
                 if q.task_id == task_id and q.answer is None:
                     await self._db.answer_question(q.id, answer, "human")
+                    # Emit the right event type for planning questions
+                    if is_planning and self._daemon and hasattr(self._daemon, '_events'):
+                        await self._daemon._events.emit("planning:answer", {
+                            "question_id": q.id,
+                            "answer": answer,
+                        })
                     break
         except Exception:
             logger.error("Failed to record answer to DB", exc_info=True)
-        self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
 
-        # Notify daemon to resume the task
-        if self._daemon and hasattr(self._daemon, '_events'):
-            try:
-                await self._daemon._events.emit("task:answer", {
-                    "task_id": task_id,
-                    "answer": answer,
-                    "pipeline_id": self._pipeline_id,
-                })
-            except Exception:
-                logger.error("Failed to emit task:answer to daemon", exc_info=True)
+        if is_planning:
+            self._state.apply_event("planning:answer", {"answer": answer})
+        else:
+            self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
+            # Notify daemon to resume the task
+            if self._daemon and hasattr(self._daemon, '_events'):
+                try:
+                    await self._daemon._events.emit("task:answer", {
+                        "task_id": task_id,
+                        "answer": answer,
+                        "pipeline_id": self._pipeline_id,
+                    })
+                except Exception:
+                    logger.error("Failed to emit task:answer to daemon", exc_info=True)
 
     async def on_final_approval_screen_create_pr(self, event) -> None:
         """User confirmed PR creation from FinalApprovalScreen."""

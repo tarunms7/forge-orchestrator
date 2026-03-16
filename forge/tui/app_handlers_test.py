@@ -162,3 +162,95 @@ async def test_answer_submission_emits_to_daemon_events():
     assert emitted[0][1]["task_id"] == "t1"
     assert emitted[0][1]["answer"] == "Use JWT"
     assert emitted[0][1]["pipeline_id"] == "pipe1"
+
+
+@pytest.mark.asyncio
+async def test_planning_answer_emits_planning_answer_event():
+    """Answering a planning question should emit planning:answer to daemon."""
+    from forge.tui.app import ForgeApp
+
+    emitted = []
+
+    class FakeEmitter:
+        async def emit(self, event_type, data):
+            emitted.append((event_type, data))
+
+    class FakeDaemon:
+        _events = FakeEmitter()
+
+    event = MagicMock()
+    event.task_id = "__planning__"
+    event.answer = "Use JWT"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(return_value=[
+        MagicMock(task_id="__planning__", answer=None, id="q1")
+    ])
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = FakeDaemon()
+    app._state = MagicMock()
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    assert len(emitted) == 1
+    assert emitted[0][0] == "planning:answer"
+    assert emitted[0][1]["question_id"] == "q1"
+    assert emitted[0][1]["answer"] == "Use JWT"
+
+
+@pytest.mark.asyncio
+async def test_planning_answer_applies_planning_answer_event():
+    """Planning answer should apply planning:answer (not task:answer) to state."""
+    from forge.tui.app import ForgeApp
+
+    event = MagicMock()
+    event.task_id = "__planning__"
+    event.answer = "Use JWT"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(return_value=[])
+    app._pipeline_id = "pipe1"
+    app._daemon = None
+    app._state = MagicMock()
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    app._state.apply_event.assert_called_once_with("planning:answer", {"answer": "Use JWT"})
+
+
+@pytest.mark.asyncio
+async def test_task_answer_does_not_emit_planning_event():
+    """Regular task answers should NOT emit planning:answer."""
+    from forge.tui.app import ForgeApp
+
+    emitted = []
+
+    class FakeEmitter:
+        async def emit(self, event_type, data):
+            emitted.append((event_type, data))
+
+    class FakeDaemon:
+        _events = FakeEmitter()
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.answer = "Option A"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(return_value=[
+        MagicMock(task_id="t1", answer=None, id="q1")
+    ])
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = FakeDaemon()
+    app._state = MagicMock()
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    assert len(emitted) == 1
+    assert emitted[0][0] == "task:answer"
+    assert emitted[0][1]["task_id"] == "t1"

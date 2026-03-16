@@ -301,7 +301,7 @@ class PipelineScreen(Screen):
             self._handle_review_output_fast()
             return
         if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
-                     "contracts_output"):
+                     "contracts_output", "planning"):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
             if field == "tasks":
                 for cache_tid in list(self._diff_cache):
@@ -469,6 +469,10 @@ class PipelineScreen(Screen):
         elif state.phase == "planning" and state.planner_output:
             agent_output.clear_error_detail()
             agent_output.update_output("planner", "Planning", "planning", state.planner_output)
+            # Auto-switch to chat view when a planning question is pending
+            planning_q = state.pending_questions.get("__planning__")
+            if planning_q:
+                self._auto_switch_planning_chat(planning_q)
         elif state.phase == "contracts":
             agent_output.clear_error_detail()
             if state.contracts_output:
@@ -597,6 +601,22 @@ class PipelineScreen(Screen):
         for name, cls in widget_map.items():
             w = self.query_one(cls)
             w.display = (name == view)
+
+    def _auto_switch_planning_chat(self, question: dict) -> None:
+        """Switch to chat view for a planning question from the Architect."""
+        state = self._state
+        chat = self.query_one(ChatThread)
+        chat.task_id = "__planning__"
+        work_lines = state.planner_output
+        history = state.question_history.get("__planning__", [])
+        chat.update_question(question, work_lines, history)
+
+        if self._active_view != "chat":
+            self._set_view("chat")
+            try:
+                self.query_one("#chat-input").focus()
+            except Exception:
+                pass
 
     def _auto_switch_chat(self, task_id: str, task: dict) -> None:
         """Switch to chat view and populate question when task needs input."""
