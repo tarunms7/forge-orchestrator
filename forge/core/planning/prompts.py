@@ -119,11 +119,21 @@ When tasks have cross-task interfaces, add integration_hints:
 
 ## Workflow
 
-1. Read the CodebaseMap to understand existing architecture
-2. Read the spec/request carefully
-3. If ambiguities exist and you have questions remaining, ask BEFORE planning
-4. Decompose into tasks with clear file ownership and dependencies
-5. Output ONLY valid JSON. No markdown, no explanation."""
+1. Use the CodebaseMap as your PRIMARY source of truth — it contains the full codebase analysis
+2. If ambiguities exist and you have questions remaining, ask BEFORE planning
+3. Decompose into tasks with clear file ownership and dependencies
+4. Output ONLY valid JSON. No markdown, no explanation.
+
+## Important: Avoid re-exploring the codebase
+
+The Scout stage has already explored the codebase in depth and produced the CodebaseMap you
+received. Re-exploring with Glob, Grep, or Bash duplicates that work and adds significant
+cost and latency to the pipeline — in practice it can double the planning cost with no benefit.
+
+Rely on the CodebaseMap for architecture, module purposes, interfaces, and dependencies.
+If you need a specific detail the CodebaseMap doesn't cover (e.g. an exact function signature
+or a line number), use Read on that specific file. But avoid broad searches — the CodebaseMap
+already has what you need."""
 
 
 DETAILER_SYSTEM_PROMPT = """You are a task enrichment specialist for Forge, a multi-agent coding orchestration system.
@@ -148,46 +158,17 @@ Return ONLY the enriched task description as plain text (not JSON). Include:
 - Reference existing patterns by file path
 - Include test file paths and test function names
 - Do NOT produce JSON — just a detailed text description
-- You may read files to get precise details (function signatures, class names)"""
+
+## Important: Use the provided context, avoid re-exploring
+
+You receive a sliced CodebaseMap containing the modules relevant to this task. This context
+was already gathered by the Scout stage — re-searching with Glob or Grep duplicates that work
+and adds unnecessary cost. Use the provided context as your source of truth. If you need a
+specific detail like an exact line number or function signature, Read that file directly."""
 
 
-VALIDATOR_LLM_SYSTEM_PROMPT = """You are a plan quality reviewer for Forge, a multi-agent coding orchestration system.
 
-You receive a complete TaskGraph and CodebaseMap. Your job: check for semantic issues that structural validation cannot catch.
-
-## What to Check
-
-1. **Spec coverage**: Does every requirement in the spec map to at least one task?
-2. **Convention compliance**: Do tasks reference correct patterns from the CodebaseMap?
-3. **Integration completeness**: Does every integration_hint have matching implementation in tasks?
-4. **Description quality**: Are descriptions specific enough to implement without guessing?
-
-## Output Schema
-
-{
-  "status": "pass" or "fail",
-  "issues": [
-    {
-      "severity": "minor" or "major" or "fatal",
-      "category": "category_name",
-      "affected_tasks": ["task-id"],
-      "description": "What's wrong",
-      "suggested_fix": "How to fix it"
-    }
-  ],
-  "minor_fixes": [
-    {
-      "task_id": "task-id",
-      "field": "description" or "files",
-      "reason": "Why this fix is needed",
-      "original_value": "original",
-      "fixed_value": "fixed"
-    }
-  ]
-}
-
-## Rules
-
-- Do NOT duplicate structural checks (file conflicts, cycles) — those are already done
-- Focus on SEMANTIC quality: is the plan complete? accurate? specific enough?
-- Output ONLY valid JSON."""
+# NOTE: A VALIDATOR_LLM_SYSTEM_PROMPT for semantic validation (spec coverage,
+# convention compliance, description quality) is not yet implemented.
+# The current validator in validator.py is purely structural.
+# When adding LLM-based semantic validation, define the prompt here.
