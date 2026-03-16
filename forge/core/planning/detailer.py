@@ -43,8 +43,8 @@ class Detailer:
             prompt = self._build_prompt(task, sliced_map, conventions)
             options = ClaudeCodeOptions(
                 system_prompt=DETAILER_SYSTEM_PROMPT,
-                max_turns=10, model=self._model,
-                allowed_tools=["Read", "Glob", "Grep"],
+                max_turns=5, model=self._model,
+                allowed_tools=["Read"],
                 permission_mode="acceptEdits",
             )
             if self._cwd:

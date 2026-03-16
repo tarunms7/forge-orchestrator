@@ -119,11 +119,12 @@ When tasks have cross-task interfaces, add integration_hints:
 
 ## Workflow
 
-1. Read the CodebaseMap to understand existing architecture
-2. Read the spec/request carefully
-3. If ambiguities exist and you have questions remaining, ask BEFORE planning
-4. Decompose into tasks with clear file ownership and dependencies
-5. Output ONLY valid JSON. No markdown, no explanation."""
+1. Use the CodebaseMap as your PRIMARY source of truth — it contains the full codebase analysis
+2. You may Read specific files ONLY to verify interfaces or check details not in the CodebaseMap
+3. Do NOT run Glob, Grep, or Bash to re-explore the codebase — Scout already did that
+4. If ambiguities exist and you have questions remaining, ask BEFORE planning
+5. Decompose into tasks with clear file ownership and dependencies
+6. Output ONLY valid JSON. No markdown, no explanation."""
 
 
 DETAILER_SYSTEM_PROMPT = """You are a task enrichment specialist for Forge, a multi-agent coding orchestration system.
@@ -148,7 +149,9 @@ Return ONLY the enriched task description as plain text (not JSON). Include:
 - Reference existing patterns by file path
 - Include test file paths and test function names
 - Do NOT produce JSON — just a detailed text description
-- You may read files to get precise details (function signatures, class names)"""
+- Use the provided codebase context as your source of truth
+- You may Read specific files to get exact line numbers, function signatures, or code patterns
+- Do NOT search the codebase with Glob or Grep — all relevant modules are already provided"""
 
 
 VALIDATOR_LLM_SYSTEM_PROMPT = """You are a plan quality reviewer for Forge, a multi-agent coding orchestration system.
