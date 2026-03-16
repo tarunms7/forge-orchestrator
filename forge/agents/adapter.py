@@ -262,7 +262,6 @@ class ClaudeAdapter(AgentAdapter):
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
             permission_mode="acceptEdits",
             cwd=worktree_path,
             model=model,

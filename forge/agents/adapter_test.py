@@ -247,6 +247,18 @@ def test_build_options_no_conventions_or_deps():
     assert "Rules:" in options.system_prompt
 
 
+def test_build_options_has_no_allowed_tools():
+    """Task agents should get full tool access (no allowed_tools key)."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path="/tmp/test",
+        allowed_dirs=[],
+    )
+    # When allowed_tools is not explicitly set, it defaults to [] (empty list)
+    # which gives the agent full tool access in Claude Code SDK
+    assert not options.allowed_tools  # empty list = full access
+
+
 # --- ClaudeAdapter.run tests ---
 
 
