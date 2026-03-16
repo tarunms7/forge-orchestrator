@@ -323,7 +323,18 @@ class ClaudeAdapter(AgentAdapter):
 - If you're unsure about something, explore first. Grep the codebase.
   Read related files. Build understanding before making changes.
 - Do NOT run git commands (add, commit, push, etc). The orchestrator
-  handles all git operations automatically after you finish."""
+  handles all git operations automatically after you finish.
+- If you get F821 (undefined name) lint errors on type annotations, string
+  quotes do NOT fix it — ruff still checks inside strings. Use a
+  `TYPE_CHECKING` guard instead:
+  ```python
+  from __future__ import annotations
+  from typing import TYPE_CHECKING
+  if TYPE_CHECKING:
+      from module import MyType
+  ```
+- If the same lint error persists after two fix attempts, try a completely
+  different approach rather than repeating the same fix."""
 
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
