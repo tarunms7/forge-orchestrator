@@ -7,6 +7,16 @@ import logging
 import os
 import time
 
+
+def _escape_markup(text: str) -> str:
+    """Escape Rich markup characters in error messages to prevent MarkupError crashes.
+
+    Pydantic/exception messages often contain [ ] = characters that Rich
+    interprets as markup tags. This escapes them for safe display in
+    Textual notifications/toasts.
+    """
+    return str(text).replace("[", "\\[")
+
 from textual.app import App
 from textual.binding import Binding
 from textual.widgets import TextArea, Input
@@ -95,7 +105,7 @@ class ForgeApp(App):
             await self._db.initialize()
         except Exception as e:
             logger.error("Failed to initialize database: %s", e, exc_info=True)
-            self.notify(f"Database initialization failed: {e}", severity="error")
+            self.notify(f"Database initialization failed: {_escape_markup(e)}", severity="error")
             self._db = None
 
     async def _load_recent_pipelines(self) -> list[dict]:
@@ -376,7 +386,7 @@ class ForgeApp(App):
                     await self._db.update_pipeline_status(self._pipeline_id, "error")
                 except Exception:
                     pass
-            self.notify(f"PR creation error: {e}", severity="error")
+            self.notify(f"PR creation error: {_escape_markup(e)}", severity="error")
 
     async def on_final_approval_screen_follow_up(self, event) -> None:
         """User submitted a follow-up prompt from FinalApprovalScreen."""
@@ -562,7 +572,7 @@ class ForgeApp(App):
                     method()
             except Exception as e:
                 logger.error("Command palette action %s failed: %s", callback_name, e, exc_info=True)
-                self.notify(f"Action failed: {e}", severity="error")
+                self.notify(f"Action failed: {_escape_markup(e)}", severity="error")
         else:
             self.notify(f"Action '{action.name}' not available", severity="warning")
 
@@ -731,7 +741,7 @@ class ForgeApp(App):
             error = task.exception()
             logger.error("Daemon crashed: %s", error)
             self._state.apply_event("pipeline:error", {"error": str(error)})
-            self.notify(f"Pipeline failed: {error}", severity="error", timeout=10)
+            self.notify(f"Pipeline failed: {_escape_markup(error)}", severity="error", timeout=10)
 
     def _tick_elapsed(self) -> None:
         if self._pipeline_start_time:
@@ -995,4 +1005,4 @@ class ForgeApp(App):
 
         except Exception as e:
             logger.error("Failed to load pipeline history: %s", e, exc_info=True)
-            self.notify(f"Failed to load pipeline: {e}", severity="error")
+            self.notify(f"Failed to load pipeline: {_escape_markup(e)}", severity="error")

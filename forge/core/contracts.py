@@ -51,11 +51,19 @@ class IntegrationHint(BaseModel):
     """
     producer_task_id: str       # task that creates/defines the interface
     consumer_task_ids: list[str]  # tasks that consume the interface
-    interface_type: ContractType
+    interface_type: str         # e.g., "api_endpoint", "shared_type", "event", "file_import"
     description: str            # e.g., "REST API for template CRUD"
     # Optional hints from planner to guide contract generation
     endpoint_hints: list[str] = Field(default_factory=list)
         # e.g., ["GET /api/templates", "POST /api/templates"]
+
+    @property
+    def contract_type(self) -> ContractType | None:
+        """Convert interface_type string to ContractType enum, or None if unknown."""
+        try:
+            return ContractType(self.interface_type)
+        except ValueError:
+            return None
 
 
 class ContractSet(BaseModel):
