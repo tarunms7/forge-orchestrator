@@ -34,10 +34,10 @@ class ForgeLogo(Static):
     DEFAULT_CSS = """
     ForgeLogo {
         width: auto;
-        height: 20;
+        height: auto;
+        max-height: 18;
         content-align: center middle;
         text-align: center;
-        padding: 1 0;
     }
     """
 

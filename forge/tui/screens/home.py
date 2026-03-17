@@ -78,13 +78,12 @@ class HomeScreen(Screen):
 
     DEFAULT_CSS = """
     HomeScreen {
-        align: center middle;
+        align: center top;
     }
     #home-container {
         width: 110;
         height: auto;
         max-height: 100%;
-        overflow-y: auto;
     }
     #input-row {
         height: auto;
@@ -132,7 +131,7 @@ class HomeScreen(Screen):
     PipelineList {
         margin: 0 2;
         height: auto;
-        max-height: 10;
+        max-height: 8;
     }
     """
 

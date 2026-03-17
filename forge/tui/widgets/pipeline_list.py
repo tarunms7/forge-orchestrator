@@ -31,7 +31,7 @@ class PipelineList(Widget, can_focus=True):
     PipelineList {
         width: 1fr;
         height: auto;
-        max-height: 12;
+        max-height: 8;
         padding: 0 1;
     }
     """
