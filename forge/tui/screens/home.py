@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.binding import Binding
 from textual.widgets import Static, TextArea, Input
-from textual.containers import Vertical, VerticalScroll, Horizontal, Center
+from textual.containers import Vertical, Horizontal
 from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
@@ -78,15 +78,17 @@ class HomeScreen(Screen):
 
     DEFAULT_CSS = """
     HomeScreen {
-        align: center top;
+        layout: vertical;
     }
     #home-container {
-        width: 110;
-        height: 1fr;
+        width: 100%;
+        height: auto;
+        align: center top;
     }
     #input-row {
+        width: 110;
         height: auto;
-        margin: 1 2;
+        margin: 1 0;
     }
     #prompt-input {
         height: 7;
@@ -104,8 +106,9 @@ class HomeScreen(Screen):
         padding: 0 1;
     }
     #branch-row {
+        width: 110;
         height: auto;
-        margin: 0 2;
+        margin: 0 0;
     }
     .branch-field {
         width: 1fr;
@@ -125,11 +128,12 @@ class HomeScreen(Screen):
         height: 1;
     }
     #recent-label {
-        margin: 1 2 0 2;
+        width: 110;
+        margin: 1 0 0 0;
         color: #8b949e;
     }
     PipelineList {
-        margin: 0 2;
+        width: 110;
         height: auto;
         max-height: 8;
     }
@@ -162,21 +166,20 @@ class HomeScreen(Screen):
             "[#5FA8FF]Esc[/]     [#A9C7E8]Quit[/]\n"
             "[#5FA8FF]?[/]       [#A9C7E8]Help[/]"
         )
-        with Center():
-            with VerticalScroll(id="home-container"):
-                yield ForgeLogo()
-                with Horizontal(id="input-row"):
-                    yield PromptTextArea(id="prompt-input")
-                    yield Static(shortcuts_text, id="shortcuts-panel")
-                with Horizontal(id="branch-row"):
-                    with Vertical(classes="branch-field"):
-                        yield Static("[#8b949e]Base branch[/]", classes="branch-label")
-                        yield Input(value="main", id="base-branch-input")
-                    with Vertical(classes="branch-field"):
-                        yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
-                        yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
-                yield Static("Recent pipelines", id="recent-label")
-                yield PipelineList()
+        with Vertical(id="home-container"):
+            yield ForgeLogo()
+            with Horizontal(id="input-row"):
+                yield PromptTextArea(id="prompt-input")
+                yield Static(shortcuts_text, id="shortcuts-panel")
+            with Horizontal(id="branch-row"):
+                with Vertical(classes="branch-field"):
+                    yield Static("[#8b949e]Base branch[/]", classes="branch-label")
+                    yield Input(value="main", id="base-branch-input")
+                with Vertical(classes="branch-field"):
+                    yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
+                    yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
+            yield Static("Recent pipelines", id="recent-label")
+            yield PipelineList()
         yield ShortcutBar([
             ("Ctrl+S", "Submit Task"),
             ("j/k", "History"),
