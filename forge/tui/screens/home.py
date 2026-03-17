@@ -78,15 +78,18 @@ class HomeScreen(Screen):
 
     DEFAULT_CSS = """
     HomeScreen {
-        layout: vertical;
-    }
-    #home-container {
-        width: 100%;
-        height: auto;
         align: center top;
     }
-    #input-row {
+    #home-container {
         width: 110;
+        height: 1fr;
+        overflow-y: auto;
+    }
+    ForgeLogo {
+        width: 100%;
+    }
+    #input-row {
+        width: 100%;
         height: auto;
         margin: 1 0;
     }
@@ -106,9 +109,8 @@ class HomeScreen(Screen):
         padding: 0 1;
     }
     #branch-row {
-        width: 110;
+        width: 100%;
         height: auto;
-        margin: 0 0;
     }
     .branch-field {
         width: 1fr;
@@ -128,12 +130,12 @@ class HomeScreen(Screen):
         height: 1;
     }
     #recent-label {
-        width: 110;
+        width: 100%;
         margin: 1 0 0 0;
         color: #8b949e;
     }
     PipelineList {
-        width: 110;
+        width: 100%;
         height: auto;
         max-height: 8;
     }
