@@ -143,6 +143,7 @@ class FinalApprovalScreen(Screen):
         stats: dict | None = None,
         tasks: list[dict] | None = None,
         pipeline_branch: str = "",
+        base_branch: str = "main",
         partial: bool = False,
         **kwargs,
     ) -> None:
@@ -150,6 +151,7 @@ class FinalApprovalScreen(Screen):
         self._stats = stats or {}
         self._tasks = tasks or []
         self._pipeline_branch = pipeline_branch
+        self._base_branch = base_branch
         self._partial = partial
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
@@ -164,13 +166,14 @@ class FinalApprovalScreen(Screen):
         asyncio.create_task(self._check_behind_main())
 
     async def _check_behind_main(self) -> None:
-        """Check if pipeline branch is behind origin/main and show warning."""
+        """Check if pipeline branch is behind the base branch and show warning."""
         project_dir = self._get_project_dir()
-        if not project_dir:
+        if not project_dir or not self._pipeline_branch:
             return
+        base = self._base_branch
         try:
             fetch = await asyncio.create_subprocess_exec(
-                "git", "fetch", "origin", "main", "--quiet",
+                "git", "fetch", "origin", base, "--quiet",
                 cwd=project_dir,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -178,7 +181,8 @@ class FinalApprovalScreen(Screen):
             await asyncio.wait_for(fetch.wait(), timeout=15)
 
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-list", "--count", "HEAD..origin/main",
+                "git", "rev-list", "--count",
+                f"{self._pipeline_branch}..origin/{base}",
                 cwd=project_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -190,7 +194,7 @@ class FinalApprovalScreen(Screen):
                 warning = self.query_one("#behind-main-warning", Static)
                 warning.update(
                     f"[bold #d29922]⚠ Branch is {count} commit{'s' if count != 1 else ''} "
-                    f"behind main. PR may have merge conflicts.[/]"
+                    f"behind {base}. PR may have merge conflicts.[/]"
                 )
         except Exception:
             pass  # Non-critical — silently skip if git fails

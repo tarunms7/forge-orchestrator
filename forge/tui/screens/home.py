@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Static, TextArea
+from textual.widgets import Static, TextArea, Input
 from textual.containers import Vertical, Horizontal, Center
 from textual.message import Message
 
@@ -104,6 +104,26 @@ class HomeScreen(Screen):
         margin-left: 1;
         padding: 0 1;
     }
+    #branch-row {
+        height: auto;
+        margin: 0 2;
+    }
+    .branch-field {
+        width: 1fr;
+    }
+    .branch-field Input {
+        height: 1;
+        border: none;
+        background: #161b22;
+        padding: 0 1;
+    }
+    .branch-field Input:focus {
+        border: tall #58a6ff;
+    }
+    .branch-label {
+        color: #8b949e;
+        height: 1;
+    }
     #recent-label {
         margin: 1 2 0 2;
         color: #8b949e;
@@ -121,8 +141,10 @@ class HomeScreen(Screen):
     ]
 
     class TaskSubmitted(Message):
-        def __init__(self, task: str) -> None:
+        def __init__(self, task: str, base_branch: str = "main", branch_name: str = "") -> None:
             self.task = task
+            self.base_branch = base_branch
+            self.branch_name = branch_name
             super().__init__()
 
     def __init__(self, recent_pipelines: list[dict] | None = None) -> None:
@@ -146,6 +168,13 @@ class HomeScreen(Screen):
                 with Horizontal(id="input-row"):
                     yield PromptTextArea(id="prompt-input")
                     yield Static(shortcuts_text, id="shortcuts-panel")
+                with Horizontal(id="branch-row"):
+                    with Vertical(classes="branch-field"):
+                        yield Static("[#8b949e]Base branch[/]", classes="branch-label")
+                        yield Input(value="main", id="base-branch-input")
+                    with Vertical(classes="branch-field"):
+                        yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
+                        yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
                 yield Static("Recent pipelines", id="recent-label")
                 yield PipelineList()
         yield ShortcutBar([
@@ -162,7 +191,18 @@ class HomeScreen(Screen):
     def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
         """Ctrl+Enter: submit the task prompt."""
         if event.text:
-            self.post_message(self.TaskSubmitted(event.text))
+            base_branch = self.query_one("#base-branch-input", Input).value.strip() or "main"
+            branch_name = self.query_one("#branch-name-input", Input).value.strip()
+            self.post_message(self.TaskSubmitted(event.text, base_branch=base_branch, branch_name=branch_name))
+
+    def on_click(self, event) -> None:
+        """Click outside focused widget to unfocus it."""
+        # Let Textual handle focus naturally — clicking a focusable widget
+        # focuses it. If user clicks a non-focusable area, blur everything.
+        from textual.widgets import Input
+        target = getattr(event, "widget", None) if hasattr(event, "widget") else None
+        if target is not None and not isinstance(target, (PromptTextArea, Input, PipelineList)):
+            self.set_focus(None)
 
     def action_cycle_focus(self) -> None:
         """Tab: switch focus between PromptTextArea and PipelineList."""
