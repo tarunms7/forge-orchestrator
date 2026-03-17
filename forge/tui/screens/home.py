@@ -114,6 +114,7 @@ class HomeScreen(Screen):
     }
     .branch-field {
         width: 1fr;
+        height: auto;
     }
     .branch-field Input {
         height: 3;
