@@ -50,6 +50,7 @@ class TuiState:
         self.unified_log: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
         self.pipeline_branch: str = ""  # branch where task work is merged
+        self.base_branch: str = "main"  # branch the pipeline was created from (PR target)
 
         # Feature 2/3/5: contracts, cost, budget, preflight, followup
         self.contracts_output: list[str] = []
@@ -469,6 +470,7 @@ class TuiState:
         self.elapsed_seconds = 0.0
         self.total_cost_usd = 0.0
         self.pipeline_branch = ""
+        self.base_branch = "main"
         self.question_history.clear()
         self.pending_questions.clear()
         self.pr_url = None

@@ -303,7 +303,7 @@ class FinalApprovalScreen(Screen):
         """Run git diff and push a DiffScreen with the result."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "diff", f"main...{self._pipeline_branch}",
+                "git", "diff", f"{self._base_branch}...{self._pipeline_branch}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._get_project_dir(),

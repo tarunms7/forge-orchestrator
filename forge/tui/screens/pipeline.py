@@ -557,7 +557,8 @@ class PipelineScreen(Screen):
         branch = await self._resolve_branch()
         if not branch:
             return "No pipeline branch available yet."
-        cmd = ["git", "diff", f"main...{branch}"]
+        base = getattr(self._state, "base_branch", "main") or "main"
+        cmd = ["git", "diff", f"{base}...{branch}"]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
