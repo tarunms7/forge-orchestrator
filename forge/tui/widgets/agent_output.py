@@ -25,12 +25,56 @@ _SECTION_COLORS = {
 
 _ERROR_TAIL_LINES = 20
 
+_IN_CODE_BLOCK = False  # Module-level state for code block tracking
+
 
 def _escape(text: str | None) -> str:
     """Escape Rich markup characters in user-provided text."""
     if text is None:
         return ""
     return text.replace("[", "\\[").replace("]", "\\]")
+
+
+def _render_markdown(line: str) -> str:
+    """Convert common markdown patterns to Rich markup for TUI display.
+
+    Handles headers, bold, inline code, code fences, and bullets.
+    """
+    import re
+    global _IN_CODE_BLOCK
+    stripped = line.strip()
+
+    # Code fence toggle
+    if stripped.startswith("```"):
+        _IN_CODE_BLOCK = not _IN_CODE_BLOCK
+        return f"[#484f58]{'─' * 40}[/]"
+
+    # Inside code block — render as dim monospace, escape markup
+    if _IN_CODE_BLOCK:
+        return f"[#8b949e]  {_escape(line)}[/]"
+
+    # Headers
+    if stripped.startswith("### "):
+        return f"[bold #58a6ff]{_escape(stripped[4:])}[/]"
+    if stripped.startswith("## "):
+        return f"[bold #58a6ff]{_escape(stripped[3:])}[/]"
+    if stripped.startswith("# "):
+        return f"[bold #58a6ff]{_escape(stripped[2:])}[/]"
+
+    # Bullets
+    if stripped.startswith("- "):
+        inner = stripped[2:]
+        # Apply inline formatting to bullet content
+        inner = re.sub(r'\*\*(.+?)\*\*', lambda m: f"[bold]{_escape(m.group(1))}[/]", inner)
+        inner = re.sub(r'`([^`]+)`', lambda m: f"[#79c0ff]{_escape(m.group(1))}[/]", inner)
+        return f"  • {inner}"
+
+    # Bold: **text**
+    line = re.sub(r'\*\*(.+?)\*\*', lambda m: f"[bold]{_escape(m.group(1))}[/]", line)
+    # Inline code: `text`
+    line = re.sub(r'`([^`]+)`', lambda m: f"[#79c0ff]{_escape(m.group(1))}[/]", line)
+
+    return line
 
 
 def format_header(task_id: str | None, title: str | None, state: str | None) -> str:
@@ -82,7 +126,9 @@ def format_output(
     if not lines:
         frame = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
         return f"[#58a6ff]{frame}[/] [#8b949e]Waiting for output...[/]"
-    parts = list(lines)
+    global _IN_CODE_BLOCK
+    _IN_CODE_BLOCK = False  # Reset at start of full render
+    parts = [_render_markdown(line) for line in lines]
     if streaming:
         cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
         parts.append(f"[#58a6ff]● Typing{cursor}[/]")
@@ -104,12 +150,16 @@ def format_unified_output(
     current_section: str | None = None
     review_count = 0
 
+    global _IN_CODE_BLOCK
+    _IN_CODE_BLOCK = False  # Reset at start of full render
+
     for source_type, line in entries:
         # Gate lines merge into review section
         effective = "review" if source_type == "gate" else source_type
 
         if effective != current_section:
             current_section = effective
+            _IN_CODE_BLOCK = False  # Reset code block state on section change
             color = _SECTION_COLORS.get(effective, "#8b949e")
             if effective == "review":
                 review_count += 1
@@ -124,9 +174,9 @@ def format_unified_output(
         if source_type == "gate":
             parts.append(f"  [#79c0ff]{line}[/]")
         elif source_type == "review":
-            parts.append(f"[#a371f7]{line}[/]")
+            parts.append(f"[#a371f7]{_render_markdown(line)}[/]")
         else:
-            parts.append(line)
+            parts.append(_render_markdown(line))
 
     if streaming:
         cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]

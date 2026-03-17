@@ -204,9 +204,10 @@ class ForgeApp(App):
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
+        base_branch = getattr(self, "_cached_base_branch", "main") or "main"
         self.push_screen(FinalApprovalScreen(
             stats=stats, tasks=task_summaries, pipeline_branch=pipeline_branch,
-            partial=partial,
+            base_branch=base_branch, partial=partial,
         ))
         # If no cached branch, fetch async and update the screen
         if not pipeline_branch:
@@ -572,17 +573,21 @@ class ForgeApp(App):
             self.notify("A pipeline is already running", severity="warning")
             return
         task = event.task
-        logger.info("Task submitted: %s", task)
+        base_branch = getattr(event, "base_branch", "main") or "main"
+        branch_name = getattr(event, "branch_name", "") or ""
+        logger.info("Task submitted: %s (base: %s, branch: %s)", task, base_branch, branch_name)
         self._state.apply_event("pipeline:phase_changed", {"phase": "planning"})
         pipeline_screen = PipelineScreen(self._state)
         self.push_screen(pipeline_screen)
         # CRITICAL: Use create_task, NOT await — planning is a long LLM call
         # that would block the Textual event loop and freeze the UI.
         # Store as _daemon_task so quit handler can cancel it gracefully.
-        self._daemon_task = asyncio.create_task(self._run_plan(task))
+        self._daemon_task = asyncio.create_task(
+            self._run_plan(task, base_branch=base_branch, branch_name=branch_name)
+        )
         self._daemon_task.add_done_callback(self._on_daemon_done)
 
-    async def _run_plan(self, task: str) -> None:
+    async def _run_plan(self, task: str, base_branch: str = "main", branch_name: str = "") -> None:
         """Run planning phase only, then show plan for approval."""
         import uuid
         from forge.core.events import EventEmitter
@@ -616,6 +621,8 @@ class ForgeApp(App):
             project_dir=self._project_dir,
             model_strategy=settings.model_strategy,
             budget_limit_usd=settings.budget_limit_usd,
+            base_branch=base_branch,
+            branch_name=branch_name if branch_name else None,
             project_path=self._project_dir,
             project_name=os.path.basename(self._project_dir),
         )
@@ -699,6 +706,13 @@ class ForgeApp(App):
                 self._state.pipeline_branch = branch
         except Exception:
             logger.debug("Could not resolve pipeline branch for state", exc_info=True)
+        # Cache the base branch for FinalApprovalScreen's behind-main check
+        try:
+            if self._db and self._pipeline_id:
+                pipeline = await self._db.get_pipeline(self._pipeline_id)
+                self._cached_base_branch = getattr(pipeline, "base_branch", None) or "main"
+        except Exception:
+            logger.debug("Could not resolve base branch", exc_info=True)
         try:
             await self._daemon.execute(
                 self._graph, self._db, pipeline_id=self._pipeline_id,
@@ -739,6 +753,7 @@ class ForgeApp(App):
         self._graph = None
         self._pipeline_id = None
         self._cached_pipeline_branch = ""
+        self._cached_base_branch = "main"
         self._pipeline_start_time = None
         # Reset TUI state (tasks, output, costs, etc.)
         self._state.reset()

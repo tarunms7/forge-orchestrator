@@ -434,6 +434,10 @@ class PipelineScreen(Screen):
                     unified = state.unified_log.get(tid, [])
                     task = state.tasks.get(tid, {})
                     ao.update_unified(tid, task.get("title"), task.get("state"), unified)
+                    # Reset tracking lengths so fast-path doesn't re-append
+                    # lines that are already in the reconciled unified log
+                    self._agent_output_len[tid] = len(state.agent_output.get(tid, []))
+                    self._review_output_len[tid] = len(state.review_output.get(tid, []))
                 except Exception:
                     pass
 
@@ -737,12 +741,7 @@ class PipelineScreen(Screen):
         if self._copy_overlay is not None:
             self._dismiss_copy_overlay()
             return  # Toggle off
-        agent_output = self.query_one(AgentOutput)
-        # Use unified entries if available, fall back to _lines
-        if agent_output._unified_entries:
-            lines = [line for _, line in agent_output._unified_entries]
-        else:
-            lines = list(agent_output._lines)
+        lines = self._get_copyable_lines()
         if not lines:
             self.app.notify("No output to copy", timeout=3)
             return
@@ -753,14 +752,28 @@ class PipelineScreen(Screen):
         except Exception:
             logger.debug("Failed to mount CopyOverlay", exc_info=True)
 
+    def _get_copyable_lines(self) -> list[str]:
+        """Get lines from agent output, with fallback to rendered text."""
+        agent_output = self.query_one(AgentOutput)
+        if agent_output._unified_entries:
+            return [line for _, line in agent_output._unified_entries]
+        if agent_output._lines:
+            return list(agent_output._lines)
+        # Fallback: read rendered text from the Static widget
+        try:
+            from textual.widgets import Static
+            content = agent_output.query_one("#agent-content", Static)
+            text = content.renderable
+            if isinstance(text, str) and text.strip():
+                return text.split("\n")
+        except Exception:
+            pass
+        return []
+
     def action_copy_all(self) -> None:
         """Instant copy of all visible output to clipboard."""
         from forge.tui.widgets.copy_overlay import copy_to_clipboard
-        agent_output = self.query_one(AgentOutput)
-        if agent_output._unified_entries:
-            lines = [line for _, line in agent_output._unified_entries]
-        else:
-            lines = list(agent_output._lines)
+        lines = self._get_copyable_lines()
         if not lines:
             self.app.notify("No output to copy", timeout=3)
             return
