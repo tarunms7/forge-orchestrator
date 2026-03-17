@@ -112,9 +112,10 @@ class HomeScreen(Screen):
         width: 1fr;
     }
     .branch-field Input {
-        height: 1;
-        border: none;
+        height: 3;
+        border: tall #30363d;
         background: #161b22;
+        color: #e6edf3;
         padding: 0 1;
     }
     .branch-field Input:focus {
