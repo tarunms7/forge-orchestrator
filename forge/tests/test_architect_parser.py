@@ -1,7 +1,8 @@
-"""Tests for the Architect's JSON parser — isolated from SDK dependencies.
+"""Tests for the planner's JSON parser — isolated from SDK dependencies.
 
 We test _parse() logic directly by extracting it into a standalone function
-rather than importing the full Architect class (which pulls in claude_code_sdk).
+rather than importing the full UnifiedPlanner class (which pulls in claude_code_sdk).
+The parser logic is shared by the unified planner.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from forge.core.models import TaskGraph
 
 
 def _parse(raw: str) -> tuple[TaskGraph | None, str | None]:
-    """Mirror of Architect._parse() for testing without SDK imports."""
+    """Mirror of UnifiedPlanner._parse() for testing without SDK imports."""
     raw = raw.strip()
 
     blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
@@ -59,7 +60,7 @@ def _parse(raw: str) -> tuple[TaskGraph | None, str | None]:
     return None, last_error or "No JSON found in output"
 
 
-class TestArchitectParser:
+class TestPlannerParser:
     def test_single_json_block(self):
         raw = '```json\n{"conventions": {}, "tasks": [{"id": "task-1", "title": "Do X", "description": "Do X in detail enough to pass validation minimum.", "files": ["a.py"], "depends_on": [], "complexity": "low"}]}\n```'
         graph, error = _parse(raw)

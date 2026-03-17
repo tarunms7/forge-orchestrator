@@ -89,14 +89,8 @@ class PhaseBanner(Widget):
         icon, _, text = label.partition(" ")
         if not text:
             text, icon = icon, ""
-        # Append planning stage if available
-        if self._phase == "planning":
-            try:
-                state = self.app._state  # TuiState stored as app._state
-                if hasattr(state, "planning_stage") and state.planning_stage:
-                    text = f"{text} ({state.planning_stage})"
-            except Exception:
-                pass
+        # During planning, the unified planner streams output via planner:output
+        # No per-stage label needed — the banner just shows "PLANNING"
         # Wide-space: double-space within words, triple-space between words
         words = text.upper().split()
         spaced_words = ["  ".join(w) for w in words]
