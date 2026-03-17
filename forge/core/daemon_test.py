@@ -732,8 +732,8 @@ class TestClassifyPipelineResult:
 class TestPlanningQuestionWiring:
     """Tests for on_question callback wiring in daemon.plan()."""
 
-    async def test_planning_pipeline_receives_on_question(self, tmp_path):
-        """When deep planning is used, PlanningPipeline should receive on_question callback."""
+    async def test_unified_planner_receives_on_question(self, tmp_path):
+        """When deep planning is used, UnifiedPlanner.run() should receive on_question callback."""
         daemon = _make_daemon(tmp_path, planning_mode="deep")
 
         db = MagicMock()
@@ -749,25 +749,21 @@ class TestPlanningQuestionWiring:
         )), \
              patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"), \
              patch("forge.core.daemon._should_use_deep_planning", return_value=True), \
-             patch("forge.core.planning.pipeline.PlanningPipeline") as MockPipeline, \
-             patch("forge.core.planning.scout.Scout"), \
-             patch("forge.core.planning.architect.Architect"), \
-             patch("forge.core.planning.detailer.DetailerFactory"):
+             patch("forge.core.planning.unified_planner.UnifiedPlanner") as MockPlanner:
 
-            MockPipeline.return_value.run = AsyncMock(return_value=MagicMock(
+            MockPlanner.return_value.run = AsyncMock(return_value=MagicMock(
                 task_graph=MagicMock(tasks=[]),
-                codebase_map=None,
-                cost_breakdown={},
+                cost_breakdown={"planner": 0.0},
                 total_cost_usd=0.0,
             ))
 
             graph = await daemon.plan("add auth", db, pipeline_id="pipe-1")
 
-        # Verify PlanningPipeline was constructed with on_question
-        init_kwargs = MockPipeline.call_args.kwargs
-        assert "on_question" in init_kwargs
-        assert init_kwargs["on_question"] is not None
-        assert callable(init_kwargs["on_question"])
+        # Verify UnifiedPlanner.run() was called with on_question
+        run_kwargs = MockPlanner.return_value.run.call_args.kwargs
+        assert "on_question" in run_kwargs
+        assert run_kwargs["on_question"] is not None
+        assert callable(run_kwargs["on_question"])
 
     async def test_planning_answer_listener_cleaned_up(self, tmp_path):
         """After plan() completes, planning:answer listener should be removed."""
@@ -785,15 +781,11 @@ class TestPlanningQuestionWiring:
         )), \
              patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"), \
              patch("forge.core.daemon._should_use_deep_planning", return_value=True), \
-             patch("forge.core.planning.pipeline.PlanningPipeline") as MockPipeline, \
-             patch("forge.core.planning.scout.Scout"), \
-             patch("forge.core.planning.architect.Architect"), \
-             patch("forge.core.planning.detailer.DetailerFactory"):
+             patch("forge.core.planning.unified_planner.UnifiedPlanner") as MockPlanner:
 
-            MockPipeline.return_value.run = AsyncMock(return_value=MagicMock(
+            MockPlanner.return_value.run = AsyncMock(return_value=MagicMock(
                 task_graph=MagicMock(tasks=[]),
-                codebase_map=None,
-                cost_breakdown={},
+                cost_breakdown={"planner": 0.0},
                 total_cost_usd=0.0,
             ))
 

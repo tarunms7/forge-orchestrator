@@ -402,23 +402,17 @@ class TuiState:
         self.pending_questions.pop("__planning__", None)
         self._notify("planning")
 
-    def _on_planning_scout(self, data: dict) -> None:
-        self._handle_planning_output("Scout", data)
-
-    def _on_planning_architect(self, data: dict) -> None:
-        self._handle_planning_output("Architect", data)
-
-    def _on_planning_detailer(self, data: dict) -> None:
-        self._handle_planning_output("Detailer", data)
-
-    def _on_planning_validator(self, data: dict) -> None:
-        self._handle_planning_output("Validator", data)
-
     def _handle_planning_output(self, stage: str, data: dict) -> None:
-        """Handle streaming output from a planning pipeline stage."""
+        """Handle streaming output from the planning stage.
+
+        Kept for backward compatibility — both unified planner (via planner:output)
+        and any legacy per-stage events route through here.
+        """
         if self.planning_stage != stage:
             self.planning_stage = stage
-            self.planner_output.append(f"─── {stage} ───")
+            if stage != "Planner":
+                # Only insert separators for legacy per-stage events
+                self.planner_output.append(f"─── {stage} ───")
             self._notify("planning_stage")
         line = data.get("line", "")
         self.planner_output.append(line)
@@ -515,10 +509,6 @@ class TuiState:
         "planner:output": _on_planner_output,
         "planning:question": _on_planning_question,
         "planning:answer": _on_planning_answer,
-        "planning:scout": _on_planning_scout,
-        "planning:architect": _on_planning_architect,
-        "planning:detailer": _on_planning_detailer,
-        "planning:validator": _on_planning_validator,
         "task:question": _on_task_question,
         "task:answer": _on_task_answer,
         "task:resumed": _on_task_resumed,

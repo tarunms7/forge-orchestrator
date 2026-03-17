@@ -132,10 +132,10 @@ def _should_use_deep_planning(
     user_input: str,
     total_files: int,
 ) -> bool:
-    """Decide whether to use multi-pass deep planning.
+    """Decide whether to use the unified planner (full codebase access).
 
-    Returns True when the task likely benefits from the Scout → Architect →
-    Detailer → Validator pipeline. The heuristics here intentionally lean
+    Returns True when the task likely benefits from the unified planner
+    with codebase exploration. The heuristics here intentionally lean
     towards deep planning for any non-trivial request.
     """
     if planning_mode == "deep":
@@ -339,44 +339,32 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         )
 
         if use_deep:
-            from forge.core.planning.pipeline import PlanningPipeline
-            from forge.core.planning.scout import Scout
-            from forge.core.planning.architect import Architect
-            from forge.core.planning.detailer import DetailerFactory
+            from forge.core.planning.unified_planner import UnifiedPlanner
 
-            scout_model = select_model(strategy, "planner", "medium")
-            architect_model = planner_model  # Same high-quality model
-            detailer_model = select_model(strategy, "planner", "low")
+            console.print(f"[dim]Unified planning: {planner_model} (full codebase access)[/dim]")
 
-            console.print(f"[dim]Deep planning: Scout({scout_model}) → Architect({architect_model}) → Detailers({detailer_model})[/dim]")
-
-            scout = Scout(model=scout_model, cwd=self._project_dir)
-            architect = Architect(
-                model=architect_model, cwd=self._project_dir,
+            unified_planner = UnifiedPlanner(
+                model=planner_model, cwd=self._project_dir,
                 autonomy=self._settings.autonomy,
                 question_limit=self._settings.question_limit,
             )
-            detailer_factory = DetailerFactory(
-                model=detailer_model, cwd=self._project_dir,
-                max_concurrent=self._settings.max_agents,
-            )
 
-            async def _on_pipeline_msg(stage, msg):
-                # msg may be a raw SDK message object or a plain string
+            async def _on_unified_msg(msg):
+                """Forward SDK streaming messages as planner:output events."""
                 text = _extract_activity(msg) if not isinstance(msg, str) else msg
                 if not text:
                     return
                 if pipeline_id:
-                    await self._emit(f"planning:{stage}", {"line": text}, db=db, pipeline_id=pipeline_id)
+                    await self._emit("planner:output", {"line": text}, db=db, pipeline_id=pipeline_id)
                 else:
-                    await self._events.emit(f"planning:{stage}", {"line": text})
+                    await self._events.emit("planner:output", {"line": text})
 
             # Planning question support via asyncio.Event synchronization
             pending_planning_answer: dict[str, asyncio.Event] = {}
             planning_answers: dict[str, str] = {}
 
-            async def _on_architect_question(question_data: dict) -> str:
-                """Called by Architect when it has a question. Blocks until human answers."""
+            async def _on_planner_question(question_data: dict) -> str:
+                """Called by planner when it has a question. Blocks until human answers."""
                 q = await db.create_task_question(
                     task_id="__planning__",
                     pipeline_id=pipeline_id or "",
@@ -423,19 +411,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Register listener for planning answers
             self._events.on("planning:answer", _on_planning_answer)
 
-            pipeline = PlanningPipeline(
-                scout=scout, architect=architect,
-                detailer_factory=detailer_factory,
-                on_message=_on_pipeline_msg,
-                on_question=_on_architect_question,
-            )
-
             try:
-                planning_result = await pipeline.run(
+                planning_result = await unified_planner.run(
                     user_input=user_input,
                     spec_text=spec_text,
                     snapshot_text=self._snapshot.format_for_planner() if self._snapshot else "",
                     conventions=planner_prompt_modifier,
+                    on_message=_on_unified_msg,
+                    on_question=_on_planner_question,
                 )
             finally:
                 # Clean up listener to prevent accumulation
@@ -444,36 +427,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     handlers.remove(_on_planning_answer)
 
             if planning_result.task_graph is None:
-                raise RuntimeError("Deep planning pipeline failed to produce a TaskGraph")
+                raise RuntimeError("Unified planner failed to produce a TaskGraph")
 
             graph = planning_result.task_graph
-
-            # Save CodebaseMap to cache for incremental scouting
-            if planning_result.codebase_map:
-                from forge.core.planning.cache import CodebaseMapCache
-                try:
-                    forge_dir = os.path.join(self._project_dir, ".forge")
-                    cache = CodebaseMapCache(forge_dir)
-                    # Get current git state for cache metadata
-                    commit_result = subprocess.run(
-                        ["git", "rev-parse", "HEAD"],
-                        cwd=self._project_dir, capture_output=True, text=True,
-                    )
-                    branch_result = subprocess.run(
-                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                        cwd=self._project_dir, capture_output=True, text=True,
-                    )
-                    current_commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
-                    current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
-                    cache.save(
-                        planning_result.codebase_map,
-                        git_commit=current_commit,
-                        git_branch=current_branch,
-                        file_hashes={},
-                    )
-                    console.print("[dim]CodebaseMap cached for incremental scouting[/dim]")
-                except Exception as e:
-                    logger.warning("Failed to cache CodebaseMap: %s", e)
 
             # Track costs
             if pipeline_id and planning_result.total_cost_usd > 0:
