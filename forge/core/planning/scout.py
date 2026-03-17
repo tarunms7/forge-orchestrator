@@ -53,8 +53,8 @@ class Scout:
 
             options = ClaudeCodeOptions(
                 system_prompt=SCOUT_SYSTEM_PROMPT,
-                max_turns=30, model=self._model,
-                allowed_tools=["Read", "Glob", "Grep", "Bash"],
+                max_turns=20, model=self._model,
+                disallowed_tools=["Edit", "Write"],
                 permission_mode="acceptEdits",
             )
             if self._cwd:

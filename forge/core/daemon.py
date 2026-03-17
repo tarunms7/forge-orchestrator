@@ -701,10 +701,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # On resume/retry, use the stored base branch from the original run.
         # Re-detecting via _get_current_branch would pick up whatever the user
         # has checked out NOW, which may be different from the original base.
-        if resume:
-            base_branch = getattr(pipeline_record, "base_branch", None) or _get_current_branch(self._project_dir)
-        else:
-            base_branch = _get_current_branch(self._project_dir)
+        # Use the base branch stored by the TUI (user's explicit choice).
+        # Fall back to detecting the current checkout only if not stored.
+        base_branch = getattr(pipeline_record, "base_branch", None) or _get_current_branch(self._project_dir)
         custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
         if custom_branch and custom_branch.strip():
             pipeline_branch = custom_branch.strip()
