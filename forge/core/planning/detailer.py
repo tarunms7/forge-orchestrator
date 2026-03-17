@@ -43,8 +43,8 @@ class Detailer:
             prompt = self._build_prompt(task, sliced_map, conventions)
             options = ClaudeCodeOptions(
                 system_prompt=DETAILER_SYSTEM_PROMPT,
-                max_turns=10, model=self._model,
-                disallowed_tools=["Bash", "Edit", "Write"],
+                max_turns=3, model=self._model,
+                disallowed_tools=["Bash", "Glob", "Grep", "Task", "Edit", "Write"],
                 permission_mode="acceptEdits",
             )
             if self._cwd:
@@ -76,7 +76,11 @@ class Detailer:
         ]
         if conventions:
             parts.append(f"\nProject conventions:\n{conventions}")
-        parts.append("\nEnrich this task description with implementation-ready detail. Include exact function signatures, test file paths, and edge cases.")
+        parts.append(
+            "\nEnrich this task with focused implementation notes. "
+            "Keep scope limited to the listed files and existing task intent. "
+            "Do not add new audit items, new risks, or unrelated refactors."
+        )
         return "\n".join(parts)
 
 

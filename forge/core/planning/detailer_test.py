@@ -48,3 +48,24 @@ async def test_detailer_factory_runs_parallel(sample_map, monkeypatch):
     results = await factory.run_all(tasks=tasks, codebase_map=sample_map, conventions="")
     assert len(results) == 4
     assert all(r.enriched_description for r in results)
+
+
+@pytest.mark.asyncio
+async def test_detailer_limits_tools_and_prompt_scope(sample_task, sample_map, monkeypatch):
+    captured: dict = {}
+
+    async def mock_sdk_query(prompt, options, on_message=None):
+        captured["prompt"] = prompt
+        captured["disallowed_tools"] = set(options.disallowed_tools or [])
+        captured["max_turns"] = options.max_turns
+        return FakeSdkResult("Enriched task text with concrete edits.")
+
+    monkeypatch.setattr("forge.core.planning.detailer.sdk_query", mock_sdk_query)
+    detailer = Detailer(model="sonnet", cwd="/tmp")
+
+    await detailer.run(task=sample_task, codebase_map=sample_map, conventions="")
+
+    assert captured["max_turns"] == 3
+    assert {"Bash", "Glob", "Grep", "Task", "Edit", "Write"} <= captured["disallowed_tools"]
+    assert "Include exact function signatures, test file paths, and edge cases." not in captured["prompt"]
+    assert "Do not add new audit items, new risks, or unrelated refactors." in captured["prompt"]
