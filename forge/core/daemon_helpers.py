@@ -214,6 +214,9 @@ def _build_agent_prompt(title: str, description: str, files: list[str], agent_pr
         f"Description: {description}\n\n"
         f"Files you MUST ONLY modify (changes to other files will be auto-reverted): {', '.join(files)}\n\n"
         "Instructions:\n"
+        "0. CHECK APPLICABILITY FIRST: Verify that the files and conditions described in the task actually exist in your worktree. "
+        "If files to modify/delete don't exist and there is nothing meaningful to do, make NO changes and do NOT commit. "
+        "NEVER create files just to delete them or fabricate work that achieves nothing.\n"
         "1. Implement this task completely\n"
         "2. Write clean, working code\n"
         "3. When done, stage and commit all changes with: git add -A && git commit -m '<type>: <short summary>'\n"
@@ -221,7 +224,8 @@ def _build_agent_prompt(title: str, description: str, files: list[str], agent_pr
         "   - Write a SHORT commit message (max 72 chars) that describes WHAT you actually changed — do NOT copy the task title or description verbatim\n"
         "   - Good: 'feat: add JWT token refresh endpoint'\n"
         "   - Bad: 'feat: Build a REST API with JWT auth, user registration, and integration tests'\n"
-        "4. Make sure you actually commit — the system checks for committed changes"
+        "4. Make sure you actually commit — the system checks for committed changes\n"
+        "5. If step 0 determined nothing to do, skip steps 1-4 entirely — no commit needed"
     )
     if agent_prompt_modifier:
         prompt += agent_prompt_modifier

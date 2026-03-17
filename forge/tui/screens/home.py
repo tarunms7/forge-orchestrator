@@ -84,13 +84,14 @@ class HomeScreen(Screen):
         width: 110;
         height: auto;
         max-height: 100%;
+        overflow-y: auto;
     }
     #input-row {
         height: auto;
         margin: 1 2;
     }
     #prompt-input {
-        height: 10;
+        height: 7;
         border: tall #30363d;
         width: 1fr;
     }
@@ -99,7 +100,7 @@ class HomeScreen(Screen):
     }
     #shortcuts-panel {
         width: 30;
-        height: 10;
+        height: 7;
         border: tall #30363d;
         margin-left: 1;
         padding: 0 1;

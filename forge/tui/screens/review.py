@@ -210,7 +210,8 @@ class ReviewScreen(Screen):
             cwd = self._get_project_dir()
             try:
                 # Scope diff to task's changed files when available
-                cmd: list[str] = ["git", "diff", f"main...{branch}"]
+                base = getattr(self._state, "base_branch", "main") or "main"
+                cmd: list[str] = ["git", "diff", f"{base}...{branch}"]
                 task = self._state.tasks.get(tid, {})
                 files = task.get("files_changed", [])
                 if files:

@@ -576,6 +576,7 @@ class ForgeApp(App):
         base_branch = getattr(event, "base_branch", "main") or "main"
         branch_name = getattr(event, "branch_name", "") or ""
         logger.info("Task submitted: %s (base: %s, branch: %s)", task, base_branch, branch_name)
+        self._state.base_branch = base_branch
         self._state.apply_event("pipeline:phase_changed", {"phase": "planning"})
         pipeline_screen = PipelineScreen(self._state)
         self.push_screen(pipeline_screen)
@@ -711,6 +712,7 @@ class ForgeApp(App):
             if self._db and self._pipeline_id:
                 pipeline = await self._db.get_pipeline(self._pipeline_id)
                 self._cached_base_branch = getattr(pipeline, "base_branch", None) or "main"
+                self._state.base_branch = self._cached_base_branch
         except Exception:
             logger.debug("Could not resolve base branch", exc_info=True)
         try:
@@ -909,6 +911,7 @@ class ForgeApp(App):
                     # Set up state for this pipeline
                     self._pipeline_id = pipeline_id
                     self._state = TuiState()
+                    self._state.base_branch = getattr(pipeline, "base_branch", None) or "main"
                     # Replay events to restore state
                     events = await self._db.list_events(pipeline_id)
                     for evt in events:
@@ -923,6 +926,7 @@ class ForgeApp(App):
             if pipeline.status in ("interrupted", "partial_success"):
                 events = await self._db.list_events(pipeline_id)
                 state = TuiState()
+                state.base_branch = getattr(pipeline, "base_branch", None) or "main"
                 for evt in events:
                     state.apply_event(evt.event_type, evt.payload or {})
 
@@ -981,6 +985,7 @@ class ForgeApp(App):
             # Load events and replay into a fresh TuiState (read-only history)
             events = await self._db.list_events(pipeline_id)
             replay_state = TuiState()
+            replay_state.base_branch = getattr(pipeline, "base_branch", None) or "main"
             replay_state._replay_date = pipeline.created_at or ""
 
             for evt in events:

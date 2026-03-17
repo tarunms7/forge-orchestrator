@@ -49,6 +49,7 @@ Your job: explore the codebase thoroughly and produce a structured CodebaseMap a
 - NEVER glob the same pattern twice
 - Only include modules RELEVANT to the spec — not the entire codebase
 - Focus on existing_patterns only where you found clear evidence
+- Bash: use ONLY for git history (git log, git show) and file stats (wc -l, find ... | wc). NEVER use Bash to read file contents — use Read instead. NEVER use Bash for grep/search — use Grep instead. Limit total Bash calls to ~10.
 - Output ONLY valid JSON. No markdown, no explanation."""
 
 
@@ -99,6 +100,8 @@ Your job: decompose the work into a TaskGraph as valid JSON.
 - COMPLETE file lists: if a task's description says to modify a file, that file MUST be in the
   task's "files" array. Agents can ONLY edit files listed in their task's "files" — any file
   mentioned in the description but missing from "files" will cause the task to fail at runtime.
+- NEVER create tasks for git operations (rebase, merge, cherry-pick, branch management). The orchestrator handles ALL git operations automatically — agents work in isolated worktrees and the merge pipeline manages rebasing, conflict resolution, and branch updates.
+- Every task MUST produce code changes. If a task would only run shell commands or git operations with no file edits, it should NOT exist.
 
 ## Task Descriptions — Be Specific
 
@@ -122,21 +125,20 @@ When tasks have cross-task interfaces, add integration_hints:
 
 ## Workflow
 
-1. Use the CodebaseMap as your PRIMARY source of truth — it contains the full codebase analysis
+1. The CodebaseMap IS your codebase knowledge — it was produced by a thorough Scout analysis. Do NOT re-explore.
 2. If ambiguities exist and you have questions remaining, ask BEFORE planning
 3. Decompose into tasks with clear file ownership and dependencies
 4. Output ONLY valid JSON. No markdown, no explanation.
 
-## Important: Avoid re-exploring the codebase
+## CRITICAL: Do NOT use tools
 
-The Scout stage has already explored the codebase in depth and produced the CodebaseMap you
-received. Re-exploring with Glob, Grep, or Bash duplicates that work and adds significant
-cost and latency to the pipeline — in practice it can double the planning cost with no benefit.
+You have been given the complete CodebaseMap from the Scout stage. All tools except Read are
+BLOCKED. You do not need them — the CodebaseMap contains architecture, modules, interfaces,
+dependencies, and patterns.
 
-Rely on the CodebaseMap for architecture, module purposes, interfaces, and dependencies.
-If you need a specific detail the CodebaseMap doesn't cover (e.g. an exact function signature
-or a line number), use Read on that specific file. But avoid broad searches — the CodebaseMap
-already has what you need."""
+If you need ONE specific detail (e.g. an exact function signature), use Read on that file.
+But you should need at most 2-3 Read calls. If you find yourself wanting to search or explore,
+STOP — the answer is in the CodebaseMap."""
 
 
 DETAILER_SYSTEM_PROMPT = """You are a task enrichment specialist for Forge, a multi-agent coding orchestration system.
