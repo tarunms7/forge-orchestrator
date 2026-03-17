@@ -82,8 +82,7 @@ class HomeScreen(Screen):
     }
     #home-container {
         width: 110;
-        height: 1fr;
-        overflow-y: auto;
+        height: auto;
     }
     ForgeLogo {
         width: 100%;
