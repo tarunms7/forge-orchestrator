@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.binding import Binding
 from textual.widgets import Static, TextArea, Input
-from textual.containers import Vertical, Horizontal, Center
+from textual.containers import Vertical, VerticalScroll, Horizontal, Center
 from textual.message import Message
 
 from forge.tui.widgets.logo import ForgeLogo
@@ -82,8 +82,7 @@ class HomeScreen(Screen):
     }
     #home-container {
         width: 110;
-        height: auto;
-        max-height: 100%;
+        height: 1fr;
     }
     #input-row {
         height: auto;
@@ -164,7 +163,7 @@ class HomeScreen(Screen):
             "[#5FA8FF]?[/]       [#A9C7E8]Help[/]"
         )
         with Center():
-            with Vertical(id="home-container"):
+            with VerticalScroll(id="home-container"):
                 yield ForgeLogo()
                 with Horizontal(id="input-row"):
                     yield PromptTextArea(id="prompt-input")
