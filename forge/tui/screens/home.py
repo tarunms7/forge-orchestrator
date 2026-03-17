@@ -78,11 +78,12 @@ class HomeScreen(Screen):
 
     DEFAULT_CSS = """
     HomeScreen {
+        layout: vertical;
         align: center top;
     }
     #home-container {
         width: 110;
-        height: auto;
+        height: 1fr;
     }
     ForgeLogo {
         width: 100%;
