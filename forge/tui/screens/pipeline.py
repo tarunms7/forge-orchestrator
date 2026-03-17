@@ -320,7 +320,8 @@ class PipelineScreen(Screen):
         if field == "error":
             error = self._state.error
             if error:
-                self.app.notify(f"Pipeline error: {error}", severity="error", timeout=10)
+                from forge.tui.app import _escape_markup
+                self.app.notify(f"Pipeline error: {_escape_markup(error)}", severity="error", timeout=10)
 
     def _update_shortcut_bar(self, phase: str) -> None:
         """Update shortcut bar based on current pipeline phase."""
