@@ -241,8 +241,8 @@ class TestOnTaskAnswered:
             MockSched.dispatch_plan.return_value = [("t1", "agent-1")]
 
             # Mock engine helpers
-            with patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
-                with patch("forge.core.models.row_to_record", side_effect=lambda t: t):
+            with patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
+                with patch("forge.core.engine._row_to_record", side_effect=lambda t: t):
                     # Mock _safe_execute_resume to avoid actual execution
                     executor._safe_execute_resume = AsyncMock()
 

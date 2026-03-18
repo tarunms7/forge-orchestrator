@@ -195,8 +195,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=make_dispatch_plan), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
 
             async def run_loop():
                 await daemon._execution_loop_inner(
@@ -267,8 +267,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=always_dispatch), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
 
             loop_task = asyncio.create_task(
                 daemon._execution_loop_inner(db, MagicMock(), MagicMock(), MagicMock(), monitor, "pipe-1")
@@ -338,8 +338,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=dispatch_once), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
 
             loop_task = asyncio.create_task(
                 daemon._execution_loop_inner(db, MagicMock(), MagicMock(), MagicMock(), monitor, "pipe-1")
@@ -412,8 +412,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=dispatch_once), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
 
             # Use _execution_loop (not _inner) so the finally block runs shutdown
             loop_task = asyncio.create_task(
