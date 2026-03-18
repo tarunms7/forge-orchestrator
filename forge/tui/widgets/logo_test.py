@@ -7,11 +7,11 @@ from forge.tui.widgets.logo import FORGE_LOGO, ForgeLogo
 
 
 EXPECTED_LOGO_PLAIN = """\
-FFFFF   OOO   RRRR   GGGG  EEEEE
-F      O   O  R   R G      E
-FFF    O   O  RRRR  G GGG  EEE
-F      O   O  R  R  G   G  E
-F       OOO   R   R  GGG   EEEEE
+██████    █████    ██████    ██████  ██████
+██      ██   ██  ██   ██  ██      ██
+█████   ██   ██  ██████   ██  ███  █████
+██      ██   ██  ██  ██   ██   ██  ██
+██       █████   ██   ██   █████   ██████
 
           O R C H E S T R A T O R"""
 
@@ -54,10 +54,10 @@ def test_forge_logo_has_correct_color() -> None:
 
 
 def test_forge_logo_uses_ascii_lettering() -> None:
-    """Logo should use explicit monospaced ASCII lettering."""
+    """Logo should use explicit monospaced block lettering."""
     plain = _strip_markup(FORGE_LOGO)
-    assert 'FFFFF' in plain
-    assert 'RRRR' in plain
+    assert '██████' in plain
+    assert '██   ██' in plain
 
 
 def test_forge_logo_widget_instantiates() -> None:
