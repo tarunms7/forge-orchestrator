@@ -313,42 +313,51 @@ class ReviewMixin:
         """Return the build command: template override → pipeline override → settings fallback.
 
         If the template sets build_cmd to '' (empty string), the build gate
-        is explicitly skipped.
+        is explicitly skipped. Returns None if disabled via forge.toml.
         """
         template_config = getattr(self, "_template_config", None)
         if template_config and "build_cmd" in template_config:
-            # Empty string means "skip this gate"
             val = template_config["build_cmd"]
             return val if val else None
-        return getattr(self, '_pipeline_build_cmd', None) or getattr(self._settings, 'build_cmd', None)
+        result = getattr(self, '_pipeline_build_cmd', None) or getattr(self._settings, 'build_cmd', None)
+        return None if result == "__DISABLED__" else result
 
     def _resolve_test_cmd(self) -> str | None:
         """Return the test command: template override → pipeline override → settings fallback.
 
         If the template sets test_cmd to '' (empty string), the test gate
-        is explicitly skipped.
+        is explicitly skipped. Returns None if disabled via forge.toml.
         """
         template_config = getattr(self, "_template_config", None)
         if template_config and "test_cmd" in template_config:
             val = template_config["test_cmd"]
             return val if val else None
-        return getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
+        result = getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
+        return None if result == "__DISABLED__" else result
 
     def _resolve_lint_cmd(self) -> str | None:
-        """Return the lint check command: template override → settings fallback."""
+        """Return the lint check command: template override → settings fallback.
+
+        Returns None if disabled via forge.toml.
+        """
         template_config = getattr(self, "_template_config", None)
         if template_config and "lint_cmd" in template_config:
             val = template_config["lint_cmd"]
             return val if val else None
-        return getattr(self._settings, 'lint_cmd', None)
+        result = getattr(self._settings, 'lint_cmd', None)
+        return None if result == "__DISABLED__" else result
 
     def _resolve_lint_fix_cmd(self) -> str | None:
-        """Return the lint fix command: template override → settings fallback."""
+        """Return the lint fix command: template override → settings fallback.
+
+        Returns None if disabled via forge.toml.
+        """
         template_config = getattr(self, "_template_config", None)
         if template_config and "lint_fix_cmd" in template_config:
             val = template_config["lint_fix_cmd"]
             return val if val else None
-        return getattr(self._settings, 'lint_fix_cmd', None)
+        result = getattr(self._settings, 'lint_fix_cmd', None)
+        return None if result == "__DISABLED__" else result
 
     # -- shell gate helpers ------------------------------------------------
 

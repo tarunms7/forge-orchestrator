@@ -169,6 +169,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         settings: ForgeSettings | None = None,
         event_emitter: EventEmitter | None = None,
     ) -> None:
+        from forge.config.project_config import ProjectConfig
+
         self._project_dir = project_dir
         self._settings = settings or ForgeSettings()
         self._state_machine = TaskStateMachine()
@@ -176,6 +178,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._strategy = self._settings.model_strategy
         self._snapshot: ProjectSnapshot | None = None
         self._merge_lock = asyncio.Lock()
+        self._project_config = ProjectConfig.load(project_dir)
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""

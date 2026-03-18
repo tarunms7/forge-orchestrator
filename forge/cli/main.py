@@ -36,9 +36,12 @@ cli.add_command(status)
 @click.option("--project-dir", default=".", help="Project root directory")
 def init(project_dir: str) -> None:
     """Initialize Forge in a project directory."""
+    from forge.config.project_config import DEFAULT_FORGE_TOML
+
     forge_dir = os.path.join(project_dir, ".forge")
     os.makedirs(forge_dir, exist_ok=True)
 
+    _write_if_missing(os.path.join(forge_dir, "forge.toml"), DEFAULT_FORGE_TOML)
     _write_if_missing(os.path.join(forge_dir, "build-log.md"), "# Forge Build Log\n")
     _write_if_missing(os.path.join(forge_dir, "decisions.md"), "# Architectural Decisions\n")
     _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
@@ -50,6 +53,7 @@ def init(project_dir: str) -> None:
     ])
 
     click.echo(f"Forge initialized in {forge_dir}")
+    click.echo(f"  Config: {os.path.join(forge_dir, 'forge.toml')} — edit to customize")
 
 
 @cli.command()
@@ -70,9 +74,12 @@ def run(task: str, project_dir: str, strategy: str | None, spec: str | None, dee
     """
     project_dir = os.path.abspath(project_dir)
 
+    from forge.config.project_config import DEFAULT_FORGE_TOML, ProjectConfig, apply_project_config
+
     forge_dir = os.path.join(project_dir, ".forge")
     if not os.path.isdir(forge_dir):
         os.makedirs(forge_dir, exist_ok=True)
+        _write_if_missing(os.path.join(forge_dir, "forge.toml"), DEFAULT_FORGE_TOML)
         _write_if_missing(os.path.join(forge_dir, "build-log.md"), "# Forge Build Log\n")
         _write_if_missing(os.path.join(forge_dir, "decisions.md"), "# Architectural Decisions\n")
         _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
@@ -80,7 +87,10 @@ def run(task: str, project_dir: str, strategy: str | None, spec: str | None, dee
     from forge.config.settings import ForgeSettings
     from forge.core.daemon import ForgeDaemon
 
+    # Load project config and apply to settings (env vars still win)
+    project_config = ProjectConfig.load(project_dir)
     settings = ForgeSettings()
+    apply_project_config(settings, project_config)
     if strategy:
         settings.model_strategy = strategy
 
