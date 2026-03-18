@@ -32,7 +32,7 @@ class TestProjectConfigDefaults:
         toml_path.write_text(DEFAULT_FORGE_TOML)
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.lint.enabled is True
-        assert config.tests.enabled is True
+        assert config.tests.enabled is False  # Off by default — user must opt in
         assert config.build.enabled is False
         assert config.review.max_retries == 3
         assert config.agents.max_turns == 25

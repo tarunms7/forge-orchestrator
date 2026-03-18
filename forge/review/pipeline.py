@@ -12,6 +12,8 @@ class GateResult:
     gate: str
     details: str
     retriable: bool = False  # True = transient failure (empty response, SDK error) — re-review, don't re-agent
+    infra_error: bool = False  # True = environment/infra failure (missing module, wrong Python, cmd not found)
+                               # — skip this gate instead of consuming a retry
 
 
 @dataclass
