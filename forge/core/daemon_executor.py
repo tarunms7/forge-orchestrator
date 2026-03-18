@@ -15,7 +15,6 @@ from forge.core.daemon_helpers import (
     _build_retry_prompt,
     _extract_activity,
     _extract_implementation_summary,
-    _extract_text,
     _find_related_test_files,
     _get_changed_files_vs_main,
     _get_diff_stats,
