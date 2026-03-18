@@ -197,7 +197,6 @@ def test_adapter_system_prompt_includes_directory_boundary():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/test-worktree", [])
     assert "/tmp/test-worktree" in options.system_prompt
-    assert "Do NOT read, write, or execute anything outside" in options.system_prompt
 
 
 def test_adapter_system_prompt_includes_extra_dirs():
@@ -238,15 +237,15 @@ def test_build_options_includes_dependency_context():
 def test_build_options_conventions_rule_in_prompt():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/wt", [])
-    assert "see the conventions section above" in options.system_prompt
+    assert "existing code style" in options.system_prompt
 
 
 def test_build_options_no_conventions_or_deps():
     """When no conventions or deps, prompt should still be valid."""
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/wt", [])
-    # Should not error and should contain Rules
-    assert "Rules:" in options.system_prompt
+    # Should not error and should contain Boundaries section
+    assert "## Boundaries" in options.system_prompt
 
 
 def test_build_options_has_no_allowed_tools():
@@ -496,15 +495,63 @@ class TestQuestionProtocol:
         assert "ANY" in result
 
 
-# --- Working effectively guidance tests ---
+# --- Turn budget and git access tests ---
 
 
-def test_system_prompt_includes_working_effectively(tmp_path):
-    """System prompt should include working-effectively guidance."""
+def test_system_prompt_includes_turn_budget(tmp_path):
+    """System prompt should include turn budget awareness."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+        agent_max_turns=30,
+    )
+    assert "30 turns" in options.system_prompt
+    assert "turn 25" in options.system_prompt  # wrap_up_turn = 30 - 5
+    assert options.max_turns == 30
+
+
+def test_system_prompt_turn_budget_defaults(tmp_path):
+    """Default max_turns=25 should produce wrap_up_turn=20."""
     adapter = ClaudeAdapter()
     options = adapter._build_options(
         worktree_path=str(tmp_path),
         allowed_dirs=[],
     )
-    assert "Working Effectively" in options.system_prompt
-    assert "Use all available tools" in options.system_prompt
+    assert "25 turns" in options.system_prompt
+    assert "turn 20" in options.system_prompt
+    assert options.max_turns == 25
+
+
+def test_system_prompt_allows_git_read_commands(tmp_path):
+    """System prompt should allow git diff/status/log."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+    )
+    assert "git diff" in options.system_prompt
+    assert "git status" in options.system_prompt
+    assert "git log" in options.system_prompt
+
+
+def test_system_prompt_blocks_git_write_commands(tmp_path):
+    """System prompt should block destructive git commands."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+    )
+    assert "git push" in options.system_prompt
+    assert "git rebase" in options.system_prompt
+
+
+def test_system_prompt_no_working_effectively_section(tmp_path):
+    """Old 'Working Effectively' section should be gone."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options(
+        worktree_path=str(tmp_path),
+        allowed_dirs=[],
+    )
+    assert "Working Effectively" not in options.system_prompt
+    assert "F821" not in options.system_prompt
