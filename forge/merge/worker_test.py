@@ -25,26 +25,29 @@ def _create_branch_with_commit(repo, branch: str, filename: str, content: str):
     subprocess.run(["git", "checkout", "master"], cwd=repo, check=True, capture_output=True)
 
 
-def test_successful_merge(git_repo):
+@pytest.mark.asyncio
+async def test_successful_merge(git_repo):
     _create_branch_with_commit(git_repo, "forge/task-1", "feature.py", "# feature\n")
     worker = MergeWorker(repo_path=str(git_repo))
-    result = worker.merge("forge/task-1")
+    result = await worker.merge("forge/task-1")
     assert result.success is True
     assert (git_repo / "feature.py").exists()
 
 
-def test_merge_conflict_detected(git_repo):
+@pytest.mark.asyncio
+async def test_merge_conflict_detected(git_repo):
     _create_branch_with_commit(git_repo, "forge/task-2", "conflict.py", "version A\n")
     (git_repo / "conflict.py").write_text("version B\n")
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "conflict on master"], cwd=git_repo, check=True, capture_output=True)
     worker = MergeWorker(repo_path=str(git_repo))
-    result = worker.merge("forge/task-2")
+    result = await worker.merge("forge/task-2")
     assert result.success is False
     assert len(result.conflicting_files) > 0
 
 
-def test_retry_merge_after_rebase_conflict(git_repo):
+@pytest.mark.asyncio
+async def test_retry_merge_after_rebase_conflict(git_repo):
     """MergeWorker.retry_merge() should re-fetch main and retry rebase."""
     worker = MergeWorker(str(git_repo), main_branch="master")
 
@@ -73,7 +76,7 @@ def test_retry_merge_after_rebase_conflict(git_repo):
     )
 
     # retry_merge should succeed since there's no conflict
-    result = worker.retry_merge("forge/task-1")
+    result = await worker.retry_merge("forge/task-1")
     assert result.success is True
 
 
@@ -137,19 +140,20 @@ def worktree_conflict_setup(tmp_path):
     return str(repo), str(wt), "shared.py"
 
 
-def test_find_conflicts_with_worktree_returns_files(worktree_conflict_setup):
+@pytest.mark.asyncio
+async def test_find_conflicts_with_worktree_returns_files(worktree_conflict_setup):
     """_find_conflicts should return conflicting file names when given worktree_path."""
     repo_path, worktree_path, conflicting_file = worktree_conflict_setup
     worker = MergeWorker(repo_path=repo_path)
 
     # Without worktree_path: main repo has no rebase state -> empty
-    conflicts_main = worker._find_conflicts()
+    conflicts_main = await worker._find_conflicts()
     assert conflicts_main == [], (
         "Main repo should have no conflicts (rebase is in the worktree)"
     )
 
     # With worktree_path: the worktree has a rebase in progress -> non-empty
-    conflicts_wt = worker._find_conflicts(worktree_path)
+    conflicts_wt = await worker._find_conflicts(worktree_path)
     assert len(conflicts_wt) > 0, (
         "_find_conflicts should detect conflicts when given worktree_path"
     )
@@ -159,7 +163,8 @@ def test_find_conflicts_with_worktree_returns_files(worktree_conflict_setup):
     subprocess.run(["git", "rebase", "--abort"], cwd=worktree_path, capture_output=True)
 
 
-def test_merge_with_worktree_conflict_populates_files(tmp_path):
+@pytest.mark.asyncio
+async def test_merge_with_worktree_conflict_populates_files(tmp_path):
     """merge() with worktree_path should populate conflicting_files on conflict."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -189,7 +194,7 @@ def test_merge_with_worktree_conflict_populates_files(tmp_path):
     _run(["git", "worktree", "add", str(wt), "forge/task-wt"], cwd=repo)
 
     worker = MergeWorker(repo_path=str(repo))
-    result = worker.merge("forge/task-wt", worktree_path=str(wt))
+    result = await worker.merge("forge/task-wt", worktree_path=str(wt))
 
     assert result.success is False
     assert len(result.conflicting_files) > 0, (
@@ -201,7 +206,8 @@ def test_merge_with_worktree_conflict_populates_files(tmp_path):
     assert "unknown files" not in result.error
 
 
-def test_merge_with_worktree_clean_succeeds(tmp_path):
+@pytest.mark.asyncio
+async def test_merge_with_worktree_clean_succeeds(tmp_path):
     """merge() with worktree_path should return success=True and empty conflicting_files
     when there is no conflict."""
     repo = tmp_path / "repo"
@@ -232,7 +238,7 @@ def test_merge_with_worktree_clean_succeeds(tmp_path):
     _run(["git", "worktree", "add", str(wt), "forge/task-clean"], cwd=repo)
 
     worker = MergeWorker(repo_path=str(repo))
-    result = worker.merge("forge/task-clean", worktree_path=str(wt))
+    result = await worker.merge("forge/task-clean", worktree_path=str(wt))
 
     assert result.success is True
     assert result.conflicting_files == []
@@ -244,7 +250,8 @@ def test_merge_with_worktree_clean_succeeds(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
+@pytest.mark.asyncio
+async def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
     """prepare_for_resolution() should NOT abort the rebase — conflict markers
     must remain in the working tree for the Tier 2 resolver to see them."""
     repo = tmp_path / "repo"
@@ -274,7 +281,7 @@ def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
     _run(["git", "worktree", "add", str(wt), "forge/task-resolve"], cwd=repo)
 
     worker = MergeWorker(repo_path=str(repo))
-    result = worker.prepare_for_resolution("forge/task-resolve", worktree_path=str(wt))
+    result = await worker.prepare_for_resolution("forge/task-resolve", worktree_path=str(wt))
 
     # Should report conflict
     assert result.success is False
@@ -302,7 +309,8 @@ def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
     subprocess.run(["git", "rebase", "--abort"], cwd=wt, capture_output=True)
 
 
-def test_prepare_for_resolution_clean_rebase_returns_success(tmp_path):
+@pytest.mark.asyncio
+async def test_prepare_for_resolution_clean_rebase_returns_success(tmp_path):
     """When there's no conflict, prepare_for_resolution() should return success=True."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -331,13 +339,14 @@ def test_prepare_for_resolution_clean_rebase_returns_success(tmp_path):
     _run(["git", "worktree", "add", str(wt), "forge/task-clean2"], cwd=repo)
 
     worker = MergeWorker(repo_path=str(repo))
-    result = worker.prepare_for_resolution("forge/task-clean2", worktree_path=str(wt))
+    result = await worker.prepare_for_resolution("forge/task-clean2", worktree_path=str(wt))
 
     assert result.success is True
     assert result.conflicting_files == []
 
 
-def test_prepare_resolve_then_merge_full_flow(tmp_path):
+@pytest.mark.asyncio
+async def test_prepare_resolve_then_merge_full_flow(tmp_path):
     """End-to-end: prepare_for_resolution → manually resolve → git rebase --continue → merge()."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -368,7 +377,7 @@ def test_prepare_resolve_then_merge_full_flow(tmp_path):
     worker = MergeWorker(repo_path=str(repo))
 
     # Step 1: Prepare (leaves rebase paused)
-    prep = worker.prepare_for_resolution("forge/task-e2e", worktree_path=str(wt))
+    prep = await worker.prepare_for_resolution("forge/task-e2e", worktree_path=str(wt))
     assert prep.success is False
     assert "shared.py" in prep.conflicting_files
 
@@ -384,7 +393,7 @@ def test_prepare_resolve_then_merge_full_flow(tmp_path):
     )
 
     # Step 3: merge() should now succeed (rebase is complete, just need ff)
-    merge_result = worker.merge("forge/task-e2e", worktree_path=str(wt))
+    merge_result = await worker.merge("forge/task-e2e", worktree_path=str(wt))
     assert merge_result.success is True
 
     # Verify the merged content is on master (use git show, not checkout,
@@ -396,7 +405,8 @@ def test_prepare_resolve_then_merge_full_flow(tmp_path):
     assert show_result.stdout == "merged: both task and master version\n"
 
 
-def test_find_conflicts_without_worktree_path_uses_repo(git_repo):
+@pytest.mark.asyncio
+async def test_find_conflicts_without_worktree_path_uses_repo(git_repo):
     """_find_conflicts with no worktree_path should use self._repo (backward compat)."""
     _create_branch_with_commit(git_repo, "forge/task-compat", "compat.py", "branch ver\n")
 
@@ -407,7 +417,7 @@ def test_find_conflicts_without_worktree_path_uses_repo(git_repo):
 
     worker = MergeWorker(repo_path=str(git_repo))
     # Merge without worktree_path (the old code path)
-    result = worker.merge("forge/task-compat")
+    result = await worker.merge("forge/task-compat")
     assert result.success is False
     # In the non-worktree path, conflicts should still be found
     # because the rebase runs in the main repo itself
