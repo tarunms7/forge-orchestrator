@@ -937,8 +937,8 @@ class TestExecuteBranchCreation:
         """On a fresh (non-resume) run, execute() creates the pipeline branch."""
         daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
 
-        db = MagicMock()
-        db.initialize = AsyncMock()
+        # Use AsyncMock as spec_set-free base so ANY db.method() is awaitable
+        db = AsyncMock()
         db.get_pipeline = AsyncMock(return_value=MagicMock(
             paused=False, executor_token=None, base_branch="main",
             branch_name=None, description="test pipeline",
@@ -947,13 +947,7 @@ class TestExecuteBranchCreation:
             _make_task(TaskState.DONE.value, "task-1"),
         ])
         db.list_agents = AsyncMock(return_value=[])
-        db.log_event = AsyncMock()
         db.get_expired_questions = AsyncMock(return_value=[])
-        db.update_pipeline_status = AsyncMock()
-        db.set_executor_info = AsyncMock()
-        db.clear_executor_info = AsyncMock()
-        db.set_pipeline_branch_name = AsyncMock()
-        db.set_pipeline_base_branch = AsyncMock()
 
         async_sub = AsyncMock(side_effect=[
             # _preflight_checks calls (5 max)
@@ -996,6 +990,7 @@ class TestExecuteBranchCreation:
 
         db = MagicMock()
         db.initialize = AsyncMock()
+        db = AsyncMock()
         db.get_pipeline = AsyncMock(return_value=MagicMock(
             paused=False, executor_token=None, base_branch="main",
             branch_name="forge/existing-branch", description="test pipeline",
@@ -1004,13 +999,7 @@ class TestExecuteBranchCreation:
             _make_task(TaskState.DONE.value, "task-1"),
         ])
         db.list_agents = AsyncMock(return_value=[])
-        db.log_event = AsyncMock()
         db.get_expired_questions = AsyncMock(return_value=[])
-        db.update_pipeline_status = AsyncMock()
-        db.set_executor_info = AsyncMock()
-        db.clear_executor_info = AsyncMock()
-        db.set_pipeline_branch_name = AsyncMock()
-        db.set_pipeline_base_branch = AsyncMock()
 
         async_sub = AsyncMock(side_effect=[
             # _preflight_checks calls

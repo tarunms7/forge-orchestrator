@@ -654,7 +654,7 @@ class ForgeApp(App):
             plan_tasks = [
                 {"id": t.id, "title": t.title, "description": t.description,
                  "files": t.files, "depends_on": t.depends_on,
-                 "complexity": t.complexity.value}
+                 "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity}
                 for t in self._graph.tasks
             ]
             self.push_screen(PlanApprovalScreen(plan_tasks))
