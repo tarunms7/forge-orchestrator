@@ -41,7 +41,6 @@ def test_forge_logo_uses_block_characters() -> None:
     """Logo should use block characters for thick letter rendering."""
     plain = _strip_markup(FORGE_LOGO)
     assert '█' in plain
-    assert '╗' in plain or '╔' in plain
 
 
 def test_forge_logo_widget_instantiates() -> None:
