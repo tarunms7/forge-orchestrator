@@ -150,8 +150,6 @@ class TestContinuousTaskPool:
         daemon._execute_task = fake_execute
 
         dispatch_round = 0
-        task1 = _make_task(TaskState.TODO.value, "task-1")
-        task2 = _make_task(TaskState.TODO.value, "task-2")
 
         def make_dispatch_plan(task_records, agent_records, max_agents):
             nonlocal dispatch_round
