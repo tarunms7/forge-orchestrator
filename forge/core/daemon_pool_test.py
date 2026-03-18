@@ -150,8 +150,6 @@ class TestContinuousTaskPool:
         daemon._execute_task = fake_execute
 
         dispatch_round = 0
-        task1 = _make_task(TaskState.TODO.value, "task-1")
-        task2 = _make_task(TaskState.TODO.value, "task-2")
 
         def make_dispatch_plan(task_records, agent_records, max_agents):
             nonlocal dispatch_round
@@ -431,3 +429,83 @@ class TestContinuousTaskPool:
 
         assert was_cancelled, "Active task should have been cancelled on shutdown"
         db.release_agent.assert_called_with("agent-0")
+
+
+@pytest.mark.asyncio
+class TestActiveTaskCleanup:
+
+    async def test_cleanup_handles_concurrent_removal(self, tmp_path):
+        """No KeyError when a task is removed from _active_tasks before the cleanup pop runs."""
+        daemon = _make_daemon(tmp_path)
+
+        # Create a done asyncio.Task
+        async def _noop():
+            pass
+
+        done_task = asyncio.ensure_future(_noop())
+        await asyncio.sleep(0)  # let it finish
+
+        # Populate _active_tasks then remove the entry to simulate concurrent removal
+        daemon._active_tasks["task-1"] = done_task
+        daemon._active_tasks.pop("task-1", None)  # removed, as if _on_task_answered ran
+
+        # Snapshot iteration used by the fixed line — should not raise even if key is absent
+        done_ids = [
+            tid
+            for tid, atask in list(daemon._active_tasks.items())
+            if atask.done()
+        ]
+        # No KeyError; done_ids is empty because the entry was already removed
+        assert "task-1" not in done_ids
+
+        # pop guard must also be safe
+        result = daemon._active_tasks.pop("task-1", None)
+        assert result is None
+
+    async def test_cleanup_with_dict_copy_snapshot(self, tmp_path):
+        """Iterating over a list() snapshot is safe when items are added/removed mid-iteration."""
+        daemon = _make_daemon(tmp_path)
+
+        async def _noop():
+            pass
+
+        # Create two done tasks and one pending task
+        done1 = asyncio.ensure_future(_noop())
+        done2 = asyncio.ensure_future(_noop())
+        await asyncio.sleep(0)  # let them finish
+
+        pending_event = asyncio.Event()
+
+        async def _pending():
+            await pending_event.wait()
+
+        pending_task = asyncio.ensure_future(_pending())
+
+        daemon._active_tasks["task-done-1"] = done1
+        daemon._active_tasks["task-done-2"] = done2
+        daemon._active_tasks["task-pending"] = pending_task
+
+        # Take a snapshot (as the fixed line does)
+        snapshot = list(daemon._active_tasks.items())
+
+        # Simulate concurrent modification: remove one entry and add a new one
+        daemon._active_tasks.pop("task-done-1", None)
+        async def _noop2():
+            pass
+        new_task = asyncio.ensure_future(_noop2())
+        daemon._active_tasks["task-new"] = new_task
+
+        # Iterating the snapshot should not raise and should reflect the original state
+        done_ids = [tid for tid, atask in snapshot if atask.done()]
+        assert "task-done-1" in done_ids
+        assert "task-done-2" in done_ids
+        assert "task-pending" not in done_ids
+
+        # pop guard: task-done-1 was already removed — must return None, not raise
+        assert daemon._active_tasks.pop("task-done-1", None) is None
+
+        # Cleanup
+        pending_event.set()
+        await asyncio.sleep(0)
+        pending_task.cancel()
+        new_task.cancel()

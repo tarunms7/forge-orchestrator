@@ -570,6 +570,15 @@ class Database:
                 agent.current_task = None
                 await session.commit()
 
+    async def force_release_agent(self, agent_id: str) -> None:
+        """Force-reset agent to idle via raw SQL. Last-resort fallback."""
+        async with self._session_factory() as session:
+            await session.execute(
+                text("UPDATE agents SET state = 'idle', current_task = NULL WHERE id = :aid"),
+                {"aid": agent_id},
+            )
+            await session.commit()
+
     async def list_agents(self, prefix: str | None = None) -> list[AgentRow]:
         async with self._session_factory() as session:
             stmt = select(AgentRow)

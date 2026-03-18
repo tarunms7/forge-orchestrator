@@ -80,6 +80,24 @@ async def test_assign_task_to_agent(db: Database):
     assert agent.state == "working"
 
 
+async def test_force_release_agent(db: Database):
+    """force_release_agent resets agent to idle via raw SQL."""
+    await db.create_task(
+        id="task-1", title="T", description="D", files=["a.py"],
+        depends_on=[], complexity="low",
+    )
+    await db.create_agent(id="agent-1")
+    await db.assign_task("task-1", "agent-1")
+    agent = await db.get_agent("agent-1")
+    assert agent.state == "working"
+    assert agent.current_task == "task-1"
+
+    await db.force_release_agent("agent-1")
+    agent = await db.get_agent("agent-1")
+    assert agent.state == "idle"
+    assert agent.current_task is None
+
+
 async def test_get_task_counts_by_state_empty_db(db: Database):
     counts = await db.get_task_counts_by_state()
     assert counts == {}

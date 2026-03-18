@@ -852,10 +852,31 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         except Exception:
             raise
         finally:
-            try:
-                await db.release_agent(agent_id)
-            except Exception:
-                logger.warning("Failed to release agent %s for task %s", agent_id, task_id)
+            released = False
+            for attempt in range(3):
+                try:
+                    await db.release_agent(agent_id)
+                    released = True
+                    break
+                except Exception:
+                    if attempt < 2:
+                        await asyncio.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s
+                        logger.warning(
+                            "Failed to release agent %s (attempt %d/3), retrying...",
+                            agent_id, attempt + 1,
+                        )
+                    else:
+                        logger.error(
+                            "All retries exhausted releasing agent %s for task %s",
+                            agent_id, task_id,
+                        )
+            if not released:
+                try:
+                    await db.force_release_agent(agent_id)
+                except Exception:
+                    logger.critical(
+                        "SLOT LEAK: Cannot release agent %s by any means", agent_id
+                    )
 
     async def _handle_task_exception(
         self, task_id: str, exc: BaseException,
@@ -970,7 +991,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._current_answer_handler = _answer_handler
         while True:
             # Reap completed tasks from the pool
-            done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
+            done_ids = [tid for tid, atask in list(self._active_tasks.items()) if atask.done()]
             for tid in done_ids:
                 atask = self._active_tasks.pop(tid, None)
                 if atask is None:
