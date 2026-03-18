@@ -300,7 +300,7 @@ async def _run_webhook_pipeline(
         graph = await daemon.plan(task_description, forge_db, pipeline_id=pipeline_id)
 
         task_list_md = "\n".join(
-            f"- **{t.title}** ({t.complexity.value})" for t in graph.tasks
+            f"- **{t.title}** ({t.complexity.value if hasattr(t.complexity, 'value') else t.complexity})" for t in graph.tasks
         )
         await _post_issue_comment(
             repo_full_name, issue_number,

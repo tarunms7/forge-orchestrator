@@ -477,12 +477,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
         for task_def in graph.tasks:
-            console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value}]")
+            console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value if hasattr(task_def.complexity, 'value') else task_def.complexity}]")
 
         if emit_plan_ready:
             plan_data = {"tasks": [
                 {"id": t.id, "title": t.title, "description": t.description,
-                 "files": t.files, "depends_on": t.depends_on, "complexity": t.complexity.value}
+                 "files": t.files, "depends_on": t.depends_on, "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity}
                 for t in graph.tasks
             ]}
             if pipeline_id:
@@ -621,7 +621,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await self._emit("pipeline:plan_ready", {"tasks": [
                     {"id": t.id, "title": t.title, "description": t.description,
                      "files": t.files, "depends_on": t.depends_on,
-                     "complexity": t.complexity.value}
+                     "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity if hasattr(t.complexity, 'value') else t.complexity}
                     for t in graph.tasks
                 ]}, db=db, pipeline_id=pid)
 
@@ -629,7 +629,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await db.create_task(
                     id=task_def.id, title=task_def.title, description=task_def.description,
                     files=task_def.files, depends_on=task_def.depends_on,
-                    complexity=task_def.complexity.value, pipeline_id=pid,
+                    complexity=task_def.complexity.value if hasattr(task_def.complexity, 'value') else task_def.complexity, pipeline_id=pid,
                 )
             # Auto-scale agent pool: create enough agents to saturate
             # parallelism.  The max width of the DAG (tasks with no deps

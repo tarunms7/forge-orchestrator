@@ -468,7 +468,7 @@ async def create_task(
                                 "id": t.id, "title": t.title,
                                 "description": t.description,
                                 "files": t.files, "depends_on": t.depends_on,
-                                "complexity": t.complexity.value,
+                                "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
                             }
                             for t in graph.tasks
                         ],
@@ -482,7 +482,7 @@ async def create_task(
                                     "id": t.id, "title": t.title,
                                     "description": t.description,
                                     "files": t.files, "depends_on": t.depends_on,
-                                    "complexity": t.complexity.value,
+                                    "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
                                 }
                                 for t in graph.tasks
                             ]
@@ -1363,7 +1363,7 @@ async def restart_pipeline(
                                 "id": t.id, "title": t.title,
                                 "description": t.description,
                                 "files": t.files, "depends_on": t.depends_on,
-                                "complexity": t.complexity.value,
+                                "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
                             }
                             for t in graph.tasks
                         ],
@@ -1377,7 +1377,7 @@ async def restart_pipeline(
                                 "id": t.id, "title": t.title,
                                 "description": t.description,
                                 "files": t.files, "depends_on": t.depends_on,
-                                "complexity": t.complexity.value,
+                                "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
                             }
                             for t in graph.tasks
                         ]
