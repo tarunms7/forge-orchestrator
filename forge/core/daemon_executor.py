@@ -906,20 +906,20 @@ class ExecutorMixin:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
         async with self._merge_lock:
-            prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
+            prep = await merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
             await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid, pre_merge_ref=pre_merge_ref)
             return
         resolved = await self._resolve_conflicts(task_id, worktree_path, prep.conflicting_files, agent_model, db=db)
         if resolved:
             async with self._merge_lock:
-                final = merge_worker.merge(branch, worktree_path=worktree_path)
+                final = await merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
                 await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution", pipeline_branch=pre_merge_ref)
                 return
-            merge_worker._abort_rebase(worktree_path)
+            await merge_worker._abort_rebase(worktree_path)
         else:
-            merge_worker._abort_rebase(worktree_path)
+            await merge_worker._abort_rebase(worktree_path)
         await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
 
     async def _attempt_merge_with_resolution(
@@ -1058,7 +1058,7 @@ class ExecutorMixin:
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
         async with self._merge_lock:
-            ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
+            ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race", pipeline_branch=pre_merge_ref)
         else:
@@ -1092,10 +1092,10 @@ class ExecutorMixin:
         agent_summary = getattr(task, "description", "") if task else ""
         # Use the agent result summary if available (stored during agent run)
         # Fall back to task description
-        summary = _extract_implementation_summary(worktree_path, agent_summary, pipeline_branch)
+        summary = await _extract_implementation_summary(worktree_path, agent_summary, pipeline_branch)
         await db.update_task_implementation_summary(task_id, summary)
 
-        stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
+        stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit("task:merge_result", {"task_id": task_id, "success": True, "error": None, **stats}, db=db, pipeline_id=pid)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
 

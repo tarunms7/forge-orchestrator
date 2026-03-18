@@ -1,19 +1,21 @@
 """Tests for daemon_executor — worktree rebase and prompt selection."""
 
+import subprocess
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 
 
-def _make_proc(stdout: str = "", returncode: int = 0) -> MagicMock:
-    """Return a fake CompletedProcess-like mock."""
-    m = MagicMock()
-    m.stdout = stdout
-    m.returncode = returncode
-    return m
+def _make_proc(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
+    """Return a fake CompletedProcess."""
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=returncode, stdout=stdout, stderr=stderr,
+    )
 
 
+@pytest.mark.asyncio
 class TestRebaseWorktree:
     """ExecutorMixin._rebase_worktree() rebases worktree onto pipeline branch."""
 
@@ -21,49 +23,43 @@ class TestRebaseWorktree:
         mixin = ExecutorMixin()
         return mixin
 
-    def test_rebase_success(self):
+    async def test_rebase_success(self):
         """Successful rebase calls git rebase and does not abort."""
         mixin = self._make_mixin()
         rebase_ok = _make_proc(returncode=0)
 
-        with patch("forge.core.daemon_executor.subprocess.run", return_value=rebase_ok) as mock_run:
-            mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=rebase_ok) as mock_git:
+            await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
-        assert mock_run.call_count == 1
-        assert mock_run.call_args == call(
-            ["git", "rebase", "forge/pipeline-abc"],
-            cwd="/wt/task-1",
-            capture_output=True,
-            text=True,
-        )
+        assert mock_git.call_count == 1
+        args, kwargs = mock_git.call_args
+        assert args[0] == ["rebase", "forge/pipeline-abc"]
+        assert kwargs["cwd"] == "/wt/task-1"
 
-    def test_rebase_conflict_aborts(self):
+    async def test_rebase_conflict_aborts(self):
         """Failed rebase triggers git rebase --abort."""
         mixin = self._make_mixin()
         rebase_fail = _make_proc(returncode=1, stdout="CONFLICT")
         abort_ok = _make_proc(returncode=0)
 
-        with patch("forge.core.daemon_executor.subprocess.run", side_effect=[rebase_fail, abort_ok]) as mock_run:
-            # Should not raise
-            mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_ok]) as mock_git:
+            await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
-        assert mock_run.call_count == 2
+        assert mock_git.call_count == 2
         # Second call should be abort
-        assert mock_run.call_args_list[1] == call(
-            ["git", "rebase", "--abort"],
-            cwd="/wt/task-1",
-            capture_output=True,
-        )
+        args, kwargs = mock_git.call_args_list[1]
+        assert args[0] == ["rebase", "--abort"]
+        assert kwargs["cwd"] == "/wt/task-1"
 
-    def test_rebase_does_not_raise(self):
+    async def test_rebase_does_not_raise(self):
         """Even if abort also fails, no exception propagates."""
         mixin = self._make_mixin()
         rebase_fail = _make_proc(returncode=1)
         abort_fail = _make_proc(returncode=1)
 
-        with patch("forge.core.daemon_executor.subprocess.run", side_effect=[rebase_fail, abort_fail]):
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_fail]):
             # Should not raise
-            mixin._rebase_worktree("/wt/task-1", "main", "task-1")
+            await mixin._rebase_worktree("/wt/task-1", "main", "task-1")
 
 
 class TestBuildPrompt:
@@ -140,27 +136,28 @@ class TestComplexityTimeout:
         assert _complexity_timeout(300, "high") == 600
 
 
+@pytest.mark.asyncio
 class TestAutoCommitIfNeeded:
     """ExecutorMixin._auto_commit_if_needed() commits uncommitted agent changes."""
 
-    def test_no_uncommitted_changes(self):
+    async def test_no_uncommitted_changes(self):
         """Clean worktree returns False without committing."""
-        with patch("forge.core.daemon_executor._run_git") as mock_git:
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock) as mock_git:
             mock_git.return_value = _make_proc(stdout="", returncode=0)
-            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+            result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is False
         # Only status check, no add/commit
         assert mock_git.call_count == 1
 
-    def test_uncommitted_changes_committed(self):
+    async def test_uncommitted_changes_committed(self):
         """Uncommitted changes are staged and committed."""
         status_result = _make_proc(stdout="M  src/main.py\n?? src/new.py", returncode=0)
         add_result = _make_proc(returncode=0)
         commit_result = _make_proc(returncode=0)
 
-        with patch("forge.core.daemon_executor._run_git", side_effect=[status_result, add_result, commit_result]) as mock_git:
-            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[status_result, add_result, commit_result]) as mock_git:
+            result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is True
         assert mock_git.call_count == 3
@@ -170,34 +167,34 @@ class TestAutoCommitIfNeeded:
         assert calls[1].args[0] == ["add", "-A"]
         assert calls[2].args[0][0] == "commit"
 
-    def test_git_add_failure_returns_false(self):
+    async def test_git_add_failure_returns_false(self):
         """If git add fails, no commit is attempted."""
         status_result = _make_proc(stdout="M  src/main.py", returncode=0)
         add_fail = _make_proc(returncode=1, stdout="error: ...")
 
-        with patch("forge.core.daemon_executor._run_git", side_effect=[status_result, add_fail]) as mock_git:
-            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[status_result, add_fail]) as mock_git:
+            result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is False
         assert mock_git.call_count == 2  # status + add, no commit
 
-    def test_git_commit_failure_returns_false(self):
+    async def test_git_commit_failure_returns_false(self):
         """If git commit fails, returns False."""
         status_result = _make_proc(stdout="M  src/main.py", returncode=0)
         add_ok = _make_proc(returncode=0)
         commit_fail = _make_proc(returncode=1, stdout="error: ...")
 
-        with patch("forge.core.daemon_executor._run_git", side_effect=[status_result, add_ok, commit_fail]) as mock_git:
-            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[status_result, add_ok, commit_fail]) as mock_git:
+            result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is False
         assert mock_git.call_count == 3
 
-    def test_status_command_failure_returns_false(self):
+    async def test_status_command_failure_returns_false(self):
         """If git status fails (not a git repo), returns False."""
-        with patch("forge.core.daemon_executor._run_git") as mock_git:
+        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock) as mock_git:
             mock_git.return_value = _make_proc(returncode=128, stdout="")
-            result = ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
+            result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is False
 
