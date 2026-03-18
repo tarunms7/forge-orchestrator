@@ -855,8 +855,8 @@ async def get_task_diff(
     if not worktree_path or not os.path.isdir(worktree_path):
         raise HTTPException(status_code=410, detail="Worktree no longer exists")
 
-    diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
-    stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
+    diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+    stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
 
     return {"task_id": task_id, "diff": diff, "stats": stats}
 
@@ -913,12 +913,12 @@ async def approve_task(
             project_dir = pipeline.project_dir
             # Use _get_diff_stats (camelCase keys: linesAdded/linesRemoved)
             # to match the frontend's TaskState.mergeResult interface.
-            stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
+            stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
 
             # Perform the actual merge via MergeWorker
             merge_worker = MergeWorker(project_dir, main_branch=pipeline_branch)
             branch = f"forge/{task_id}"
-            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
+            merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
 
             if merge_result.success:
                 await forge_db.update_task_state(task_id, "done")

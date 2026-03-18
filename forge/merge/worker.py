@@ -27,7 +27,7 @@ class MergeWorker:
         self._repo = repo_path
         self._main = main_branch
 
-    def retry_merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
+    async def retry_merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
         """Retry a merge: abort any in-progress rebase, re-attempt rebase + ff merge.
 
         This is Tier 1 retry — no agent re-run, just git operations.
@@ -35,12 +35,12 @@ class MergeWorker:
         another task has merged (making main advance).
         """
         # Abort any lingering rebase state
-        self._abort_rebase(worktree_path)
+        await self._abort_rebase(worktree_path)
 
         # Re-attempt the full merge sequence
-        return self.merge(branch, worktree_path=worktree_path)
+        return await self.merge(branch, worktree_path=worktree_path)
 
-    def merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
+    async def merge(self, branch: str, worktree_path: str | None = None) -> MergeResult:
         """Attempt to rebase branch onto main and fast-forward merge.
 
         Args:
@@ -50,9 +50,9 @@ class MergeWorker:
                            the main repo. This avoids "already checked out" errors.
         """
         try:
-            self._rebase(branch, worktree_path)
+            await self._rebase(branch, worktree_path)
         except _RebaseConflict as e:
-            self._abort_rebase(worktree_path)
+            await self._abort_rebase(worktree_path)
             if e.files:
                 conflict_desc = ", ".join(e.files)
             elif e.stderr:
@@ -68,13 +68,13 @@ class MergeWorker:
             return MergeResult(success=False, error=str(e))
 
         try:
-            self._fast_forward(branch)
+            await self._fast_forward(branch)
         except Exception as e:
             return MergeResult(success=False, error=str(e))
 
         return MergeResult(success=True)
 
-    def prepare_for_resolution(
+    async def prepare_for_resolution(
         self, branch: str, worktree_path: str | None = None
     ) -> MergeResult:
         """Start a rebase, leaving it paused on conflict for Tier 2 resolution.
@@ -89,10 +89,10 @@ class MergeWorker:
         completed) and ``_fast_forward()`` will advance the merge target.
         """
         # Clean any stale rebase state first
-        self._abort_rebase(worktree_path)
+        await self._abort_rebase(worktree_path)
 
         try:
-            self._rebase(branch, worktree_path)
+            await self._rebase(branch, worktree_path)
         except _RebaseConflict as e:
             # DON'T abort — leave rebase paused so the resolver can work
             if e.files:
@@ -112,19 +112,19 @@ class MergeWorker:
         # Rebase completed cleanly — no resolution needed
         return MergeResult(success=True)
 
-    def _rebase(self, branch: str, worktree_path: str | None = None) -> None:
+    async def _rebase(self, branch: str, worktree_path: str | None = None) -> None:
         if worktree_path:
-            result = _run_git(
+            result = await _run_git(
                 ["rebase", self._main], cwd=worktree_path,
                 check=False, description="rebase in worktree",
             )
         else:
-            result = _run_git(
+            result = await _run_git(
                 ["rebase", self._main, branch], cwd=self._repo,
                 check=False, description="rebase branch",
             )
         if result.returncode != 0:
-            conflicts = self._find_conflicts(worktree_path)
+            conflicts = await self._find_conflicts(worktree_path)
             if not conflicts:
                 # git diff --diff-filter=U found nothing — parse stderr
                 # for conflict file names as fallback
@@ -134,28 +134,28 @@ class MergeWorker:
                 files=conflicts, stderr=stderr_snippet,
             )
 
-    def _abort_rebase(self, worktree_path: str | None = None) -> None:
+    async def _abort_rebase(self, worktree_path: str | None = None) -> None:
         cwd = worktree_path or self._repo
-        _run_git(["rebase", "--abort"], cwd=cwd, check=False, description="abort rebase")
+        await _run_git(["rebase", "--abort"], cwd=cwd, check=False, description="abort rebase")
 
-    def _fast_forward(self, branch: str) -> None:
+    async def _fast_forward(self, branch: str) -> None:
         """Advance the merge-target branch ref to the task branch tip.
 
         Uses ``git update-ref`` instead of ``git checkout + merge`` so the
         user's working directory is never mutated.  This only works for
         fast-forward merges — which is guaranteed after a successful rebase.
         """
-        task_sha = _run_git(
+        task_sha = (await _run_git(
             ["rev-parse", branch], cwd=self._repo,
             check=True, description="resolve branch SHA",
-        ).stdout.strip()
-        _run_git(
+        )).stdout.strip()
+        await _run_git(
             ["update-ref", f"refs/heads/{self._main}", task_sha],
             cwd=self._repo, check=True, description="fast-forward merge target",
         )
 
-    def _find_conflicts(self, worktree_path: str | None = None) -> list[str]:
-        result = _run_git(
+    async def _find_conflicts(self, worktree_path: str | None = None) -> list[str]:
+        result = await _run_git(
             ["diff", "--name-only", "--diff-filter=U"],
             cwd=worktree_path or self._repo,
             check=False, description="find conflict files",

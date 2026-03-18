@@ -7,7 +7,6 @@ import json
 import os
 import shlex
 import shutil
-import subprocess
 import sys
 import logging
 import time
@@ -21,6 +20,7 @@ from forge.core.daemon_helpers import (
     _get_changed_files_vs_main,
     _is_pytest_cmd,
     _run_git,
+    async_subprocess,
 )
 from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
@@ -378,7 +378,7 @@ class ReviewMixin:
         """
         if changed_files and _is_pytest_cmd(test_cmd):
             if allowed_files is not None:
-                result = _find_related_test_files(
+                result = await _find_related_test_files(
                     worktree_path, changed_files,
                     allowed_files=allowed_files,
                     base_ref=pipeline_branch or "main",
@@ -402,7 +402,7 @@ class ReviewMixin:
                     )
                 test_files = in_scope
             else:
-                test_files = _find_related_test_files(worktree_path, changed_files)
+                test_files = await _find_related_test_files(worktree_path, changed_files)
                 if not test_files:
                     return GateResult(
                         passed=True,
@@ -447,18 +447,9 @@ class ReviewMixin:
         is marked with ``infra_error=True`` so callers can skip the gate
         instead of consuming a retry.
         """
-        def _run() -> subprocess.CompletedProcess:
-            parts = shlex.split(cmd)
-            return subprocess.run(
-                parts,
-                shell=False,
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-            )
-
         try:
-            proc = await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout)
+            parts = shlex.split(cmd)
+            proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
         except asyncio.TimeoutError:
             return GateResult(
                 passed=False,
@@ -638,7 +629,7 @@ class ReviewMixin:
             }, db=db, pipeline_id=pipeline_id)
 
         # Compute changed files once — used by both lint (L1) and test (Gate 1.5) gates
-        changed_files = _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
+        changed_files = await _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
 
         # L1: lint only the changed files (not full test suite)
         console.print(f"[blue]  L1 (general): Auto-checks for {task.id}...[/blue]")
@@ -675,7 +666,7 @@ class ReviewMixin:
         # captured before the review pipeline ran.
         if pipeline_branch:
             from forge.core.daemon_helpers import _get_diff_vs_main
-            diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+            diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
 
         # Gate 1.5: Test gate — scoped to changed files when possible
         test_cmd = self._resolve_test_cmd()
@@ -880,7 +871,7 @@ class ReviewMixin:
         Two-pass model: fix + commit, then verify clean.
         """
         # Get changed files and filter out deleted ones
-        changed = _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
+        changed = await _get_changed_files_vs_main(worktree_path, base_ref=pipeline_branch)
         changed_files = [
             f for f in changed
             if os.path.isfile(os.path.join(worktree_path, f))
@@ -920,14 +911,9 @@ class ReviewMixin:
         # PASS 1: Fix
         auto_fix_diff = ""
         if fix_cmd is not None:
-            subprocess.run(
-                fix_cmd,
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-            )
+            await async_subprocess(fix_cmd, cwd=worktree_path)
             # Capture what changed
-            diff_result = _run_git(
+            diff_result = await _run_git(
                 ["diff"], cwd=worktree_path, check=False,
                 description=f"capture {strategy.name} auto-fix diff",
             )
@@ -939,24 +925,19 @@ class ReviewMixin:
                     auto_fix_diff = diff_result.stdout.strip()
 
             # Stage and commit auto-fixes
-            _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
-            staged = _run_git(
+            await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
+            staged = await _run_git(
                 ["diff", "--cached", "--name-only"],
                 cwd=worktree_path, check=False, description="check staged lint fixes",
             )
             if staged.stdout.strip():
-                _run_git(
+                await _run_git(
                     ["commit", "-m", strategy.commit_msg],
                     cwd=worktree_path, check=False, description="commit lint fixes",
                 )
 
         # PASS 2: Verify
-        lint_result = subprocess.run(
-            check_cmd,
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
+        lint_result = await async_subprocess(check_cmd, cwd=worktree_path)
 
         # Determine pass/fail
         if strategy.check_via_output:

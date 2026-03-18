@@ -1,6 +1,13 @@
-"""Tests for ForgeDaemon._auto_detect_commands()."""
+"""Tests for ForgeDaemon._auto_detect_commands().
+
+Note: _auto_detect_commands is synchronous (filesystem reads only) but is called
+from the async _preflight_checks method.  These tests verify it works correctly
+in both sync and async contexts after the subprocess→async_subprocess migration.
+"""
 
 import json
+import subprocess
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -154,5 +161,47 @@ class TestAutoDetectMultipleFiles:
 
         daemon._auto_detect_commands(str(tmp_path))
 
+        assert daemon._settings.build_cmd == "npm run build"
+        assert daemon._settings.test_cmd == "python -m pytest"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _auto_detect_commands called from async _preflight_checks
+# ---------------------------------------------------------------------------
+
+def _mock_completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+@pytest.mark.asyncio
+class TestAutoDetectViaPreflightAsync:
+    """Verify _auto_detect_commands runs correctly when invoked from
+    the async _preflight_checks (which uses async_subprocess)."""
+
+    async def test_preflight_calls_auto_detect_before_git_checks(self, tmp_path):
+        """_preflight_checks invokes _auto_detect_commands, detecting build/test cmds."""
+        pkg = {"scripts": {"build": "vite build"}}
+        (tmp_path / "package.json").write_text(json.dumps(pkg))
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+        settings = ForgeSettings()
+        daemon = ForgeDaemon(project_dir=str(tmp_path), settings=settings)
+        daemon._emit = AsyncMock()
+
+        db = MagicMock()
+        db.update_pipeline_status = AsyncMock()
+        db.log_event = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
+            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+            _mock_completed(0, "origin\n"),  # git remote
+        ])
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value=None):
+            result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
+
+        assert result is True
         assert daemon._settings.build_cmd == "npm run build"
         assert daemon._settings.test_cmd == "python -m pytest"

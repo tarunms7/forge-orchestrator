@@ -1184,8 +1184,8 @@ class TestGetTaskDiff:
         # Mock _get_diff_vs_main and _get_diff_stats for the temp worktree
         mock_diff = "diff --git a/foo.py b/foo.py\n+added line\n-removed line\n"
         mock_stats = {"filesChanged": 1, "linesAdded": 1, "linesRemoved": 1}
-        with patch("forge.api.routes.tasks._get_diff_vs_main", return_value=mock_diff), \
-             patch("forge.api.routes.tasks._get_diff_stats", return_value=mock_stats):
+        with patch("forge.api.routes.tasks._get_diff_vs_main", new=AsyncMock(return_value=mock_diff)), \
+             patch("forge.api.routes.tasks._get_diff_stats", new=AsyncMock(return_value=mock_stats)):
             resp = await client.get(
                 f"/api/tasks/{pid}/tasks/{tid}/diff",
                 headers=headers,

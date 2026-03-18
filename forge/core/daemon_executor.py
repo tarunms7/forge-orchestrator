@@ -90,7 +90,7 @@ class ExecutorMixin:
         # delta diff (what the retry agent actually changed) for review.
         pre_retry_ref = None
         if task.retry_count > 0:
-            snap = _run_git(
+            snap = await _run_git(
                 ["rev-parse", "HEAD"], cwd=worktree_path,
                 check=False, description="snapshot pre-retry ref",
             )
@@ -127,7 +127,7 @@ class ExecutorMixin:
                 return
 
         # Strip out-of-scope changes before review
-        has_in_scope_changes, reverted_files = self._enforce_file_scope(
+        has_in_scope_changes, reverted_files = await self._enforce_file_scope(
             task, worktree_path, pipeline_branch,
         )
         if not has_in_scope_changes:
@@ -175,9 +175,9 @@ class ExecutorMixin:
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
-        pre_merge_ref = _resolve_ref(worktree_path, merge_worker._main)
+        pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         async with self._merge_lock:
-            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
+            merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
         else:
@@ -207,7 +207,7 @@ class ExecutorMixin:
                 # This eliminates "ghost diffs" where the diff shows
                 # deletions of lines added by other tasks.
                 if base_ref:
-                    self._rebase_worktree(wt, base_ref, task_id)
+                    await self._rebase_worktree(wt, base_ref, task_id)
                 return wt
             console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
         except Exception as exc:
@@ -216,14 +216,14 @@ class ExecutorMixin:
         await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
         return None
 
-    def _rebase_worktree(self, worktree_path: str, base_ref: str, task_id: str) -> None:
+    async def _rebase_worktree(self, worktree_path: str, base_ref: str, task_id: str) -> None:
         """Rebase the worktree branch onto the latest pipeline branch.
 
         Best-effort: if the rebase conflicts, abort and continue with
         the un-rebased worktree.  The merge step will handle conflicts
         later.  This is preferable to failing the retry entirely.
         """
-        result = _run_git(
+        result = await _run_git(
             ["rebase", base_ref], cwd=worktree_path,
             check=False, description="rebase worktree",
         )
@@ -231,7 +231,7 @@ class ExecutorMixin:
             console.print(f"[green]  {task_id}: worktree rebased onto {base_ref}[/green]")
         else:
             # Abort the failed rebase so the worktree is usable
-            _run_git(
+            await _run_git(
                 ["rebase", "--abort"], cwd=worktree_path,
                 check=False, description="abort rebase",
             )
@@ -286,9 +286,9 @@ class ExecutorMixin:
         # The agent is instructed to commit, but may fail to do so if the
         # SDK session was sandboxed or the agent simply forgot. Without
         # this, uncommitted changes are invisible to the merge pipeline.
-        self._auto_commit_if_needed(worktree_path, task_id, task_title=getattr(task, 'title', ''))
+        await self._auto_commit_if_needed(worktree_path, task_id, task_title=getattr(task, 'title', ''))
 
-        diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+        diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         if not diff.strip():
             # A FORGE_QUESTION with no diff is valid — the agent stopped to ask.
             # Detect it before declaring failure; the caller checks summary after return.
@@ -305,7 +305,7 @@ class ExecutorMixin:
     # -- auto-commit safety net -------------------------------------------
 
     @staticmethod
-    def _auto_commit_if_needed(worktree_path: str, task_id: str, task_title: str = "") -> bool:
+    async def _auto_commit_if_needed(worktree_path: str, task_id: str, task_title: str = "") -> bool:
         """Commit any uncommitted agent changes as a safety net.
 
         The agent is instructed to commit its own work, but may fail to if:
@@ -320,7 +320,7 @@ class ExecutorMixin:
         Returns True if a commit was made, False otherwise.
         """
         # Check for uncommitted changes (staged + unstaged + untracked new files)
-        status = _run_git(
+        status = await _run_git(
             ["status", "--porcelain"],
             cwd=worktree_path, check=False,
             description="check uncommitted changes",
@@ -337,7 +337,7 @@ class ExecutorMixin:
         )
 
         # Stage everything (including new files the agent created)
-        add_result = _run_git(
+        add_result = await _run_git(
             ["add", "-A"],
             cwd=worktree_path, check=False,
             description="auto-stage agent changes",
@@ -357,7 +357,7 @@ class ExecutorMixin:
         else:
             commit_msg = f"feat({task_id}): implement task changes"
 
-        commit_result = _run_git(
+        commit_result = await _run_git(
             ["commit", "-m", commit_msg],
             cwd=worktree_path, check=False,
             description="auto-commit agent changes",
@@ -564,7 +564,7 @@ class ExecutorMixin:
                 return
 
         # Agent finished — proceed to review
-        has_in_scope_changes, reverted_files = self._enforce_file_scope(
+        has_in_scope_changes, reverted_files = await self._enforce_file_scope(
             task, worktree_path, pipeline_branch,
         )
         if not has_in_scope_changes:
@@ -681,7 +681,7 @@ class ExecutorMixin:
 
     # -- file scope enforcement -------------------------------------------
 
-    def _enforce_file_scope(
+    async def _enforce_file_scope(
         self, task, worktree_path: str, pipeline_branch: str | None,
     ) -> tuple[bool, list[str]]:
         """Strip changes to files outside the task's allowed scope.
@@ -702,7 +702,7 @@ class ExecutorMixin:
             return True, []  # No file list = no enforcement (safety valve)
 
         # Get all files changed by the agent vs pipeline branch
-        result = _run_git(
+        result = await _run_git(
             ["diff", "--name-only", pipeline_branch, "HEAD"],
             cwd=worktree_path, check=False, description="scope diff",
         )
@@ -712,7 +712,7 @@ class ExecutorMixin:
         # Agents often need to create/modify test files for the source files
         # they're working on — those shouldn't be reverted.
         related_tests = set(
-            _find_related_test_files(worktree_path, list(allowed))
+            await _find_related_test_files(worktree_path, list(allowed))
         )
         out_of_scope = [
             f for f in changed
@@ -730,31 +730,31 @@ class ExecutorMixin:
 
         for file in out_of_scope:
             # Restore file to pipeline branch state (works for modified/deleted)
-            restore = _run_git(
+            restore = await _run_git(
                 ["checkout", pipeline_branch, "--", file],
                 cwd=worktree_path, check=False, description="restore out-of-scope",
             )
             if restore.returncode != 0:
                 # File was newly created (doesn't exist in base) — remove it
-                _run_git(
+                await _run_git(
                     ["rm", "-f", file],
                     cwd=worktree_path, check=False, description="rm out-of-scope",
                 )
 
         # Stage and commit the reverts
-        _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts")
-        staged = _run_git(
+        await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts")
+        staged = await _run_git(
             ["diff", "--cached", "--name-only"],
             cwd=worktree_path, check=False, description="check staged",
         )
         if staged.stdout.strip():
-            _run_git(
+            await _run_git(
                 ["commit", "-m", "chore: revert out-of-scope file changes"],
                 cwd=worktree_path, check=False, description="commit scope reverts",
             )
 
         # Check if any in-scope changes remain
-        remaining = _run_git(
+        remaining = await _run_git(
             ["diff", "--name-only", pipeline_branch, "HEAD"],
             cwd=worktree_path, check=False, description="check remaining",
         )
@@ -769,14 +769,14 @@ class ExecutorMixin:
         pre_retry_ref: str | None = None,
     ) -> None:
         """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
-        diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+        diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         # Compute delta diff for retry reviews: shows ONLY what the retry
         # agent changed, so the reviewer can focus on the fix rather than
         # re-reading the entire accumulated diff.
         delta_diff = None
         no_changes_on_retry = False
         if pre_retry_ref and task.retry_count > 0:
-            delta_result = _run_git(
+            delta_result = await _run_git(
                 ["diff", pre_retry_ref, "HEAD"],
                 cwd=worktree_path, check=False, description="delta diff",
             )
@@ -822,7 +822,7 @@ class ExecutorMixin:
                 # The agent has the worktree and can read its own code — no need
                 # to dump the raw diff which wastes context on unchanged code.
                 enriched_feedback = feedback or ""
-                changed_files = _get_changed_files_vs_main(
+                changed_files = await _get_changed_files_vs_main(
                     worktree_path, base_ref=pipeline_branch,
                 )
                 if changed_files:
@@ -875,16 +875,16 @@ class ExecutorMixin:
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
-        pre_merge_ref = _resolve_ref(worktree_path, merge_worker._main)
+        pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         async with self._merge_lock:
-            merge_result = merge_worker.merge(branch, worktree_path=worktree_path)
+            merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
             return
         console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
         await self._emit_merge_failure(db, task_id, merge_result.error, pid)
         async with self._merge_lock:
-            retry_result = merge_worker.retry_merge(branch, worktree_path=worktree_path)
+            retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref)
             return
@@ -906,20 +906,20 @@ class ExecutorMixin:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
         async with self._merge_lock:
-            prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
+            prep = await merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
             await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid, pre_merge_ref=pre_merge_ref)
             return
         resolved = await self._resolve_conflicts(task_id, worktree_path, prep.conflicting_files, agent_model, db=db)
         if resolved:
             async with self._merge_lock:
-                final = merge_worker.merge(branch, worktree_path=worktree_path)
+                final = await merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
                 await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution", pipeline_branch=pre_merge_ref)
                 return
-            merge_worker._abort_rebase(worktree_path)
+            await merge_worker._abort_rebase(worktree_path)
         else:
-            merge_worker._abort_rebase(worktree_path)
+            await merge_worker._abort_rebase(worktree_path)
         await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
 
     async def _attempt_merge_with_resolution(
@@ -1058,7 +1058,7 @@ class ExecutorMixin:
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
         async with self._merge_lock:
-            ff_result = merge_worker.merge(branch, worktree_path=worktree_path)
+            ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race", pipeline_branch=pre_merge_ref)
         else:
@@ -1092,10 +1092,10 @@ class ExecutorMixin:
         agent_summary = getattr(task, "description", "") if task else ""
         # Use the agent result summary if available (stored during agent run)
         # Fall back to task description
-        summary = _extract_implementation_summary(worktree_path, agent_summary, pipeline_branch)
+        summary = await _extract_implementation_summary(worktree_path, agent_summary, pipeline_branch)
         await db.update_task_implementation_summary(task_id, summary)
 
-        stats = _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
+        stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit("task:merge_result", {"task_id": task_id, "success": True, "error": None, **stats}, db=db, pipeline_id=pid)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
 
