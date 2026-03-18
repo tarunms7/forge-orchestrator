@@ -1,7 +1,6 @@
 """Tests for agent release retry logic in _safe_execute_task."""
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
