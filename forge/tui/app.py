@@ -276,6 +276,32 @@ class ForgeApp(App):
                 except Exception:
                     logger.error("Failed to emit task:answer to daemon", exc_info=True)
 
+    async def respond_to_integration_prompt(self, action: str) -> None:
+        """Handle user response to an integration health check prompt.
+
+        Emits the appropriate event so the daemon can resume.
+        """
+        if not self._daemon or not hasattr(self._daemon, "_events"):
+            return
+
+        prompt = self._state.integration_prompt
+        if not prompt:
+            return
+
+        prompt_type = prompt.get("type", "post_merge")
+        if prompt_type == "baseline":
+            event_type = "integration:baseline_response"
+        else:
+            event_type = "integration:check_response"
+
+        try:
+            await self._daemon._events.emit(event_type, {"action": action})
+        except Exception:
+            logger.error("Failed to emit %s to daemon", event_type, exc_info=True)
+
+        # Update local state immediately
+        self._state.apply_event(event_type, {"action": action})
+
     async def on_chat_thread_interjection_submitted(self, event) -> None:
         """Create an interjection record for a running agent."""
         task_id = event.task_id

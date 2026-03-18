@@ -712,6 +712,65 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
 
+        # ── Integration baseline capture ────────────────────────────
+        from forge.config.project_config import ProjectConfig
+        from forge.core.integration import (
+            capture_baseline, effective_enabled, run_final_gate,
+        )
+
+        project_config = ProjectConfig.load(self._project_dir)
+        integration_config = project_config.integration
+        pm_enabled = effective_enabled(integration_config.post_merge)
+        fg_enabled = effective_enabled(integration_config.final_gate)
+
+        if pm_enabled or fg_enabled:
+            await self._emit(
+                "integration:baseline_started", {},
+                db=db, pipeline_id=pid,
+            )
+            # Use post_merge cmd for baseline; fall back to final_gate if only that is enabled
+            baseline_cfg = (
+                integration_config.post_merge if pm_enabled
+                else integration_config.final_gate
+            )
+            baseline_exit = await capture_baseline(
+                baseline_cfg, self._project_dir, base_branch,
+            )
+
+            if baseline_exit is not None and baseline_exit != 0:
+                # Baseline is red — ask user: ignore or cancel
+                await self._emit("integration:baseline_failed_prompt", {
+                    "exit_code": baseline_exit,
+                }, db=db, pipeline_id=pid)
+
+                action = await self._wait_for_integration_response(
+                    db, pid, "baseline",
+                )
+                if action == "cancel_pipeline":
+                    await self._emit("pipeline:phase_changed", {
+                        "phase": "cancelled",
+                    }, db=db, pipeline_id=pid)
+                    return
+
+                await self._emit("integration:baseline_response", {
+                    "action": "ignore_and_continue",
+                }, db=db, pipeline_id=pid)
+
+            await self._emit("integration:baseline_result", {
+                "status": (
+                    "passed" if baseline_exit == 0
+                    else ("failed" if baseline_exit is not None else "skipped")
+                ),
+                "exit_code": baseline_exit,
+            }, db=db, pipeline_id=pid)
+
+            await db.set_baseline_exit_code(pid, baseline_exit)
+            self._integration_config = integration_config
+            self._baseline_exit_code = baseline_exit
+        else:
+            self._integration_config = None
+            self._baseline_exit_code = None
+
         await self._execution_loop(db, runtime, worktree_mgr, merge_worker, monitor, pid)
 
         # Auto-update conventions file after all tasks complete successfully
@@ -725,6 +784,39 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     update_conventions_file(self._project_dir, conventions)
                 except (json.JSONDecodeError, TypeError):
                     logger.warning("Failed to parse conventions_json for auto-update")
+
+        # ── Integration final gate ──────────────────────────────────
+        if self._integration_config and fg_enabled:
+            await self._emit(
+                "integration:final_gate_started", {},
+                db=db, pipeline_id=pid,
+            )
+            fg_result = await run_final_gate(
+                self._integration_config.final_gate,
+                self._project_dir,
+                pipeline_branch,
+            )
+            await self._emit("integration:final_gate_result", {
+                "status": fg_result.status,
+                "exit_code": fg_result.exit_code,
+                "stderr": fg_result.stderr[-2000:] if fg_result.stderr else "",
+            }, db=db, pipeline_id=pid)
+
+            if fg_result.status in ("failed", "timeout"):
+                action = await self._resolve_integration_failure(
+                    self._integration_config.final_gate,
+                    fg_result, db, pid, task_id=None, phase="final_gate",
+                )
+                if action == "stop_pipeline":
+                    await self._emit("pipeline:phase_changed", {
+                        "phase": "error",
+                    }, db=db, pipeline_id=pid)
+                    return
+            elif fg_result.status == "infra_error":
+                logger.warning(
+                    "Final gate infra error: %s — skipping",
+                    fg_result.stderr[:200],
+                )
 
         await self._emit("pipeline:phase_changed", {"phase": "complete"}, db=db, pipeline_id=pid)
 
@@ -753,6 +845,85 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             pipeline_id=pipeline_id,
         )
         logger.info("Task %s reset to 'todo' for retry", task_id)
+
+    # ── Integration health check helpers ─────────────────────────────
+
+    async def _wait_for_integration_response(
+        self, db: Database, pipeline_id: str, phase: str,
+    ) -> str:
+        """Block until the user responds to an integration prompt.
+
+        Args:
+            phase: "baseline" → listens for integration:baseline_response
+                   anything else → listens for integration:check_response
+
+        Returns:
+            "ignore_and_continue", "stop_pipeline", or "cancel_pipeline".
+        """
+        response_event = asyncio.Event()
+        response_value: dict[str, str | None] = {"action": None}
+
+        event_type = (
+            "integration:baseline_response" if phase == "baseline"
+            else "integration:check_response"
+        )
+
+        async def _handler(data: dict) -> None:
+            response_value["action"] = data.get("action", "ignore_and_continue")
+            response_event.set()
+
+        self._events.on(event_type, _handler)
+        try:
+            await response_event.wait()
+        finally:
+            handlers = self._events._handlers.get(event_type, [])
+            if _handler in handlers:
+                handlers.remove(_handler)
+
+        return response_value["action"] or "ignore_and_continue"
+
+    async def _resolve_integration_failure(
+        self,
+        config,  # IntegrationCheckConfig
+        result,  # IntegrationCheckResult
+        db: Database,
+        pipeline_id: str,
+        task_id: str | None,
+        phase: str,
+    ) -> str:
+        """Determine action on health check failure based on config.on_failure.
+
+        Returns "ignore_and_continue" or "stop_pipeline".
+        """
+        if config.on_failure == "ignore_and_continue":
+            logger.warning(
+                "Integration check failed (exit=%s) but on_failure=ignore_and_continue",
+                result.exit_code,
+            )
+            return "ignore_and_continue"
+
+        if config.on_failure == "stop_pipeline":
+            logger.error(
+                "Integration check failed (exit=%s) and on_failure=stop_pipeline",
+                result.exit_code,
+            )
+            return "stop_pipeline"
+
+        # on_failure == "ask" — emit prompt and wait for user
+        await self._emit("integration:check_prompt", {
+            "task_id": task_id,
+            "cmd": config.cmd,
+            "exit_code": result.exit_code,
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+            "is_regression": result.is_regression,
+            "baseline_was_red": (getattr(self, "_baseline_exit_code", None) or 0) != 0,
+            "options": ["ignore_and_continue", "stop_pipeline"],
+            "phase": phase,
+        }, db=db, pipeline_id=pipeline_id)
+
+        return await self._wait_for_integration_response(
+            db, pipeline_id, "check",
+        )
 
     async def run(self, user_input: str, spec_path: str | None = None, deep_plan: bool = False) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""

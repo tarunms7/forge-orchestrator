@@ -128,6 +128,35 @@ class DecisionBadge(Widget):
         return f"[bold #f0883e]● {self._count} decision{'s' if self._count != 1 else ''} pending[/]"
 
 
+class IntegrationBadge(Widget):
+    """Shows integration health status below DecisionBadge."""
+
+    DEFAULT_CSS = """
+    IntegrationBadge {
+        height: 1;
+        padding: 0 1;
+        background: #161b22;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._degraded = False
+        self._checking = False
+
+    def update(self, *, degraded: bool = False, checking: bool = False) -> None:
+        self._degraded = degraded
+        self._checking = checking
+        self.refresh()
+
+    def render(self) -> str:
+        if self._checking:
+            return "[#d2a8ff]⧗ Integration check running...[/]"
+        if self._degraded:
+            return "[bold #d29922]⚠ Pipeline Degraded[/]"
+        return ""
+
+
 class PipelineScreen(Screen):
     """Main pipeline execution screen with full-width phase banner + dynamic layout.
 
@@ -137,6 +166,7 @@ class PipelineScreen(Screen):
     Left panel (hidden during planning, shown during execution):
       - TaskList
       - DecisionBadge
+      - IntegrationBadge
 
     Right panel (fills remaining or full width):
       - AgentOutput   (unified log stream — agent + review + gates)
@@ -257,6 +287,7 @@ class PipelineScreen(Screen):
             with Vertical(id="left-panel"):
                 yield TaskList()
                 yield DecisionBadge()
+                yield IntegrationBadge()
             with Vertical(id="right-panel"):
                 yield AgentOutput()
                 yield ChatThread()
@@ -296,6 +327,9 @@ class PipelineScreen(Screen):
             return
         if field == "review_output":
             self._handle_review_output_fast()
+            return
+        if field == "integration":
+            self._refresh_integration_badge()
             return
         if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
                      "contracts_output", "planning"):
@@ -446,6 +480,24 @@ class PipelineScreen(Screen):
                 except Exception:
                     pass
 
+    def _refresh_integration_badge(self) -> None:
+        """Update the integration badge based on current state."""
+        try:
+            badge = self.query_one(IntegrationBadge)
+        except Exception:
+            return
+        state = self._state
+        # Check if any integration check is currently running
+        checking = any(
+            c.get("status") == "running"
+            for c in state.integration_checks.values()
+        )
+        if not checking and state.integration_baseline:
+            checking = state.integration_baseline.get("status") == "running"
+        if not checking and state.integration_final_gate:
+            checking = state.integration_final_gate.get("status") == "running"
+        badge.update(degraded=state.integration_degraded, checking=checking)
+
     def _refresh_all(self) -> None:
         state = self._state
         task_list = self.query_one(TaskList)
@@ -454,6 +506,7 @@ class PipelineScreen(Screen):
         dag = self.query_one(DagOverlay)
         phase_banner = self.query_one(PhaseBanner)
         decision_badge = self.query_one(DecisionBadge)
+        self._refresh_integration_badge()
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
         task_list.update_tasks(ordered_tasks, state.selected_task_id, phase=state.phase)

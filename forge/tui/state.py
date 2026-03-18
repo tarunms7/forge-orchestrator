@@ -68,6 +68,13 @@ class TuiState:
         self.planning_stage: str = ""
         self.last_auto_decided: dict | None = None
 
+        # Integration health checks
+        self.integration_baseline: dict | None = None      # {"status": ..., "exit_code": ...}
+        self.integration_degraded: bool = False             # True if user chose "ignore" on a failure
+        self.integration_checks: dict[str, dict] = {}       # task_id → check result
+        self.integration_prompt: dict | None = None         # pending user decision
+        self.integration_final_gate: dict | None = None
+
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
@@ -423,6 +430,71 @@ class TuiState:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines]
         self._notify("planner_output")
 
+    # ── Integration health check handlers ──────────────────────────
+
+    def _on_integration_baseline_started(self, data: dict) -> None:
+        self.integration_baseline = {"status": "running"}
+        self._notify("integration")
+
+    def _on_integration_baseline_result(self, data: dict) -> None:
+        self.integration_baseline = data
+        self._notify("integration")
+
+    def _on_integration_baseline_failed_prompt(self, data: dict) -> None:
+        self.integration_prompt = {
+            "type": "baseline",
+            "exit_code": data.get("exit_code"),
+            "stderr": data.get("stderr", ""),
+            "options": ["ignore_and_continue", "cancel_pipeline"],
+        }
+        self._notify("integration")
+
+    def _on_integration_baseline_response(self, data: dict) -> None:
+        self.integration_prompt = None
+        if data.get("action") == "ignore_and_continue":
+            self.integration_degraded = True
+        self._notify("integration")
+
+    def _on_integration_check_started(self, data: dict) -> None:
+        tid = data.get("task_id", "")
+        self.integration_checks[tid] = {"status": "running"}
+        self._notify("integration")
+
+    def _on_integration_check_result(self, data: dict) -> None:
+        tid = data.get("task_id", "")
+        self.integration_checks[tid] = data
+        if data.get("action") == "ignore_and_continue":
+            self.integration_degraded = True
+        self._notify("integration")
+
+    def _on_integration_check_prompt(self, data: dict) -> None:
+        self.integration_prompt = {
+            "type": "post_merge",
+            "task_id": data.get("task_id"),
+            "cmd": data.get("cmd"),
+            "stderr": data.get("stderr", ""),
+            "exit_code": data.get("exit_code"),
+            "is_regression": data.get("is_regression", False),
+            "baseline_was_red": data.get("baseline_was_red", False),
+            "options": data.get("options", ["ignore_and_continue", "stop_pipeline"]),
+            "phase": data.get("phase", "post_merge"),
+        }
+        self._notify("integration")
+
+    def _on_integration_check_response(self, data: dict) -> None:
+        self.integration_prompt = None
+        if data.get("action") == "ignore_and_continue":
+            self.integration_degraded = True
+        self._notify("integration")
+
+    def _on_integration_final_gate_started(self, data: dict) -> None:
+        self.integration_final_gate = {"status": "running"}
+        self._notify("integration")
+
+    def _on_integration_final_gate_result(self, data: dict) -> None:
+        self.integration_final_gate = data
+        self._notify("integration")
+
     def _on_all_tasks_done(self, data: dict) -> None:
         summary = data.get("summary", {})
         result = summary.get("result", "complete")
@@ -474,6 +546,12 @@ class TuiState:
         self._pending_state_updates.clear()
         self.error_history.clear()
         self.planning_stage = ""
+        # Integration health checks
+        self.integration_baseline = None
+        self.integration_degraded = False
+        self.integration_checks.clear()
+        self.integration_prompt = None
+        self.integration_final_gate = None
 
     @property
     def done_count(self) -> int:
@@ -546,4 +624,15 @@ class TuiState:
         "slot:acquired": _on_slot_acquired,
         "slot:released": _on_slot_released,
         "slot:queued": _on_slot_queued,
+        # Integration health checks
+        "integration:baseline_started": _on_integration_baseline_started,
+        "integration:baseline_result": _on_integration_baseline_result,
+        "integration:baseline_failed_prompt": _on_integration_baseline_failed_prompt,
+        "integration:baseline_response": _on_integration_baseline_response,
+        "integration:check_started": _on_integration_check_started,
+        "integration:check_result": _on_integration_check_result,
+        "integration:check_prompt": _on_integration_check_prompt,
+        "integration:check_response": _on_integration_check_response,
+        "integration:final_gate_started": _on_integration_final_gate_started,
+        "integration:final_gate_result": _on_integration_final_gate_result,
     }
