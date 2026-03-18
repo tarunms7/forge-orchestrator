@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -794,3 +795,254 @@ class TestPlanningQuestionWiring:
         # planning:answer handlers should be cleaned up
         handlers = daemon._events._handlers.get("planning:answer", [])
         assert len(handlers) == 0
+
+
+# ---------------------------------------------------------------------------
+# Helper: build a mock CompletedProcess for async_subprocess
+# ---------------------------------------------------------------------------
+
+def _mock_completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _preflight_checks (async_subprocess mocking)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestPreflightChecks:
+    """Verify _preflight_checks uses async_subprocess correctly."""
+
+    async def test_all_checks_pass(self, tmp_path):
+        """Happy path: valid git repo, has commits, has remote, gh authed."""
+        daemon = _make_daemon(tmp_path)
+        db = MagicMock()
+        db.update_pipeline_status = AsyncMock()
+        db.log_event = AsyncMock()
+        daemon._emit = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            _mock_completed(0, "true\n"),      # git rev-parse --is-inside-work-tree
+            _mock_completed(0, "abc123\n"),     # git rev-parse HEAD
+            _mock_completed(0, "origin\n"),     # git remote
+            _mock_completed(0, ""),             # gh auth status
+        ])
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"):
+            result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
+
+        assert result is True
+        assert async_sub.call_count == 4
+        db.update_pipeline_status.assert_not_called()
+
+    async def test_not_a_git_repo_fails(self, tmp_path):
+        """Non-git directory causes preflight failure."""
+        daemon = _make_daemon(tmp_path)
+        db = MagicMock()
+        db.update_pipeline_status = AsyncMock()
+        db.log_event = AsyncMock()
+        daemon._emit = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            _mock_completed(128, "", "fatal: not a git repo"),  # git rev-parse --is-inside-work-tree
+            _mock_completed(0, "abc123\n"),                      # git rev-parse HEAD
+            _mock_completed(0, "origin\n"),                      # git remote
+        ])
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value=None):
+            result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
+
+        assert result is False
+        db.update_pipeline_status.assert_called_once_with("pipe-1", "error")
+        daemon._emit.assert_called()
+
+    async def test_empty_repo_creates_initial_commit(self, tmp_path):
+        """Empty repo (no HEAD) triggers initial commit via async_subprocess."""
+        daemon = _make_daemon(tmp_path)
+        db = MagicMock()
+        db.update_pipeline_status = AsyncMock()
+        db.log_event = AsyncMock()
+        daemon._emit = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            _mock_completed(0, "true\n"),      # git rev-parse --is-inside-work-tree
+            _mock_completed(128, "", "fatal"),  # git rev-parse HEAD — no commits
+            _mock_completed(0, ""),             # git commit --allow-empty
+            _mock_completed(0, "origin\n"),     # git remote
+        ])
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value=None):
+            result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
+
+        assert result is True
+        # Third call should be the commit
+        commit_call = async_sub.call_args_list[2]
+        assert commit_call.args[0][0] == "git"
+        assert "--allow-empty" in commit_call.args[0]
+
+    async def test_no_remote_is_warning_not_failure(self, tmp_path):
+        """Missing git remote produces a warning but preflight still passes."""
+        daemon = _make_daemon(tmp_path)
+        db = MagicMock()
+        db.update_pipeline_status = AsyncMock()
+        db.log_event = AsyncMock()
+        daemon._emit = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
+            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+            _mock_completed(0, ""),          # git remote — empty stdout
+        ])
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value=None):
+            result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
+
+        assert result is True
+
+    async def test_gh_not_authed_is_warning_not_failure(self, tmp_path):
+        """gh CLI auth failure produces a warning but preflight still passes."""
+        daemon = _make_daemon(tmp_path)
+        db = MagicMock()
+        db.update_pipeline_status = AsyncMock()
+        db.log_event = AsyncMock()
+        daemon._emit = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
+            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+            _mock_completed(0, "origin\n"),  # git remote
+            _mock_completed(1, "", "not logged in"),  # gh auth status — fails
+        ])
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"):
+            result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
+
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for execute() branch creation (async_subprocess mocking)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestExecuteBranchCreation:
+    """Verify execute() creates pipeline branches via async_subprocess."""
+
+    async def test_creates_branch_on_fresh_run(self, tmp_path):
+        """On a fresh (non-resume) run, execute() creates the pipeline branch."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        db = MagicMock()
+        db.initialize = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(
+            paused=False, executor_token=None, base_branch="main",
+            branch_name=None, description="test pipeline",
+        ))
+        db.list_tasks_by_pipeline = AsyncMock(return_value=[
+            _make_task(TaskState.DONE.value, "task-1"),
+        ])
+        db.list_agents = AsyncMock(return_value=[])
+        db.log_event = AsyncMock()
+        db.get_expired_questions = AsyncMock(return_value=[])
+        db.update_pipeline_status = AsyncMock()
+        db.set_executor_info = AsyncMock()
+        db.clear_executor_info = AsyncMock()
+        db.set_pipeline_branch_name = AsyncMock()
+        db.set_pipeline_base_branch = AsyncMock()
+
+        branch_create_mock = AsyncMock(return_value=_mock_completed(0))
+
+        async_sub = AsyncMock(side_effect=[
+            # _preflight_checks calls (5 max)
+            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
+            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+            _mock_completed(0, "origin\n"),  # git remote
+            _mock_completed(0),              # gh auth status
+            # execute() branch creation
+            _mock_completed(0),              # git branch -f pipeline_branch base_branch
+        ])
+
+        daemon._emit = AsyncMock()
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"), \
+             patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"), \
+             patch("forge.core.daemon._generate_branch_name", new_callable=AsyncMock, return_value="forge/test-branch"), \
+             patch("forge.core.daemon._print_status_table"), \
+             patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]), \
+             patch("forge.core.daemon.WorktreeManager"), \
+             patch("forge.core.daemon.MergeWorker"), \
+             patch("forge.core.daemon.ResourceMonitor") as MockMon:
+            MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
+            MockMon.return_value.can_dispatch = MagicMock(return_value=True)
+
+            plan = MagicMock(tasks=[_make_task(TaskState.TODO.value, "task-1")])
+            await daemon.execute(plan, db, "pipe-1", resume=False)
+
+        # Verify git branch -f was called (one of the async_subprocess calls)
+        branch_calls = [
+            c for c in async_sub.call_args_list
+            if len(c.args[0]) >= 3 and c.args[0][1] == "branch"
+        ]
+        assert len(branch_calls) >= 1
+        assert "-f" in branch_calls[0].args[0]
+
+    async def test_resume_verifies_branch_exists(self, tmp_path):
+        """On resume, execute() checks if the pipeline branch exists."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        db = MagicMock()
+        db.initialize = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(
+            paused=False, executor_token=None, base_branch="main",
+            branch_name="forge/existing-branch", description="test pipeline",
+        ))
+        db.list_tasks_by_pipeline = AsyncMock(return_value=[
+            _make_task(TaskState.DONE.value, "task-1"),
+        ])
+        db.list_agents = AsyncMock(return_value=[])
+        db.log_event = AsyncMock()
+        db.get_expired_questions = AsyncMock(return_value=[])
+        db.update_pipeline_status = AsyncMock()
+        db.set_executor_info = AsyncMock()
+        db.clear_executor_info = AsyncMock()
+        db.set_pipeline_branch_name = AsyncMock()
+        db.set_pipeline_base_branch = AsyncMock()
+
+        async_sub = AsyncMock(side_effect=[
+            # _preflight_checks calls
+            _mock_completed(0, "true\n"),
+            _mock_completed(0, "abc123\n"),
+            _mock_completed(0, "origin\n"),
+            _mock_completed(0),
+            # execute() branch verification (resume path)
+            _mock_completed(0, "abc123\n"),  # git rev-parse --verify — branch exists
+        ])
+
+        daemon._emit = AsyncMock()
+
+        with patch("forge.core.daemon.async_subprocess", async_sub), \
+             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"), \
+             patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"), \
+             patch("forge.core.daemon._print_status_table"), \
+             patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]), \
+             patch("forge.core.daemon.WorktreeManager"), \
+             patch("forge.core.daemon.MergeWorker"), \
+             patch("forge.core.daemon.ResourceMonitor") as MockMon:
+            MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
+            MockMon.return_value.can_dispatch = MagicMock(return_value=True)
+
+            plan = MagicMock(tasks=[_make_task(TaskState.TODO.value, "task-1")])
+            await daemon.execute(plan, db, "pipe-1", resume=True)
+
+        # Should have called rev-parse --verify for the branch check
+        verify_calls = [
+            c for c in async_sub.call_args_list
+            if len(c.args[0]) >= 3 and "--verify" in c.args[0]
+        ]
+        assert len(verify_calls) == 1
