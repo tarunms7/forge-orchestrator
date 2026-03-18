@@ -757,7 +757,7 @@ class TestPlanningQuestionWiring:
                 total_cost_usd=0.0,
             ))
 
-            graph = await daemon.plan("add auth", db, pipeline_id="pipe-1")
+            await daemon.plan("add auth", db, pipeline_id="pipe-1")
 
         # Verify UnifiedPlanner.run() was called with on_question
         run_kwargs = MockPlanner.return_value.run.call_args.kwargs
