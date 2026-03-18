@@ -288,7 +288,6 @@ async def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
     assert "shared.py" in result.conflicting_files
 
     # The rebase should STILL be in progress (not aborted)
-    rebase_dir = wt / ".git"
     # In a worktree .git is a file pointing to the main repo, so check via git status
     status = subprocess.run(
         ["git", "status"], cwd=wt, capture_output=True, text=True
