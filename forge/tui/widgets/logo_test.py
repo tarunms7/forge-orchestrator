@@ -18,40 +18,32 @@ def test_forge_logo_constant_is_string() -> None:
     assert len(FORGE_LOGO) > 0
 
 
-def test_forge_logo_contains_forge_text() -> None:
-    """Logo should contain the letters F O R G E (as label text)."""
+def test_forge_logo_contains_orchestrator_text() -> None:
+    """Logo should contain ORCHESTRATOR as subtitle."""
     plain = _strip_markup(FORGE_LOGO)
-    # Accept either compact 'FORGE' or spaced 'F    O    R    G    E'
-    assert 'FORGE' in plain or all(c in plain for c in 'FORGE')
+    assert 'O R C H E S T R A T O R' in plain
 
 
 def test_forge_logo_is_approximately_10_to_15_lines_tall() -> None:
-    """Logo content should be roughly 10-20 lines tall (anvil + FORGE + subtitle)."""
+    """Logo content should be roughly 8-16 lines tall."""
     lines = FORGE_LOGO.strip().split('\n')
-    assert 10 <= len(lines) <= 20, (
-        f"Expected 10-20 lines, got {len(lines)}"
+    assert 8 <= len(lines) <= 16, (
+        f"Expected 8-16 lines, got {len(lines)}"
     )
 
 
-def test_forge_logo_has_orange_color_markup() -> None:
-    """Logo should include orange (#f0883e) color markup for the anvil."""
-    assert '#f0883e' in FORGE_LOGO
+def test_forge_logo_has_warm_color_markup() -> None:
+    """Logo should use #f2e2c8 color."""
+    assert '#f2e2c8' in FORGE_LOGO
 
 
-def test_forge_logo_has_blue_color_markup() -> None:
-    """Logo should include blue (#58a6ff) color markup for FORGE text."""
-    assert '#58a6ff' in FORGE_LOGO
-
-
-def test_forge_logo_has_subtitle() -> None:
-    """Logo should include the subtitle text."""
+def test_forge_logo_uses_box_drawing_characters() -> None:
+    """Logo should use box-drawing characters for circuit-board style."""
     plain = _strip_markup(FORGE_LOGO)
-    assert 'multi-agent code orchestration' in plain
-
-
-def test_forge_logo_has_gray_subtitle_markup() -> None:
-    """Subtitle should be styled with gray (#8b949e)."""
-    assert '#8b949e' in FORGE_LOGO
+    assert '┌' in plain
+    assert '┐' in plain
+    assert '│' in plain
+    assert '└' in plain
 
 
 def test_forge_logo_widget_instantiates() -> None:
@@ -65,11 +57,3 @@ def test_forge_logo_widget_has_correct_css_properties() -> None:
     css = ForgeLogo.DEFAULT_CSS
     assert 'text-align: center' in css
     assert 'content-align: center middle' in css
-
-
-def test_forge_logo_anvil_shape_present() -> None:
-    """Logo should include ASCII art anvil-like characters."""
-    plain = _strip_markup(FORGE_LOGO)
-    # Anvil shape uses underscores and slashes
-    assert '_' in plain
-    assert '/' in plain or '\\' in plain
