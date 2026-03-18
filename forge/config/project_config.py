@@ -40,8 +40,8 @@ enabled = true
 # check_cmd = "ruff check ."       # Leave commented to auto-detect
 
 [checks.tests]
-enabled = true
-# cmd = "pytest"            # Leave commented to auto-detect
+enabled = false             # Off by default — set your test command first
+# cmd = "pytest"            # Set your test command (use absolute venv path if needed)
 # scope = "changed"         # "changed" = only tests for modified files (default)
                             # "all" = run full test suite
                             # "none" = skip tests entirely
