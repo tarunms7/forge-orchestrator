@@ -29,6 +29,7 @@ class AgentRuntime:
         questions_remaining: int = 3,
         timeout_seconds: int | None = None,
         project_dir: str | None = None,
+        agent_max_turns: int = 25,
     ) -> AgentResult:
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         try:
@@ -49,6 +50,7 @@ class AgentRuntime:
                 autonomy=autonomy,
                 questions_remaining=questions_remaining,
                 project_dir=project_dir,
+                agent_max_turns=agent_max_turns,
             )
         except TimeoutError:
             return AgentResult(

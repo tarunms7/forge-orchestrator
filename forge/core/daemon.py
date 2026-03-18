@@ -969,7 +969,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Reap completed tasks from the pool
             done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
             for tid in done_ids:
-                atask = self._active_tasks.pop(tid)
+                atask = self._active_tasks.pop(tid, None)
+                if atask is None:
+                    continue  # Already removed by concurrent event handler
                 exc = atask.exception() if not atask.cancelled() else None
                 if exc:
                     await self._handle_task_exception(tid, exc, db, worktree_mgr, pipeline_id)

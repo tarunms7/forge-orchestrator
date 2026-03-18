@@ -209,26 +209,14 @@ def _get_current_branch(repo_path: str) -> str:
 
 
 def _build_agent_prompt(title: str, description: str, files: list[str], agent_prompt_modifier: str = "") -> str:
+    files_str = ", ".join(files) if files else "(no file restrictions)"
     prompt = (
-        f"Task: {title}\n\n"
-        f"Description: {description}\n\n"
-        f"Files you MUST ONLY modify (changes to other files will be auto-reverted): {', '.join(files)}\n\n"
-        "Instructions:\n"
-        "0. CHECK APPLICABILITY FIRST: Verify that the files and conditions described in the task actually exist in your worktree. "
-        "If files to modify/delete don't exist and there is nothing meaningful to do, make NO changes and do NOT commit. "
-        "NEVER create files just to delete them or fabricate work that achieves nothing.\n"
-        "1. Implement this task completely\n"
-        "2. Write clean, working code\n"
-        "3. When done, stage and commit all changes with: git add -A && git commit -m '<type>: <short summary>'\n"
-        "   - Use conventional commit types: feat, fix, refactor, test, docs, chore\n"
-        "   - Write a SHORT commit message (max 72 chars) that describes WHAT you actually changed — do NOT copy the task title or description verbatim\n"
-        "   - Good: 'feat: add JWT token refresh endpoint'\n"
-        "   - Bad: 'feat: Build a REST API with JWT auth, user registration, and integration tests'\n"
-        "4. Make sure you actually commit — the system checks for committed changes\n"
-        "5. If step 0 determined nothing to do, skip steps 1-4 entirely — no commit needed"
+        f"## Task: {title}\n\n"
+        f"{description}\n\n"
+        f"**Files in scope:** {files_str}\n"
     )
     if agent_prompt_modifier:
-        prompt += agent_prompt_modifier
+        prompt += "\n" + agent_prompt_modifier
     return prompt
 
 
@@ -242,34 +230,18 @@ def _build_retry_prompt(
     The agent gets the original task spec PLUS the reviewer's notes so it
     can fix the specific issues instead of starting from scratch.
     """
+    files_str = ", ".join(files) if files else "(no file restrictions)"
     prompt = (
-        f"Task: {title}\n\n"
-        f"Description: {description}\n\n"
-        f"=== IMPORTANT: This is RETRY #{retry_number} ===\n\n"
-        f"Your previous implementation was reviewed and REJECTED.\n"
-        f"The worktree still contains your previous in-scope changes. "
-        f"Fix the specific issues the reviewer flagged — do NOT start over.\n\n"
-        f"CRITICAL FILE SCOPE: You MUST ONLY modify these files: {', '.join(files)}\n"
-        f"Changes to any other file will be AUTOMATICALLY REVERTED by the system.\n\n"
-        f"Review feedback from the reviewer:\n"
-        f"---\n"
+        f"## Task: {title} (Retry #{retry_number})\n\n"
+        f"{description}\n\n"
+        f"**Files in scope:** {files_str}\n\n"
+        f"## Review Feedback\n\n"
+        f"Your previous attempt was reviewed and needs fixes. "
+        f"The worktree has your previous code — fix the issues, don't start over.\n\n"
         f"{review_feedback}\n"
-        f"---\n\n"
-        "Instructions:\n"
-        "1. Read the review feedback above carefully\n"
-        "2. Look at your existing code in the worktree and fix the reviewer's issues\n"
-        "3. Fix ONLY the issues the reviewer flagged — do NOT modify files outside your scope\n"
-        "4. Make sure your code actually works — run it if possible\n"
-        "5. Stage and commit your fixes with a short, descriptive message:\n"
-        "   git add -A && git commit -m '<type>: <short summary of what you fixed>'\n"
-        "   - Use conventional commit types: feat, fix, refactor, test, docs, chore\n"
-        "   - Write a SHORT commit message (max 72 chars) describing WHAT you actually fixed — do NOT use the generic 'fix: address review feedback'\n"
-        "   - Good: 'fix: handle None return in token refresh'\n"
-        "   - Bad: 'fix: address review feedback'\n"
-        "6. Make sure you actually commit — the system checks for committed changes"
     )
     if agent_prompt_modifier:
-        prompt += agent_prompt_modifier
+        prompt += "\n" + agent_prompt_modifier
     return prompt
 
 

@@ -23,6 +23,7 @@ class ForgeSettings(BaseSettings):
     # overloaded (CPU, memory, disk thresholds).  Override via FORGE_MAX_AGENTS.
     max_agents: int = 4
     agent_timeout_seconds: int = 600  # lowered from 1800
+    agent_max_turns: int = 25  # Max turns per agent execution. Override via FORGE_AGENT_MAX_TURNS.
     context_rotation_tokens: int = 80_000
     max_retries: int = 5
 
