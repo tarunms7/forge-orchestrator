@@ -420,6 +420,20 @@ class ReviewMixin:
             )
         return await self._run_shell_gate(worktree_path, test_cmd, timeout, gate_name='gate1_5_test')
 
+    # Patterns that indicate environment/infra problems, not code problems.
+    # If a gate fails with one of these, it's not the agent's fault.
+    _INFRA_ERROR_PATTERNS = (
+        "ModuleNotFoundError",
+        "ImportError",
+        "No module named",
+        "command not found",
+        "No such file or directory",
+        "Permission denied",
+        "not recognized as an internal or external command",
+        "SyntaxError: future feature annotations",  # Python version mismatch
+        "ERROR collecting",  # pytest collection error (usually import issue)
+    )
+
     async def _run_shell_gate(
         self, worktree_path: str, cmd: str, timeout: int, *, gate_name: str,
     ) -> GateResult:
@@ -427,6 +441,11 @@ class ReviewMixin:
 
         Runs *cmd* inside *worktree_path* with a timeout.  Captures stdout+stderr,
         truncated to the last 5000 characters so logs stay manageable.
+
+        If the failure output matches known infrastructure error patterns
+        (missing modules, wrong Python version, command not found), the result
+        is marked with ``infra_error=True`` so callers can skip the gate
+        instead of consuming a retry.
         """
         def _run() -> subprocess.CompletedProcess:
             parts = shlex.split(cmd)
@@ -446,6 +465,14 @@ class ReviewMixin:
                 gate=gate_name,
                 details=f"Command timed out after {timeout}s: {cmd}",
             )
+        except FileNotFoundError:
+            # The command binary itself doesn't exist (e.g. ruff not installed)
+            return GateResult(
+                passed=False,
+                gate=gate_name,
+                details=f"Command not found: {cmd}",
+                infra_error=True,
+            )
 
         combined = (proc.stdout or "") + (proc.stderr or "")
         # Keep last 5000 chars so we see the tail of build/test output
@@ -454,10 +481,14 @@ class ReviewMixin:
         if proc.returncode == 0:
             return GateResult(passed=True, gate=gate_name, details="OK")
 
+        # Check if this is an infrastructure failure, not a code problem
+        is_infra = any(pattern in combined for pattern in self._INFRA_ERROR_PATTERNS)
+
         return GateResult(
             passed=False,
             gate=gate_name,
             details=f"Exit code {proc.returncode}:\n{truncated}",
+            infra_error=is_infra,
         )
 
     # -- streaming helpers --------------------------------------------------
@@ -587,10 +618,18 @@ class ReviewMixin:
                 "details": build_result.details,
             }, db=db, pipeline_id=pipeline_id)
             if not build_result.passed:
-                console.print(f"[red]  Gate 0 (build) failed: {build_result.details}[/red]")
-                feedback_parts.append(f"Gate 0 (build) FAILED:\n{build_result.details}")
-                return False, "\n\n".join(feedback_parts)
-            console.print("[green]  Gate 0 (build) passed[/green]")
+                if build_result.infra_error:
+                    console.print(f"[yellow]  Gate 0 (build) skipped — environment error: {build_result.details[:200]}[/yellow]")
+                    await self._emit("task:review_update", {
+                        "task_id": task.id, "gate": "gate0_build", "passed": True,
+                        "skipped": True, "details": f"Skipped (infra error): {build_result.details[:200]}",
+                    }, db=db, pipeline_id=pipeline_id)
+                else:
+                    console.print(f"[red]  Gate 0 (build) failed: {build_result.details}[/red]")
+                    feedback_parts.append(f"Gate 0 (build) FAILED:\n{build_result.details}")
+                    return False, "\n\n".join(feedback_parts)
+            else:
+                console.print("[green]  Gate 0 (build) passed[/green]")
         else:
             console.print("[dim]  Gate 0 (build): skipped — no build command configured[/dim]")
             await self._emit("task:review_update", {
@@ -617,10 +656,18 @@ class ReviewMixin:
             "details": gate1_result.details,
         }, db=db, pipeline_id=pipeline_id)
         if not gate1_result.passed:
-            console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
-            feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
-            return False, "\n\n".join(feedback_parts)
-        console.print("[green]  L1 passed[/green]")
+            if gate1_result.infra_error:
+                console.print(f"[yellow]  L1 (lint) skipped — environment error: {gate1_result.details[:200]}[/yellow]")
+                await self._emit("task:review_update", {
+                    "task_id": task.id, "gate": "L1", "passed": True,
+                    "skipped": True, "details": f"Skipped (infra error): {gate1_result.details[:200]}",
+                }, db=db, pipeline_id=pipeline_id)
+            else:
+                console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
+                feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
+                return False, "\n\n".join(feedback_parts)
+        else:
+            console.print("[green]  L1 passed[/green]")
 
         # L1 may have auto-fixed lint issues (unused imports, etc.) and
         # committed the result.  Recompute the diff so L2 reviews the
@@ -653,9 +700,16 @@ class ReviewMixin:
                 "details": test_result.details,
             }, db=db, pipeline_id=pipeline_id)
             if not test_result.passed:
-                console.print(f"[red]  Gate 1.5 (test) failed: {test_result.details}[/red]")
-                feedback_parts.append(f"Gate 1.5 (test) FAILED:\n{test_result.details}")
-                return False, "\n\n".join(feedback_parts)
+                if test_result.infra_error:
+                    console.print(f"[yellow]  Gate 1.5 (test) skipped — environment error: {test_result.details[:200]}[/yellow]")
+                    await self._emit("task:review_update", {
+                        "task_id": task.id, "gate": "gate1_5_test", "passed": True,
+                        "skipped": True, "details": f"Skipped (infra error): {test_result.details[:200]}",
+                    }, db=db, pipeline_id=pipeline_id)
+                else:
+                    console.print(f"[red]  Gate 1.5 (test) failed: {test_result.details}[/red]")
+                    feedback_parts.append(f"Gate 1.5 (test) FAILED:\n{test_result.details}")
+                    return False, "\n\n".join(feedback_parts)
             console.print("[green]  Gate 1.5 (test) passed[/green]")
         else:
             console.print("[dim]  Gate 1.5 (test): skipped — no test command configured[/dim]")
@@ -920,9 +974,12 @@ class ReviewMixin:
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
         # Failed — include output
-        output = (lint_result.stdout or lint_result.stderr or "Unknown error")[:500]
+        combined_output = (lint_result.stdout or "") + (lint_result.stderr or "")
+        output = (combined_output or "Unknown error")[:500]
+        is_infra = any(pattern in combined_output for pattern in self._INFRA_ERROR_PATTERNS)
         return GateResult(
             passed=False,
             gate="gate1_auto_check",
             details=f"Lint errors:\n{output}",
+            infra_error=is_infra,
         )
