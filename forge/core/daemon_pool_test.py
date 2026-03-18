@@ -190,7 +190,7 @@ class TestContinuousTaskPool:
         db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
 
         monitor = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value={})
+        monitor.take_snapshot = AsyncMock(return_value={})
         monitor.can_dispatch = MagicMock(return_value=True)
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=make_dispatch_plan), \
@@ -262,7 +262,7 @@ class TestContinuousTaskPool:
         db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
 
         monitor = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value={})
+        monitor.take_snapshot = AsyncMock(return_value={})
         monitor.can_dispatch = MagicMock(return_value=True)
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=always_dispatch), \
@@ -333,7 +333,7 @@ class TestContinuousTaskPool:
         db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
 
         monitor = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value={})
+        monitor.take_snapshot = AsyncMock(return_value={})
         monitor.can_dispatch = MagicMock(return_value=True)
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=dispatch_once), \
@@ -407,7 +407,7 @@ class TestContinuousTaskPool:
         ])
 
         monitor = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value={})
+        monitor.take_snapshot = AsyncMock(return_value={})
         monitor.can_dispatch = MagicMock(return_value=True)
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=dispatch_once), \

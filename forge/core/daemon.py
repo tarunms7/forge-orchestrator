@@ -1115,7 +1115,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                             pipeline_id, paused_elapsed,
                         )
 
-            snapshot = monitor.take_snapshot()
+            snapshot = await monitor.take_snapshot()
             if not monitor.can_dispatch(snapshot):
                 console.print(f"[yellow]Backpressure: {', '.join(monitor.blocked_reasons(snapshot))}[/yellow]")
                 await asyncio.sleep(self._settings.scheduler_poll_interval)

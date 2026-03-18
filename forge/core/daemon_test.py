@@ -176,7 +176,7 @@ def _make_minimal_execution_loop_mocks(tasks: list[MagicMock]):
 
     monitor = MagicMock()
     snapshot = MagicMock()
-    monitor.take_snapshot = MagicMock(return_value=snapshot)
+    monitor.take_snapshot = AsyncMock(return_value=snapshot)
     monitor.can_dispatch = MagicMock(return_value=True)
 
     worktree_mgr = MagicMock()
@@ -269,7 +269,7 @@ class TestAllTasksDoneEvent:
 
         monitor = MagicMock()
         snapshot = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value=snapshot)
+        monitor.take_snapshot = AsyncMock(return_value=snapshot)
         monitor.can_dispatch = MagicMock(return_value=True)
 
         emitted: list[tuple] = []
@@ -333,7 +333,7 @@ class TestPipelinePauseTracking:
 
         monitor = MagicMock()
         snapshot = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value=snapshot)
+        monitor.take_snapshot = AsyncMock(return_value=snapshot)
         monitor.can_dispatch = MagicMock(return_value=True)
 
         emitted: list[tuple] = []
@@ -388,7 +388,7 @@ class TestPipelinePauseTracking:
 
         monitor = MagicMock()
         snapshot = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value=snapshot)
+        monitor.take_snapshot = AsyncMock(return_value=snapshot)
         monitor.can_dispatch = MagicMock(return_value=True)
 
         emitted: list[tuple] = []
@@ -452,7 +452,7 @@ class TestPipelinePauseTracking:
             with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
                 await daemon._execution_loop(
                     db, MagicMock(), MagicMock(), MagicMock(), monitor=MagicMock(
-                        take_snapshot=MagicMock(return_value=MagicMock()),
+                        take_snapshot=AsyncMock(return_value=MagicMock()),
                         can_dispatch=MagicMock(return_value=True),
                     ),
                     pipeline_id="pipe-abc"
@@ -486,7 +486,7 @@ class TestPipelinePauseTracking:
         db.add_pipeline_paused_duration = AsyncMock()
 
         monitor = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value=MagicMock())
+        monitor.take_snapshot = AsyncMock(return_value=MagicMock())
         monitor.can_dispatch = MagicMock(return_value=True)
 
         daemon._emit = AsyncMock()
@@ -534,7 +534,7 @@ class TestPipelinePauseTracking:
         db.clear_executor_info = AsyncMock()
 
         monitor = MagicMock()
-        monitor.take_snapshot = MagicMock(return_value=MagicMock())
+        monitor.take_snapshot = AsyncMock(return_value=MagicMock())
         monitor.can_dispatch = MagicMock(return_value=True)
 
         emitted: list[tuple] = []
