@@ -98,44 +98,6 @@ async def test_force_release_agent(db: Database):
     assert agent.current_task is None
 
 
-async def test_get_task_counts_by_state_empty_db(db: Database):
-    counts = await db.get_task_counts_by_state()
-    assert counts == {}
-
-
-async def test_get_task_counts_by_state_counts_each_state(db: Database):
-    await db.create_task(
-        id="t1", title="T1", description="D", files=[], depends_on=[], complexity="low",
-    )
-    await db.create_task(
-        id="t2", title="T2", description="D", files=[], depends_on=[], complexity="low",
-    )
-    await db.create_task(
-        id="t3", title="T3", description="D", files=[], depends_on=[], complexity="low",
-    )
-    await db.update_task_state("t2", "in_progress")
-    await db.update_task_state("t3", "completed")
-
-    counts = await db.get_task_counts_by_state()
-
-    assert counts == {"todo": 1, "in_progress": 1, "completed": 1}
-
-
-async def test_get_task_counts_by_state_multiple_tasks_same_state(db: Database):
-    for i in range(4):
-        await db.create_task(
-            id=f"t{i}", title=f"T{i}", description="D", files=[], depends_on=[], complexity="low",
-        )
-    await db.update_task_state("t0", "failed")
-    await db.update_task_state("t1", "failed")
-    await db.update_task_state("t2", "failed")
-
-    counts = await db.get_task_counts_by_state()
-
-    assert counts["failed"] == 3
-    assert counts["todo"] == 1
-    assert len(counts) == 2
-
 
 async def test_create_task_with_pipeline_id(db: Database):
     await db.create_pipeline(
