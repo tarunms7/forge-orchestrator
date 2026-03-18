@@ -587,12 +587,6 @@ class Database:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def get_task_counts_by_state(self) -> dict[str, int]:
-        async with self._session_factory() as session:
-            stmt = select(TaskRow.state, func.count(TaskRow.id)).group_by(TaskRow.state)
-            result = await session.execute(stmt)
-            return {state: count for state, count in result.all()}
-
     # ── Pipelines ─────────────────────────────────────────────────────
 
     async def create_pipeline(

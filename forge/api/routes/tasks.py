@@ -120,27 +120,6 @@ async def _set_pipeline_require_approval(forge_db, pipeline_id: str, value: bool
             await session.commit()
 
 
-def _parse_diff_stats(diff_text: str) -> dict:
-    """Parse diff text to extract file stats."""
-    files_changed = 0
-    lines_added = 0
-    lines_removed = 0
-
-    for line in diff_text.splitlines():
-        if line.startswith("diff --git"):
-            files_changed += 1
-        elif line.startswith("+") and not line.startswith("+++"):
-            lines_added += 1
-        elif line.startswith("-") and not line.startswith("---"):
-            lines_removed += 1
-
-    return {
-        "files_changed": files_changed,
-        "lines_added": lines_added,
-        "lines_removed": lines_removed,
-    }
-
-
 # ── PR title generation helpers ──────────────────────────────────────
 
 

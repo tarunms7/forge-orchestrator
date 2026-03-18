@@ -1729,49 +1729,6 @@ class TestRequireApprovalPassthrough:
         assert pipeline.require_approval is False
 
 
-# ── Diff stats parsing tests ─────────────────────────────────────────
-
-
-class TestParseDiffStats:
-    """Tests for _parse_diff_stats helper."""
-
-    def test_parse_empty_diff(self):
-        from forge.api.routes.tasks import _parse_diff_stats
-        stats = _parse_diff_stats("")
-        assert stats == {"files_changed": 0, "lines_added": 0, "lines_removed": 0}
-
-    def test_parse_single_file_diff(self):
-        from forge.api.routes.tasks import _parse_diff_stats
-        diff = (
-            "diff --git a/foo.py b/foo.py\n"
-            "--- a/foo.py\n"
-            "+++ b/foo.py\n"
-            "@@ -1,3 +1,5 @@\n"
-            " unchanged\n"
-            "+added line 1\n"
-            "+added line 2\n"
-            "-removed line\n"
-        )
-        stats = _parse_diff_stats(diff)
-        assert stats["files_changed"] == 1
-        assert stats["lines_added"] == 2
-        assert stats["lines_removed"] == 1
-
-    def test_parse_multi_file_diff(self):
-        from forge.api.routes.tasks import _parse_diff_stats
-        diff = (
-            "diff --git a/a.py b/a.py\n"
-            "+line\n"
-            "diff --git a/b.py b/b.py\n"
-            "-old\n"
-            "+new\n"
-        )
-        stats = _parse_diff_stats(diff)
-        assert stats["files_changed"] == 2
-        assert stats["lines_added"] == 2
-        assert stats["lines_removed"] == 1
-
-
 # ── IDOR tests for new endpoints ─────────────────────────────────────
 
 
