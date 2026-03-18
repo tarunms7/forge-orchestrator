@@ -605,7 +605,12 @@ class ForgeApp(App):
         from forge.core.daemon import ForgeDaemon
         from forge.config.settings import ForgeSettings
 
+        from forge.config.project_config import ProjectConfig, apply_project_config
+
         settings = self._settings or ForgeSettings()
+        project_config = ProjectConfig.load(self._project_dir)
+        apply_project_config(settings, project_config)
+
         emitter = EventEmitter()
         self._bus = EventBus()
         self._source = EmbeddedSource(emitter, self._bus)
@@ -954,8 +959,11 @@ class ForgeApp(App):
                 from forge.core.events import EventEmitter
                 from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
                 from forge.config.settings import ForgeSettings
+                from forge.config.project_config import ProjectConfig, apply_project_config
 
                 settings = self._settings or ForgeSettings()
+                project_config = ProjectConfig.load(pipeline.project_dir)
+                apply_project_config(settings, project_config)
                 emitter = EventEmitter()
                 self._bus = EventBus()
                 self._source = EmbeddedSource(emitter, self._bus)

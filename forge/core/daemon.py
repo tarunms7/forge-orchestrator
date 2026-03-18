@@ -169,6 +169,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         settings: ForgeSettings | None = None,
         event_emitter: EventEmitter | None = None,
     ) -> None:
+        from forge.config.project_config import ProjectConfig
+
         self._project_dir = project_dir
         self._settings = settings or ForgeSettings()
         self._state_machine = TaskStateMachine()
@@ -176,6 +178,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._strategy = self._settings.model_strategy
         self._snapshot: ProjectSnapshot | None = None
         self._merge_lock = asyncio.Lock()
+        self._project_config = ProjectConfig.load(project_dir)
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""
@@ -969,7 +972,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Reap completed tasks from the pool
             done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
             for tid in done_ids:
-                atask = self._active_tasks.pop(tid)
+                atask = self._active_tasks.pop(tid, None)
+                if atask is None:
+                    continue  # Already removed by concurrent event handler
                 exc = atask.exception() if not atask.cancelled() else None
                 if exc:
                     await self._handle_task_exception(tid, exc, db, worktree_mgr, pipeline_id)

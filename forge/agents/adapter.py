@@ -102,11 +102,9 @@ FORGE_QUESTION:
 - If you hit 0 remaining, proceed with best judgment."""
 
 
-AGENT_SYSTEM_PROMPT_TEMPLATE = """You are a coding agent working on a specific task within the Forge orchestration system.
+AGENT_SYSTEM_PROMPT_TEMPLATE = """You are a senior software engineer working on a focused task.
 
-Your working directory is {cwd}. Do NOT read, write, or execute anything outside this directory{extra_dirs_clause}.
-
-You have access to a git worktree isolated to your task. Write clean, tested code.
+Your working directory is {cwd}.{extra_dirs_clause}
 
 {project_context}
 
@@ -122,16 +120,25 @@ You have access to a git worktree isolated to your task. Write clean, tested cod
 
 {question_protocol}
 
-{working_effectively}
+## Boundaries
+- Only modify files listed in File Scope above (plus their test files). Out-of-scope changes are auto-reverted.
+- If contracts are specified above, implement them exactly as defined.
+- Follow existing code style — read before you write.
+- Do NOT run: git push, git branch, git rebase, git checkout, git reset. The orchestrator manages branches.
+- You CAN and SHOULD run: git diff, git status, git log to verify your own work.
 
-Rules:
-- You MUST ONLY modify files listed in the File Scope section above (plus their related test files). Changes to other files are automatically reverted by the system.
-- If Interface Contracts are provided above, you MUST implement them EXACTLY as specified. Do NOT rename fields, change types, or alter response shapes.
-- Follow existing code style and patterns — see the conventions section above
-- Write tests for any new functionality
-- Do NOT run git add, git commit, or any git write commands — the system handles commits automatically after you finish. Just edit the files and stop.
-- If you encounter an error, fix it rather than giving up
-- If image file paths are mentioned in the task description, use the Read tool to view them (images are readable)"""
+## Turn Budget
+You have {max_turns} turns for this task. Manage them wisely:
+- If you're past turn {wrap_up_turn} and not done, STOP coding and write a status summary of what's done, what's remaining, and what the next agent should do.
+- An honest handoff is better than a half-finished hack.
+
+## Before You Finish
+1. Run git diff to review all your changes
+2. Run tests if a test command is available
+3. Stage and commit: git add -A && git commit -m '<type>: <short summary>'
+   Use conventional commits (feat, fix, refactor, test, docs, chore).
+   Max 72 chars. Describe WHAT changed, don't copy the task title.
+4. If nothing meaningful to do (files don't exist, task already done), make no changes."""
 
 
 def _build_conventions_block(
@@ -256,6 +263,7 @@ class AgentAdapter(ABC):
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
+        agent_max_turns: int = 25,
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -275,12 +283,11 @@ class ClaudeAdapter(AgentAdapter):
         questions_remaining: int = 3,
         resume: str | None = None,
         project_dir: str | None = None,
+        agent_max_turns: int = 25,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
-            extra_dirs_clause = " and the following allowed directories: " + ", ".join(
-                allowed_dirs
-            )
+            extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
         else:
             extra_dirs_clause = ""
         conventions_block = _build_conventions_block(conventions_json, conventions_md)
@@ -288,15 +295,12 @@ class ClaudeAdapter(AgentAdapter):
         if allowed_files:
             files_list = "\n".join(f"- {f}" for f in allowed_files)
             file_scope_block = (
-                "## File Scope (STRICT — enforced by the system)\n\n"
-                "You are ONLY allowed to modify these files:\n"
+                "## File Scope\n\n"
+                "You may only modify these files:\n"
                 f"{files_list}\n\n"
-                "ANY changes to files outside this list will be AUTOMATICALLY REVERTED "
-                "before review. Do NOT modify, create, or delete any other files — "
-                "it wastes your time and tokens.\n\n"
-                "**Exception**: Test files that correspond to the source files above "
-                "(e.g. `tests/test_<name>.py` or `<name>_test.py`) ARE allowed. "
-                "You may create or modify test files for your in-scope source files."
+                "Out-of-scope changes are automatically reverted before review.\n\n"
+                "**Exception**: Test files for the source files above "
+                "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
             )
         else:
             file_scope_block = ""
@@ -312,29 +316,8 @@ class ClaudeAdapter(AgentAdapter):
                     f"{claude_md_content}"
                 )
 
-        working_effectively = """## Working Effectively
-
-- Use all available tools. If you need to look up API docs, use WebSearch.
-  If you need to understand a library, read its source. Be resourceful.
-- If tests fail, read the full error output. Diagnose the root cause.
-  Fix it. Re-run. Don't guess — verify.
-- Before editing a file, read it first. Understand the existing patterns.
-  Follow them. Don't introduce new conventions.
-- If you're unsure about something, explore first. Grep the codebase.
-  Read related files. Build understanding before making changes.
-- Do NOT run git commands (add, commit, push, etc). The orchestrator
-  handles all git operations automatically after you finish.
-- If you get F821 (undefined name) lint errors on type annotations, string
-  quotes do NOT fix it — ruff still checks inside strings. Use a
-  `TYPE_CHECKING` guard instead:
-  ```python
-  from __future__ import annotations
-  from typing import TYPE_CHECKING
-  if TYPE_CHECKING:
-      from module import MyType
-  ```
-- If the same lint error persists after two fix attempts, try a completely
-  different approach rather than repeating the same fix."""
+        max_turns = agent_max_turns
+        wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
 
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
             cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
@@ -345,14 +328,15 @@ class ClaudeAdapter(AgentAdapter):
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
             claude_md_block=claude_md_block,
-            working_effectively=working_effectively,
+            max_turns=max_turns,
+            wrap_up_turn=wrap_up_turn,
         )
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
             permission_mode="acceptEdits",
             cwd=worktree_path,
             model=model,
-            max_turns=25,
+            max_turns=max_turns,
             resume=resume,
         )
 
@@ -374,6 +358,7 @@ class ClaudeAdapter(AgentAdapter):
         autonomy: str = "balanced",
         questions_remaining: int = 3,
         project_dir: str | None = None,
+        agent_max_turns: int = 25,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -387,6 +372,7 @@ class ClaudeAdapter(AgentAdapter):
             questions_remaining=questions_remaining,
             resume=resume,
             project_dir=project_dir,
+            agent_max_turns=agent_max_turns,
         )
 
         try:
