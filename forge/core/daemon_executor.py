@@ -51,6 +51,17 @@ class ExecutorMixin:
     ``_handle_retry``, ``_handle_merge_retry``.
     """
 
+    def _build_project_context(self) -> str:
+        """Build project context string from snapshot + forge.toml instructions."""
+        parts = []
+        if self._snapshot:
+            parts.append(self._snapshot.format_for_agent())
+        # Inject user instructions from .forge/forge.toml
+        instructions = getattr(getattr(self, "_project_config", None), "instructions", "")
+        if instructions:
+            parts.append(f"## User Instructions (from forge.toml)\n\n{instructions}")
+        return "\n\n".join(parts)
+
     # -- orchestrator ----------------------------------------------------
 
     async def _execute_task(
@@ -1016,7 +1027,7 @@ class ExecutorMixin:
         result = await runtime.run_task(
             agent_id, prompt, worktree_path, task.files,
             allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
-            project_context=self._snapshot.format_for_agent() if self._snapshot else "",
+            project_context=self._build_project_context(),
             conventions_json=conventions_json,
             conventions_md=conventions_md,
             completed_deps=completed_deps if completed_deps else None,
