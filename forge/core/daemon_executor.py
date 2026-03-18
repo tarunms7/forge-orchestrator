@@ -286,7 +286,7 @@ class ExecutorMixin:
         # The agent is instructed to commit, but may fail to do so if the
         # SDK session was sandboxed or the agent simply forgot. Without
         # this, uncommitted changes are invisible to the merge pipeline.
-        self._auto_commit_if_needed(worktree_path, task_id)
+        self._auto_commit_if_needed(worktree_path, task_id, task_title=getattr(task, 'title', ''))
 
         diff = _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         if not diff.strip():
@@ -305,7 +305,7 @@ class ExecutorMixin:
     # -- auto-commit safety net -------------------------------------------
 
     @staticmethod
-    def _auto_commit_if_needed(worktree_path: str, task_id: str) -> bool:
+    def _auto_commit_if_needed(worktree_path: str, task_id: str, task_title: str = "") -> bool:
         """Commit any uncommitted agent changes as a safety net.
 
         The agent is instructed to commit its own work, but may fail to if:
@@ -349,9 +349,16 @@ class ExecutorMixin:
             )
             return False
 
-        # Commit with a clear message indicating this was auto-committed
+        # Build a descriptive commit message from the task title
+        if task_title:
+            # Truncate to 72 chars for conventional commit format
+            short_title = task_title[:65].rstrip()
+            commit_msg = f"feat({task_id}): {short_title}"
+        else:
+            commit_msg = f"feat({task_id}): implement task changes"
+
         commit_result = _run_git(
-            ["commit", "-m", f"feat({task_id}): auto-commit agent changes"],
+            ["commit", "-m", commit_msg],
             cwd=worktree_path, check=False,
             description="auto-commit agent changes",
         )
