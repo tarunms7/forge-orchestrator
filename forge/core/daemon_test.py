@@ -955,8 +955,6 @@ class TestExecuteBranchCreation:
         db.set_pipeline_branch_name = AsyncMock()
         db.set_pipeline_base_branch = AsyncMock()
 
-        branch_create_mock = AsyncMock(return_value=_mock_completed(0))
-
         async_sub = AsyncMock(side_effect=[
             # _preflight_checks calls (5 max)
             _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
