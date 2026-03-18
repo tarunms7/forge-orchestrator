@@ -970,7 +970,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._current_answer_handler = _answer_handler
         while True:
             # Reap completed tasks from the pool
-            done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
+            done_ids = [tid for tid, atask in list(self._active_tasks.items()) if atask.done()]
             for tid in done_ids:
                 atask = self._active_tasks.pop(tid, None)
                 if atask is None:
