@@ -7,13 +7,14 @@ from forge.tui.widgets.logo import FORGE_LOGO, ForgeLogo
 
 
 EXPECTED_LOGO_PLAIN = """\
-███████   █████   ██████   ██████   ███████
-██       ██   ██  ██   ██  ██       ██
-█████    ██   ██  ██████   ██  ███  █████
-██       ██   ██  ██  ██   ██   ██  ██
-██        █████   ██   ██   █████   ███████
+███████╗ ██████╗ ██████╗  ██████╗ ███████╗
+██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝
+█████╗  ██║   ██║██████╔╝██║  ███╗█████╗
+██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝
+██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗
+╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
 
-           O R C H E S T R A T O R"""
+        O R C H E S T R A T O R"""
 
 
 def _strip_markup(text: str) -> str:
@@ -43,8 +44,8 @@ def test_forge_logo_matches_expected_ascii_art() -> None:
 def test_forge_logo_is_reasonable_height() -> None:
     """Logo content should stay at its expected line count."""
     lines = FORGE_LOGO.strip().split('\n')
-    assert len(lines) == 7, (
-        f"Expected 7 lines, got {len(lines)}"
+    assert len(lines) == 8, (
+        f"Expected 8 lines, got {len(lines)}"
     )
 
 
@@ -54,10 +55,10 @@ def test_forge_logo_has_correct_color() -> None:
 
 
 def test_forge_logo_uses_ascii_lettering() -> None:
-    """Logo should use explicit monospaced block lettering."""
+    """Logo should use explicit block logo characters."""
     plain = _strip_markup(FORGE_LOGO)
-    assert '██████' in plain
-    assert '██   ██' in plain
+    assert '█' in plain
+    assert '╗' in plain
 
 
 def test_forge_logo_widget_instantiates() -> None:
