@@ -1,6 +1,8 @@
 """Tests for daemon_review — sibling context builder, test gate scoping, and review streaming."""
 
 
+import subprocess
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -673,7 +675,7 @@ class TestLintGateAutoFix:
             "-import sys\n"
         )
 
-        def fake_run_git(args, cwd=None, check=True, description=""):
+        async def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
             if args == ["diff"]:
                 result.stdout = diff_output
@@ -683,22 +685,16 @@ class TestLintGateAutoFix:
                 result.stdout = ""
             return result
 
+        fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
-            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            # First call: ruff --fix, second: ruff check (pass)
-            fix_result = MagicMock()
-            fix_result.returncode = 0
-            check_result = MagicMock()
-            check_result.returncode = 0
-            check_result.stdout = ""
-            check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
-
             result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
@@ -710,26 +706,21 @@ class TestLintGateAutoFix:
         """When the linter makes no changes, GateResult.details is plain 'Lint clean'."""
         mixin = self._make_mixin()
 
-        def fake_run_git(args, cwd=None, check=True, description=""):
+        async def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
             result.stdout = ""
             return result
 
+        fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
-            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            fix_result = MagicMock()
-            fix_result.returncode = 0
-            check_result = MagicMock()
-            check_result.returncode = 0
-            check_result.stdout = ""
-            check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
-
             result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
@@ -742,7 +733,7 @@ class TestLintGateAutoFix:
         mixin = self._make_mixin()
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=None),
         ):
@@ -765,28 +756,23 @@ class TestLintGateAutoFix:
             check_via_output=True,
         )
 
-        def fake_run_git(args, cwd=None, check=True, description=""):
+        async def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
             result.stdout = ""
             return result
 
+        fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        # gofmt -l returns filenames on stdout when unformatted
+        check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="main.go\n", stderr="")
+
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["main.go"]),
+            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["main.go"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=gofmt_strategy),
             patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/gofmt"),
-            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            fix_result = MagicMock()
-            fix_result.returncode = 0
-            # gofmt -l returns filenames on stdout when unformatted
-            check_result = MagicMock()
-            check_result.returncode = 0  # gofmt always exits 0
-            check_result.stdout = "main.go\n"
-            check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
-
             result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is False
@@ -805,7 +791,7 @@ class TestLintGateAutoFix:
             "+\n"
         )
 
-        def fake_run_git(args, cwd=None, check=True, description=""):
+        async def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
             if args == ["diff"]:
                 result.stdout = diff_output
@@ -815,21 +801,16 @@ class TestLintGateAutoFix:
                 result.stdout = ""
             return result
 
+        fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["foo.py"]),
+            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
-            patch("forge.core.daemon_review.subprocess.run") as mock_subprocess,
+            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
-            fix_result = MagicMock()
-            fix_result.returncode = 0
-            check_result = MagicMock()
-            check_result.returncode = 0
-            check_result.stdout = ""
-            check_result.stderr = ""
-            mock_subprocess.side_effect = [fix_result, check_result]
-
             result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
