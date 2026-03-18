@@ -49,6 +49,7 @@ from forge.core.daemon_helpers import (  # noqa: F401
     _get_diff_stats,
     _get_changed_files_vs_main,
     _print_status_table,
+    async_subprocess,
 )
 
 logger = logging.getLogger("forge")
@@ -240,34 +241,34 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         errors = []
 
         # Valid git repo?
-        result = subprocess.run(
+        result = await async_subprocess(
             ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir,
         )
         if result.returncode != 0:
             errors.append("Not a git repository")
 
         # Ensure at least one commit exists (worktrees need valid HEAD)
-        has_commits = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=project_dir, capture_output=True,
-        ).returncode == 0
-        if not has_commits:
+        has_commits_result = await async_subprocess(
+            ["git", "rev-parse", "HEAD"], cwd=project_dir,
+        )
+        if has_commits_result.returncode != 0:
             console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
-            subprocess.run(
+            await async_subprocess(
                 ["git", "commit", "--allow-empty", "-m", "chore: initial commit (forge)"],
-                cwd=project_dir, capture_output=True, text=True,
+                cwd=project_dir,
             )
 
         # Git remote (warning only)
-        result = subprocess.run(
-            ["git", "remote"], cwd=project_dir, capture_output=True, text=True,
+        result = await async_subprocess(
+            ["git", "remote"], cwd=project_dir,
         )
         if not result.stdout.strip():
             console.print("[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]")
 
         # gh CLI auth (optional)
         if shutil.which("gh"):
-            result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+            result = await async_subprocess(["gh", "auth", "status"], cwd=project_dir)
             if result.returncode != 0:
                 console.print("[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]")
 
@@ -662,7 +663,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # has checked out NOW, which may be different from the original base.
         # Use the base branch stored by the TUI (user's explicit choice).
         # Fall back to detecting the current checkout only if not stored.
-        base_branch = getattr(pipeline_record, "base_branch", None) or _get_current_branch(self._project_dir)
+        base_branch = getattr(pipeline_record, "base_branch", None) or await _get_current_branch(self._project_dir)
         custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
         if custom_branch and custom_branch.strip():
             pipeline_branch = custom_branch.strip()
@@ -678,24 +679,36 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # On resume/retry the branch already exists and may contain merged
         # task changes — force-resetting it would DESTROY that work.
         if not resume:
-            subprocess.run(
+            result = await async_subprocess(
                 ["git", "branch", "-f", pipeline_branch, base_branch],
-                cwd=self._project_dir, check=True, capture_output=True,
+                cwd=self._project_dir,
             )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    ["git", "branch", "-f", pipeline_branch, base_branch],
+                    result.stdout, result.stderr,
+                )
             await db.set_pipeline_base_branch(pid, base_branch)
         else:
             # Verify the branch still exists (safety check)
-            branch_check = subprocess.run(
+            branch_check = await async_subprocess(
                 ["git", "rev-parse", "--verify", pipeline_branch],
-                cwd=self._project_dir, capture_output=True, text=True,
+                cwd=self._project_dir,
             )
             if branch_check.returncode != 0:
                 # Branch was deleted — recreate it from base
                 console.print(f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]")
-                subprocess.run(
+                result = await async_subprocess(
                     ["git", "branch", "-f", pipeline_branch, base_branch],
-                    cwd=self._project_dir, check=True, capture_output=True,
+                    cwd=self._project_dir,
                 )
+                if result.returncode != 0:
+                    raise subprocess.CalledProcessError(
+                        result.returncode,
+                        ["git", "branch", "-f", pipeline_branch, base_branch],
+                        result.stdout, result.stderr,
+                    )
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
         merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
 
