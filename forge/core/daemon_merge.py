@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from rich.console import Console
@@ -150,6 +151,9 @@ class MergeMixin:
                 f"[yellow]{task_id}: retry {task.retry_count + 1}/{self._settings.max_retries}"
                 f" — {'with review feedback' if review_feedback else 'clean retry'}[/yellow]"
             )
+            backoff = min(5 * (2 ** task.retry_count), 120)
+            logger.info("Retry backoff: waiting %ds before retry %d for %s", backoff, task.retry_count + 1, task_id)
+            await asyncio.sleep(backoff)
             await db.retry_task(task_id, review_feedback=review_feedback)
             if pipeline_id:
                 await self._emit(
@@ -220,6 +224,9 @@ class MergeMixin:
                 f"{task.retry_count + 1}/{self._settings.max_retries}"
                 f" — skipping agent + review[/yellow]"
             )
+            backoff = min(5 * (2 ** task.retry_count), 120)
+            logger.info("Merge retry backoff: waiting %ds for %s", backoff, task_id)
+            await asyncio.sleep(backoff)
             await db.retry_task_for_merge(task_id)
             if pipeline_id:
                 await self._emit(

@@ -322,6 +322,16 @@ class PipelineScreen(Screen):
             if error:
                 from forge.tui.app import _escape_markup
                 self.app.notify(f"Pipeline error: {_escape_markup(error)}", severity="error", timeout=10)
+        if field == "auto_decided":
+            info = self._state.last_auto_decided
+            if info:
+                from forge.tui.app import _escape_markup
+                self.app.notify(
+                    f"Question auto-answered for task {_escape_markup(info['task_id'])} "
+                    f"(reason: {info['reason']}). Agent resumed with best judgment.",
+                    severity="warning",
+                    timeout=15,
+                )
 
     def _update_shortcut_bar(self, phase: str) -> None:
         """Update shortcut bar based on current pipeline phase."""

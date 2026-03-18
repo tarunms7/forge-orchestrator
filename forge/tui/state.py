@@ -66,6 +66,7 @@ class TuiState:
         self.error_history: dict[str, list[str]] = defaultdict(list)
 
         self.planning_stage: str = ""
+        self.last_auto_decided: dict | None = None
 
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
@@ -239,6 +240,8 @@ class TuiState:
                 history = self.question_history.setdefault(task_id, [])
                 history.append({"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"})
             self._notify("tasks")
+            self.last_auto_decided = {"task_id": task_id, "reason": data.get("reason", "timeout")}
+            self._notify("auto_decided")
 
     def _on_review_gate_started(self, data: dict) -> None:
         task_id = data.get("task_id")

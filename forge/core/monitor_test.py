@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import pytest
+
 from forge.core.monitor import ResourceMonitor, ResourceSnapshot
 
 
@@ -34,9 +36,10 @@ def test_cannot_dispatch_when_disk_low():
     assert monitor.can_dispatch(snap) is False
 
 
-def test_take_snapshot_returns_real_values():
+@pytest.mark.asyncio
+async def test_take_snapshot_returns_real_values():
     monitor = ResourceMonitor(cpu_threshold=80.0, memory_threshold_pct=20.0, disk_threshold_gb=5.0)
-    snap = monitor.take_snapshot()
+    snap = await monitor.take_snapshot()
     assert 0.0 <= snap.cpu_percent <= 100.0
     assert 0.0 <= snap.memory_available_pct <= 100.0
     assert snap.disk_free_gb >= 0.0
@@ -59,22 +62,24 @@ def test_healthy_snapshot_no_blocked_reasons():
     assert len(reasons) == 0
 
 
-def test_take_snapshot_returns_safe_defaults_on_oserror():
+@pytest.mark.asyncio
+async def test_take_snapshot_returns_safe_defaults_on_oserror():
     """When psutil raises OSError, take_snapshot returns safe defaults."""
     monitor = ResourceMonitor(cpu_threshold=80.0, memory_threshold_pct=20.0, disk_threshold_gb=5.0)
     with patch("forge.core.monitor.psutil.virtual_memory", side_effect=OSError("device not ready")):
-        snap = monitor.take_snapshot()
+        snap = await monitor.take_snapshot()
 
     assert snap.cpu_percent == 0.0
     assert snap.memory_available_pct == 100.0
     assert snap.disk_free_gb == 100.0
 
 
-def test_take_snapshot_returns_safe_defaults_on_runtime_error():
+@pytest.mark.asyncio
+async def test_take_snapshot_returns_safe_defaults_on_runtime_error():
     """When psutil raises RuntimeError, take_snapshot returns safe defaults."""
     monitor = ResourceMonitor(cpu_threshold=80.0, memory_threshold_pct=20.0, disk_threshold_gb=5.0)
     with patch("forge.core.monitor.psutil.virtual_memory", side_effect=RuntimeError("unexpected")):
-        snap = monitor.take_snapshot()
+        snap = await monitor.take_snapshot()
 
     assert snap.cpu_percent == 0.0
     assert snap.memory_available_pct == 100.0

@@ -1,5 +1,6 @@
 """Resource monitor. Tracks CPU, memory, disk and gates agent dispatch."""
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -30,7 +31,7 @@ class ResourceMonitor:
         self._memory_threshold_pct = memory_threshold_pct
         self._disk_threshold_gb = disk_threshold_gb
 
-    def take_snapshot(self) -> ResourceSnapshot:
+    def _take_snapshot_sync(self) -> ResourceSnapshot:
         try:
             mem = psutil.virtual_memory()
             disk = psutil.disk_usage("/")
@@ -46,6 +47,14 @@ class ResourceMonitor:
                 memory_available_pct=100.0,
                 disk_free_gb=100.0,
             )
+
+    async def take_snapshot(self) -> ResourceSnapshot:
+        try:
+            snapshot = await asyncio.to_thread(self._take_snapshot_sync)
+            return snapshot
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Resource snapshot failed: %s -- returning safe defaults", exc)
+            return ResourceSnapshot(cpu_percent=0.0, memory_available_pct=100.0, disk_free_gb=100.0)
 
     def can_dispatch(self, snapshot: ResourceSnapshot) -> bool:
         return len(self.blocked_reasons(snapshot)) == 0

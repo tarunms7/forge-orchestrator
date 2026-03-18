@@ -13,8 +13,8 @@ from forge.core.budget import check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
+    _extract_activity,
     _extract_implementation_summary,
-    _extract_text,
     _find_related_test_files,
     _get_changed_files_vs_main,
     _get_diff_stats,
@@ -898,7 +898,8 @@ class ExecutorMixin:
         if not retry_result.conflicting_files:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
-        prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
+        async with self._merge_lock:
+            prep = merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
             await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid, pre_merge_ref=pre_merge_ref)
             return
@@ -963,7 +964,7 @@ class ExecutorMixin:
         _batch: list[str] = []
 
         async def _on_msg(msg):
-            text = _extract_text(msg)
+            text = _extract_activity(msg)
             if not text:
                 return
             _batch.append(text)
