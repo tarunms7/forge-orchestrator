@@ -162,3 +162,77 @@ class TestApplyProjectConfig:
         settings = ForgeSettings()
         apply_project_config(settings, config)
         assert settings.test_cmd == "npm test"
+
+
+class TestIntegrationConfig:
+    """Tests for [integration] section parsing."""
+
+    def test_integration_defaults(self):
+        """No [integration] section → both checks disabled."""
+        config = ProjectConfig()
+        assert config.integration.post_merge.enabled is False
+        assert config.integration.final_gate.enabled is False
+        assert config.integration.post_merge.cmd is None
+        assert config.integration.final_gate.cmd is None
+
+    def test_integration_from_toml_defaults(self, tmp_path):
+        """TOML without [integration] → both disabled."""
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text('[agents]\nmax_turns = 25\n')
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.integration.post_merge.enabled is False
+        assert config.integration.final_gate.enabled is False
+
+    def test_integration_post_merge_only(self, tmp_path):
+        """Only [integration.post_merge] configured."""
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            '[integration.post_merge]\n'
+            'enabled = true\n'
+            'cmd = "make smoke"\n'
+            'timeout_seconds = 60\n'
+            'on_failure = "stop_pipeline"\n'
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.integration.post_merge.enabled is True
+        assert config.integration.post_merge.cmd == "make smoke"
+        assert config.integration.post_merge.timeout_seconds == 60
+        assert config.integration.post_merge.on_failure == "stop_pipeline"
+        # final_gate stays default
+        assert config.integration.final_gate.enabled is False
+
+    def test_integration_full(self, tmp_path):
+        """Both sections with all fields."""
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            '[integration.post_merge]\n'
+            'enabled = true\n'
+            'cmd = "pytest tests/smoke/"\n'
+            'timeout_seconds = 90\n'
+            'on_failure = "ask"\n'
+            '\n'
+            '[integration.final_gate]\n'
+            'enabled = true\n'
+            'cmd = "pytest tests/ --tb=short"\n'
+            'timeout_seconds = 300\n'
+            'on_failure = "ignore_and_continue"\n'
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.integration.post_merge.enabled is True
+        assert config.integration.post_merge.cmd == "pytest tests/smoke/"
+        assert config.integration.post_merge.timeout_seconds == 90
+        assert config.integration.final_gate.enabled is True
+        assert config.integration.final_gate.cmd == "pytest tests/ --tb=short"
+        assert config.integration.final_gate.timeout_seconds == 300
+        assert config.integration.final_gate.on_failure == "ignore_and_continue"
+
+    def test_integration_enabled_no_cmd(self, tmp_path):
+        """enabled=true but no cmd → no error, defaults to None."""
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            '[integration.post_merge]\n'
+            'enabled = true\n'
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.integration.post_merge.enabled is True
+        assert config.integration.post_merge.cmd is None

@@ -146,6 +146,9 @@ class PipelineRow(Base):
     # Executor tracking for orphan detection
     executor_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     executor_token: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    # Integration health check baseline
+    baseline_exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    integration_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
 class UserTemplateRow(Base):
@@ -693,6 +696,28 @@ class Database:
             row = result.scalar_one_or_none()
             if row:
                 row.branch_name = branch_name
+                await session.commit()
+
+    async def set_baseline_exit_code(self, pipeline_id: str, exit_code: int | None) -> None:
+        """Store the integration baseline exit code for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.baseline_exit_code = exit_code
+                await session.commit()
+
+    async def set_integration_status(self, pipeline_id: str, status_json: str) -> None:
+        """Store integration health check status JSON for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.integration_status = status_json
                 await session.commit()
 
     async def set_pipeline_contracts(self, pipeline_id: str, contracts_json: str) -> None:

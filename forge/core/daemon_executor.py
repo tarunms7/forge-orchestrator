@@ -1076,6 +1076,11 @@ class ExecutorMixin:
     ) -> None:
         """Mark task done and emit merge-success events.
 
+        If integration post-merge checks are enabled, runs the health check
+        BEFORE marking the task as DONE. If the check fails and the user (or
+        policy) chooses to stop, the task is NOT marked done — an early return
+        leaves it in MERGING state and emits a pipeline error.
+
         Args:
             pipeline_branch: The pipeline branch ref (e.g. ``forge/pipeline-abc123``)
                 used as the diff base so that stats reflect only *this* task's
@@ -1085,6 +1090,69 @@ class ExecutorMixin:
         """
         tag = f" ({label})" if label else ""
         console.print(f"[bold green]{task_id} merged{tag}![/bold green]")
+
+        # ── Post-merge integration health check ─────────────────────
+        integration_config = getattr(self, "_integration_config", None)
+        if integration_config is not None:
+            from forge.core.integration import effective_enabled, run_post_merge_check
+
+            if effective_enabled(integration_config.post_merge):
+                baseline_exit = getattr(self, "_baseline_exit_code", None)
+                # Use the actual pipeline branch name (merge target)
+                mw = getattr(self, "_merge_worker", None)
+                actual_pb = mw._main if mw else (pipeline_branch or "HEAD")
+
+                await self._emit("integration:check_started", {
+                    "task_id": task_id,
+                }, db=db, pipeline_id=pid)
+
+                check_result = await run_post_merge_check(
+                    integration_config.post_merge,
+                    self._project_dir,
+                    actual_pb,
+                    baseline_exit,
+                    task_id,
+                )
+
+                if check_result.status == "infra_error":
+                    logger.warning(
+                        "Post-merge integration check infra error for %s: %s — skipping",
+                        task_id, check_result.stderr[:200],
+                    )
+                    await self._emit("integration:check_result", {
+                        "task_id": task_id,
+                        "status": "infra_error",
+                    }, db=db, pipeline_id=pid)
+                elif check_result.status in ("failed", "timeout"):
+                    action = await self._resolve_integration_failure(
+                        integration_config.post_merge,
+                        check_result, db, pid,
+                        task_id=task_id, phase="post_merge",
+                    )
+                    await self._emit("integration:check_result", {
+                        "task_id": task_id,
+                        "status": check_result.status,
+                        "exit_code": check_result.exit_code,
+                        "is_regression": check_result.is_regression,
+                        "action": action,
+                    }, db=db, pipeline_id=pid)
+
+                    if action == "stop_pipeline":
+                        # Do NOT mark task DONE — leave in MERGING state
+                        await self._emit("pipeline:error", {
+                            "error": f"Integration check failed after merging {task_id}",
+                        }, db=db, pipeline_id=pid)
+                        await self._emit("pipeline:phase_changed", {
+                            "phase": "error",
+                        }, db=db, pipeline_id=pid)
+                        return  # early return — task NOT marked done
+                else:
+                    await self._emit("integration:check_result", {
+                        "task_id": task_id,
+                        "status": "passed",
+                    }, db=db, pipeline_id=pid)
+
+        # ── Mark task DONE (existing logic) ─────────────────────────
         await db.update_task_state(task_id, TaskState.DONE.value)
 
         # Extract and store implementation summary for downstream tasks

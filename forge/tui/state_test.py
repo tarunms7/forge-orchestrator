@@ -658,3 +658,131 @@ def test_pipeline_interrupted_event():
     state.phase = "executing"
     state.apply_event("pipeline:interrupted", {"summary": {"done": 2, "todo": 3}})
     assert state.phase == "interrupted"
+
+
+# ── Integration health check state tests ─────────────────────────────
+
+
+def test_integration_initial_state():
+    state = TuiState()
+    assert state.integration_baseline is None
+    assert state.integration_degraded is False
+    assert state.integration_checks == {}
+    assert state.integration_prompt is None
+    assert state.integration_final_gate is None
+
+
+def test_integration_baseline_started():
+    state = TuiState()
+    state.apply_event("integration:baseline_started", {})
+    assert state.integration_baseline == {"status": "running"}
+
+
+def test_integration_baseline_result():
+    state = TuiState()
+    state.apply_event("integration:baseline_result", {"status": "passed", "exit_code": 0})
+    assert state.integration_baseline["status"] == "passed"
+    assert state.integration_baseline["exit_code"] == 0
+
+
+def test_integration_baseline_failed_prompt():
+    state = TuiState()
+    state.apply_event("integration:baseline_failed_prompt", {"exit_code": 1})
+    assert state.integration_prompt is not None
+    assert state.integration_prompt["type"] == "baseline"
+    assert state.integration_prompt["exit_code"] == 1
+
+
+def test_integration_baseline_response_ignore():
+    state = TuiState()
+    state.integration_prompt = {"type": "baseline"}
+    state.apply_event("integration:baseline_response", {"action": "ignore_and_continue"})
+    assert state.integration_prompt is None
+    assert state.integration_degraded is True
+
+
+def test_integration_check_started():
+    state = TuiState()
+    state.apply_event("integration:check_started", {"task_id": "t1"})
+    assert state.integration_checks["t1"]["status"] == "running"
+
+
+def test_integration_check_result_passed():
+    state = TuiState()
+    state.apply_event("integration:check_result", {"task_id": "t1", "status": "passed"})
+    assert state.integration_checks["t1"]["status"] == "passed"
+    assert state.integration_degraded is False
+
+
+def test_integration_check_result_ignore():
+    state = TuiState()
+    state.apply_event("integration:check_result", {
+        "task_id": "t1", "status": "failed", "action": "ignore_and_continue",
+    })
+    assert state.integration_degraded is True
+
+
+def test_integration_check_prompt():
+    state = TuiState()
+    state.apply_event("integration:check_prompt", {
+        "task_id": "t1", "cmd": "make test", "exit_code": 1,
+        "is_regression": True, "baseline_was_red": False,
+        "options": ["ignore_and_continue", "stop_pipeline"],
+        "phase": "post_merge",
+    })
+    assert state.integration_prompt is not None
+    assert state.integration_prompt["type"] == "post_merge"
+    assert state.integration_prompt["task_id"] == "t1"
+
+
+def test_integration_check_response():
+    state = TuiState()
+    state.integration_prompt = {"type": "post_merge"}
+    state.apply_event("integration:check_response", {"action": "stop_pipeline"})
+    assert state.integration_prompt is None
+    assert state.integration_degraded is False  # stop doesn't degrade, it halts
+
+
+def test_integration_final_gate_started():
+    state = TuiState()
+    state.apply_event("integration:final_gate_started", {})
+    assert state.integration_final_gate == {"status": "running"}
+
+
+def test_integration_final_gate_result():
+    state = TuiState()
+    state.apply_event("integration:final_gate_result", {"status": "passed", "exit_code": 0})
+    assert state.integration_final_gate["status"] == "passed"
+
+
+def test_integration_reset_clears_state():
+    state = TuiState()
+    state.integration_baseline = {"status": "passed"}
+    state.integration_degraded = True
+    state.integration_checks["t1"] = {"status": "passed"}
+    state.integration_prompt = {"type": "baseline"}
+    state.integration_final_gate = {"status": "passed"}
+    state.reset()
+    assert state.integration_baseline is None
+    assert state.integration_degraded is False
+    assert state.integration_checks == {}
+    assert state.integration_prompt is None
+    assert state.integration_final_gate is None
+
+
+def test_integration_events_in_event_map():
+    """All integration events must be in the EVENT_MAP."""
+    integration_events = [
+        "integration:baseline_started",
+        "integration:baseline_result",
+        "integration:baseline_failed_prompt",
+        "integration:baseline_response",
+        "integration:check_started",
+        "integration:check_result",
+        "integration:check_prompt",
+        "integration:check_response",
+        "integration:final_gate_started",
+        "integration:final_gate_result",
+    ]
+    for event in integration_events:
+        assert event in TuiState._EVENT_MAP, f"Missing from _EVENT_MAP: {event}"

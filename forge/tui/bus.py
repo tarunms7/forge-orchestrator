@@ -68,6 +68,17 @@ TUI_EVENT_TYPES = [
     "slot:acquired",
     "slot:released",
     "slot:queued",
+    # Integration health checks
+    "integration:baseline_started",
+    "integration:baseline_result",
+    "integration:baseline_failed_prompt",
+    "integration:baseline_response",
+    "integration:check_started",
+    "integration:check_result",
+    "integration:check_prompt",
+    "integration:check_response",
+    "integration:final_gate_started",
+    "integration:final_gate_result",
 ]
 
 

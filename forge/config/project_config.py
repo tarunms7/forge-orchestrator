@@ -83,6 +83,47 @@ timeout_seconds = 600       # Per-agent timeout in seconds
 [instructions]
 text = """\
 """
+
+
+# ── Integration Health Checks ────────────────────────────────────────
+# Pipeline-level validation that runs AFTER tasks merge onto the pipeline branch.
+#
+# These are NOT the same as [checks.*] above:
+#   [checks.*]       → per-task, pre-commit gates. The AGENT runs these and fixes failures.
+#   [integration.*]  → pipeline-level. Validates the COMBINED result of all merged tasks.
+#
+# Both sections are OFF by default. Existing pipelines are completely unaffected.
+#
+# Provide the FULL command including virtual environment activation if needed:
+#   cmd = "source .venv/bin/activate && pytest tests/integration/ -x"
+#
+# If enabled = true but no cmd is set, the check is a no-op (effectively disabled).
+#
+# At pipeline start, Forge runs the health check on the clean base branch to capture
+# a "baseline". If the baseline already fails, you choose: ignore pre-existing
+# failures and continue, or cancel the pipeline.
+# Comparison is exit-code only: baseline exit 0 means post-merge must also exit 0.
+#
+# on_failure controls what happens when the check fails:
+#   "ask"                 → pause pipeline, show failure in TUI, let you choose (default)
+#   "ignore_and_continue" → log warning, mark pipeline as degraded, keep going
+#   "stop_pipeline"       → halt the pipeline immediately
+
+# Runs after EACH task merges into the pipeline branch.
+# Use a fast/smoke command here — it runs once per task.
+[integration.post_merge]
+enabled = false
+# cmd = "make smoke"               # Full command (include venv if needed)
+# timeout_seconds = 120            # Max seconds before the check is killed
+# on_failure = "ask"               # "ask" | "ignore_and_continue" | "stop_pipeline"
+
+# Runs ONCE after ALL tasks complete, before PR creation.
+# Use your full test suite here — it only runs once.
+[integration.final_gate]
+enabled = false
+# cmd = "pytest tests/ --tb=short" # Full command (include venv if needed)
+# timeout_seconds = 300            # Max seconds before the check is killed
+# on_failure = "ask"               # "ask" | "ignore_and_continue" | "stop_pipeline"
 '''
 
 
@@ -118,6 +159,26 @@ class AgentConfig:
 
 
 @dataclass
+class IntegrationCheckConfig:
+    """Config for a single integration health check (post_merge or final_gate).
+
+    Unlike [checks.*] which are per-task agent pre-commit gates,
+    integration checks validate the combined pipeline branch after merges.
+    """
+    enabled: bool = False
+    cmd: str | None = None          # Full shell command including venv activation
+    timeout_seconds: int = 120
+    on_failure: str = "ask"         # "ask" | "ignore_and_continue" | "stop_pipeline"
+
+
+@dataclass
+class IntegrationConfig:
+    """Parsed [integration] config from forge.toml."""
+    post_merge: IntegrationCheckConfig = field(default_factory=IntegrationCheckConfig)
+    final_gate: IntegrationCheckConfig = field(default_factory=IntegrationCheckConfig)
+
+
+@dataclass
 class ProjectConfig:
     """Parsed .forge/forge.toml configuration."""
     lint: CheckConfig = field(default_factory=CheckConfig)
@@ -126,6 +187,7 @@ class ProjectConfig:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     agents: AgentConfig = field(default_factory=AgentConfig)
     instructions: str = ""
+    integration: IntegrationConfig = field(default_factory=IntegrationConfig)
 
     @classmethod
     def from_toml(cls, path: str) -> ProjectConfig:
@@ -148,6 +210,9 @@ class ProjectConfig:
         review_raw = data.get("review", {})
         agents_raw = data.get("agents", {})
         instructions_raw = data.get("instructions", {})
+        integration_raw = data.get("integration", {})
+        post_merge_raw = integration_raw.get("post_merge", {})
+        final_gate_raw = integration_raw.get("final_gate", {})
 
         return cls(
             lint=CheckConfig(
@@ -177,6 +242,20 @@ class ProjectConfig:
                 timeout_seconds=agents_raw.get("timeout_seconds", 600),
             ),
             instructions=instructions_raw.get("text", "").strip(),
+            integration=IntegrationConfig(
+                post_merge=IntegrationCheckConfig(
+                    enabled=post_merge_raw.get("enabled", False),
+                    cmd=post_merge_raw.get("cmd"),
+                    timeout_seconds=post_merge_raw.get("timeout_seconds", 120),
+                    on_failure=post_merge_raw.get("on_failure", "ask"),
+                ),
+                final_gate=IntegrationCheckConfig(
+                    enabled=final_gate_raw.get("enabled", False),
+                    cmd=final_gate_raw.get("cmd"),
+                    timeout_seconds=final_gate_raw.get("timeout_seconds", 120),
+                    on_failure=final_gate_raw.get("on_failure", "ask"),
+                ),
+            ),
         )
 
     @classmethod
