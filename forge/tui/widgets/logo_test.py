@@ -10,12 +10,11 @@ from forge.tui.widgets.logo import FORGE_LOGO, ForgeLogo
 EXPECTED_LOGO_PLAIN = """\
 ███████╗ ██████╗ ██████╗  ██████╗ ███████╗
 ██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝
-█████╗  ██║   ██║██████╔╝██║  ███╗█████╗
-██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝
+█████╗  ██║   ██║██████╔╝██║  ███╗█████╗  
+██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝  
 ██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗
 ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
-
-              ORCHESTRATOR"""
+              O R C H E S T R A T O R"""
 
 
 def _strip_markup(text: str) -> str:
@@ -31,7 +30,7 @@ def test_forge_logo_constant_is_string() -> None:
 
 def test_forge_logo_contains_orchestrator_text() -> None:
     """Logo should contain ORCHESTRATOR as subtitle."""
-    plain = _strip_markup(FORGE_LOGO)
+    plain = _strip_markup(FORGE_LOGO).replace(" ", "")
     assert "ORCHESTRATOR" in plain
 
 
@@ -45,13 +44,13 @@ def test_forge_logo_is_reasonable_height() -> None:
     """Logo content should stay at its expected line count."""
     plain = _strip_markup(FORGE_LOGO).strip("\n")
     lines = plain.split("\n")
-    assert len(lines) == 8, f"Expected 8 lines, got {len(lines)}"
+    assert len(lines) == 7, f"Expected 7 lines, got {len(lines)}"
 
 
 def test_forge_logo_has_correct_colors() -> None:
     """Logo should use the expected accent colors."""
     assert "#d6a85f" in FORGE_LOGO
-    assert "#8aa9ff" in FORGE_LOGO
+    assert "#7fa8ff" in FORGE_LOGO
 
 
 def test_forge_logo_uses_block_lettering() -> None:
