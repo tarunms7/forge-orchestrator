@@ -1,9 +1,10 @@
 """Tests for daemon_helpers — git diff utilities and context helpers."""
 
+import asyncio
 import logging
 import subprocess
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -17,63 +18,119 @@ from forge.core.daemon_helpers import (
     _load_conventions_md,
     _parse_forge_question,
     _run_git,
+    async_subprocess,
 )
 
 
-def _make_proc(stdout: str = "", returncode: int = 0) -> MagicMock:
-    """Return a fake CompletedProcess-like mock."""
-    m = MagicMock()
-    m.stdout = stdout
-    m.returncode = returncode
-    return m
+def _make_proc(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
+    """Return a fake CompletedProcess."""
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=returncode, stdout=stdout, stderr="",
+    )
+
+
+def _async_side_effects(procs: list[subprocess.CompletedProcess]) -> AsyncMock:
+    """Create an AsyncMock with side_effect returning procs in order."""
+    mock = AsyncMock(side_effect=procs)
+    return mock
+
+
+# ── async_subprocess tests ────────────────────────────────────────────
+
+
+class TestAsyncSubprocess:
+    """Tests for the async_subprocess() helper."""
+
+    @pytest.mark.asyncio
+    async def test_success_returns_completed_process(self):
+        """Successful command returns a CompletedProcess with stdout/stderr."""
+        result = await async_subprocess(
+            ["echo", "hello"], cwd="/tmp",
+        )
+        assert isinstance(result, subprocess.CompletedProcess)
+        assert result.returncode == 0
+        assert "hello" in result.stdout
+        assert result.args == ["echo", "hello"]
+
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_does_not_raise(self):
+        """Non-zero exit code is returned, not raised."""
+        result = await async_subprocess(
+            ["git", "rev-parse", "--verify", "nonexistent-ref-abc123"],
+            cwd="/tmp",
+        )
+        assert result.returncode != 0
+
+    @pytest.mark.asyncio
+    async def test_timeout_kills_and_raises(self):
+        """A command exceeding the timeout is killed and TimeoutError raised."""
+        with pytest.raises(asyncio.TimeoutError, match="timed out"):
+            await async_subprocess(
+                ["sleep", "10"], cwd="/tmp", timeout=0.1,
+            )
+
+    @pytest.mark.asyncio
+    async def test_completed_process_shape(self):
+        """Verify the returned CompletedProcess has the expected attributes."""
+        result = await async_subprocess(
+            ["echo", "test"], cwd="/tmp",
+        )
+        assert hasattr(result, "args")
+        assert hasattr(result, "returncode")
+        assert hasattr(result, "stdout")
+        assert hasattr(result, "stderr")
+        assert isinstance(result.stdout, str)
+        assert isinstance(result.stderr, str)
+
+
+# ── _get_diff_vs_main tests ──────────────────────────────────────────
 
 
 class TestGetDiffVsMainBaseRef:
     """_get_diff_vs_main() with explicit base_ref skips the --not --remotes heuristic."""
 
-    def test_uses_base_ref_when_provided(self):
+    @pytest.mark.asyncio
+    async def test_uses_base_ref_when_provided(self):
         """Should diff base_ref..HEAD directly, no rev-list call."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         diff_proc = _make_proc("diff --git a/foo.py b/foo.py\n+new line\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, diff_proc]) as mock_run:
-            result = _get_diff_vs_main("/repo/worktrees/task-1", base_ref="forge/pipeline-abc")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, diff_proc]) as mock_sub:
+            result = await _get_diff_vs_main("/repo/worktrees/task-1", base_ref="forge/pipeline-abc")
 
         assert "new line" in result
-        assert mock_run.call_count == 2
-        # First call: verify ref exists
-        assert mock_run.call_args_list[0] == call(
+        assert mock_sub.call_count == 2
+        assert mock_sub.call_args_list[0] == call(
             ["git", "rev-parse", "--verify", "forge/pipeline-abc"],
             cwd="/repo/worktrees/task-1",
-            capture_output=True, text=True,
         )
-        # Second call: git diff base_ref HEAD
-        assert mock_run.call_args_list[1] == call(
+        assert mock_sub.call_args_list[1] == call(
             ["git", "diff", "forge/pipeline-abc", "HEAD"],
             cwd="/repo/worktrees/task-1",
-            capture_output=True, text=True,
         )
 
-    def test_falls_back_when_base_ref_not_found(self):
+    @pytest.mark.asyncio
+    async def test_falls_back_when_base_ref_not_found(self):
         """When base_ref can't be resolved, falls back to --not --remotes heuristic."""
         verify_fail = _make_proc("", returncode=128)
         count_proc = _make_proc("1\n")
         heuristic_verify = _make_proc("def456\n", returncode=0)
         diff_proc = _make_proc("diff --git a/bar.py b/bar.py\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_fail, count_proc, heuristic_verify, diff_proc]):
-            result = _get_diff_vs_main("/repo", base_ref="forge/pipeline-missing")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_fail, count_proc, heuristic_verify, diff_proc]):
+            result = await _get_diff_vs_main("/repo", base_ref="forge/pipeline-missing")
 
         assert result == "diff --git a/bar.py b/bar.py\n"
 
-    def test_none_base_ref_uses_heuristic(self):
+    @pytest.mark.asyncio
+    async def test_none_base_ref_uses_heuristic(self):
         """When base_ref is None, uses the commit-count heuristic directly."""
         count_proc = _make_proc("1\n")
         heuristic_verify = _make_proc("abc\n", returncode=0)
         diff_proc = _make_proc("some diff\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, heuristic_verify, diff_proc]):
-            result = _get_diff_vs_main("/repo", base_ref=None)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, heuristic_verify, diff_proc]):
+            result = await _get_diff_vs_main("/repo", base_ref=None)
 
         assert result == "some diff\n"
 
@@ -81,41 +138,43 @@ class TestGetDiffVsMainBaseRef:
 class TestGetChangedFilesVsMainBaseRef:
     """_get_changed_files_vs_main() with explicit base_ref."""
 
-    def test_uses_base_ref_when_provided(self):
+    @pytest.mark.asyncio
+    async def test_uses_base_ref_when_provided(self):
         """Should use git diff --name-only base_ref HEAD."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         name_only_proc = _make_proc("foo.py\nbar.py\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, name_only_proc]) as mock_run:
-            result = _get_changed_files_vs_main("/repo/wt", base_ref="forge/pipeline-abc")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, name_only_proc]) as mock_sub:
+            result = await _get_changed_files_vs_main("/repo/wt", base_ref="forge/pipeline-abc")
 
         assert result == ["foo.py", "bar.py"]
-        assert mock_run.call_args_list[1] == call(
+        assert mock_sub.call_args_list[1] == call(
             ["git", "diff", "--name-only", "forge/pipeline-abc", "HEAD"],
             cwd="/repo/wt",
-            capture_output=True, text=True,
         )
 
-    def test_falls_back_when_base_ref_not_found(self):
+    @pytest.mark.asyncio
+    async def test_falls_back_when_base_ref_not_found(self):
         """Falls back to heuristic when base_ref doesn't resolve."""
         verify_fail = _make_proc("", returncode=128)
         count_proc = _make_proc("1\n")
         heuristic_verify = _make_proc("abc\n", returncode=0)
         name_only_proc = _make_proc("baz.py\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_fail, count_proc, heuristic_verify, name_only_proc]):
-            result = _get_changed_files_vs_main("/repo", base_ref="forge/missing")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_fail, count_proc, heuristic_verify, name_only_proc]):
+            result = await _get_changed_files_vs_main("/repo", base_ref="forge/missing")
 
         assert result == ["baz.py"]
 
-    def test_none_base_ref_uses_heuristic(self):
+    @pytest.mark.asyncio
+    async def test_none_base_ref_uses_heuristic(self):
         """When base_ref is None, uses heuristic directly."""
         count_proc = _make_proc("2\n")
         heuristic_verify = _make_proc("abc\n", returncode=0)
         name_only_proc = _make_proc("x.py\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, heuristic_verify, name_only_proc]):
-            result = _get_changed_files_vs_main("/repo")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, heuristic_verify, name_only_proc]):
+            result = await _get_changed_files_vs_main("/repo")
 
         assert result == ["x.py"]
 
@@ -123,60 +182,62 @@ class TestGetChangedFilesVsMainBaseRef:
 class TestGetDiffStatsPipelineBranch:
     """_get_diff_stats() with a valid pipeline_branch uses git diff --shortstat."""
 
-    def test_uses_pipeline_branch_when_ref_resolves(self):
+    @pytest.mark.asyncio
+    async def test_uses_pipeline_branch_when_ref_resolves(self):
         """Should return per-task stats from `git diff --shortstat <branch> HEAD`."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc(" 3 files changed, 42 insertions(+), 7 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, shortstat]) as mock_run:
-            result = _get_diff_stats("/repo/worktrees/task-1", pipeline_branch="forge/pipeline-abc")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]) as mock_sub:
+            result = await _get_diff_stats("/repo/worktrees/task-1", pipeline_branch="forge/pipeline-abc")
 
-        assert result == {"linesAdded": 42, "linesRemoved": 7}
-        # First call: verify ref; second call: git diff --shortstat
-        assert mock_run.call_count == 2
-        shortstat_call = mock_run.call_args_list[1]
+        assert result == {"linesAdded": 42, "linesRemoved": 7, "filesChanged": 3}
+        assert mock_sub.call_count == 2
+        shortstat_call = mock_sub.call_args_list[1]
         assert shortstat_call == call(
             ["git", "diff", "--shortstat", "forge/pipeline-abc", "HEAD"],
             cwd="/repo/worktrees/task-1",
-            capture_output=True,
-            text=True,
         )
 
-    def test_insertions_only(self):
+    @pytest.mark.asyncio
+    async def test_insertions_only(self):
         """Handles a diff with insertions but no deletions."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 10 insertions(+)\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, shortstat]):
-            result = _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]):
+            result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
-        assert result == {"linesAdded": 10, "linesRemoved": 0}
+        assert result == {"linesAdded": 10, "linesRemoved": 0, "filesChanged": 1}
 
-    def test_deletions_only(self):
+    @pytest.mark.asyncio
+    async def test_deletions_only(self):
         """Handles a diff with deletions but no insertions."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc(" 2 files changed, 5 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, shortstat]):
-            result = _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]):
+            result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
-        assert result == {"linesAdded": 0, "linesRemoved": 5}
+        assert result == {"linesAdded": 0, "linesRemoved": 5, "filesChanged": 2}
 
-    def test_empty_shortstat_returns_zeros(self):
+    @pytest.mark.asyncio
+    async def test_empty_shortstat_returns_zeros(self):
         """When the diff is empty (no changes), returns zeros."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc("")  # empty = no diff
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, shortstat]):
-            result = _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]):
+            result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
-        assert result == {"linesAdded": 0, "linesRemoved": 0}
+        assert result == {"linesAdded": 0, "linesRemoved": 0, "filesChanged": 0}
 
 
 class TestGetDiffStatsFallback:
     """_get_diff_stats() falls back to commit-count heuristic when pipeline branch is missing."""
 
-    def test_falls_back_when_pipeline_branch_not_found(self):
+    @pytest.mark.asyncio
+    async def test_falls_back_when_pipeline_branch_not_found(self):
         """When git rev-parse --verify fails, falls back to HEAD~N approach."""
         verify_fail = _make_proc("", returncode=128)   # branch not found
         count_proc = _make_proc("2\n")                  # 2 local commits
@@ -184,23 +245,25 @@ class TestGetDiffStatsFallback:
         shortstat = _make_proc(" 1 file changed, 15 insertions(+), 3 deletions(-)\n")
 
         side_effects = [verify_fail, count_proc, base_verify, shortstat]
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=side_effects):
-            result = _get_diff_stats("/repo", pipeline_branch="forge/pipeline-missing")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=side_effects):
+            result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-missing")
 
-        assert result == {"linesAdded": 15, "linesRemoved": 3}
+        assert result == {"linesAdded": 15, "linesRemoved": 3, "filesChanged": 1}
 
-    def test_no_pipeline_branch_uses_commit_count(self):
+    @pytest.mark.asyncio
+    async def test_no_pipeline_branch_uses_commit_count(self):
         """When pipeline_branch is None, uses HEAD~N heuristic directly."""
         count_proc = _make_proc("1\n")
         base_verify = _make_proc("abc\n", returncode=0)
         shortstat = _make_proc(" 2 files changed, 100 insertions(+), 20 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, base_verify, shortstat]):
-            result = _get_diff_stats("/repo", pipeline_branch=None)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, base_verify, shortstat]):
+            result = await _get_diff_stats("/repo", pipeline_branch=None)
 
-        assert result == {"linesAdded": 100, "linesRemoved": 20}
+        assert result == {"linesAdded": 100, "linesRemoved": 20, "filesChanged": 2}
 
-    def test_root_commit_uses_empty_tree(self):
+    @pytest.mark.asyncio
+    async def test_root_commit_uses_empty_tree(self):
         """Fallback handles root commits by diffing against the empty tree."""
         count_proc = _make_proc("1\n")
         base_verify = _make_proc("", returncode=128)          # HEAD~1 doesn't exist
@@ -208,32 +271,34 @@ class TestGetDiffStatsFallback:
         shortstat = _make_proc(" 1 file changed, 50 insertions(+)\n")
 
         side_effects = [count_proc, base_verify, empty_tree_proc, shortstat]
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=side_effects):
-            result = _get_diff_stats("/repo", pipeline_branch=None)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=side_effects):
+            result = await _get_diff_stats("/repo", pipeline_branch=None)
 
-        assert result == {"linesAdded": 50, "linesRemoved": 0}
+        assert result == {"linesAdded": 50, "linesRemoved": 0, "filesChanged": 1}
 
-    def test_invalid_commit_count_defaults_to_one(self):
+    @pytest.mark.asyncio
+    async def test_invalid_commit_count_defaults_to_one(self):
         """When git rev-list returns non-integer output, defaults commit_count to 1."""
         count_proc = _make_proc("bad-output\n")
         base_verify = _make_proc("abc\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 5 insertions(+)\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, base_verify, shortstat]):
-            result = _get_diff_stats("/repo")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, base_verify, shortstat]):
+            result = await _get_diff_stats("/repo")
 
-        assert result == {"linesAdded": 5, "linesRemoved": 0}
+        assert result == {"linesAdded": 5, "linesRemoved": 0, "filesChanged": 1}
 
-    def test_zero_commit_count_defaults_to_one(self):
+    @pytest.mark.asyncio
+    async def test_zero_commit_count_defaults_to_one(self):
         """When rev-list returns 0, bumps commit_count to 1 to avoid HEAD~0 == HEAD."""
         count_proc = _make_proc("0\n")
         base_verify = _make_proc("abc\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 8 insertions(+), 2 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[count_proc, base_verify, shortstat]):
-            result = _get_diff_stats("/repo")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, base_verify, shortstat]):
+            result = await _get_diff_stats("/repo")
 
-        assert result == {"linesAdded": 8, "linesRemoved": 2}
+        assert result == {"linesAdded": 8, "linesRemoved": 2, "filesChanged": 1}
 
 
 class TestLoadConventionsMd:
@@ -271,13 +336,14 @@ class TestLoadConventionsMd:
 class TestExtractImplementationSummary:
     """_extract_implementation_summary() builds a short summary from git + agent."""
 
-    def test_with_commit_messages_and_agent_summary(self):
+    @pytest.mark.asyncio
+    async def test_with_commit_messages_and_agent_summary(self):
         """Combines commit messages with agent summary."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc("feat: add auth\nfix: handle edge case\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
-            result = _extract_implementation_summary(
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+            result = await _extract_implementation_summary(
                 "/repo/wt", "Added authentication module", pipeline_branch="forge/pipeline-abc",
             )
 
@@ -285,13 +351,14 @@ class TestExtractImplementationSummary:
         assert "Added authentication module" in result
         assert len(result) <= 300
 
-    def test_with_commit_messages_only(self):
+    @pytest.mark.asyncio
+    async def test_with_commit_messages_only(self):
         """Uses commit messages when agent summary is generic 'Task completed'."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc("feat: add new endpoint\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
-            result = _extract_implementation_summary(
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+            result = await _extract_implementation_summary(
                 "/repo/wt", "Task completed", pipeline_branch="forge/pipeline-abc",
             )
 
@@ -299,57 +366,62 @@ class TestExtractImplementationSummary:
         # Generic "Task completed" should be excluded
         assert "Task completed" not in result
 
-    def test_without_pipeline_branch_uses_fallback(self):
+    @pytest.mark.asyncio
+    async def test_without_pipeline_branch_uses_fallback(self):
         """Falls back to --not --remotes when pipeline_branch is None."""
         log_proc = _make_proc("chore: initial setup\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[log_proc]):
-            result = _extract_implementation_summary("/repo/wt", "Task completed")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[log_proc]):
+            result = await _extract_implementation_summary("/repo/wt", "Task completed")
 
         assert "chore: initial setup" in result
 
-    def test_with_pipeline_branch_that_resolves(self):
+    @pytest.mark.asyncio
+    async def test_with_pipeline_branch_that_resolves(self):
         """Uses pipeline_branch..HEAD when the ref resolves."""
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc("feat: add login\nfeat: add logout\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
-            result = _extract_implementation_summary(
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+            result = await _extract_implementation_summary(
                 "/repo/wt", "Task completed", pipeline_branch="forge/pipeline-abc",
             )
 
         assert "feat: add login; feat: add logout" in result
 
-    def test_pipeline_branch_not_found_falls_back(self):
+    @pytest.mark.asyncio
+    async def test_pipeline_branch_not_found_falls_back(self):
         """Falls back to --not --remotes when pipeline_branch can't be resolved."""
         verify_fail = _make_proc("", returncode=128)
         log_fallback = _make_proc("fix: something\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_fail, log_fallback]):
-            result = _extract_implementation_summary(
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_fail, log_fallback]):
+            result = await _extract_implementation_summary(
                 "/repo/wt", "Fixed the thing", pipeline_branch="forge/missing",
             )
 
         assert "fix: something" in result
         assert "Fixed the thing" in result
 
-    def test_no_commits_no_summary_returns_fallback(self):
+    @pytest.mark.asyncio
+    async def test_no_commits_no_summary_returns_fallback(self):
         """Returns generic fallback when no commit messages and no agent summary."""
         log_proc = _make_proc("", returncode=0)
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[log_proc]):
-            result = _extract_implementation_summary("/repo/wt", "Task completed")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[log_proc]):
+            result = await _extract_implementation_summary("/repo/wt", "Task completed")
 
         assert "no detailed summary" in result.lower()
 
-    def test_truncates_to_300_chars(self):
+    @pytest.mark.asyncio
+    async def test_truncates_to_300_chars(self):
         """Summary is capped at 300 characters."""
         long_messages = "\n".join([f"feat: implement feature number {i}" for i in range(50)])
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc(long_messages + "\n")
 
-        with patch("forge.core.daemon_helpers.subprocess.run", side_effect=[verify_ok, log_proc]):
-            result = _extract_implementation_summary(
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+            result = await _extract_implementation_summary(
                 "/repo/wt", "A very detailed agent summary that goes on and on",
                 pipeline_branch="forge/pipeline-abc",
             )
@@ -379,80 +451,88 @@ class TestIsPytestCmd:
 class TestFindRelatedTestFiles:
     """_find_related_test_files() discovers test files for changed source files."""
 
-    def test_co_located_test_found(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_co_located_test_found(self, tmp_path):
         """foo.py → foo_test.py (same directory)."""
         (tmp_path / "forge" / "core").mkdir(parents=True)
         (tmp_path / "forge" / "core" / "foo.py").touch()
         (tmp_path / "forge" / "core" / "foo_test.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["forge/core/foo.py"],
         )
         assert result == ["forge/core/foo_test.py"]
 
-    def test_test_dir_convention(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_test_dir_convention(self, tmp_path):
         """src/foo.py → src/tests/test_foo.py."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "foo.py").touch()
         (tmp_path / "src" / "tests").mkdir()
         (tmp_path / "src" / "tests" / "test_foo.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["src/foo.py"],
         )
         assert result == ["src/tests/test_foo.py"]
 
-    def test_root_tests_convention(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_root_tests_convention(self, tmp_path):
         """src/foo.py → tests/test_foo.py (root-level tests dir)."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "foo.py").touch()
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_foo.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["src/foo.py"],
         )
         assert result == ["tests/test_foo.py"]
 
-    def test_changed_file_is_test(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_changed_file_is_test(self, tmp_path):
         """Test files themselves are included directly."""
         (tmp_path / "forge" / "core").mkdir(parents=True)
         (tmp_path / "forge" / "core" / "foo_test.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["forge/core/foo_test.py"],
         )
         assert result == ["forge/core/foo_test.py"]
 
-    def test_changed_file_test_prefix(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_changed_file_test_prefix(self, tmp_path):
         """test_foo.py style test files are included directly."""
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_bar.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["tests/test_bar.py"],
         )
         assert result == ["tests/test_bar.py"]
 
-    def test_no_test_files_found(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_no_test_files_found(self, tmp_path):
         """Returns empty list when no test files exist for the changed files."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "foo.py").touch()
         # No test files anywhere
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["src/foo.py"],
         )
         assert result == []
 
-    def test_non_python_files_ignored(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_non_python_files_ignored(self, tmp_path):
         """Non-.py files are skipped."""
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["README.md", "package.json"],
         )
         assert result == []
 
-    def test_multiple_changed_files(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_multiple_changed_files(self, tmp_path):
         """Multiple changed files accumulate their test files."""
         (tmp_path / "forge" / "core").mkdir(parents=True)
         (tmp_path / "forge" / "core" / "foo.py").touch()
@@ -460,18 +540,19 @@ class TestFindRelatedTestFiles:
         (tmp_path / "forge" / "core" / "bar.py").touch()
         (tmp_path / "forge" / "core" / "bar_test.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path), ["forge/core/foo.py", "forge/core/bar.py"],
         )
         assert result == ["forge/core/bar_test.py", "forge/core/foo_test.py"]
 
-    def test_deduplicates_test_files(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_deduplicates_test_files(self, tmp_path):
         """Same test file found via different paths is only included once."""
         (tmp_path / "forge" / "core").mkdir(parents=True)
         (tmp_path / "forge" / "core" / "foo.py").touch()
         (tmp_path / "forge" / "core" / "foo_test.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path),
             ["forge/core/foo.py", "forge/core/foo_test.py"],
         )
@@ -531,39 +612,48 @@ class TestParseForgeQuestion:
 
 
 class TestRunGit:
-    """_run_git() wraps subprocess with logging and error handling."""
+    """_run_git() wraps async_subprocess with logging and error handling."""
 
-    def test_success_returns_result(self):
+    @pytest.mark.asyncio
+    async def test_success_returns_result(self):
         """On exit 0, returns the CompletedProcess without raising."""
         proc = _make_proc("abc123\n", returncode=0)
-        with patch("forge.core.daemon_helpers.subprocess.run", return_value=proc) as mock_run:
-            result = _run_git(["rev-parse", "HEAD"], cwd="/repo")
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc) as mock_sub:
+            result = await _run_git(["rev-parse", "HEAD"], cwd="/repo")
 
         assert result is proc
-        mock_run.assert_called_once_with(
+        mock_sub.assert_called_once_with(
             ["git", "rev-parse", "HEAD"],
             cwd="/repo",
-            capture_output=True,
-            text=True,
         )
 
-    def test_check_true_raises_on_failure(self):
+    @pytest.mark.asyncio
+    async def test_check_true_raises_on_failure(self):
         """With check=True (default), non-zero exit raises CalledProcessError."""
-        proc = _make_proc("", returncode=128)
-        proc.stderr = "fatal: not a git repository"
-        with patch("forge.core.daemon_helpers.subprocess.run", return_value=proc):
+        proc = subprocess.CompletedProcess(
+            args=["git", "rev-parse", "HEAD"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
             with pytest.raises(subprocess.CalledProcessError) as exc_info:
-                _run_git(["rev-parse", "HEAD"], cwd="/bad")
+                await _run_git(["rev-parse", "HEAD"], cwd="/bad")
 
         assert exc_info.value.returncode == 128
 
-    def test_check_false_returns_result_on_failure(self, caplog):
+    @pytest.mark.asyncio
+    async def test_check_false_returns_result_on_failure(self, caplog):
         """With check=False, non-zero exit returns result and logs warning."""
-        proc = _make_proc("", returncode=1)
-        proc.stderr = "error: something went wrong"
-        with patch("forge.core.daemon_helpers.subprocess.run", return_value=proc):
+        proc = subprocess.CompletedProcess(
+            args=["git", "status"],
+            returncode=1,
+            stdout="",
+            stderr="error: something went wrong",
+        )
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
             with caplog.at_level(logging.WARNING, logger="forge"):
-                result = _run_git(["status"], cwd="/repo", check=False)
+                result = await _run_git(["status"], cwd="/repo", check=False)
 
         assert result is proc
         assert "returned 1" in caplog.text
@@ -572,14 +662,15 @@ class TestRunGit:
 class TestFindRelatedTestFilesScoped:
     """Tests for _find_related_test_files with allowed_files filtering."""
 
-    def test_in_scope_test_included(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_in_scope_test_included(self, tmp_path):
         """Test file in allowed_files is included."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "auth.py").touch()
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_auth.py").touch()
 
-        in_scope, out_of_scope = _find_related_test_files(
+        in_scope, out_of_scope = await _find_related_test_files(
             str(tmp_path),
             changed_files=["src/auth.py"],
             allowed_files=["src/auth.py", "tests/test_auth.py"],
@@ -587,14 +678,15 @@ class TestFindRelatedTestFilesScoped:
         assert "tests/test_auth.py" in in_scope
         assert len(out_of_scope) == 0
 
-    def test_out_of_scope_test_excluded(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_out_of_scope_test_excluded(self, tmp_path):
         """Test file NOT in allowed_files is excluded."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "auth.py").touch()
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_auth.py").touch()
 
-        in_scope, out_of_scope = _find_related_test_files(
+        in_scope, out_of_scope = await _find_related_test_files(
             str(tmp_path),
             changed_files=["src/auth.py"],
             allowed_files=["src/auth.py"],  # test_auth.py NOT listed
@@ -602,14 +694,15 @@ class TestFindRelatedTestFilesScoped:
         assert "tests/test_auth.py" not in in_scope
         assert "tests/test_auth.py" in out_of_scope
 
-    def test_no_allowed_files_returns_all(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_no_allowed_files_returns_all(self, tmp_path):
         """When allowed_files is None, all discovered tests are in-scope."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "auth.py").touch()
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_auth.py").touch()
 
-        result = _find_related_test_files(
+        result = await _find_related_test_files(
             str(tmp_path),
             changed_files=["src/auth.py"],
             allowed_files=None,
@@ -617,7 +710,8 @@ class TestFindRelatedTestFilesScoped:
         # Backward compat: returns flat list when allowed_files is None
         assert "tests/test_auth.py" in result
 
-    def test_newly_created_test_is_in_scope(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_newly_created_test_is_in_scope(self, tmp_path):
         """A test file created by the agent (not on base branch) is in-scope."""
         # Set up a git repo to simulate new file detection
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
@@ -634,7 +728,7 @@ class TestFindRelatedTestFilesScoped:
         subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
         subprocess.run(["git", "commit", "-m", "add new"], cwd=tmp_path, capture_output=True)
 
-        in_scope, out_of_scope = _find_related_test_files(
+        in_scope, out_of_scope = await _find_related_test_files(
             str(tmp_path),
             changed_files=["new.py"],
             allowed_files=["new.py"],  # test_new.py NOT in allowed list
@@ -642,3 +736,58 @@ class TestFindRelatedTestFilesScoped:
         )
         # test_new.py was created by agent (not on main), so it's in-scope
         assert "tests/test_new.py" in in_scope
+
+
+class TestResolveRef:
+    """_resolve_ref() resolves a git ref to its commit SHA."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_valid_ref(self):
+        """Returns commit SHA for a valid ref."""
+        proc = _make_proc("abc123def456\n", returncode=0)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+            from forge.core.daemon_helpers import _resolve_ref
+            result = await _resolve_ref("/repo", "main")
+        assert result == "abc123def456"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_invalid_ref(self):
+        """Returns None when ref doesn't resolve."""
+        proc = _make_proc("", returncode=128)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+            from forge.core.daemon_helpers import _resolve_ref
+            result = await _resolve_ref("/repo", "nonexistent")
+        assert result is None
+
+
+class TestGetCurrentBranch:
+    """_get_current_branch() returns the current branch name."""
+
+    @pytest.mark.asyncio
+    async def test_returns_branch_name(self):
+        """Returns branch name from git rev-parse."""
+        proc = _make_proc("feature-branch\n", returncode=0)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+            from forge.core.daemon_helpers import _get_current_branch
+            result = await _get_current_branch("/repo")
+        assert result == "feature-branch"
+
+    @pytest.mark.asyncio
+    async def test_detached_head_falls_back_to_symbolic_ref(self):
+        """When rev-parse returns HEAD, falls back to symbolic-ref."""
+        head_proc = _make_proc("HEAD\n", returncode=0)
+        sym_proc = _make_proc("main\n", returncode=0)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[head_proc, sym_proc]):
+            from forge.core.daemon_helpers import _get_current_branch
+            result = await _get_current_branch("/repo")
+        assert result == "main"
+
+    @pytest.mark.asyncio
+    async def test_empty_repo_returns_main(self):
+        """When both commands fail, returns 'main'."""
+        fail_proc = _make_proc("", returncode=128)
+        sym_fail = _make_proc("", returncode=128)
+        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[fail_proc, sym_fail]):
+            from forge.core.daemon_helpers import _get_current_branch
+            result = await _get_current_branch("/repo")
+        assert result == "main"

@@ -6,6 +6,7 @@ and console output used by the Forge daemon orchestration loop.
 
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 import os
@@ -19,6 +20,47 @@ logger = logging.getLogger("forge")
 console = Console()
 
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
+
+
+async def async_subprocess(
+    cmd: list[str],
+    cwd: str,
+    *,
+    timeout: float = 30,
+    text: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command asynchronously, returning a CompletedProcess for API compat.
+
+    On timeout, kills the process and raises ``asyncio.TimeoutError`` with a
+    descriptive message.  Does **not** raise on non-zero exit — callers handle
+    check logic themselves.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise asyncio.TimeoutError(
+            f"Command {cmd} timed out after {timeout}s",
+        )
+
+    stdout_str = stdout_bytes.decode() if stdout_bytes else ""
+    stderr_str = stderr_bytes.decode() if stderr_bytes else ""
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=proc.returncode,  # type: ignore[arg-type]
+        stdout=stdout_str,
+        stderr=stderr_str,
+    )
 
 
 def _parse_forge_question(text: str | None) -> dict | None:
@@ -179,18 +221,16 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
     return f"🔧 {tool}"
 
 
-def _get_current_branch(repo_path: str) -> str:
+async def _get_current_branch(repo_path: str) -> str:
     """Get the current branch name of the repo.
 
     Falls back to 'main' if the branch can't be determined (e.g. detached
     HEAD or empty repo). Never returns the literal string 'HEAD' since
     that's not a valid branch name for merge targets.
     """
-    result = subprocess.run(
+    result = await async_subprocess(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=repo_path,
-        capture_output=True,
-        text=True,
     )
     branch = result.stdout.strip()
     # "HEAD" is returned for detached HEAD — not a valid branch name.
@@ -198,11 +238,9 @@ def _get_current_branch(repo_path: str) -> str:
     if branch and branch != "HEAD":
         return branch
     # Try symbolic-ref as fallback (works even before first commit)
-    sym = subprocess.run(
+    sym = await async_subprocess(
         ["git", "symbolic-ref", "--short", "HEAD"],
         cwd=repo_path,
-        capture_output=True,
-        text=True,
     )
     sym_branch = sym.stdout.strip()
     return sym_branch if sym_branch else "main"
@@ -245,7 +283,7 @@ def _build_retry_prompt(
     return prompt
 
 
-def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str:
+async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str:
     """Get diff of the worktree branch vs its merge-base with the parent branch.
 
     Args:
@@ -264,18 +302,14 @@ def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str
     """
     # ── Fast path: explicit base ref ──────────────────────────────────
     if base_ref is not None:
-        verify = subprocess.run(
+        verify = await async_subprocess(
             ["git", "rev-parse", "--verify", base_ref],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
         if verify.returncode == 0:
-            result = subprocess.run(
+            result = await async_subprocess(
                 ["git", "diff", base_ref, "HEAD"],
                 cwd=worktree_path,
-                capture_output=True,
-                text=True,
             )
             return result.stdout
         logger.warning(
@@ -285,11 +319,9 @@ def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str
         )
 
     # ── Fallback: commit-count heuristic ──────────────────────────────
-    count_result = subprocess.run(
+    count_result = await async_subprocess(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
-        capture_output=True,
-        text=True,
     )
     try:
         commit_count = int(count_result.stdout.strip())
@@ -300,56 +332,47 @@ def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) -> str
 
     # Check if HEAD~{commit_count} exists (won't if this is a root commit)
     heuristic_ref = f"HEAD~{commit_count}"
-    verify = subprocess.run(
+    verify = await async_subprocess(
         ["git", "rev-parse", "--verify", heuristic_ref],
         cwd=worktree_path,
-        capture_output=True,
-        text=True,
     )
 
     if verify.returncode == 0:
         # Normal case: diff the agent's commits against their base
-        result = subprocess.run(
+        result = await async_subprocess(
             ["git", "diff", heuristic_ref, "HEAD"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
     else:
         # Root commit (orphan branch / new repo): diff against empty tree
-        empty_tree = subprocess.run(
+        empty_tree_result = await async_subprocess(
             ["git", "hash-object", "-t", "tree", "/dev/null"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        result = subprocess.run(
+        )
+        empty_tree = empty_tree_result.stdout.strip()
+        result = await async_subprocess(
             ["git", "diff", empty_tree, "HEAD"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
 
     return result.stdout
 
 
-def _resolve_ref(repo_path: str, ref: str) -> str | None:
+async def _resolve_ref(repo_path: str, ref: str) -> str | None:
     """Resolve a git ref (branch name) to its immutable commit SHA.
 
     Used to snapshot the pipeline branch *before* a merge so that
     ``_get_diff_stats`` can compute per-task stats against a fixed
     point rather than the (now-moved) branch tip.
     """
-    result = subprocess.run(
+    result = await async_subprocess(
         ["git", "rev-parse", ref],
         cwd=repo_path,
-        capture_output=True,
-        text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> dict[str, int]:
+async def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> dict[str, int]:
     """Get lines added/removed for this task's commits in its worktree.
 
     When ``pipeline_branch`` is provided the diff is computed as
@@ -364,18 +387,14 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
     """
     if pipeline_branch is not None:
         # Verify that the pipeline branch ref exists in this worktree
-        verify = subprocess.run(
+        verify = await async_subprocess(
             ["git", "rev-parse", "--verify", pipeline_branch],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
         if verify.returncode == 0:
-            result = subprocess.run(
+            result = await async_subprocess(
                 ["git", "diff", "--shortstat", pipeline_branch, "HEAD"],
                 cwd=worktree_path,
-                capture_output=True,
-                text=True,
             )
             added, removed, files = 0, 0, 0
             if result.returncode == 0 and result.stdout.strip():
@@ -398,11 +417,9 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
             )
 
     # Fallback: find how many commits the agent added on top of the base
-    count_result = subprocess.run(
+    count_result = await async_subprocess(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
-        capture_output=True,
-        text=True,
     )
     try:
         commit_count = int(count_result.stdout.strip())
@@ -412,33 +429,26 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
         commit_count = 1
 
     base_ref = f"HEAD~{commit_count}"
-    verify = subprocess.run(
+    verify = await async_subprocess(
         ["git", "rev-parse", "--verify", base_ref],
         cwd=worktree_path,
-        capture_output=True,
-        text=True,
     )
 
     if verify.returncode == 0:
-        result = subprocess.run(
+        result = await async_subprocess(
             ["git", "diff", "--shortstat", base_ref, "HEAD"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
     else:
         # Root commit (orphan branch / new repo): diff against empty tree
-        empty_tree = subprocess.run(
+        empty_tree_result = await async_subprocess(
             ["git", "hash-object", "-t", "tree", "/dev/null"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        result = subprocess.run(
+        )
+        empty_tree = empty_tree_result.stdout.strip()
+        result = await async_subprocess(
             ["git", "diff", "--shortstat", empty_tree, "HEAD"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
 
     added, removed, files = 0, 0, 0
@@ -455,7 +465,7 @@ def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> d
     return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
 
 
-def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = None) -> list[str]:
+async def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = None) -> list[str]:
     """Get list of files changed by the agent (not the entire feature branch).
 
     Args:
@@ -466,18 +476,14 @@ def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = Non
     """
     # ── Fast path: explicit base ref ──────────────────────────────────
     if base_ref is not None:
-        verify = subprocess.run(
+        verify = await async_subprocess(
             ["git", "rev-parse", "--verify", base_ref],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
         if verify.returncode == 0:
-            result = subprocess.run(
+            result = await async_subprocess(
                 ["git", "diff", "--name-only", base_ref, "HEAD"],
                 cwd=worktree_path,
-                capture_output=True,
-                text=True,
             )
             return [f for f in result.stdout.strip().split("\n") if f.strip()]
         logger.warning(
@@ -487,11 +493,9 @@ def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = Non
         )
 
     # ── Fallback: commit-count heuristic ──────────────────────────────
-    count_result = subprocess.run(
+    count_result = await async_subprocess(
         ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
         cwd=worktree_path,
-        capture_output=True,
-        text=True,
     )
     try:
         commit_count = int(count_result.stdout.strip())
@@ -501,33 +505,26 @@ def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = Non
         commit_count = 1
 
     heuristic_ref = f"HEAD~{commit_count}"
-    verify = subprocess.run(
+    verify = await async_subprocess(
         ["git", "rev-parse", "--verify", heuristic_ref],
         cwd=worktree_path,
-        capture_output=True,
-        text=True,
     )
 
     if verify.returncode == 0:
-        result = subprocess.run(
+        result = await async_subprocess(
             ["git", "diff", "--name-only", heuristic_ref, "HEAD"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
     else:
         # Root commit: diff against empty tree
-        empty_tree = subprocess.run(
+        empty_tree_result = await async_subprocess(
             ["git", "hash-object", "-t", "tree", "/dev/null"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        result = subprocess.run(
+        )
+        empty_tree = empty_tree_result.stdout.strip()
+        result = await async_subprocess(
             ["git", "diff", "--name-only", empty_tree, "HEAD"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
 
     return [f for f in result.stdout.strip().split("\n") if f.strip()]
@@ -548,7 +545,7 @@ def _load_conventions_md(project_dir: str) -> str | None:
         return None
 
 
-def _extract_implementation_summary(
+async def _extract_implementation_summary(
     worktree_path: str,
     agent_summary: str,
     pipeline_branch: str | None = None,
@@ -563,18 +560,14 @@ def _extract_implementation_summary(
 
     # Try explicit base-ref first (most accurate)
     if pipeline_branch is not None:
-        verify = subprocess.run(
+        verify = await async_subprocess(
             ["git", "rev-parse", "--verify", pipeline_branch],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
         if verify.returncode == 0:
-            result = subprocess.run(
+            result = await async_subprocess(
                 ["git", "log", "--format=%s", f"{pipeline_branch}..HEAD"],
                 cwd=worktree_path,
-                capture_output=True,
-                text=True,
             )
             if result.returncode == 0 and result.stdout.strip():
                 commit_messages = [
@@ -585,11 +578,9 @@ def _extract_implementation_summary(
 
     # Fallback: recent local-only commits
     if not commit_messages:
-        result = subprocess.run(
+        result = await async_subprocess(
             ["git", "log", "--format=%s", "--not", "--remotes", "-5"],
             cwd=worktree_path,
-            capture_output=True,
-            text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
             commit_messages = [
@@ -649,7 +640,7 @@ def _is_pytest_cmd(cmd: str) -> bool:
     return "pytest" in cmd.lower()
 
 
-def _find_related_test_files(
+async def _find_related_test_files(
     worktree_path: str,
     changed_files: list[str],
     *,
@@ -704,9 +695,10 @@ def _find_related_test_files(
     new_files: set[str] = set()
     if base_ref:
         try:
-            result = subprocess.run(
+            result = await async_subprocess(
                 ["git", "diff", "--name-only", "--diff-filter=A", f"{base_ref}...HEAD"],
-                capture_output=True, text=True, cwd=worktree_path, timeout=10,
+                cwd=worktree_path,
+                timeout=10,
             )
             if result.returncode == 0:
                 new_files = set(result.stdout.strip().splitlines())
@@ -724,13 +716,13 @@ def _find_related_test_files(
     return in_scope, out_of_scope
 
 
-def _run_git(
+async def _run_git(
     args: list[str],
     cwd: str,
     *,
     check: bool = True,
     description: str = "",
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run a git command with consistent logging and error handling.
 
     Args:
@@ -741,7 +733,7 @@ def _run_git(
         description: Human-readable description for log messages.
     """
     cmd = ["git"] + args
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    result = await async_subprocess(cmd, cwd=cwd)
     desc = description or " ".join(args[:3])
     if result.returncode != 0:
         if check:
