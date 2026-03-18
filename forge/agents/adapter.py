@@ -124,7 +124,7 @@ Your working directory is {cwd}.{extra_dirs_clause}
 - Only modify files listed in File Scope above (plus their test files). Out-of-scope changes are auto-reverted.
 - If contracts are specified above, implement them exactly as defined.
 - Follow existing code style — read before you write.
-- Do NOT run: git push, git branch, git rebase, git checkout, git reset. The orchestrator manages branches.
+- Do NOT run: git add, git commit, git push, git branch, git rebase, git checkout, git reset. The orchestrator handles all git operations.
 - You CAN and SHOULD run: git diff, git status, git log to verify your own work.
 
 ## Turn Budget
@@ -135,9 +135,7 @@ You have {max_turns} turns for this task. Manage them wisely:
 ## Before You Finish
 1. Run git diff to review all your changes
 2. Run tests if a test command is available
-3. Stage and commit: git add -A && git commit -m '<type>: <short summary>'
-   Use conventional commits (feat, fix, refactor, test, docs, chore).
-   Max 72 chars. Describe WHAT changed, don't copy the task title.
+3. Do NOT commit. The orchestrator handles staging and committing your changes automatically.
 4. If nothing meaningful to do (files don't exist, task already done), make no changes."""
 
 

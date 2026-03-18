@@ -17,10 +17,17 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 _SECTION_COLORS = {
-    "agent": "#f0883e",
-    "review": "#a371f7",
-    "gate": "#79c0ff",
-    "system": "#8b949e",
+    "agent": "#e2e4e8",     # White-ish for agent text — primary content
+    "review": "#a371f7",    # Purple for LLM review
+    "gate": "#79c0ff",      # Light blue for gate results (lint/test/build)
+    "system": "#8b949e",    # Gray for system messages
+}
+
+_SECTION_HEADER_COLORS = {
+    "agent": "#f0883e",     # Orange header for AGENT sections
+    "review": "#a371f7",    # Purple header for REVIEW sections
+    "gate": "#79c0ff",      # Blue header for gate sections
+    "system": "#8b949e",    # Gray header for system sections
 }
 
 _ERROR_TAIL_LINES = 20
@@ -160,19 +167,21 @@ def format_unified_output(
         if effective != current_section:
             current_section = effective
             _IN_CODE_BLOCK = False  # Reset code block state on section change
-            color = _SECTION_COLORS.get(effective, "#8b949e")
+            header_color = _SECTION_HEADER_COLORS.get(effective, "#8b949e")
             if effective == "review":
                 review_count += 1
                 label = f"REVIEW {review_count}"
             else:
                 label = "AGENT"
-            header = f"[{color}]───── {label} " + "─" * max(1, 50 - len(label)) + "[/]"
+            # Full-width separator with bold label for clear visual breaks
+            bar = "─" * max(1, 50 - len(label))
+            header = f"[{header_color} bold]───── {label} {bar}[/]"
             if parts:
                 parts.append("")  # blank line before new section
             parts.append(header)
 
         if source_type == "gate":
-            parts.append(f"  [#79c0ff]{line}[/]")
+            parts.append(f"  [#79c0ff]{_escape(line)}[/]")
         elif source_type == "review":
             parts.append(f"[#a371f7]{_render_markdown(line)}[/]")
         else:
