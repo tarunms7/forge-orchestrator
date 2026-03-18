@@ -619,15 +619,15 @@ class ExecutorMixin:
 
         # Acquire an agent slot via Scheduler
         from forge.core.scheduler import Scheduler
-        from forge.core.engine import _row_to_agent, _row_to_record
+        from forge.core.models import row_to_agent, row_to_record
 
         prefix = pipeline_id[:8] if pipeline_id else None
         agents = await db.list_agents(prefix=prefix)
-        agent_records = [_row_to_agent(a) for a in agents]
+        agent_records = [row_to_agent(a) for a in agents]
         tasks = await (
             db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
         )
-        task_records = [_row_to_record(t) for t in tasks]
+        task_records = [row_to_record(t) for t in tasks]
         dispatch_plan = Scheduler.dispatch_plan(
             task_records, agent_records, self._effective_max_agents,
         )

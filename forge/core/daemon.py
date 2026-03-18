@@ -18,7 +18,7 @@ from forge.config.settings import ForgeSettings
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.cost_estimator import estimate_pipeline_cost
-from forge.core.engine import _row_to_record
+from forge.core.models import row_to_record
 from forge.core.events import EventEmitter
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
 from forge.core.contracts import ContractSet, IntegrationHint
@@ -1140,10 +1140,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     console.print("[yellow]Pipeline taken over by another session. Exiting.[/yellow]")
                     break
 
-            task_records = [_row_to_record(t) for t in tasks]
+            task_records = [row_to_record(t) for t in tasks]
             agents = await db.list_agents(prefix=prefix)
-            from forge.core.engine import _row_to_agent
-            agent_records = [_row_to_agent(a) for a in agents]
+            from forge.core.models import row_to_agent
+            agent_records = [row_to_agent(a) for a in agents]
             dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._effective_max_agents)
 
             if not dispatch_plan:

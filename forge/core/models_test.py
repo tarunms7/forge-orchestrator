@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
@@ -9,6 +11,8 @@ from forge.core.models import (
     TaskRecord,
     AgentRecord,
     AgentState,
+    row_to_record,
+    row_to_agent,
 )
 
 
@@ -120,3 +124,64 @@ class TestTaskState:
 
     def test_blocked_is_distinct_from_error(self):
         assert TaskState.BLOCKED != TaskState.ERROR
+
+
+# --- Tests migrated from engine_test.py ---
+
+
+def _make_task_row(**overrides):
+    defaults = {
+        "id": "task-1",
+        "title": "Build feature",
+        "description": "Build it",
+        "files": ["a.py"],
+        "depends_on": [],
+        "complexity": "low",
+        "state": "todo",
+        "assigned_agent": None,
+        "retry_count": 0,
+    }
+    defaults.update(overrides)
+    return MagicMock(**defaults)
+
+
+def _make_agent_row(**overrides):
+    defaults = {
+        "id": "agent-1",
+        "state": "idle",
+        "current_task": None,
+    }
+    defaults.update(overrides)
+    return MagicMock(**defaults)
+
+
+class TestRowToRecord:
+    def test_row_to_record(self):
+        row = _make_task_row()
+        record = row_to_record(row)
+        assert record.id == "task-1"
+        assert record.title == "Build feature"
+        assert record.state == TaskState.TODO
+        assert record.assigned_agent is None
+        assert record.retry_count == 0
+
+    def test_row_to_record_in_progress(self):
+        row = _make_task_row(state="in_progress", assigned_agent="agent-1")
+        record = row_to_record(row)
+        assert record.state == TaskState.IN_PROGRESS
+        assert record.assigned_agent == "agent-1"
+
+
+class TestRowToAgent:
+    def test_row_to_agent(self):
+        row = _make_agent_row()
+        record = row_to_agent(row)
+        assert record.id == "agent-1"
+        assert record.state == AgentState.IDLE
+        assert record.current_task is None
+
+    def test_row_to_agent_working(self):
+        row = _make_agent_row(state="working", current_task="task-1")
+        record = row_to_agent(row)
+        assert record.state == AgentState.WORKING
+        assert record.current_task == "task-1"
