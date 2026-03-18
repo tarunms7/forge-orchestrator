@@ -13,7 +13,7 @@ FORGE_LOGO = """\
 ██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗
 ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝[/]
 
-[#f2e2c8]        O R C H E S T R A T O R[/]\
+[#f2e2c8]          O R C H E S T R A T O R[/]\
 """
 
 
@@ -25,7 +25,7 @@ class ForgeLogo(Static):
         width: auto;
         height: auto;
         max-height: 12;
-        margin-top: 2;
+        margin-top: 1;
         content-align: center middle;
         text-align: center;
     }
