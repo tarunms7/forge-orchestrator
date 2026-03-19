@@ -17,6 +17,123 @@ from forge.core.sdk_helpers import sdk_query
 logger = logging.getLogger("forge.agents")
 
 
+# ── Agent permission rules ──────────────────────────────────────────
+# Written to .claude/settings.json in each worktree before the agent
+# spawns, so the SDK auto-approves these bash commands without a human
+# in the loop.  acceptEdits already covers file tools (Read/Write/Edit).
+#
+# Design: allowlist only.  The agent runs in an isolated worktree so
+# there's nothing dangerous to hit.  We allow the tools agents actually
+# need (git, file ops, common project commands) and deny only the
+# clearly dangerous ones (network, sudo, permissions, process killing).
+
+AGENT_PERMISSIONS = {
+    "permissions": {
+        "allow": [
+            # Git operations — agents must be able to commit their own work
+            "Bash(git *)",
+            # File operations — refactoring needs rm, mv, cp, mkdir
+            "Bash(rm *)",
+            "Bash(mv *)",
+            "Bash(cp *)",
+            "Bash(mkdir *)",
+            "Bash(touch *)",
+            # Read/inspect — agents need to read files and search
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(head *)",
+            "Bash(tail *)",
+            "Bash(find *)",
+            "Bash(wc *)",
+            "Bash(pwd)",
+            "Bash(echo *)",
+            "Bash(which *)",
+            # Build/test tools — agents verify their own work
+            "Bash(python *)",
+            "Bash(python3 *)",
+            "Bash(pip *)",
+            "Bash(pytest *)",
+            "Bash(npm *)",
+            "Bash(npx *)",
+            "Bash(node *)",
+            "Bash(make *)",
+            "Bash(cargo *)",
+            "Bash(go *)",
+            "Bash(yarn *)",
+            "Bash(pnpm *)",
+            "Bash(bun *)",
+            "Bash(ruff *)",
+            "Bash(eslint *)",
+            "Bash(tsc *)",
+            "Bash(javac *)",
+            "Bash(gradle *)",
+            "Bash(mvn *)",
+            "Bash(dotnet *)",
+            "Bash(swift *)",
+            "Bash(rustc *)",
+            "Bash(ruby *)",
+            "Bash(bundle *)",
+            "Bash(rake *)",
+            # Shell utilities — agents chain commands, source venvs
+            "Bash(source *)",
+            "Bash(cd *)",
+            "Bash(sort *)",
+            "Bash(uniq *)",
+            "Bash(xargs *)",
+            "Bash(sed *)",
+            "Bash(awk *)",
+            "Bash(tr *)",
+            "Bash(cut *)",
+            "Bash(diff *)",
+            "Bash(grep *)",
+            "Bash(jq *)",
+            "Bash(basename *)",
+            "Bash(dirname *)",
+            "Bash(realpath *)",
+            "Bash(readlink *)",
+        ],
+        "deny": [
+            # Network — no exfiltration or downloads
+            "Bash(curl *)",
+            "Bash(wget *)",
+            "Bash(ssh *)",
+            "Bash(scp *)",
+            "Bash(rsync *)",
+            "Bash(nc *)",
+            "Bash(ncat *)",
+            "Bash(telnet *)",
+            "Bash(ftp *)",
+            # Privilege escalation
+            "Bash(sudo *)",
+            "Bash(su *)",
+            "Bash(doas *)",
+            # Permission changes
+            "Bash(chmod *)",
+            "Bash(chown *)",
+            "Bash(chgrp *)",
+            # Process management
+            "Bash(kill *)",
+            "Bash(pkill *)",
+            "Bash(killall *)",
+            # Container/VM escape
+            "Bash(docker *)",
+            "Bash(podman *)",
+            # System modification
+            "Bash(systemctl *)",
+            "Bash(service *)",
+            "Bash(mount *)",
+            "Bash(umount *)",
+            # Environment pollution (could affect other agents)
+            "Bash(export *)",
+            "Bash(unset *)",
+            # Sensitive file reads
+            "Read(.env)",
+            "Read(.env.*)",
+        ],
+    }
+}
+
+
 def _load_claude_md(project_dir: str) -> str | None:
     """Load CLAUDE.md from standard locations.
 
@@ -341,6 +458,50 @@ class ClaudeAdapter(AgentAdapter):
             resume=resume,
         )
 
+    @staticmethod
+    def _ensure_worktree_permissions(worktree_path: str) -> None:
+        """Write agent permission rules to .claude/settings.json in the worktree.
+
+        The SDK reads permissions from this file.  Without it, agents in
+        ``acceptEdits`` mode can edit files but every bash command (including
+        ``git commit``) is blocked — with no human to approve it, the command
+        silently fails.
+
+        If the worktree already has a .claude/settings.json (from the project
+        repo), we merge our permissions into it rather than overwriting.
+        """
+        claude_dir = os.path.join(worktree_path, ".claude")
+        settings_path = os.path.join(claude_dir, "settings.json")
+
+        # Load existing settings if present (project may have its own)
+        existing: dict = {}
+        if os.path.isfile(settings_path):
+            try:
+                with open(settings_path) as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass  # Overwrite broken file
+
+        # Merge permissions: existing allow/deny rules take precedence,
+        # we append ours only if not already present
+        existing_perms = existing.get("permissions", {})
+        existing_allow = set(existing_perms.get("allow", []))
+        existing_deny = set(existing_perms.get("deny", []))
+
+        agent_allow = set(AGENT_PERMISSIONS["permissions"]["allow"])
+        agent_deny = set(AGENT_PERMISSIONS["permissions"]["deny"])
+
+        merged_allow = sorted(existing_allow | agent_allow)
+        merged_deny = sorted(existing_deny | agent_deny)
+
+        existing.setdefault("permissions", {})
+        existing["permissions"]["allow"] = merged_allow
+        existing["permissions"]["deny"] = merged_deny
+
+        os.makedirs(claude_dir, exist_ok=True)
+        with open(settings_path, "w") as f:
+            json.dump(existing, f, indent=2)
+
     async def run(
         self,
         task_prompt: str,
@@ -361,6 +522,9 @@ class ClaudeAdapter(AgentAdapter):
         project_dir: str | None = None,
         agent_max_turns: int = 25,
     ) -> AgentResult:
+        # Ensure agent has bash permissions before spawning
+        self._ensure_worktree_permissions(worktree_path)
+
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
             project_context=project_context,
