@@ -183,6 +183,8 @@ class ExecutorMixin:
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
+        # Clean infrastructure files before merge
+        await self._unstage_infra_files(worktree_path)
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         async with self._merge_lock:
@@ -311,6 +313,44 @@ class ExecutorMixin:
             await self._emit("task:files_changed", {"task_id": task_id, "files": result.files_changed}, db=db, pipeline_id=pid)
         return result
 
+    # -- infrastructure file cleanup --------------------------------------
+
+    # Files written by Forge into the worktree that must NEVER be staged,
+    # committed, or included in diffs.  They are invisible to the agent's
+    # work product.
+    _INFRA_FILES = (".claude/settings.json",)
+
+    @staticmethod
+    async def _unstage_infra_files(worktree_path: str) -> None:
+        """Remove Forge infrastructure files from the git index.
+
+        Called after every ``git add -A`` to ensure files like
+        ``.claude/settings.json`` (written by the adapter for agent
+        permissions) are never committed as part of the agent's work.
+
+        Also resets any Forge-caused modifications to ``.gitignore``
+        so the worktree is clean for rebase.
+        """
+        for infra_file in ExecutorMixin._INFRA_FILES:
+            await _run_git(
+                ["reset", "HEAD", "--", infra_file],
+                cwd=worktree_path, check=False,
+                description=f"unstage {infra_file}",
+            )
+        # Unstage AND restore .gitignore if it was modified (legacy cleanup
+        # from older Forge versions that appended exclusion rules to it).
+        # reset removes it from the index; checkout restores the working copy.
+        await _run_git(
+            ["reset", "HEAD", "--", ".gitignore"],
+            cwd=worktree_path, check=False,
+            description="unstage .gitignore",
+        )
+        await _run_git(
+            ["checkout", "--", ".gitignore"],
+            cwd=worktree_path, check=False,
+            description="restore .gitignore",
+        )
+
     # -- auto-commit safety net -------------------------------------------
 
     @staticmethod
@@ -357,6 +397,10 @@ class ExecutorMixin:
                 task_id, add_result.stderr.strip(),
             )
             return False
+
+        # Remove Forge infrastructure files from the index so they
+        # don't leak into the agent's commit or block rebase.
+        await ExecutorMixin._unstage_infra_files(worktree_path)
 
         # Build a descriptive commit message from the task title
         if task_title:
@@ -765,6 +809,7 @@ class ExecutorMixin:
 
         # Stage and commit the reverts
         await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts")
+        await self._unstage_infra_files(worktree_path)
         staged = await _run_git(
             ["diff", "--cached", "--name-only"],
             cwd=worktree_path, check=False, description="check staged",
@@ -896,6 +941,11 @@ class ExecutorMixin:
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
+
+        # Clean infrastructure files before merge — .claude/settings.json
+        # and .gitignore modifications left by Forge must not block rebase.
+        await self._unstage_infra_files(worktree_path)
+
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         async with self._merge_lock:
@@ -905,6 +955,7 @@ class ExecutorMixin:
             return
         console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
         await self._emit_merge_failure(db, task_id, merge_result.error, pid)
+        await self._unstage_infra_files(worktree_path)  # clean before retry
         async with self._merge_lock:
             retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:

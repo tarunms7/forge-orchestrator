@@ -502,21 +502,10 @@ class ClaudeAdapter(AgentAdapter):
         with open(settings_path, "w") as f:
             json.dump(existing, f, indent=2)
 
-        # Add .claude/settings.json to .gitignore so `git add -A` never
-        # stages it. The diff function (_get_diff_vs_main) also excludes
-        # .gitignore from review diffs, so the reviewer never sees either file.
-        gitignore_path = os.path.join(worktree_path, ".gitignore")
-        marker = ".claude/settings.json"
-        already_ignored = False
-        if os.path.isfile(gitignore_path):
-            try:
-                with open(gitignore_path) as f:
-                    already_ignored = marker in f.read()
-            except OSError:
-                pass
-        if not already_ignored:
-            with open(gitignore_path, "a") as f:
-                f.write(f"\n# Forge agent permissions (auto-added)\n{marker}\n")
+        # NOTE: We do NOT modify .gitignore here. Modifying .gitignore creates
+        # an unstaged change that blocks `git rebase`. Instead, every call to
+        # `git add -A` in the executor is followed by `_unstage_infra_files()`
+        # which removes .claude/settings.json from the index.
 
     async def run(
         self,
