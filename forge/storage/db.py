@@ -97,6 +97,7 @@ class TaskRow(Base):
     session_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
     questions_asked: Mapped[int] = mapped_column(default=0)
     questions_limit: Mapped[int] = mapped_column(default=3)
+    review_diff: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -895,6 +896,25 @@ class Database:
             if task:
                 task.prior_diff = diff
                 await session.commit()
+
+    async def set_task_review_diff(self, task_id: str, diff: str) -> None:
+        """Store the current diff when task enters review.
+
+        This is the diff the TUI displays in the review screen and
+        pipeline diff viewer.  Computed by the daemon in the worktree
+        so it reflects the task's actual changes, not the merged state.
+        """
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.review_diff = diff
+                await session.commit()
+
+    async def get_task_review_diff(self, task_id: str) -> str | None:
+        """Retrieve the stored review diff for a task."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            return task.review_diff if task else None
 
     async def update_pipeline_conventions(self, pipeline_id: str, conventions_json: str) -> None:
         """Store conventions JSON for a pipeline."""

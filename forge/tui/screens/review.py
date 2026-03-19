@@ -103,7 +103,7 @@ class ReviewScreen(Screen):
         self._state.remove_change_callback(self._on_state_change)
 
     def _on_state_change(self, field: str) -> None:
-        if field == "tasks":
+        if field in ("tasks", "task_diffs"):
             self._refresh()
 
     def _refresh(self) -> None:
@@ -111,7 +111,11 @@ class ReviewScreen(Screen):
         tid = state.selected_task_id
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            diff = self._diff_cache.get(tid, "")
+            # Prefer daemon-computed diff (from worktree, always accurate)
+            diff = state.task_diffs.get(tid, "")
+            if not diff:
+                # Fallback: try cache from previous git-based load
+                diff = self._diff_cache.get(tid, "")
             if not diff and tid not in self._diff_loading:
                 self._diff_loading.add(tid)
                 asyncio.create_task(self._load_diff(tid))

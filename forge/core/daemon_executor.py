@@ -871,6 +871,14 @@ class ExecutorMixin:
                     task_id, task.retry_count,
                 )
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
+        # Store and emit the diff so the TUI can display it immediately.
+        # This is the diff computed from the worktree (task's actual changes)
+        # rather than from the pipeline branch (which doesn't have them yet).
+        await db.set_task_review_diff(task_id, diff)
+        await self._emit("task:review_diff", {
+            "task_id": task_id,
+            "diff": diff,
+        }, db=db, pipeline_id=pid)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
         # Resolve per-pipeline build/test commands for review gates
         pipeline = await db.get_pipeline(pid) if pid else None
