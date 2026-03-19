@@ -299,7 +299,15 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
     is ``None`` or cannot be resolved.  Handles root commits (orphan
     branches from repos with no prior history) by diffing against the
     empty tree.
+
+    Forge infrastructure files (.claude/, .forge/, .gitignore) are excluded
+    from the diff so the LLM reviewer only sees agent work product.
     """
+    # Pathspec exclusions: hide Forge infrastructure files from review diffs.
+    # The agent may write .claude/settings.json (permissions) or modify
+    # .gitignore — these are orchestrator artifacts, not task output.
+    _DIFF_EXCLUDES = ["--", ":(exclude).claude/", ":(exclude).forge/", ":(exclude).gitignore"]
+
     # ── Fast path: explicit base ref ──────────────────────────────────
     if base_ref is not None:
         verify = await async_subprocess(
@@ -308,7 +316,7 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
         )
         if verify.returncode == 0:
             result = await async_subprocess(
-                ["git", "diff", base_ref, "HEAD"],
+                ["git", "diff", base_ref, "HEAD"] + _DIFF_EXCLUDES,
                 cwd=worktree_path,
             )
             return result.stdout
@@ -340,7 +348,7 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
     if verify.returncode == 0:
         # Normal case: diff the agent's commits against their base
         result = await async_subprocess(
-            ["git", "diff", heuristic_ref, "HEAD"],
+            ["git", "diff", heuristic_ref, "HEAD"] + _DIFF_EXCLUDES,
             cwd=worktree_path,
         )
     else:
@@ -351,7 +359,7 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
         )
         empty_tree = empty_tree_result.stdout.strip()
         result = await async_subprocess(
-            ["git", "diff", empty_tree, "HEAD"],
+            ["git", "diff", empty_tree, "HEAD"] + _DIFF_EXCLUDES,
             cwd=worktree_path,
         )
 

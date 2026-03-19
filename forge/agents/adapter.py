@@ -502,29 +502,21 @@ class ClaudeAdapter(AgentAdapter):
         with open(settings_path, "w") as f:
             json.dump(existing, f, indent=2)
 
-        # Use git's per-worktree exclude file so .claude/settings.json
-        # is invisible to git (never staged, never committed, never in diffs).
-        # This avoids modifying .gitignore which would itself appear in diffs.
-        git_dir_result = subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
-            cwd=worktree_path, capture_output=True, text=True,
-        )
-        if git_dir_result.returncode == 0:
-            git_dir = git_dir_result.stdout.strip()
-            info_dir = os.path.join(git_dir, "info")
-            os.makedirs(info_dir, exist_ok=True)
-            exclude_path = os.path.join(info_dir, "exclude")
-            marker = ".claude/settings.json"
-            already_excluded = False
-            if os.path.isfile(exclude_path):
-                try:
-                    with open(exclude_path) as f:
-                        already_excluded = marker in f.read()
-                except OSError:
-                    pass
-            if not already_excluded:
-                with open(exclude_path, "a") as f:
-                    f.write(f"\n# Forge agent permissions\n{marker}\n")
+        # Add .claude/settings.json to .gitignore so `git add -A` never
+        # stages it. The diff function (_get_diff_vs_main) also excludes
+        # .gitignore from review diffs, so the reviewer never sees either file.
+        gitignore_path = os.path.join(worktree_path, ".gitignore")
+        marker = ".claude/settings.json"
+        already_ignored = False
+        if os.path.isfile(gitignore_path):
+            try:
+                with open(gitignore_path) as f:
+                    already_ignored = marker in f.read()
+            except OSError:
+                pass
+        if not already_ignored:
+            with open(gitignore_path, "a") as f:
+                f.write(f"\n# Forge agent permissions (auto-added)\n{marker}\n")
 
     async def run(
         self,
