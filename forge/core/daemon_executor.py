@@ -714,9 +714,14 @@ class ExecutorMixin:
         related_tests = set(
             await _find_related_test_files(worktree_path, list(allowed))
         )
+        # Always exempt .claude/ and .forge/ — these are Forge infrastructure
+        # files (e.g. agent permissions), not agent work product.
+        infra_prefixes = (".claude/", ".forge/")
         out_of_scope = [
             f for f in changed
-            if f not in allowed and f not in related_tests
+            if f not in allowed
+            and f not in related_tests
+            and not any(f.startswith(p) for p in infra_prefixes)
         ]
 
         if not out_of_scope:
