@@ -183,8 +183,9 @@ class ExecutorMixin:
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
-        # Clean infrastructure files before merge
-        await self._unstage_infra_files(worktree_path)
+        # Ensure worktree is clean before merge — commits staged changes,
+        # stashes untracked files, so rebase never hits "uncommitted changes"
+        await self._ensure_clean_for_rebase(worktree_path, task_id)
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         async with self._merge_lock:
@@ -234,6 +235,9 @@ class ExecutorMixin:
         the un-rebased worktree.  The merge step will handle conflicts
         later.  This is preferable to failing the retry entirely.
         """
+        # Ensure worktree is clean — rebase refuses if index or working tree is dirty
+        await self._ensure_clean_for_rebase(worktree_path, task_id)
+
         result = await _run_git(
             ["rebase", base_ref], cwd=worktree_path,
             check=False, description="rebase worktree",
@@ -327,9 +331,6 @@ class ExecutorMixin:
         Called after every ``git add -A`` to ensure files like
         ``.claude/settings.json`` (written by the adapter for agent
         permissions) are never committed as part of the agent's work.
-
-        Also resets any Forge-caused modifications to ``.gitignore``
-        so the worktree is clean for rebase.
         """
         for infra_file in ExecutorMixin._INFRA_FILES:
             await _run_git(
@@ -337,19 +338,54 @@ class ExecutorMixin:
                 cwd=worktree_path, check=False,
                 description=f"unstage {infra_file}",
             )
-        # Unstage AND restore .gitignore if it was modified (legacy cleanup
-        # from older Forge versions that appended exclusion rules to it).
-        # reset removes it from the index; checkout restores the working copy.
-        await _run_git(
-            ["reset", "HEAD", "--", ".gitignore"],
+
+    @staticmethod
+    async def _ensure_clean_for_rebase(worktree_path: str, task_id: str) -> None:
+        """Ensure the worktree has no uncommitted changes before rebase.
+
+        git rebase refuses to run if the index or working tree is dirty.
+        This can happen when:
+        - The agent's git commit failed (pre-commit hook, sandbox, etc.)
+          leaving staged files in the index
+        - Forge infrastructure files (.claude/settings.json) are present
+          as untracked or modified files
+        - Scope enforcement left residual changes
+
+        Strategy: unstage infra files, then commit any remaining staged
+        changes with --no-verify, then stash any remaining working tree
+        dirt (untracked files, modifications).
+        """
+        # 1. Unstage infra files so they don't get committed
+        await ExecutorMixin._unstage_infra_files(worktree_path)
+
+        # 2. If anything is still staged, commit it (agent work that wasn't committed)
+        staged = await _run_git(
+            ["diff", "--cached", "--quiet"],
             cwd=worktree_path, check=False,
-            description="unstage .gitignore",
+            description="check staged changes",
         )
-        await _run_git(
-            ["checkout", "--", ".gitignore"],
+        if staged.returncode != 0:
+            # There are staged changes — commit them
+            logger.info("%s: committing leftover staged changes before rebase", task_id)
+            await _run_git(
+                ["commit", "--no-verify", "-m", f"chore({task_id}): commit staged changes before merge"],
+                cwd=worktree_path, check=False,
+                description="commit staged before rebase",
+            )
+
+        # 3. Stash any remaining working tree dirt (untracked files, modifications)
+        #    --include-untracked catches .claude/settings.json and any other debris
+        status = await _run_git(
+            ["status", "--porcelain"],
             cwd=worktree_path, check=False,
-            description="restore .gitignore",
+            description="check working tree",
         )
+        if status.stdout.strip():
+            await _run_git(
+                ["stash", "push", "--include-untracked", "-m", "forge-pre-rebase-cleanup"],
+                cwd=worktree_path, check=False,
+                description="stash working tree before rebase",
+            )
 
     # -- auto-commit safety net -------------------------------------------
 
@@ -942,9 +978,9 @@ class ExecutorMixin:
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
 
-        # Clean infrastructure files before merge — .claude/settings.json
-        # and .gitignore modifications left by Forge must not block rebase.
-        await self._unstage_infra_files(worktree_path)
+        # Ensure worktree is clean before merge — commits staged changes,
+        # stashes untracked files, so rebase never hits "uncommitted changes"
+        await self._ensure_clean_for_rebase(worktree_path, task_id)
 
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
@@ -955,7 +991,7 @@ class ExecutorMixin:
             return
         console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
         await self._emit_merge_failure(db, task_id, merge_result.error, pid)
-        await self._unstage_infra_files(worktree_path)  # clean before retry
+        await self._ensure_clean_for_rebase(worktree_path, task_id)  # clean before retry
         async with self._merge_lock:
             retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:
