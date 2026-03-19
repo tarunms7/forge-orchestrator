@@ -225,6 +225,39 @@ from forge.cli.ping import ping  # noqa: E402
 cli.add_command(ping)
 
 
+@cli.command()
+def upgrade() -> None:
+    """Upgrade Forge to the latest version from GitHub."""
+    import shutil
+    import subprocess
+    import sys
+
+    uv = shutil.which("uv")
+    if not uv:
+        click.echo("Error: uv not found. Install it first: https://docs.astral.sh/uv/", err=True)
+        sys.exit(1)
+
+    repo = "git+https://github.com/tarunms7/forge-orchestrator.git"
+    click.echo(f"Upgrading forge-orchestrator from {_version}...")
+
+    result = subprocess.run(
+        [uv, "tool", "install", "--upgrade", "--force", repo],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode != 0:
+        click.echo(f"Upgrade failed:\n{result.stderr}", err=True)
+        sys.exit(1)
+
+    # Get the new version
+    ver_result = subprocess.run(
+        [uv, "tool", "run", "forge", "--version"],
+        capture_output=True, text=True,
+    )
+    new_version = ver_result.stdout.strip() if ver_result.returncode == 0 else "unknown"
+    click.echo(f"Done. {new_version}")
+
+
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
         with open(path, "w") as f:
