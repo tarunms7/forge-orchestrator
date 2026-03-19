@@ -131,6 +131,15 @@ class ExecutorMixin:
             task, worktree_path, pipeline_branch,
         )
         if not has_in_scope_changes:
+            if not reverted_files:
+                # Agent made zero changes and nothing was reverted —
+                # the task legitimately required no modifications.
+                # Mark done directly (skip review and merge).
+                console.print(f"[bold green]{task_id}: no changes needed — marking done[/bold green]")
+                await db.update_task_state(task_id, TaskState.DONE.value)
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                await db.release_agent(agent_id)
+                return
             console.print(f"[red]{task_id}: all changes were outside file scope[/red]")
             reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
@@ -568,6 +577,14 @@ class ExecutorMixin:
             task, worktree_path, pipeline_branch,
         )
         if not has_in_scope_changes:
+            if not reverted_files:
+                # Agent made zero changes and nothing was reverted —
+                # the task legitimately required no modifications.
+                console.print(f"[bold green]{task_id}: no changes needed — marking done (after resume)[/bold green]")
+                await db.update_task_state(task_id, TaskState.DONE.value)
+                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                await db.release_agent(agent_id)
+                return
             console.print(f"[red]{task_id}: all changes were outside file scope (after resume)[/red]")
             reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
@@ -714,9 +731,14 @@ class ExecutorMixin:
         related_tests = set(
             await _find_related_test_files(worktree_path, list(allowed))
         )
+        # Always exempt .claude/ and .forge/ — these are Forge infrastructure
+        # files (e.g. agent permissions), not agent work product.
+        infra_prefixes = (".claude/", ".forge/")
         out_of_scope = [
             f for f in changed
-            if f not in allowed and f not in related_tests
+            if f not in allowed
+            and f not in related_tests
+            and not any(f.startswith(p) for p in infra_prefixes)
         ]
 
         if not out_of_scope:
