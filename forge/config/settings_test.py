@@ -8,7 +8,7 @@ from forge.config.settings import ForgeSettings
 def test_default_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
     s = ForgeSettings()
-    assert s.max_agents == 4
+    assert s.max_agents == 5
     assert s.cpu_threshold == 80.0
     assert s.memory_threshold_pct == 10.0
     assert s.agent_timeout_seconds == 600

@@ -512,15 +512,15 @@ def test_system_prompt_includes_turn_budget(tmp_path):
 
 
 def test_system_prompt_turn_budget_defaults(tmp_path):
-    """Default max_turns=25 should produce wrap_up_turn=20."""
+    """Default max_turns=75 should produce wrap_up_turn=70."""
     adapter = ClaudeAdapter()
     options = adapter._build_options(
         worktree_path=str(tmp_path),
         allowed_dirs=[],
     )
-    assert "25 turns" in options.system_prompt
-    assert "turn 20" in options.system_prompt
-    assert options.max_turns == 25
+    assert "75 turns" in options.system_prompt
+    assert "turn 70" in options.system_prompt
+    assert options.max_turns == 75
 
 
 def test_system_prompt_allows_git_read_commands(tmp_path):

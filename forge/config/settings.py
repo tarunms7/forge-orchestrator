@@ -21,9 +21,9 @@ class ForgeSettings(BaseSettings):
     # ~300-500 MB.  Default 4 balances parallelism with memory pressure.
     # The resource monitor provides backpressure if the machine is
     # overloaded (CPU, memory, disk thresholds).  Override via FORGE_MAX_AGENTS.
-    max_agents: int = 4
+    max_agents: int = 5
     agent_timeout_seconds: int = 600  # lowered from 1800
-    agent_max_turns: int = 25  # Max turns per agent execution. Override via FORGE_AGENT_MAX_TURNS.
+    agent_max_turns: int = 75  # Max turns per agent execution. Override via FORGE_AGENT_MAX_TURNS.
     context_rotation_tokens: int = 80_000
     max_retries: int = 5
 

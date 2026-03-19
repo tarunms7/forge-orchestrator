@@ -20,8 +20,8 @@ class TestProjectConfigDefaults:
         assert config.build.enabled is False
         assert config.review.enabled is True
         assert config.review.max_retries == 3
-        assert config.agents.max_parallel == 4
-        assert config.agents.max_turns == 25
+        assert config.agents.max_parallel == 5
+        assert config.agents.max_turns == 75
         assert config.agents.model == "sonnet"
         assert config.agents.autonomy == "balanced"
         assert config.instructions == ""
@@ -35,14 +35,14 @@ class TestProjectConfigDefaults:
         assert config.tests.enabled is False  # Off by default — user must opt in
         assert config.build.enabled is False
         assert config.review.max_retries == 3
-        assert config.agents.max_turns == 25
+        assert config.agents.max_turns == 75
 
 
 class TestProjectConfigFromToml:
     def test_missing_file_returns_defaults(self):
         config = ProjectConfig.from_toml("/nonexistent/forge.toml")
         assert config.lint.enabled is True
-        assert config.agents.max_turns == 25
+        assert config.agents.max_turns == 75
 
     def test_invalid_toml_returns_defaults(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
@@ -109,7 +109,7 @@ class TestProjectConfigLoad:
 
     def test_load_missing_forge_dir(self, tmp_path):
         config = ProjectConfig.load(str(tmp_path))
-        assert config.agents.max_turns == 25  # default
+        assert config.agents.max_turns == 75  # default
 
 
 class TestApplyProjectConfig:

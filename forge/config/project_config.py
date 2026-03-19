@@ -62,8 +62,8 @@ max_retries = 3             # How many times to retry on review rejection
 # ── Agents ─────────────────────────────────────────────────────────────
 
 [agents]
-max_parallel = 4            # Max concurrent agents (each uses ~300-500 MB)
-max_turns = 25              # Max turns per agent. Increase for complex tasks.
+max_parallel = 5            # Max concurrent agents (each uses ~300-500 MB)
+max_turns = 75              # Max turns per agent. Increase for complex tasks.
 model = "sonnet"            # "sonnet", "opus", "haiku"
 autonomy = "balanced"       # "full" = never ask questions
                             # "balanced" = ask when <80% confident (default)
@@ -151,8 +151,8 @@ class ReviewConfig:
 @dataclass
 class AgentConfig:
     """Configuration for execution agents."""
-    max_parallel: int = 4
-    max_turns: int = 25
+    max_parallel: int = 5
+    max_turns: int = 75
     model: str = "sonnet"
     autonomy: str = "balanced"
     timeout_seconds: int = 600
