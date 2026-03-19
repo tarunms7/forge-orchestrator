@@ -331,6 +331,20 @@ class PipelineScreen(Screen):
         if field == "integration":
             self._refresh_integration_badge()
             return
+        if field == "task_diffs":
+            # New diff arrived from daemon — update diff viewer if showing
+            if self._active_view == "diff":
+                tid = self._state.selected_task_id
+                if tid and tid in self._state.task_diffs:
+                    self._diff_cache[tid] = self._state.task_diffs[tid]
+                    try:
+                        task = self._state.tasks.get(tid, {})
+                        self.query_one(DiffViewer).update_diff(
+                            tid, task.get("title", ""), self._state.task_diffs[tid],
+                        )
+                    except Exception:
+                        pass
+            return
         if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
                      "contracts_output", "planning"):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
@@ -609,9 +623,21 @@ class PipelineScreen(Screen):
         return ""
 
     async def _load_task_diff(self, tid: str) -> str:
-        """Generate diff for a task from the pipeline branch."""
+        """Get diff for a task, preferring daemon-computed diff from worktree.
+
+        Priority:
+        1. state.task_diffs[tid] — computed by daemon in the worktree (always accurate)
+        2. self._diff_cache[tid] — previously loaded
+        3. git diff base...pipeline_branch — fallback for merged tasks
+        """
+        # Prefer daemon-computed diff (available as soon as task enters review)
+        daemon_diff = self._state.task_diffs.get(tid, "")
+        if daemon_diff:
+            self._diff_cache[tid] = daemon_diff
+            return daemon_diff
         if tid in self._diff_cache:
             return self._diff_cache[tid]
+        # Fallback: git diff on the pipeline branch (works for already-merged tasks)
         branch = await self._resolve_branch()
         if not branch:
             return "No pipeline branch available yet."

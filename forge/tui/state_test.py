@@ -660,6 +660,35 @@ def test_pipeline_interrupted_event():
     assert state.phase == "interrupted"
 
 
+# ── Review diff state tests ──────────────────────────────────────────
+
+
+def test_review_diff_initial_state():
+    state = TuiState()
+    assert state.task_diffs == {}
+
+
+def test_review_diff_stored():
+    state = _make_state_with_task("t1")
+    state.apply_event("task:review_diff", {"task_id": "t1", "diff": "--- a/foo\n+++ b/foo\n+hello"})
+    assert state.task_diffs["t1"] == "--- a/foo\n+++ b/foo\n+hello"
+
+
+def test_review_diff_reset():
+    state = TuiState()
+    state.task_diffs["t1"] = "some diff"
+    state.reset()
+    assert state.task_diffs == {}
+
+
+def test_review_diff_notifies():
+    state = TuiState()
+    notified = []
+    state.on_change(lambda f: notified.append(f))
+    state.apply_event("task:review_diff", {"task_id": "t1", "diff": "diff text"})
+    assert "task_diffs" in notified
+
+
 # ── Integration health check state tests ─────────────────────────────
 
 

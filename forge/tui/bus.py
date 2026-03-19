@@ -44,6 +44,7 @@ TUI_EVENT_TYPES = [
     "task:merge_result",
     "task:cost_update",
     "task:awaiting_approval",
+    "task:review_diff",
     "planner:output",
     "contracts:output",
     "followup:task_started",

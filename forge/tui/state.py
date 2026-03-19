@@ -68,6 +68,10 @@ class TuiState:
         self.planning_stage: str = ""
         self.last_auto_decided: dict | None = None
 
+        # Task diffs: computed by the daemon from the worktree, stored here
+        # so the TUI can display them immediately without running git commands.
+        self.task_diffs: dict[str, str] = {}  # task_id → diff text
+
         # Integration health checks
         self.integration_baseline: dict | None = None      # {"status": ..., "exit_code": ...}
         self.integration_degraded: bool = False             # True if user chose "ignore" on a failure
@@ -199,6 +203,14 @@ class TuiState:
         if tid and tid in self.tasks:
             self.tasks[tid]["state"] = "awaiting_approval"
             self._notify("tasks")
+
+    def _on_review_diff(self, data: dict) -> None:
+        """Store the diff computed from the task's worktree."""
+        tid = data.get("task_id")
+        diff = data.get("diff", "")
+        if tid:
+            self.task_diffs[tid] = diff
+            self._notify("task_diffs")
 
     def _on_pipeline_error(self, data: dict) -> None:
         self.error = data.get("error", "Unknown error")
@@ -546,6 +558,7 @@ class TuiState:
         self._pending_state_updates.clear()
         self.error_history.clear()
         self.planning_stage = ""
+        self.task_diffs.clear()
         # Integration health checks
         self.integration_baseline = None
         self.integration_degraded = False
@@ -587,6 +600,7 @@ class TuiState:
         "task:review_update": _on_review_update,
         "task:merge_result": _on_merge_result,
         "task:awaiting_approval": _on_awaiting_approval,
+        "task:review_diff": _on_review_diff,
         "planner:output": _on_planner_output,
         "planning:question": _on_planning_question,
         "planning:answer": _on_planning_answer,
