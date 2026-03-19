@@ -34,7 +34,7 @@ class AgentRuntime:
         questions_remaining: int = 3,
         timeout_seconds: int | None = None,
         project_dir: str | None = None,
-        agent_max_turns: int = 25,
+        agent_max_turns: int = 75,
     ) -> AgentResult:
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         max_retries = 2  # 3 total attempts

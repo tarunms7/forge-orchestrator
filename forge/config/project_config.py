@@ -235,8 +235,8 @@ class ProjectConfig:
                 max_retries=review_raw.get("max_retries", 3),
             ),
             agents=AgentConfig(
-                max_parallel=agents_raw.get("max_parallel", 4),
-                max_turns=agents_raw.get("max_turns", 25),
+                max_parallel=agents_raw.get("max_parallel", 5),
+                max_turns=agents_raw.get("max_turns", 75),
                 model=agents_raw.get("model", "sonnet"),
                 autonomy=agents_raw.get("autonomy", "balanced"),
                 timeout_seconds=agents_raw.get("timeout_seconds", 600),

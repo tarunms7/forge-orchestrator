@@ -44,7 +44,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         autonomy="balanced",
         questions_remaining=3,
         project_dir=None,
-        agent_max_turns=25,
+        agent_max_turns=75,
     )
 
 
@@ -187,7 +187,7 @@ async def test_runtime_passes_all_new_params_together():
         autonomy="balanced",
         questions_remaining=3,
         project_dir=None,
-        agent_max_turns=25,
+        agent_max_turns=75,
     )
 
 

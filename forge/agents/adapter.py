@@ -379,7 +379,7 @@ class AgentAdapter(ABC):
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
-        agent_max_turns: int = 25,
+        agent_max_turns: int = 75,
     ) -> AgentResult:
         """Execute a task and return the result."""
 
@@ -399,7 +399,7 @@ class ClaudeAdapter(AgentAdapter):
         questions_remaining: int = 3,
         resume: str | None = None,
         project_dir: str | None = None,
-        agent_max_turns: int = 25,
+        agent_max_turns: int = 75,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -480,7 +480,7 @@ class ClaudeAdapter(AgentAdapter):
         autonomy: str = "balanced",
         questions_remaining: int = 3,
         project_dir: str | None = None,
-        agent_max_turns: int = 25,
+        agent_max_turns: int = 75,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
