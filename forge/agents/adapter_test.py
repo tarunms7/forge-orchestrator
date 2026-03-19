@@ -2,6 +2,8 @@ import json
 from unittest.mock import AsyncMock, patch
 
 from forge.agents.adapter import (
+    AGENT_ALLOWED_TOOLS,
+    AGENT_DISALLOWED_TOOLS,
     AgentAdapter,
     AgentResult,
     ClaudeAdapter,
@@ -560,102 +562,62 @@ def test_system_prompt_no_working_effectively_section(tmp_path):
 # --- Worktree permission tests ---
 
 
-class TestEnsureWorktreePermissions:
-    """ClaudeAdapter._ensure_worktree_permissions() writes settings.json."""
+class TestAgentPermissions:
+    """Permissions are passed via SDK options, not written to disk."""
 
-    def test_creates_settings_in_empty_worktree(self, tmp_path):
-        """Settings file is created when .claude/ doesn't exist."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        settings_path = tmp_path / ".claude" / "settings.json"
-        assert settings_path.exists()
-        data = json.loads(settings_path.read_text())
-        assert "permissions" in data
-        assert "allow" in data["permissions"]
-        assert "deny" in data["permissions"]
+    def test_allowed_tools_contains_git(self):
+        """Git commands are in the allowed tools list."""
+        from forge.agents.adapter import AGENT_ALLOWED_TOOLS
+        assert "Bash(git *)" in AGENT_ALLOWED_TOOLS
 
-    def test_allows_git_commands(self, tmp_path):
-        """Git commands are in the allow list."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        settings_path = tmp_path / ".claude" / "settings.json"
-        data = json.loads(settings_path.read_text())
-        allow = data["permissions"]["allow"]
-        assert "Bash(git *)" in allow
-
-    def test_allows_file_operations(self, tmp_path):
+    def test_allowed_tools_contains_file_ops(self):
         """rm, mv, cp, mkdir are allowed for refactoring."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-        allow = data["permissions"]["allow"]
-        assert "Bash(rm *)" in allow
-        assert "Bash(mv *)" in allow
-        assert "Bash(mkdir *)" in allow
+        from forge.agents.adapter import AGENT_ALLOWED_TOOLS
+        assert "Bash(rm *)" in AGENT_ALLOWED_TOOLS
+        assert "Bash(mv *)" in AGENT_ALLOWED_TOOLS
+        assert "Bash(mkdir *)" in AGENT_ALLOWED_TOOLS
 
-    def test_allows_build_tools(self, tmp_path):
+    def test_allowed_tools_contains_build_tools(self):
         """Common build/test tools are allowed."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-        allow = data["permissions"]["allow"]
-        assert "Bash(pytest *)" in allow
-        assert "Bash(npm *)" in allow
-        assert "Bash(make *)" in allow
-        assert "Bash(cargo *)" in allow
+        from forge.agents.adapter import AGENT_ALLOWED_TOOLS
+        assert "Bash(pytest *)" in AGENT_ALLOWED_TOOLS
+        assert "Bash(npm *)" in AGENT_ALLOWED_TOOLS
+        assert "Bash(make *)" in AGENT_ALLOWED_TOOLS
+        assert "Bash(cargo *)" in AGENT_ALLOWED_TOOLS
 
-    def test_denies_network_commands(self, tmp_path):
+    def test_disallowed_tools_blocks_network(self):
         """Network commands are blocked."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-        deny = data["permissions"]["deny"]
-        assert "Bash(curl *)" in deny
-        assert "Bash(wget *)" in deny
-        assert "Bash(ssh *)" in deny
+        from forge.agents.adapter import AGENT_DISALLOWED_TOOLS
+        assert "Bash(curl *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(wget *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(ssh *)" in AGENT_DISALLOWED_TOOLS
 
-    def test_denies_privilege_escalation(self, tmp_path):
+    def test_disallowed_tools_blocks_privilege_escalation(self):
         """sudo and friends are blocked."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-        deny = data["permissions"]["deny"]
-        assert "Bash(sudo *)" in deny
-        assert "Bash(chmod *)" in deny
+        from forge.agents.adapter import AGENT_DISALLOWED_TOOLS
+        assert "Bash(sudo *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(chmod *)" in AGENT_DISALLOWED_TOOLS
 
-    def test_merges_with_existing_settings(self, tmp_path):
-        """Existing project settings are preserved and merged."""
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        existing = {
-            "model": "opus",
-            "permissions": {
-                "allow": ["Bash(my-custom-tool *)"],
-                "deny": ["Bash(my-blocked-tool *)"],
-            },
-        }
-        (claude_dir / "settings.json").write_text(json.dumps(existing))
+    def test_no_settings_file_written(self, tmp_path):
+        """Permissions are NOT written to disk — no file pollution."""
+        # Build options and verify no file is created
+        adapter = ClaudeAdapter()
+        options = adapter._build_options(
+            str(tmp_path), [],
+            model="sonnet",
+            project_context="",
+        )
+        assert not (tmp_path / ".claude" / "settings.json").exists()
+        assert options.allowed_tools == list(AGENT_ALLOWED_TOOLS)
+        assert options.disallowed_tools == list(AGENT_DISALLOWED_TOOLS)
 
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        data = json.loads((claude_dir / "settings.json").read_text())
-
-        # Existing settings preserved
-        assert data.get("model") == "opus"
-        # Existing rules merged
-        assert "Bash(my-custom-tool *)" in data["permissions"]["allow"]
-        assert "Bash(my-blocked-tool *)" in data["permissions"]["deny"]
-        # Agent rules added
-        assert "Bash(git *)" in data["permissions"]["allow"]
-        assert "Bash(curl *)" in data["permissions"]["deny"]
-
-    def test_handles_broken_json(self, tmp_path):
-        """Broken settings.json is overwritten cleanly."""
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-        (claude_dir / "settings.json").write_text("{broken json!!")
-
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        data = json.loads((claude_dir / "settings.json").read_text())
-        assert "Bash(git *)" in data["permissions"]["allow"]
-
-    def test_idempotent(self, tmp_path):
-        """Running twice produces the same result."""
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        first = (tmp_path / ".claude" / "settings.json").read_text()
-        ClaudeAdapter._ensure_worktree_permissions(str(tmp_path))
-        second = (tmp_path / ".claude" / "settings.json").read_text()
-        assert first == second
+    def test_build_options_passes_permissions(self):
+        """_build_options includes allowed_tools and disallowed_tools."""
+        adapter = ClaudeAdapter()
+        options = adapter._build_options(
+            "/tmp/test", [],
+            model="sonnet",
+            project_context="",
+        )
+        assert "Bash(git *)" in options.allowed_tools
+        assert "Bash(curl *)" in options.disallowed_tools

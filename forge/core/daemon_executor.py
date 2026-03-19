@@ -322,22 +322,6 @@ class ExecutorMixin:
     # Files written by Forge into the worktree that must NEVER be staged,
     # committed, or included in diffs.  They are invisible to the agent's
     # work product.
-    _INFRA_FILES = (".claude/settings.json",)
-
-    @staticmethod
-    async def _unstage_infra_files(worktree_path: str) -> None:
-        """Remove Forge infrastructure files from the git index.
-
-        Called after every ``git add -A`` to ensure files like
-        ``.claude/settings.json`` (written by the adapter for agent
-        permissions) are never committed as part of the agent's work.
-        """
-        for infra_file in ExecutorMixin._INFRA_FILES:
-            await _run_git(
-                ["reset", "HEAD", "--", infra_file],
-                cwd=worktree_path, check=False,
-                description=f"unstage {infra_file}",
-            )
 
     @staticmethod
     async def _ensure_clean_for_rebase(worktree_path: str, task_id: str) -> None:
@@ -355,10 +339,7 @@ class ExecutorMixin:
         changes with --no-verify, then stash any remaining working tree
         dirt (untracked files, modifications).
         """
-        # 1. Unstage infra files so they don't get committed
-        await ExecutorMixin._unstage_infra_files(worktree_path)
-
-        # 2. If anything is still staged, commit it (agent work that wasn't committed)
+        # 1. If anything is staged, commit it (agent work that wasn't committed)
         staged = await _run_git(
             ["diff", "--cached", "--quiet"],
             cwd=worktree_path, check=False,
@@ -373,8 +354,7 @@ class ExecutorMixin:
                 description="commit staged before rebase",
             )
 
-        # 3. Stash any remaining working tree dirt (untracked files, modifications)
-        #    --include-untracked catches .claude/settings.json and any other debris
+        # 2. Stash any remaining working tree dirt (untracked files, modifications)
         status = await _run_git(
             ["status", "--porcelain"],
             cwd=worktree_path, check=False,
@@ -433,10 +413,6 @@ class ExecutorMixin:
                 task_id, add_result.stderr.strip(),
             )
             return False
-
-        # Remove Forge infrastructure files from the index so they
-        # don't leak into the agent's commit or block rebase.
-        await ExecutorMixin._unstage_infra_files(worktree_path)
 
         # Build a descriptive commit message from the task title
         if task_title:
@@ -845,7 +821,6 @@ class ExecutorMixin:
 
         # Stage and commit the reverts
         await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts")
-        await self._unstage_infra_files(worktree_path)
         staged = await _run_git(
             ["diff", "--cached", "--name-only"],
             cwd=worktree_path, check=False, description="check staged",
