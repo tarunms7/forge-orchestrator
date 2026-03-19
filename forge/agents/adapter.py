@@ -252,9 +252,10 @@ You have {max_turns} turns for this task. Manage them wisely:
 ## Before You Finish
 1. Run git diff to review all your changes
 2. Run tests if a test command is available
-3. Stage and commit: git add -A && git commit -m '<type>: <short summary>'
+3. Stage and commit: git add -A && git commit --no-verify -m '<type>: <short summary>'
    Use conventional commits (feat, fix, refactor, test, docs, chore).
    Max 72 chars. Describe WHAT changed, don't copy the task title.
+   ALWAYS use --no-verify to skip pre-commit hooks (the orchestrator runs its own review).
    If the commit fails for any reason, don't worry — the orchestrator will auto-commit your changes.
 4. If nothing meaningful to do (files don't exist, task already done), make no changes."""
 

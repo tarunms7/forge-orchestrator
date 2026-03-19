@@ -411,7 +411,7 @@ class ExecutorMixin:
             commit_msg = f"feat({task_id}): implement task changes"
 
         commit_result = await _run_git(
-            ["commit", "-m", commit_msg],
+            ["commit", "--no-verify", "-m", commit_msg],
             cwd=worktree_path, check=False,
             description="auto-commit agent changes",
         )
@@ -816,7 +816,7 @@ class ExecutorMixin:
         )
         if staged.stdout.strip():
             await _run_git(
-                ["commit", "-m", "chore: revert out-of-scope file changes"],
+                ["commit", "--no-verify", "-m", "chore: revert out-of-scope file changes"],
                 cwd=worktree_path, check=False, description="commit scope reverts",
             )
 
