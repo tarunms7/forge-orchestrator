@@ -171,6 +171,9 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        # Ensure worktree is clean before merge — a previous failed attempt
+        # may have left staged-but-uncommitted changes that block git rebase.
+        await self._ensure_clean_worktree(worktree_path, task_id)
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{task_id}"
@@ -223,6 +226,9 @@ class ExecutorMixin:
         the un-rebased worktree.  The merge step will handle conflicts
         later.  This is preferable to failing the retry entirely.
         """
+        # Ensure worktree is clean before rebase — uncommitted changes
+        # from a previous failed attempt would cause git rebase to refuse.
+        await self._ensure_clean_worktree(worktree_path, task_id)
         result = await _run_git(
             ["rebase", base_ref], cwd=worktree_path,
             check=False, description="rebase worktree",
@@ -371,6 +377,72 @@ class ExecutorMixin:
 
         logger.info("%s: auto-commit succeeded", task_id)
         return True
+
+    @staticmethod
+    async def _ensure_clean_worktree(worktree_path: str, task_id: str) -> None:
+        """Ensure the worktree has no uncommitted changes before merge/rebase.
+
+        This is a last-resort safety net called right before any git operation
+        that requires a clean index (rebase, merge).  If uncommitted changes
+        are found, stages and commits them with a generic message.
+
+        If the commit fails (e.g. nothing to commit after staging), resets the
+        index so the worktree is at least in a usable state.
+
+        Unlike _auto_commit_if_needed (which runs once after the agent), this
+        is defensive: it handles leftover dirt from scope enforcement, failed
+        partial commits, or interrupted operations.
+        """
+        status = await _run_git(
+            ["status", "--porcelain"],
+            cwd=worktree_path, check=False,
+            description="pre-merge clean check",
+        )
+        if status.returncode != 0 or not status.stdout.strip():
+            return  # Already clean
+
+        logger.warning(
+            "%s: worktree has uncommitted changes before merge/rebase — "
+            "auto-committing to prevent failure",
+            task_id,
+        )
+        console.print(
+            f"[yellow]{task_id}: cleaning dirty worktree before merge[/yellow]",
+        )
+
+        # Stage everything
+        await _run_git(
+            ["add", "-A"],
+            cwd=worktree_path, check=False,
+            description="pre-merge stage",
+        )
+
+        # Try to commit
+        commit = await _run_git(
+            ["commit", "-m", f"chore({task_id}): auto-commit before merge"],
+            cwd=worktree_path, check=False,
+            description="pre-merge commit",
+        )
+        if commit.returncode == 0:
+            return
+
+        # Commit failed — maybe nothing to commit after staging, or
+        # the index is in a broken state.  Reset to clean the index.
+        logger.warning(
+            "%s: pre-merge commit failed (%s) — resetting index",
+            task_id, commit.stderr.strip()[:100],
+        )
+        await _run_git(
+            ["reset", "HEAD"],
+            cwd=worktree_path, check=False,
+            description="pre-merge reset index",
+        )
+        # Try one more time: checkout all modified files to restore clean state
+        await _run_git(
+            ["checkout", "."],
+            cwd=worktree_path, check=False,
+            description="pre-merge checkout clean",
+        )
 
     # -- question handling (pause / resume) --------------------------------
 
@@ -870,6 +942,11 @@ class ExecutorMixin:
             # The /approve endpoint triggers the merge. Agent is released by
             # _cleanup_and_release in the caller.
             return
+
+        # Final safety net: ensure worktree is clean before merge.
+        # Scope enforcement or review may have left staged-but-uncommitted
+        # changes that cause git rebase to refuse with "uncommitted changes".
+        await self._ensure_clean_worktree(worktree_path, task_id)
 
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
