@@ -18,18 +18,16 @@ logger = logging.getLogger("forge.agents")
 
 
 # ── Agent permission rules ──────────────────────────────────────────
-# Written to .claude/settings.json in each worktree before the agent
-# spawns, so the SDK auto-approves these bash commands without a human
-# in the loop.  acceptEdits already covers file tools (Read/Write/Edit).
+# Passed directly to ClaudeCodeOptions as allowed_tools / disallowed_tools.
+# No file is written to the worktree — permissions flow through the SDK,
+# keeping the git working tree clean for rebase.
 #
 # Design: allowlist only.  The agent runs in an isolated worktree so
 # there's nothing dangerous to hit.  We allow the tools agents actually
 # need (git, file ops, common project commands) and deny only the
 # clearly dangerous ones (network, sudo, permissions, process killing).
 
-AGENT_PERMISSIONS = {
-    "permissions": {
-        "allow": [
+AGENT_ALLOWED_TOOLS = [
             # Git operations — agents must be able to commit their own work
             "Bash(git *)",
             # File operations — refactoring needs rm, mv, cp, mkdir
@@ -91,8 +89,9 @@ AGENT_PERMISSIONS = {
             "Bash(dirname *)",
             "Bash(realpath *)",
             "Bash(readlink *)",
-        ],
-        "deny": [
+]
+
+AGENT_DISALLOWED_TOOLS = [
             # Network — no exfiltration or downloads
             "Bash(curl *)",
             "Bash(wget *)",
@@ -124,14 +123,12 @@ AGENT_PERMISSIONS = {
             "Bash(mount *)",
             "Bash(umount *)",
             # Environment pollution (could affect other agents)
-            "Bash(export *)",
-            "Bash(unset *)",
-            # Sensitive file reads
-            "Read(.env)",
-            "Read(.env.*)",
-        ],
-    }
-}
+    "Bash(export *)",
+    "Bash(unset *)",
+    # Sensitive file reads
+    "Read(.env)",
+    "Read(.env.*)",
+]
 
 
 def _load_claude_md(project_dir: str) -> str | None:
@@ -453,60 +450,17 @@ class ClaudeAdapter(AgentAdapter):
         return ClaudeCodeOptions(
             system_prompt=system_prompt,
             permission_mode="acceptEdits",
+            allowed_tools=list(AGENT_ALLOWED_TOOLS),
+            disallowed_tools=list(AGENT_DISALLOWED_TOOLS),
             cwd=worktree_path,
             model=model,
             max_turns=max_turns,
             resume=resume,
         )
 
-    @staticmethod
-    def _ensure_worktree_permissions(worktree_path: str) -> None:
-        """Write agent permission rules to .claude/settings.json in the worktree.
-
-        The SDK reads permissions from this file.  Without it, agents in
-        ``acceptEdits`` mode can edit files but every bash command (including
-        ``git commit``) is blocked — with no human to approve it, the command
-        silently fails.
-
-        If the worktree already has a .claude/settings.json (from the project
-        repo), we merge our permissions into it rather than overwriting.
-        """
-        claude_dir = os.path.join(worktree_path, ".claude")
-        settings_path = os.path.join(claude_dir, "settings.json")
-
-        # Load existing settings if present (project may have its own)
-        existing: dict = {}
-        if os.path.isfile(settings_path):
-            try:
-                with open(settings_path) as f:
-                    existing = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                pass  # Overwrite broken file
-
-        # Merge permissions: existing allow/deny rules take precedence,
-        # we append ours only if not already present
-        existing_perms = existing.get("permissions", {})
-        existing_allow = set(existing_perms.get("allow", []))
-        existing_deny = set(existing_perms.get("deny", []))
-
-        agent_allow = set(AGENT_PERMISSIONS["permissions"]["allow"])
-        agent_deny = set(AGENT_PERMISSIONS["permissions"]["deny"])
-
-        merged_allow = sorted(existing_allow | agent_allow)
-        merged_deny = sorted(existing_deny | agent_deny)
-
-        existing.setdefault("permissions", {})
-        existing["permissions"]["allow"] = merged_allow
-        existing["permissions"]["deny"] = merged_deny
-
-        os.makedirs(claude_dir, exist_ok=True)
-        with open(settings_path, "w") as f:
-            json.dump(existing, f, indent=2)
-
-        # NOTE: We do NOT modify .gitignore here. Modifying .gitignore creates
-        # an unstaged change that blocks `git rebase`. Instead, every call to
-        # `git add -A` in the executor is followed by `_unstage_infra_files()`
-        # which removes .claude/settings.json from the index.
+    # NOTE: Permissions are passed directly via ClaudeCodeOptions
+    # (allowed_tools / disallowed_tools).  No file is written to the
+    # worktree, so there is nothing to pollute git status or block rebase.
 
     async def run(
         self,
@@ -528,9 +482,6 @@ class ClaudeAdapter(AgentAdapter):
         project_dir: str | None = None,
         agent_max_turns: int = 25,
     ) -> AgentResult:
-        # Ensure agent has bash permissions before spawning
-        self._ensure_worktree_permissions(worktree_path)
-
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
             project_context=project_context,
