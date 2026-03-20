@@ -7,16 +7,6 @@ import logging
 import os
 import time
 
-
-def _escape_markup(text: str) -> str:
-    """Escape Rich markup characters in error messages to prevent MarkupError crashes.
-
-    Pydantic/exception messages often contain [ ] = characters that Rich
-    interprets as markup tags. This escapes them for safe display in
-    Textual notifications/toasts.
-    """
-    return str(text).replace("[", "\\[")
-
 from textual.app import App
 from textual.binding import Binding
 from textual.widgets import TextArea, Input
@@ -34,6 +24,16 @@ from forge.tui.widgets.pipeline_list import PipelineList
 from forge.tui.widgets.command_palette import CommandPalette
 
 logger = logging.getLogger("forge.tui.app")
+
+
+def _escape_markup(text: str) -> str:
+    """Escape Rich markup characters in error messages to prevent MarkupError crashes.
+
+    Pydantic/exception messages often contain [ ] = characters that Rich
+    interprets as markup tags. This escapes them for safe display in
+    Textual notifications/toasts.
+    """
+    return str(text).replace("[", "\\[")
 
 
 async def detect_server(base_url: str = "http://localhost:8000", timeout: float = 0.1) -> bool:
