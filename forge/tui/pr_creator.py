@@ -46,8 +46,33 @@ def generate_pr_body(
     for t in tasks:
         added = t.get("added", 0)
         removed = t.get("removed", 0)
-        files = t.get("files", 0)
-        lines.append(f"- \u2705 **{t['title']}** — +{added}/-{removed}, {files} files")
+        files_count = t.get("files", 0)
+        file_list = t.get("file_list", [])
+        description = t.get("description", "")
+        impl_summary = t.get("implementation_summary", "")
+
+        # Header line with diff stats
+        stats_parts = []
+        if added or removed:
+            stats_parts.append(f"+{added}/-{removed}")
+        if files_count:
+            stats_parts.append(f"{files_count} files")
+        stats_str = f" — {', '.join(stats_parts)}" if stats_parts else ""
+        lines.append(f"- \u2705 **{t['title']}**{stats_str}")
+
+        # Collapsible detail block with description, summary, and files
+        detail_lines: list[str] = []
+        if description:
+            detail_lines.append(f"  **What:** {description}")
+        if impl_summary:
+            detail_lines.append(f"  **Done:** {impl_summary}")
+        if file_list:
+            formatted_files = ", ".join(f"`{f}`" for f in file_list)
+            detail_lines.append(f"  **Files:** {formatted_files}")
+        if detail_lines:
+            lines.append(f"  <details><summary>Details</summary>\n")
+            lines.extend(detail_lines)
+            lines.append(f"\n  </details>")
 
     if failed_tasks:
         lines.append("")
