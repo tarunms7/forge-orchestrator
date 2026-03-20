@@ -6,6 +6,7 @@ from forge.core.models import (
     TaskState,
     AgentState,
     Complexity,
+    RepoConfig,
 )
 from forge.core.errors import (
     ForgeError,
@@ -23,6 +24,7 @@ __all__ = [
     "TaskState",
     "AgentState",
     "Complexity",
+    "RepoConfig",
     "ForgeError",
     "ValidationError",
     "AgentError",

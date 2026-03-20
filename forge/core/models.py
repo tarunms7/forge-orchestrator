@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
+
+_REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class Complexity(str, Enum):
@@ -32,6 +36,15 @@ class AgentState(str, Enum):
     PAUSED = "paused"
 
 
+@dataclass(frozen=True)
+class RepoConfig:
+    """Immutable configuration for a single repository in a workspace."""
+
+    id: str  # unique identifier (e.g., 'backend', 'frontend')
+    path: str  # absolute path to the repo root
+    base_branch: str  # default branch for this repo (e.g., 'main', 'develop')
+
+
 class TaskDefinition(BaseModel):
     """A task as defined by the planner. Immutable spec."""
 
@@ -43,6 +56,16 @@ class TaskDefinition(BaseModel):
     complexity: Complexity = Complexity.MEDIUM
     # Integration hints from planner (optional for backward compat)
     integration_hints: list[dict] | None = None
+    repo: str = "default"  # which repo this task operates in
+
+    @field_validator("repo")
+    @classmethod
+    def repo_id_valid(cls, v: str) -> str:
+        if not v or not _REPO_ID_RE.match(v):
+            raise ValueError(
+                f"repo must be non-empty and match ^[a-z0-9][a-z0-9-]*$, got {v!r}"
+            )
+        return v
 
     @field_validator("files")
     @classmethod
@@ -75,6 +98,7 @@ class TaskRecord(BaseModel):
     retry_count: int = 0
     branch_name: str | None = None
     worktree_path: str | None = None
+    repo: str = "default"
 
     @classmethod
     def from_definition(cls, defn: TaskDefinition) -> "TaskRecord":
@@ -85,6 +109,7 @@ class TaskRecord(BaseModel):
             files=list(defn.files),
             depends_on=list(defn.depends_on),
             complexity=defn.complexity,
+            repo=defn.repo,
         )
 
 
@@ -103,6 +128,7 @@ def row_to_record(row) -> TaskRecord:
         state=TaskState(row.state),
         assigned_agent=row.assigned_agent,
         retry_count=row.retry_count,
+        repo=getattr(row, 'repo_id', None) or 'default',
     )
 
 
