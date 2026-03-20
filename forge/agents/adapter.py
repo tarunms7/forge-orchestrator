@@ -162,14 +162,17 @@ def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> 
         )
     else:  # balanced
         when_to_ask = (
-            "Ask when you are less than 80% confident about a decision that\n"
-            "affects correctness. It is always better to pause for 30 seconds\n"
-            "than to build the wrong thing for 10 minutes.\n\n"
+            "You SHOULD ask questions when uncertain. It is always better to\n"
+            "pause for 30 seconds than to build the wrong thing for 10 minutes.\n"
+            "Asking a good question is a sign of strength, not weakness.\n\n"
             "ASK when:\n"
             "- The spec is ambiguous and you see multiple valid interpretations\n"
             "- You're about to make an architectural choice the spec doesn't specify\n"
             "- You found conflicting patterns in the codebase and aren't sure which to follow\n"
-            "- You're about to delete, rename, or restructure something that other code depends on\n\n"
+            "- You're about to delete, rename, or restructure something that other code depends on\n"
+            "- The task description is vague or underspecified — ask for clarification\n"
+            "- You're unsure about the intended behavior or expected output\n"
+            "- There are multiple reasonable approaches and the choice meaningfully affects the result\n\n"
             "DON'T ASK when:\n"
             "- The spec is clear and you know exactly what to do\n"
             "- It's a naming, formatting, or minor style choice\n"
@@ -178,7 +181,9 @@ def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> 
             "- Spec says \"add caching\" but doesn't mention TTL or eviction strategy → ASK\n"
             "- Spec says \"add a login button to the nav bar\" and you can see the nav component → DON'T ASK\n"
             "- You're about to change a function signature that 12 other files import → ASK\n"
-            "- You need to pick between two equivalent testing patterns → DON'T ASK"
+            "- You need to pick between two equivalent testing patterns → DON'T ASK\n"
+            "- Task says \"improve error handling\" but doesn't say which errors → ASK\n"
+            "- Task says \"add tests for the auth module\" and the module is clear → DON'T ASK"
         )
 
     return f"""## Human Interaction Protocol
@@ -209,7 +214,7 @@ FORGE_QUESTION:
 }}
 
 ### Rules:
-- You have {remaining} questions left. Use them wisely.
+- You have {remaining} questions available. Don't hesitate to use them — an answered question prevents wasted work.
 - ALWAYS provide 2-3 concrete suggestions.
 - ALWAYS explain what you found that led to the question.
 - NEVER ask open-ended "what should I do?" questions.
@@ -536,10 +541,12 @@ class ClaudeAdapter(AgentAdapter):
                 session_id=result.session_id,
             )
 
+        # Keep full result text — truncating here silently drops FORGE_QUESTION
+        # markers that appear after 500 chars, preventing question detection.
         return AgentResult(
             success=True,
             files_changed=files_changed,
-            summary=result_text[:500] if result_text else "Task completed",
+            summary=result_text or "Task completed",
             cost_usd=cost_usd,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,

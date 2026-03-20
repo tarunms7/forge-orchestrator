@@ -36,6 +36,34 @@ def _escape_markup(text: str) -> str:
     return str(text).replace("[", "\\[")
 
 
+def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
+    """Convert raw TUI state task dicts into PR-ready summary dicts.
+
+    Raw state dicts have 'files' as a list of paths and diff stats nested
+    inside 'merge_result'.  This helper normalises them into the flat shape
+    that generate_pr_body and FinalApprovalScreen expect.
+    """
+    summaries = []
+    for t in tasks_list:
+        mr = t.get("merge_result") or {}
+        summaries.append({
+            "title": t.get("title", ""),
+            "description": t.get("description", ""),
+            "implementation_summary": mr.get("implementation_summary", "")
+                or t.get("implementation_summary", ""),
+            "state": t.get("state", "done"),
+            "added": mr.get("linesAdded", 0) if mr.get("success") else 0,
+            "removed": mr.get("linesRemoved", 0) if mr.get("success") else 0,
+            "files": mr.get("filesChanged", 0) if mr.get("success") else 0,
+            "file_list": t.get("files", []) if isinstance(t.get("files"), list) else [],
+            "tests_passed": t.get("tests_passed", 0),
+            "tests_total": t.get("tests_total", 0),
+            "review": "passed" if t.get("state") == "done" else "failed",
+            "error": t.get("error", ""),
+        })
+    return summaries
+
+
 async def detect_server(base_url: str = "http://localhost:8000", timeout: float = 0.1) -> bool:
     """Probe the Forge server health endpoint."""
     try:
@@ -198,20 +226,7 @@ class ForgeApp(App):
             "cost": state.total_cost_usd,
             "questions": total_questions,
         }
-        task_summaries = [
-            {
-                "title": t.get("title", ""),
-                "state": t.get("state", "done"),
-                "added": t.get("merge_result", {}).get("linesAdded", 0),
-                "removed": t.get("merge_result", {}).get("linesRemoved", 0),
-                "files": t.get("merge_result", {}).get("filesChanged", 0),
-                "tests_passed": t.get("tests_passed", 0),
-                "tests_total": t.get("tests_total", 0),
-                "review": "passed" if t.get("state") == "done" else "failed",
-                "error": t.get("error", ""),
-            }
-            for t in tasks_list
-        ]
+        task_summaries = _build_task_summaries(tasks_list)
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
@@ -352,7 +367,10 @@ class ForgeApp(App):
         state = self._state
         elapsed_secs = int(state.elapsed_seconds)
         elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
-        tasks_list = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+        raw_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+        task_summaries = _build_task_summaries(raw_tasks)
+        done_tasks = [t for t in task_summaries if t["state"] == "done"]
+        failed_tasks = [t for t in task_summaries if t["state"] not in ("done", "todo", "pending")] or None
 
         # Determine the base branch for the PR target
         base_branch = "main"
@@ -376,7 +394,8 @@ class ForgeApp(App):
                 return
 
             body = generate_pr_body(
-                tasks=tasks_list,
+                tasks=done_tasks,
+                failed_tasks=failed_tasks,
                 time=elapsed_str,
                 cost=state.total_cost_usd,
                 questions=all_questions,

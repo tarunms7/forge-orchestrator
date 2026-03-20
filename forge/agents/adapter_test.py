@@ -474,9 +474,9 @@ def test_system_prompt_without_claude_md(tmp_path):
 
 
 class TestQuestionProtocol:
-    def test_balanced_contains_80_percent_threshold(self):
+    def test_balanced_encourages_questions(self):
         result = _build_question_protocol("balanced", 3)
-        assert "80% confident" in result
+        assert "SHOULD ask questions" in result
 
     def test_balanced_contains_examples(self):
         result = _build_question_protocol("balanced", 3)
