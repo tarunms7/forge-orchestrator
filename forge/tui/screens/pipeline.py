@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Input
 
+from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
 from forge.tui.widgets.task_list import TaskList
 from forge.tui.widgets.agent_output import AgentOutput
@@ -577,7 +578,7 @@ class PipelineScreen(Screen):
                     diff_viewer.update_diff(tid, task.get("title", ""), self._diff_cache[tid])
                 else:
                     diff_viewer.update_diff(tid, task.get("title", ""), "Loading diff...")
-                    asyncio.create_task(self._refresh_diff_async(tid))
+                    safe_create_task(self._refresh_diff_async(tid), logger=logger, name="refresh-diff")
             else:
                 diff_text = self._diff_cache.get(tid, "")
                 diff_viewer.update_diff(tid, task.get("title", ""), diff_text)

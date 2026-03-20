@@ -21,6 +21,7 @@ from textual.app import App
 from textual.binding import Binding
 from textual.widgets import TextArea, Input
 
+from forge.core.async_utils import safe_create_task
 from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
 from forge.tui.state import TuiState
 from forge.tui.screens.home import HomeScreen, PromptTextArea
@@ -221,7 +222,7 @@ class ForgeApp(App):
         ))
         # If no cached branch, fetch async and update the screen
         if not pipeline_branch:
-            asyncio.create_task(self._resolve_pipeline_branch())
+            safe_create_task(self._resolve_pipeline_branch(), logger=logger, name="resolve-branch")
 
     async def _resolve_pipeline_branch(self) -> None:
         """Fetch pipeline branch from DB and update the FinalApprovalScreen."""
@@ -501,8 +502,10 @@ class ForgeApp(App):
             self.notify("Cannot resume: missing context.", severity="error")
             return
 
-        self._daemon_task = asyncio.create_task(
-            self._daemon.execute(self._graph, self._db, pipeline_id=self._pipeline_id, resume=True)
+        self._daemon_task = safe_create_task(
+            self._daemon.execute(self._graph, self._db, pipeline_id=self._pipeline_id, resume=True),
+            logger=logger,
+            name="resume-execution",
         )
         self._daemon_task.add_done_callback(self._on_daemon_done)
 
@@ -804,7 +807,7 @@ class ForgeApp(App):
         while len(self.screen_stack) > 1:
             self.pop_screen()
         # Push a fresh HomeScreen with recent pipelines
-        asyncio.create_task(self._push_fresh_home())
+        safe_create_task(self._push_fresh_home(), logger=logger, name="push-fresh-home")
 
     async def _push_fresh_home(self) -> None:
         """Load recent pipelines and push a fresh HomeScreen."""
@@ -838,7 +841,7 @@ class ForgeApp(App):
         while len(self.screen_stack) > 1:
             self.pop_screen()
         # Push a fresh HomeScreen
-        asyncio.create_task(self._push_fresh_home())
+        safe_create_task(self._push_fresh_home(), logger=logger, name="switch-home")
 
     def action_switch_pipeline(self) -> None:
         if self._is_input_focused() or self._is_modal_screen():
@@ -858,7 +861,7 @@ class ForgeApp(App):
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():
             if getattr(self, "_force_quit", False):
-                asyncio.create_task(self._graceful_quit())
+                safe_create_task(self._graceful_quit(), logger=logger, name="graceful-quit")
             else:
                 self.notify("Pipeline running. Press q again to quit (tasks will be saved).", severity="warning")
                 self._force_quit = True

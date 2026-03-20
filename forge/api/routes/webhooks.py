@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
+from forge.core.async_utils import safe_create_task
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -221,7 +223,7 @@ async def github_webhook(request: Request) -> Response:
     # 11. Launch background pipeline
     daemon_factory = getattr(request.app.state, "daemon_factory", None)
 
-    asyncio.create_task(
+    safe_create_task(
         _run_webhook_pipeline(
             forge_db=forge_db,
             daemon_factory=daemon_factory,
@@ -231,7 +233,9 @@ async def github_webhook(request: Request) -> Response:
             issue_url=issue_url,
             issue_number=issue_number,
             repo_full_name=repo_full_name,
-        )
+        ),
+        logger=logger,
+        name="webhook-pipeline",
     )
 
     return Response(

@@ -12,6 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from forge.api.security.jwt import decode_token
+from forge.core.async_utils import safe_create_task
 from forge.core.events import EventEmitter
 from forge.core.followup import (
     FollowUpExecution,
@@ -243,7 +244,7 @@ async def submit_followup(
                     "error": str(exc),
                 })
 
-    asyncio.create_task(_run_followup())
+    safe_create_task(_run_followup(), logger=logger, name="run-followup")
 
     return FollowUpResponse(
         followup_id=followup_id,
