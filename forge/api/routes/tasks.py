@@ -26,6 +26,7 @@ from forge.api.models.schemas import (
     TaskStatusResponse,
 )
 from forge.api.security.jwt import decode_token
+from forge.core.async_utils import safe_create_task
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
 from forge.core.templates import get_template, get_quality_preset, BUILTIN_TEMPLATES, template_to_dict
@@ -487,7 +488,7 @@ async def create_task(
                         "type": "pipeline:error", "error": str(exc),
                     })
 
-            asyncio.create_task(_run_plan())
+            safe_create_task(_run_plan(), logger=logger, name="plan-pipeline")
     else:
         # Fallback: in-memory storage for testing without forge DB
         if not hasattr(request.app.state, "pipelines"):
@@ -663,7 +664,7 @@ async def execute_pipeline(
                 "type": "pipeline:error", "error": str(exc),
             })
 
-    asyncio.create_task(_run_execute())
+    safe_create_task(_run_execute(), logger=logger, name="execute-pipeline")
 
     # Remove from pending_graphs under lock (use app.state directly, not local var)
     if lock:
@@ -1186,7 +1187,7 @@ async def resume_pipeline(
             logger.error("Resume execution failed: %s", e)
             await forge_db.update_pipeline_status(pipeline_id, "error")
 
-    asyncio.create_task(_run())
+    safe_create_task(_run(), logger=logger, name="resume-pipeline")
 
     return {"status": "resumed", "pipeline_id": pipeline_id, "tasks_reset": reset_count, "fresh_start": needs_fresh_start}
 
@@ -1379,7 +1380,7 @@ async def restart_pipeline(
                         "type": "pipeline:error", "error": str(exc),
                     })
 
-        asyncio.create_task(_run_restart_plan())
+        safe_create_task(_run_restart_plan(), logger=logger, name="restart-pipeline")
 
     return {
         "status": "restarting",
@@ -1455,7 +1456,7 @@ async def retry_task(
                     logger.error("Retry execution failed for %s: %s", task_id, e)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
 
-            asyncio.create_task(_run_retry())
+            safe_create_task(_run_retry(), logger=logger, name="retry-task")
 
     return {"status": "retrying", "task_id": task_id}
 

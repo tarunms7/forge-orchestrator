@@ -239,6 +239,13 @@ class Database:
         self._engine = create_async_engine(url)
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
+    async def __aenter__(self) -> 'Database':
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.close()
+
     async def initialize(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

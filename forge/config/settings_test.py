@@ -145,3 +145,87 @@ def test_planning_mode_valid_values():
 def test_planning_mode_invalid_raises():
     with pytest.raises(ValidationError, match="planning_mode must be"):
         ForgeSettings(planning_mode="invalid")
+
+
+# --- model_strategy validator ---
+
+def test_model_strategy_valid_values():
+    for val in ("auto", "fast", "quality"):
+        s = ForgeSettings(model_strategy=val)
+        assert s.model_strategy == val
+
+
+def test_model_strategy_invalid_raises():
+    with pytest.raises(ValidationError, match="model_strategy must be"):
+        ForgeSettings(model_strategy="turbo")
+
+
+# --- autonomy validator ---
+
+def test_autonomy_valid_values_validator():
+    for val in ("full", "balanced", "supervised"):
+        s = ForgeSettings(autonomy=val)
+        assert s.autonomy == val
+
+
+def test_autonomy_invalid_raises():
+    with pytest.raises(ValidationError, match="autonomy must be"):
+        ForgeSettings(autonomy="manual")
+
+
+# --- agent_max_turns validator ---
+
+def test_agent_max_turns_default():
+    s = ForgeSettings()
+    assert s.agent_max_turns == 75
+
+
+def test_agent_max_turns_valid():
+    s = ForgeSettings(agent_max_turns=1)
+    assert s.agent_max_turns == 1
+
+
+def test_agent_max_turns_zero_raises():
+    with pytest.raises(ValidationError, match="agent_max_turns must be >= 1"):
+        ForgeSettings(agent_max_turns=0)
+
+
+def test_agent_max_turns_negative_raises():
+    with pytest.raises(ValidationError, match="agent_max_turns must be >= 1"):
+        ForgeSettings(agent_max_turns=-5)
+
+
+# --- question_limit validator ---
+
+def test_question_limit_valid_range():
+    for val in (1, 5, 10):
+        s = ForgeSettings(question_limit=val)
+        assert s.question_limit == val
+
+
+def test_question_limit_zero_raises():
+    with pytest.raises(ValidationError, match="question_limit must be between 1 and 10"):
+        ForgeSettings(question_limit=0)
+
+
+def test_question_limit_over_max_raises():
+    with pytest.raises(ValidationError, match="question_limit must be between 1 and 10"):
+        ForgeSettings(question_limit=11)
+
+
+# --- question_timeout validator ---
+
+def test_question_timeout_valid_range():
+    for val in (60, 1800, 7200):
+        s = ForgeSettings(question_timeout=val)
+        assert s.question_timeout == val
+
+
+def test_question_timeout_too_low_raises():
+    with pytest.raises(ValidationError, match="question_timeout must be between 60 and 7200"):
+        ForgeSettings(question_timeout=59)
+
+
+def test_question_timeout_too_high_raises():
+    with pytest.raises(ValidationError, match="question_timeout must be between 60 and 7200"):
+        ForgeSettings(question_timeout=7201)

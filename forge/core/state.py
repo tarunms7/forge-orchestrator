@@ -4,10 +4,12 @@ from forge.core.errors import ForgeError
 from forge.core.models import TaskState
 
 _TRANSITIONS: dict[TaskState, set[TaskState]] = {
-    TaskState.TODO: {TaskState.IN_PROGRESS, TaskState.CANCELLED, TaskState.ERROR},
-    TaskState.IN_PROGRESS: {TaskState.IN_REVIEW, TaskState.CANCELLED, TaskState.ERROR},
+    TaskState.TODO: {TaskState.IN_PROGRESS, TaskState.BLOCKED, TaskState.CANCELLED, TaskState.ERROR},
+    TaskState.IN_PROGRESS: {TaskState.IN_REVIEW, TaskState.AWAITING_INPUT, TaskState.CANCELLED, TaskState.ERROR},
     TaskState.IN_REVIEW: {TaskState.MERGING, TaskState.IN_PROGRESS, TaskState.AWAITING_APPROVAL, TaskState.CANCELLED, TaskState.ERROR},
     TaskState.AWAITING_APPROVAL: {TaskState.MERGING, TaskState.CANCELLED, TaskState.ERROR},
+    TaskState.AWAITING_INPUT: {TaskState.IN_PROGRESS, TaskState.CANCELLED, TaskState.ERROR},
+    TaskState.BLOCKED: {TaskState.TODO, TaskState.CANCELLED, TaskState.ERROR},
     TaskState.MERGING: {TaskState.DONE, TaskState.IN_PROGRESS, TaskState.ERROR},
     TaskState.DONE: set(),
     TaskState.CANCELLED: set(),

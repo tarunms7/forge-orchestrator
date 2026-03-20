@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 from textual.screen import Screen
@@ -11,9 +12,12 @@ from textual.widgets import Static
 from textual.containers import Vertical, VerticalScroll, Center
 from textual.message import Message
 
+from forge.core.async_utils import safe_create_task
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.followup_input import FollowUpInput
 from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+logger = logging.getLogger("forge.tui.screens.final_approval")
 
 
 def format_summary_stats(stats: dict) -> str:
@@ -163,7 +167,7 @@ class FinalApprovalScreen(Screen):
         return True
 
     def on_mount(self) -> None:
-        asyncio.create_task(self._check_behind_main())
+        safe_create_task(self._check_behind_main(), logger=logger, name="check-behind-main")
 
     async def _check_behind_main(self) -> None:
         """Check if pipeline branch is behind the base branch and show warning."""
@@ -290,7 +294,7 @@ class FinalApprovalScreen(Screen):
         if not self._pipeline_branch:
             self.notify("No pipeline branch available.", severity="warning")
             return
-        asyncio.create_task(self._load_and_show_diff())
+        safe_create_task(self._load_and_show_diff(), logger=logger, name="load-diff")
 
     def _get_project_dir(self) -> str | None:
         """Get the project directory from the app if available."""

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from rich.console import Console
 
+from forge.config.project_config import CMD_DISABLED
 from forge.core.daemon_helpers import (
     _extract_text,
     _find_related_test_files,
@@ -320,7 +321,7 @@ class ReviewMixin:
             val = template_config["build_cmd"]
             return val if val else None
         result = getattr(self, '_pipeline_build_cmd', None) or getattr(self._settings, 'build_cmd', None)
-        return None if result == "__DISABLED__" else result
+        return None if result == CMD_DISABLED else result
 
     def _resolve_test_cmd(self) -> str | None:
         """Return the test command: template override → pipeline override → settings fallback.
@@ -333,7 +334,7 @@ class ReviewMixin:
             val = template_config["test_cmd"]
             return val if val else None
         result = getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
-        return None if result == "__DISABLED__" else result
+        return None if result == CMD_DISABLED else result
 
     def _resolve_lint_cmd(self) -> str | None:
         """Return the lint check command: template override → settings fallback.
@@ -345,7 +346,7 @@ class ReviewMixin:
             val = template_config["lint_cmd"]
             return val if val else None
         result = getattr(self._settings, 'lint_cmd', None)
-        return None if result == "__DISABLED__" else result
+        return None if result == CMD_DISABLED else result
 
     def _resolve_lint_fix_cmd(self) -> str | None:
         """Return the lint fix command: template override → settings fallback.
@@ -357,7 +358,7 @@ class ReviewMixin:
             val = template_config["lint_fix_cmd"]
             return val if val else None
         result = getattr(self._settings, 'lint_fix_cmd', None)
-        return None if result == "__DISABLED__" else result
+        return None if result == CMD_DISABLED else result
 
     # -- shell gate helpers ------------------------------------------------
 

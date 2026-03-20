@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 import tempfile
@@ -13,10 +14,13 @@ from textual.widgets import Static
 from textual.binding import Binding
 from textual.message import Message
 
+from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.search_overlay import SearchOverlay
 from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+logger = logging.getLogger("forge.tui.screens.review")
 
 _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
 
@@ -118,7 +122,7 @@ class ReviewScreen(Screen):
                 diff = self._diff_cache.get(tid, "")
             if not diff and tid not in self._diff_loading:
                 self._diff_loading.add(tid)
-                asyncio.create_task(self._load_diff(tid))
+                safe_create_task(self._load_diff(tid), logger=logger, name="load-diff")
                 diff = "Loading diff..."
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
