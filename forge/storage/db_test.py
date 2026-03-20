@@ -706,3 +706,252 @@ async def test_mark_interjection_delivered(db):
 
     pending = await db.get_pending_interjections("t1")
     assert len(pending) == 0
+
+
+# ── repo_id / repos_json tests ────────────────────────────────────────
+
+
+async def test_task_repo_id_defaults_to_default(db: Database):
+    """create_task without repo_id should default to 'default'."""
+    await db.create_task(
+        id="t-repo-def", title="T", description="D",
+        files=["a.py"], depends_on=[], complexity="low",
+    )
+    task = await db.get_task("t-repo-def")
+    assert task.repo_id == "default"
+
+
+async def test_task_repo_id_custom(db: Database):
+    """create_task with repo_id='backend' should store it."""
+    await db.create_task(
+        id="t-repo-be", title="T", description="D",
+        files=["a.py"], depends_on=[], complexity="low",
+        repo_id="backend",
+    )
+    task = await db.get_task("t-repo-be")
+    assert task.repo_id == "backend"
+
+
+async def test_pipeline_repos_json_defaults_to_none(db: Database):
+    """create_pipeline without repos_json should default to None."""
+    await db.create_pipeline(
+        id="pipe-rj-def", description="Test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    pipeline = await db.get_pipeline("pipe-rj-def")
+    assert pipeline.repos_json is None
+
+
+async def test_pipeline_repos_json_stored(db: Database):
+    """create_pipeline with repos_json should store the JSON string."""
+    import json
+    repos = [{"id": "backend", "path": "/tmp/be", "base_branch": "main", "branch_name": "feat/x"}]
+    repos_str = json.dumps(repos)
+    await db.create_pipeline(
+        id="pipe-rj-set", description="Test", project_dir="/tmp",
+        model_strategy="auto", repos_json=repos_str,
+    )
+    pipeline = await db.get_pipeline("pipe-rj-set")
+    assert pipeline.repos_json == repos_str
+
+
+async def test_pipeline_get_repos_single_repo(db: Database):
+    """get_repos() with no repos_json returns synthetic default entry."""
+    await db.create_pipeline(
+        id="pipe-gr-single", description="Test", project_dir="/tmp/project",
+        model_strategy="auto", base_branch="main", branch_name="feat/test",
+    )
+    pipeline = await db.get_pipeline("pipe-gr-single")
+    repos = pipeline.get_repos()
+    assert len(repos) == 1
+    assert repos[0]["id"] == "default"
+    assert repos[0]["path"] == "/tmp/project"
+    assert repos[0]["base_branch"] == "main"
+    assert repos[0]["branch_name"] == "feat/test"
+
+
+async def test_pipeline_get_repos_multi_repo(db: Database):
+    """get_repos() with repos_json parses and returns the list."""
+    import json
+    repos = [
+        {"id": "backend", "path": "/tmp/be", "base_branch": "main", "branch_name": "feat/x"},
+        {"id": "frontend", "path": "/tmp/fe", "base_branch": "develop", "branch_name": "feat/y"},
+    ]
+    await db.create_pipeline(
+        id="pipe-gr-multi", description="Test", project_dir="/tmp",
+        model_strategy="auto", repos_json=json.dumps(repos),
+    )
+    pipeline = await db.get_pipeline("pipe-gr-multi")
+    result = pipeline.get_repos()
+    assert len(result) == 2
+    assert result[0]["id"] == "backend"
+    assert result[1]["id"] == "frontend"
+    assert result[1]["base_branch"] == "develop"
+
+
+async def test_pipeline_get_repos_no_base_branch_raises(db: Database):
+    """get_repos() without base_branch or repos_json should raise ValueError."""
+    await db.create_pipeline(
+        id="pipe-gr-err", description="Test", project_dir="/tmp",
+        model_strategy="auto",
+    )
+    pipeline = await db.get_pipeline("pipe-gr-err")
+    with pytest.raises(ValueError, match="has no base_branch set"):
+        pipeline.get_repos()
+
+
+async def test_migrate_adds_repo_id_column():
+    """Verify initialize() adds repo_id column to an old tasks table."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    # Create a DB with old schema (no repo_id on tasks)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE tasks ("
+            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
+            "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
+            "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
+            "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
+            "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
+            "  implementation_summary VARCHAR, session_id VARCHAR,"
+            "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3,"
+            "  review_diff TEXT"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE pipelines ("
+            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+            "  task_graph_json VARCHAR, user_id VARCHAR,"
+            "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
+            "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
+            "  build_cmd VARCHAR, test_cmd VARCHAR,"
+            "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
+            "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
+            "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
+            "  github_issue_url VARCHAR, github_issue_number INTEGER,"
+            "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
+            "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0,"
+            "  project_path VARCHAR, project_name VARCHAR,"
+            "  executor_pid INTEGER, executor_token VARCHAR,"
+            "  baseline_exit_code INTEGER, integration_status VARCHAR,"
+            "  repos_json TEXT"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE agents ("
+            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+            ")"
+        ))
+        # Insert a task with old schema (no repo_id)
+        await conn.execute(text(
+            "INSERT INTO tasks (id, title, description, files, depends_on, complexity) "
+            "VALUES ('old-task', 'Old', 'Old task', '[]', '[]', 'low')"
+        ))
+
+    # Wrap in Database and call initialize() — should add repo_id column
+    from forge.storage.db import Database as DB
+    db = DB.__new__(DB)
+    db._engine = engine
+    db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await db.initialize()
+
+    # Old task should still work
+    old = await db.get_task("old-task")
+    assert old is not None
+    assert old.title == "Old"
+
+    # New task with repo_id should work
+    await db.create_task(
+        id="new-task", title="New", description="D",
+        files=[], depends_on=[], complexity="low",
+        repo_id="backend",
+    )
+    new = await db.get_task("new-task")
+    assert new.repo_id == "backend"
+
+    await engine.dispose()
+
+
+async def test_migrate_adds_repos_json_column():
+    """Verify initialize() adds repos_json column to an old pipelines table."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    # Create a DB with old schema (no repos_json on pipelines)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE tasks ("
+            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
+            "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
+            "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
+            "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
+            "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
+            "  implementation_summary VARCHAR, session_id VARCHAR,"
+            "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3,"
+            "  review_diff TEXT, repo_id VARCHAR DEFAULT 'default'"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE pipelines ("
+            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+            "  task_graph_json VARCHAR, user_id VARCHAR,"
+            "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
+            "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
+            "  build_cmd VARCHAR, test_cmd VARCHAR,"
+            "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
+            "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
+            "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
+            "  github_issue_url VARCHAR, github_issue_number INTEGER,"
+            "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
+            "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0,"
+            "  project_path VARCHAR, project_name VARCHAR,"
+            "  executor_pid INTEGER, executor_token VARCHAR,"
+            "  baseline_exit_code INTEGER, integration_status VARCHAR"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE agents ("
+            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+            ")"
+        ))
+        # Insert a pipeline with old schema (no repos_json)
+        await conn.execute(text(
+            "INSERT INTO pipelines (id, description, project_dir, created_at) "
+            "VALUES ('old-pipe', 'Old', '/tmp/old', '2025-01-01T00:00:00+00:00')"
+        ))
+
+    # Wrap in Database and call initialize() — should add repos_json column
+    import json
+    from forge.storage.db import Database as DB
+    db = DB.__new__(DB)
+    db._engine = engine
+    db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await db.initialize()
+
+    # Old pipeline should still work
+    old = await db.get_pipeline("old-pipe")
+    assert old is not None
+    assert old.repos_json is None
+
+    # New pipeline with repos_json should work
+    repos = [{"id": "backend", "path": "/tmp/be", "base_branch": "main", "branch_name": ""}]
+    await db.create_pipeline(
+        id="new-pipe", description="New", project_dir="/tmp/new",
+        repos_json=json.dumps(repos),
+    )
+    new = await db.get_pipeline("new-pipe")
+    assert new.repos_json is not None
+    assert json.loads(new.repos_json) == repos
+
+    await engine.dispose()
