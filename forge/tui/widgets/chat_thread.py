@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import Input, Static
 from textual.containers import VerticalScroll
 from textual.message import Message
 
@@ -75,6 +75,28 @@ class ChatThread(Widget):
         )
         yield Input(placeholder=placeholder, id="chat-input")
 
+    def _render_scroll_content(self) -> None:
+        """Populate the VerticalScroll with current question, work log, and history."""
+        scroll = self.query_one("#chat-scroll", VerticalScroll)
+        scroll.remove_children()
+
+        # Show previous Q&A history
+        for entry in self._history:
+            q_text = _escape(entry.get("question", ""))
+            a_text = _escape(entry.get("answer", ""))
+            scroll.mount(Static(f"[#8b949e]Q: {q_text}[/]\n[#58a6ff]A: {a_text}[/]\n"))
+
+        # Show work log
+        if self._work_lines:
+            scroll.mount(Static(format_work_log(self._work_lines)))
+            scroll.mount(Static(""))  # spacer
+
+        # Show current question
+        if self._question:
+            scroll.mount(Static(format_question_card(self._question)))
+
+        scroll.scroll_end(animate=False)
+
     def update_question(self, question: dict, work_lines: list[str], history: list[dict] | None = None) -> None:
         self._question = question
         self._work_lines = work_lines
@@ -83,13 +105,14 @@ class ChatThread(Widget):
         suggestions = question.get("suggestions", [])
         suggestions.append("Let agent decide")
         chips.update_suggestions(suggestions)
-        self.refresh()
+        self._render_scroll_content()
+        self.query_one("#chat-input", Input).focus()
 
     def clear_question(self) -> None:
         self._question = None
         self.query_one(SuggestionChips).update_suggestions([])
         self.query_one("#chat-input", Input).value = ""
-        self.refresh()
+        self.query_one("#chat-scroll", VerticalScroll).remove_children()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.value.strip():
