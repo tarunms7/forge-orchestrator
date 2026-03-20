@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from forge.core.errors import ForgeError
+
 if TYPE_CHECKING:
     from forge.config.settings import ForgeSettings
     from forge.storage.db import Database
 
 
-class BudgetExceededError(Exception):
+class BudgetExceededError(ForgeError):
     """Raised when a pipeline's spending reaches or exceeds its budget."""
 
     def __init__(self, spent: float, limit: float) -> None:

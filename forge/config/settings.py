@@ -136,6 +136,41 @@ class ForgeSettings(BaseSettings):
             raise ValueError("agent_timeout_seconds must be >= 30")
         return v
 
+    @field_validator("model_strategy")
+    @classmethod
+    def model_strategy_valid(cls, v: str) -> str:
+        if v not in ("auto", "fast", "quality"):
+            raise ValueError("model_strategy must be 'auto', 'fast', or 'quality'")
+        return v
+
+    @field_validator("autonomy")
+    @classmethod
+    def autonomy_valid(cls, v: str) -> str:
+        if v not in ("full", "balanced", "supervised"):
+            raise ValueError("autonomy must be 'full', 'balanced', or 'supervised'")
+        return v
+
+    @field_validator("agent_max_turns")
+    @classmethod
+    def agent_max_turns_minimum(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("agent_max_turns must be >= 1")
+        return v
+
+    @field_validator("question_limit")
+    @classmethod
+    def question_limit_range(cls, v: int) -> int:
+        if not (1 <= v <= 10):
+            raise ValueError("question_limit must be between 1 and 10")
+        return v
+
+    @field_validator("question_timeout")
+    @classmethod
+    def question_timeout_range(cls, v: int) -> int:
+        if not (60 <= v <= 7200):
+            raise ValueError("question_timeout must be between 60 and 7200")
+        return v
+
     @field_validator("planning_mode")
     @classmethod
     def planning_mode_valid(cls, v: str) -> str:

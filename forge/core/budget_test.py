@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from forge.core.budget import BudgetExceededError, check_budget
+from forge.core.errors import ForgeError
 
 
 def _make_settings(budget_limit_usd: float = 0.0):
@@ -31,6 +32,10 @@ class TestBudgetExceededError:
         err = BudgetExceededError(spent=0.5, limit=0.5)
         assert "0.5" in str(err)
         assert "Budget exceeded" in str(err)
+
+    def test_is_forge_error_subclass(self):
+        err = BudgetExceededError(spent=1.0, limit=0.5)
+        assert isinstance(err, ForgeError)
 
 
 class TestCheckBudget:
