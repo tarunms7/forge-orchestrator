@@ -12,6 +12,8 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 # a nested session — we're an orchestrator spawning independent agents.
 os.environ.pop("CLAUDECODE", None)
 
+from forge.core.logging_config import configure_logging
+
 import click
 
 try:
@@ -22,8 +24,13 @@ except PackageNotFoundError:
 
 @click.group()
 @click.version_option(version=_version, prog_name="Forge")
-def cli() -> None:
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Enable DEBUG logging")
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool) -> None:
     """Forge -- Multi-agent orchestration engine."""
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    configure_logging(level="DEBUG" if verbose else "INFO")
 
 
 # Register subcommands from separate modules.

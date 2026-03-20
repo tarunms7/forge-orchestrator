@@ -26,6 +26,10 @@ def create_app(
             Single DB for auth + pipelines + tasks.
         jwt_secret: Secret key used for JWT token signing.
     """
+    from forge.core.logging_config import configure_logging
+
+    configure_logging()
+
     from forge.config.settings import ForgeSettings as _AuthSettings
 
     _auth_settings = _AuthSettings()
