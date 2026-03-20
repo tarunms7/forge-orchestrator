@@ -1,8 +1,7 @@
 """Tests for structural plan validator."""
 
-import pytest
 from forge.core.models import TaskDefinition, TaskGraph
-from forge.core.planning.models import CodebaseMap, ValidationResult, ValidationIssue, MinorFix
+from forge.core.planning.models import CodebaseMap, ValidationResult
 from forge.core.planning.validator import validate_plan
 
 
