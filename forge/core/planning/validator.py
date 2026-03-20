@@ -12,7 +12,12 @@ _MAX_FILES_PER_TASK = 10
 _MIN_DESCRIPTION_LENGTH = 50
 
 
-def validate_plan(graph: TaskGraph, codebase_map: CodebaseMap, spec_text: str = "") -> ValidationResult:
+def validate_plan(
+    graph: TaskGraph,
+    codebase_map: CodebaseMap,
+    spec_text: str = "",
+    repo_ids: set[str] | None = None,
+) -> ValidationResult:
     """Run all structural checks and return a ValidationResult.
 
     ``codebase_map`` and ``spec_text`` are accepted for future semantic
@@ -27,6 +32,9 @@ def validate_plan(graph: TaskGraph, codebase_map: CodebaseMap, spec_text: str = 
     issues.extend(_check_dependency_validity(graph))
     issues.extend(_check_cycles(graph))
     issues.extend(_check_task_granularity(graph))
+    if repo_ids is not None:
+        issues.extend(_check_repo_assignments(graph, repo_ids))
+        issues.extend(_check_cross_repo_file_paths(graph, repo_ids))
     has_major_or_fatal = any(i.severity in ("major", "fatal") for i in issues)
     status = "fail" if has_major_or_fatal else "pass"
     return ValidationResult(status=status, issues=issues, minor_fixes=minor_fixes)
@@ -54,17 +62,22 @@ def _build_transitive_deps(graph: TaskGraph) -> dict[str, set[str]]:
 
 
 def _check_file_ownership(graph: TaskGraph) -> list[ValidationIssue]:
-    """Detect when two independent tasks share the same file."""
+    """Detect when two independent tasks share the same file.
+
+    Uses ``(task.repo, file_path)`` as the composite key so that files
+    in different repos don't conflict.
+    """
     transitive_deps = _build_transitive_deps(graph)
     issues: list[ValidationIssue] = []
 
-    # Build file -> list of owner task IDs
-    file_owners: dict[str, list[str]] = {}
+    # Build (repo, file) -> list of owner task IDs
+    file_owners: dict[tuple[str, str], list[str]] = {}
     for task in graph.tasks:
         for file_path in task.files:
-            file_owners.setdefault(file_path, []).append(task.id)
+            key = (task.repo, file_path)
+            file_owners.setdefault(key, []).append(task.id)
 
-    for file_path, owners in file_owners.items():
+    for (repo, file_path), owners in file_owners.items():
         if len(owners) < 2:
             continue
         # Check each pair of owners
@@ -194,4 +207,75 @@ def _check_task_granularity(graph: TaskGraph) -> list[ValidationIssue]:
                 )
             )
 
+    return issues
+
+
+def _check_repo_assignments(graph: TaskGraph, repo_ids: set[str]) -> list[ValidationIssue]:
+    """Validate that every task references a known repo ID."""
+    issues: list[ValidationIssue] = []
+    for task in graph.tasks:
+        task_repo = task.repo  # defaults to 'default'
+        if task_repo not in repo_ids:
+            issues.append(
+                ValidationIssue(
+                    severity="major",
+                    category="unknown_repo",
+                    affected_tasks=[task.id],
+                    description=(
+                        f"Task '{task.id}' has repo='{task_repo}' but valid repos are: "
+                        f"{', '.join(sorted(repo_ids))}. Fix the repo field for this task."
+                    ),
+                    suggested_fix=f"Set repo to one of: {', '.join(sorted(repo_ids))}",
+                )
+            )
+    return issues
+
+
+def _check_cross_repo_file_paths(graph: TaskGraph, repo_ids: set[str]) -> list[ValidationIssue]:
+    """Reject task files that look like cross-repo references."""
+    issues: list[ValidationIssue] = []
+    for task in graph.tasks:
+        for file_path in task.files:
+            if file_path.startswith("/"):
+                issues.append(
+                    ValidationIssue(
+                        severity="major",
+                        category="absolute_path",
+                        affected_tasks=[task.id],
+                        description=(
+                            f"Task '{task.id}' has absolute file path '{file_path}'. "
+                            "Files must be relative to the repo root."
+                        ),
+                        suggested_fix="Use a path relative to the repo root.",
+                    )
+                )
+            elif file_path.startswith("../"):
+                issues.append(
+                    ValidationIssue(
+                        severity="major",
+                        category="parent_traversal",
+                        affected_tasks=[task.id],
+                        description=(
+                            f"Task '{task.id}' has file path '{file_path}' that escapes the repo root."
+                        ),
+                        suggested_fix="Use a path relative to the repo root without parent directory traversal.",
+                    )
+                )
+            else:
+                # Check if path starts with another repo name
+                first_segment = file_path.split("/")[0]
+                if first_segment in repo_ids and first_segment != task.repo:
+                    issues.append(
+                        ValidationIssue(
+                            severity="major",
+                            category="cross_repo_path",
+                            affected_tasks=[task.id],
+                            description=(
+                                f"Task '{task.id}' has file '{file_path}' that appears to reference "
+                                f"repo '{first_segment}' but task is assigned to repo '{task.repo}'. "
+                                f"Files must be relative to the task's repo."
+                            ),
+                            suggested_fix=f"Remove the '{first_segment}/' prefix — files are relative to the repo root.",
+                        )
+                    )
     return issues
