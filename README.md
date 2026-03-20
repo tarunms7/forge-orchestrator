@@ -184,26 +184,26 @@ Build and test commands are **auto-detected** from your project (`package.json`,
 | Setting | Default | Description |
 |---|---|---|
 | `FORGE_DATA_DIR` | `~/.local/share/forge` | Central data directory |
-| `FORGE_MAX_AGENTS` | 5 | Max concurrent agent sessions |
+| `FORGE_MAX_AGENTS` | 4 | Max concurrent agent sessions |
 | `FORGE_AGENT_TIMEOUT_SECONDS` | 600 | Per-task timeout (10 min) |
 | `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
 | `FORGE_BUILD_CMD` | *(auto-detected)* | Build command |
 | `FORGE_TEST_CMD` | *(auto-detected)* | Test command |
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap |
-| `FORGE_MODEL_STRATEGY` | auto | Model routing: `auto`, `fast`, `quality` |
+| `FORGE_MODEL_STRATEGY` | balanced | Model routing: `cost-optimized`, `balanced`, `quality-first` |
 | `FORGE_REQUIRE_APPROVAL` | false | Require human approval before merge |
 
 ```bash
-FORGE_BUDGET_LIMIT_USD=5 FORGE_MODEL_STRATEGY=quality forge run "Refactor auth to OAuth2"
+FORGE_BUDGET_LIMIT_USD=5 FORGE_MODEL_STRATEGY=quality-first forge run "Refactor auth to OAuth2"
 ```
 
 ### Model routing
 
 | Strategy | Planner | Contract Builder | Agent | Reviewer |
 |---|---|---|---|---|
-| `fast` | Sonnet | Sonnet | Haiku | Haiku/Sonnet |
-| `auto` (default) | Opus | Opus | Sonnet/Opus | Sonnet |
-| `quality` | Opus | Opus | Opus | Sonnet |
+| `cost-optimized` | Haiku | Haiku | Sonnet | Haiku |
+| `balanced` (default) | Sonnet | Sonnet | Sonnet | Haiku |
+| `quality-first` | Opus | Opus | Opus | Sonnet |
 
 ---
 
@@ -247,9 +247,9 @@ Your code arrives as a **pull request** — never pushed directly to `main`:
 
 ## Limitations
 
-- **Cost** — A 4-task pipeline makes ~12 Claude calls. Use `fast` strategy or set `FORGE_BUDGET_LIMIT_USD`.
+- **Cost** — A 4-task pipeline makes ~12 Claude calls. Use `cost-optimized` strategy or set `FORGE_BUDGET_LIMIT_USD`.
 - **Speed** — Tasks with dependencies run sequentially; independent tasks run in parallel.
-- **Linting** — Lint gate auto-detects the language and runs the appropriate tool: `ruff` (Python), `eslint` (JS/TS), `gofmt` (Go), `cargo clippy` (Rust), `rubocop` (Ruby), `ktlint` (Kotlin), `swiftlint` (Swift), `shellcheck` (Shell). Override with `FORGE_LINT_CMD`/`FORGE_LINT_FIX_CMD`.
+- **Linting** — Lint gate currently covers Python only (via `ruff`). Use `FORGE_BUILD_CMD`/`FORGE_TEST_CMD` for other languages.
 - **Merge conflicts** — If two tasks modify the same file, the later merge may fail and retry.
 - **Contracts** — Adds ~15-30s to startup. Skipped automatically for single-task pipelines.
 
