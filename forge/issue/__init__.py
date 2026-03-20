@@ -66,3 +66,10 @@ def parse_issue_ref(ref: str) -> tuple[int, str | None]:
         f"Cannot parse issue reference: {ref!r}. "
         "Expected a bare issue number or https://github.com/org/repo/issues/N"
     )
+
+
+__all__ = [
+    "IssueComment",
+    "GitHubIssue",
+    "parse_issue_ref",
+]
