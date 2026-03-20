@@ -98,6 +98,7 @@ class TaskRow(Base):
     questions_asked: Mapped[int] = mapped_column(default=0)
     questions_limit: Mapped[int] = mapped_column(default=3)
     review_diff: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    repo_id: Mapped[str] = mapped_column(String, default='default')
 
 
 class AgentRow(Base):
@@ -150,6 +151,21 @@ class PipelineRow(Base):
     # Integration health check baseline
     baseline_exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     integration_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    # Multi-repo workspace support
+    repos_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+
+    def get_repos(self) -> list[dict]:
+        """Return repo configurations. Single-repo returns synthetic default entry."""
+        if self.repos_json:
+            return json.loads(self.repos_json)
+        if not self.base_branch:
+            raise ValueError(
+                f"Pipeline {self.id} has no base_branch set. "
+                "This should have been set during execute()."
+            )
+        return [{"id": "default", "path": self.project_dir,
+                 "base_branch": self.base_branch,
+                 "branch_name": self.branch_name or ""}]
 
 
 class UserTemplateRow(Base):
@@ -396,12 +412,14 @@ class Database:
         depends_on: list[str],
         complexity: str,
         pipeline_id: str | None = None,
+        repo_id: str = 'default',
     ) -> None:
         async with self._session_factory() as session:
             row = TaskRow(
                 id=id, title=title, description=description,
                 files=files, depends_on=depends_on, complexity=complexity,
                 pipeline_id=pipeline_id,
+                repo_id=repo_id,
             )
             session.add(row)
             await session.commit()
@@ -610,6 +628,7 @@ class Database:
         github_issue_number: int | None = None,
         project_path: str | None = None,
         project_name: str | None = None,
+        repos_json: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
@@ -622,6 +641,7 @@ class Database:
                 github_issue_number=github_issue_number,
                 project_path=project_path,
                 project_name=project_name,
+                repos_json=repos_json,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             session.add(row)

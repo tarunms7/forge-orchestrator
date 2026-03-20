@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock
 
 import pytest
@@ -5,6 +6,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from forge.core.models import (
     Complexity,
+    RepoConfig,
     TaskDefinition,
     TaskGraph,
     TaskState,
@@ -14,6 +16,29 @@ from forge.core.models import (
     row_to_record,
     row_to_agent,
 )
+
+
+class TestRepoConfig:
+    def test_fields_stored_correctly(self):
+        cfg = RepoConfig(id="backend", path="/home/user/backend", base_branch="main")
+        assert cfg.id == "backend"
+        assert cfg.path == "/home/user/backend"
+        assert cfg.base_branch == "main"
+
+    def test_frozen_immutability(self):
+        cfg = RepoConfig(id="frontend", path="/tmp/fe", base_branch="develop")
+        with pytest.raises(FrozenInstanceError):
+            cfg.id = "changed"  # type: ignore[misc]
+
+    def test_equality(self):
+        a = RepoConfig(id="svc", path="/p", base_branch="main")
+        b = RepoConfig(id="svc", path="/p", base_branch="main")
+        assert a == b
+
+    def test_inequality(self):
+        a = RepoConfig(id="svc", path="/p", base_branch="main")
+        b = RepoConfig(id="svc", path="/p", base_branch="develop")
+        assert a != b
 
 
 class TestTaskDefinition:
@@ -61,6 +86,78 @@ class TestTaskDefinition:
         assert task.depends_on == []
         assert task.complexity == Complexity.MEDIUM
 
+    def test_repo_defaults_to_default(self):
+        task = TaskDefinition(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+        )
+        assert task.repo == "default"
+
+    def test_repo_custom_value(self):
+        task = TaskDefinition(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+            repo="backend",
+        )
+        assert task.repo == "backend"
+
+    def test_repo_invalid_empty_rejected(self):
+        with pytest.raises(PydanticValidationError, match="repo"):
+            TaskDefinition(
+                id="task-1",
+                title="Something",
+                description="Desc",
+                files=["a.py"],
+                repo="",
+            )
+
+    def test_repo_invalid_uppercase_rejected(self):
+        with pytest.raises(PydanticValidationError, match="repo"):
+            TaskDefinition(
+                id="task-1",
+                title="Something",
+                description="Desc",
+                files=["a.py"],
+                repo="Backend",
+            )
+
+    def test_repo_invalid_starts_with_hyphen_rejected(self):
+        with pytest.raises(PydanticValidationError, match="repo"):
+            TaskDefinition(
+                id="task-1",
+                title="Something",
+                description="Desc",
+                files=["a.py"],
+                repo="-bad",
+            )
+
+    def test_repo_with_hyphens_accepted(self):
+        task = TaskDefinition(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+            repo="my-service-2",
+        )
+        assert task.repo == "my-service-2"
+
+    def test_repo_preserved_in_serialization(self):
+        task = TaskDefinition(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+            repo="frontend",
+        )
+        data = task.model_dump()
+        assert data["repo"] == "frontend"
+        restored = TaskDefinition.model_validate(data)
+        assert restored.repo == "frontend"
+
 
 class TestTaskGraph:
     def test_valid_graph(self):
@@ -102,6 +199,38 @@ class TestTaskRecord:
         assert record.retry_count == 0
         assert record.assigned_agent is None
 
+    def test_from_definition_copies_repo(self):
+        defn = TaskDefinition(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+            repo="backend",
+        )
+        record = TaskRecord.from_definition(defn)
+        assert record.repo == "backend"
+
+    def test_from_definition_copies_default_repo(self):
+        defn = TaskDefinition(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+        )
+        record = TaskRecord.from_definition(defn)
+        assert record.repo == "default"
+
+    def test_repo_defaults_to_default(self):
+        record = TaskRecord(
+            id="task-1",
+            title="Something",
+            description="Desc",
+            files=["a.py"],
+            depends_on=[],
+            complexity=Complexity.LOW,
+        )
+        assert record.repo == "default"
+
 
 class TestAgentRecord:
     def test_default_state_is_idle(self):
@@ -140,6 +269,7 @@ def _make_task_row(**overrides):
         "state": "todo",
         "assigned_agent": None,
         "retry_count": 0,
+        "repo_id": None,
     }
     defaults.update(overrides)
     return MagicMock(**defaults)
@@ -170,6 +300,34 @@ class TestRowToRecord:
         record = row_to_record(row)
         assert record.state == TaskState.IN_PROGRESS
         assert record.assigned_agent == "agent-1"
+
+    def test_row_to_record_with_repo_id(self):
+        row = _make_task_row(repo_id="backend")
+        record = row_to_record(row)
+        assert record.repo == "backend"
+
+    def test_row_to_record_without_repo_id(self):
+        """Backward compat: rows without repo_id default to 'default'."""
+        # Use a simple namespace without repo_id attribute (MagicMock auto-creates attrs)
+        class FakeRow:
+            id = "task-1"
+            title = "Build feature"
+            description = "Build it"
+            files = ["a.py"]
+            depends_on = []  # noqa: RUF012
+            complexity = "low"
+            state = "todo"
+            assigned_agent = None
+            retry_count = 0
+
+        record = row_to_record(FakeRow())
+        assert record.repo == "default"
+
+    def test_row_to_record_with_none_repo_id(self):
+        """Rows with repo_id=None also default to 'default'."""
+        row = _make_task_row(repo_id=None)
+        record = row_to_record(row)
+        assert record.repo == "default"
 
 
 class TestRowToAgent:
