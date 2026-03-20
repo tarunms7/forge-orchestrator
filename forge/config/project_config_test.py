@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from forge.config.project_config import (
+    CMD_DISABLED,
     DEFAULT_FORGE_TOML,
+    AgentConfig,
     CheckConfig,
+    IntegrationCheckConfig,
     ProjectConfig,
     apply_project_config,
 )
@@ -142,7 +147,7 @@ class TestApplyProjectConfig:
         config.tests.enabled = False
         settings = ForgeSettings()
         apply_project_config(settings, config)
-        assert settings.test_cmd == "__DISABLED__"
+        assert settings.test_cmd == CMD_DISABLED
 
     def test_disabled_lint_sets_disabled_marker(self):
         from forge.config.settings import ForgeSettings
@@ -151,8 +156,8 @@ class TestApplyProjectConfig:
         config.lint.enabled = False
         settings = ForgeSettings()
         apply_project_config(settings, config)
-        assert settings.lint_cmd == "__DISABLED__"
-        assert settings.lint_fix_cmd == "__DISABLED__"
+        assert settings.lint_cmd == CMD_DISABLED
+        assert settings.lint_fix_cmd == CMD_DISABLED
 
     def test_custom_test_cmd(self):
         from forge.config.settings import ForgeSettings
@@ -236,3 +241,69 @@ class TestIntegrationConfig:
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.integration.post_merge.enabled is True
         assert config.integration.post_merge.cmd is None
+
+
+class TestCmdDisabledConstant:
+    def test_constant_value(self):
+        assert CMD_DISABLED == "__DISABLED__"
+
+    def test_disabled_tests_uses_constant(self):
+        from forge.config.settings import ForgeSettings
+
+        config = ProjectConfig()
+        config.tests.enabled = False
+        settings = ForgeSettings()
+        apply_project_config(settings, config)
+        assert settings.test_cmd is CMD_DISABLED
+
+    def test_disabled_lint_uses_constant(self):
+        from forge.config.settings import ForgeSettings
+
+        config = ProjectConfig()
+        config.lint.enabled = False
+        settings = ForgeSettings()
+        apply_project_config(settings, config)
+        assert settings.lint_cmd is CMD_DISABLED
+        assert settings.lint_fix_cmd is CMD_DISABLED
+
+
+class TestCheckConfigValidation:
+    def test_valid_scope_values(self):
+        for scope in ("changed", "all", "none"):
+            c = CheckConfig(scope=scope)
+            assert c.scope == scope
+
+    def test_invalid_scope_raises(self):
+        with pytest.raises(ValueError, match="scope must be"):
+            CheckConfig(scope="invalid")
+
+
+class TestAgentConfigValidation:
+    def test_valid_model_values(self):
+        for model in ("sonnet", "opus", "haiku"):
+            a = AgentConfig(model=model)
+            assert a.model == model
+
+    def test_invalid_model_raises(self):
+        with pytest.raises(ValueError, match="model must be"):
+            AgentConfig(model="gpt-4")
+
+    def test_valid_autonomy_values(self):
+        for autonomy in ("full", "balanced", "supervised"):
+            a = AgentConfig(autonomy=autonomy)
+            assert a.autonomy == autonomy
+
+    def test_invalid_autonomy_raises(self):
+        with pytest.raises(ValueError, match="autonomy must be"):
+            AgentConfig(autonomy="yolo")
+
+
+class TestIntegrationCheckConfigValidation:
+    def test_valid_on_failure_values(self):
+        for val in ("ask", "ignore_and_continue", "stop_pipeline"):
+            c = IntegrationCheckConfig(on_failure=val)
+            assert c.on_failure == val
+
+    def test_invalid_on_failure_raises(self):
+        with pytest.raises(ValueError, match="on_failure must be"):
+            IntegrationCheckConfig(on_failure="crash")

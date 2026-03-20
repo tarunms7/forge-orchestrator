@@ -16,6 +16,9 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
+# Sentinel value used to mark a check command as explicitly disabled via forge.toml.
+CMD_DISABLED = "__DISABLED__"
+
 
 # ── Default forge.toml content (written by `forge init`) ──────────────
 
@@ -140,6 +143,10 @@ class CheckConfig:
     auto_fix: bool = True
     scope: str = "changed"  # "changed", "all", "none"
 
+    def __post_init__(self):
+        if self.scope not in ("changed", "all", "none"):
+            raise ValueError("scope must be 'changed', 'all', or 'none'")
+
 
 @dataclass
 class ReviewConfig:
@@ -157,6 +164,12 @@ class AgentConfig:
     autonomy: str = "balanced"
     timeout_seconds: int = 600
 
+    def __post_init__(self):
+        if self.model not in ("sonnet", "opus", "haiku"):
+            raise ValueError("model must be 'sonnet', 'opus', or 'haiku'")
+        if self.autonomy not in ("full", "balanced", "supervised"):
+            raise ValueError("autonomy must be 'full', 'balanced', or 'supervised'")
+
 
 @dataclass
 class IntegrationCheckConfig:
@@ -169,6 +182,10 @@ class IntegrationCheckConfig:
     cmd: str | None = None          # Full shell command including venv activation
     timeout_seconds: int = 120
     on_failure: str = "ask"         # "ask" | "ignore_and_continue" | "stop_pipeline"
+
+    def __post_init__(self):
+        if self.on_failure not in ("ask", "ignore_and_continue", "stop_pipeline"):
+            raise ValueError("on_failure must be 'ask', 'ignore_and_continue', or 'stop_pipeline'")
 
 
 @dataclass
@@ -300,9 +317,9 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
 
     # Disabled checks → set command to None (skip the gate)
     if not config.lint.enabled:
-        settings.lint_cmd = "__DISABLED__"
-        settings.lint_fix_cmd = "__DISABLED__"
+        settings.lint_cmd = CMD_DISABLED
+        settings.lint_fix_cmd = CMD_DISABLED
     if not config.tests.enabled:
-        settings.test_cmd = "__DISABLED__"
+        settings.test_cmd = CMD_DISABLED
     if not config.build.enabled:
         settings.build_cmd = None

@@ -663,6 +663,20 @@ async def test_get_planning_questions(db: Database):
 # ── InterjectionRow tests ─────────────────────────────────────────────
 
 
+async def test_database_async_context_manager():
+    """Database should work as an async context manager."""
+    async with Database("sqlite+aiosqlite:///:memory:") as db:
+        # Should be initialized — create a task to verify
+        await db.create_task(
+            id="t-ctx", title="Context test", description="D",
+            files=["a.py"], depends_on=[], complexity="low",
+        )
+        task = await db.get_task("t-ctx")
+        assert task is not None
+        assert task.title == "Context test"
+    # After exiting, the engine should be disposed (no error expected)
+
+
 async def test_create_interjection(db):
     """Should create an interjection row with delivered=False."""
     row = await db.create_interjection(
