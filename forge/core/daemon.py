@@ -183,8 +183,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._project_config = ProjectConfig.load(project_dir)
 
         # Lesson store for self-evolving learning
-        global_db_path = os.path.expanduser("~/.forge/forge_lessons.db")
-        project_db_path = os.path.join(project_dir, ".forge", "lessons.db")
+        from forge.core.paths import forge_data_dir, project_forge_dir
+        global_db_path = os.path.join(forge_data_dir(), "lessons.db")
+        project_db_path = os.path.join(project_forge_dir(project_dir), "lessons.db")
         self._global_lesson_store = LessonStore(global_db_path)
         self._project_lesson_store = LessonStore(project_db_path)
         self._lesson_store = self._project_lesson_store  # Primary store for executor/merge access

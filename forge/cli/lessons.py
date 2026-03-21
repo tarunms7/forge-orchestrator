@@ -10,6 +10,13 @@ from rich.console import Console
 from rich.table import Table
 
 
+def _get_db_path(project_dir: str, is_global: bool) -> str:
+    from forge.core.paths import forge_data_dir, project_forge_dir
+    if is_global:
+        return os.path.join(forge_data_dir(), "lessons.db")
+    return os.path.join(project_forge_dir(project_dir), "lessons.db")
+
+
 async def _list_lessons(db_path: str) -> list[dict]:
     from forge.learning.store import LessonStore
 
@@ -61,13 +68,8 @@ def lessons() -> None:
 def lessons_list(project_dir: str, show_global: bool) -> None:
     """List all captured lessons."""
     project_dir = os.path.abspath(project_dir)
-
-    if show_global:
-        db_path = os.path.expanduser("~/.forge/forge_lessons.db")
-        label = "Global"
-    else:
-        db_path = os.path.join(project_dir, ".forge", "lessons.db")
-        label = "Project"
+    db_path = _get_db_path(project_dir, show_global)
+    label = "Global" if show_global else "Project"
 
     if not os.path.exists(db_path):
         click.echo(f"No {label.lower()} lessons DB found at {db_path}")
@@ -118,13 +120,8 @@ def lessons_list(project_dir: str, show_global: bool) -> None:
 def lessons_add(project_dir: str, is_global: bool, category: str, title: str, resolution: str, trigger: str | None) -> None:
     """Add a lesson manually. TITLE and RESOLUTION are required arguments."""
     project_dir = os.path.abspath(project_dir)
-
-    if is_global:
-        db_path = os.path.expanduser("~/.forge/forge_lessons.db")
-        scope = "global"
-    else:
-        db_path = os.path.join(project_dir, ".forge", "lessons.db")
-        scope = "project"
+    db_path = _get_db_path(project_dir, is_global)
+    scope = "global" if is_global else "project"
 
     async def _add():
         from forge.learning.store import LessonStore, Lesson
@@ -161,13 +158,8 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
 def lessons_clear(project_dir: str, clear_global: bool) -> None:
     """Clear all captured lessons."""
     project_dir = os.path.abspath(project_dir)
-
-    if clear_global:
-        db_path = os.path.expanduser("~/.forge/forge_lessons.db")
-        label = "global"
-    else:
-        db_path = os.path.join(project_dir, ".forge", "lessons.db")
-        label = "project"
+    db_path = _get_db_path(project_dir, clear_global)
+    label = "global" if clear_global else "project"
 
     if not os.path.exists(db_path):
         click.echo(f"No {label} lessons DB found.")
