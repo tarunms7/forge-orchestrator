@@ -10,6 +10,7 @@ from forge.agents.runtime import AgentRuntime
 from forge.core.logging_config import make_console
 from forge.core.models import TaskState
 from forge.merge.worktree import WorktreeManager
+from forge.learning.extractor import extract_from_review_feedback
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge")
@@ -154,6 +155,24 @@ class MergeMixin:
             logger.info("Retry backoff: waiting %ds before retry %d for %s", backoff, task.retry_count + 1, task_id)
             await asyncio.sleep(backoff)
             await db.retry_task(task_id, review_feedback=review_feedback)
+            # Extract lesson from review feedback if this is a repeated failure
+            if review_feedback and task.retry_count >= 2:  # 3rd+ attempt
+                lesson_store = getattr(self, "_lesson_store", None)
+                if lesson_store:
+                    try:
+                        lesson = extract_from_review_feedback(
+                            feedback=review_feedback,
+                            task_title=getattr(task, "title", ""),
+                            project_dir=getattr(self, "_project_dir", None),
+                        )
+                        existing = await lesson_store.find_matching(lesson.trigger)
+                        if existing:
+                            await lesson_store.bump_hit(existing.id)
+                        else:
+                            await lesson_store.add_lesson(lesson)
+                        logger.info("Review lesson captured: %s", lesson.title)
+                    except Exception as exc:
+                        logger.warning("Failed to capture review lesson: %s", exc)
             if pipeline_id:
                 await self._emit(
                     "task:state_changed",

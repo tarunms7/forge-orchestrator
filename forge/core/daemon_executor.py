@@ -25,6 +25,9 @@ from forge.core.daemon_helpers import (
 from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
+from forge.learning.guard import RuntimeGuard, GuardTriggered
+from forge.learning.store import LessonStore, format_lessons_block
+from forge.learning.extractor import extract_from_command_failures
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -1061,7 +1064,19 @@ class ExecutorMixin:
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
 
+        # RuntimeGuard — detects wasteful retry loops
+        guard = RuntimeGuard()
+
         async def _on_msg(msg):
+            # Check for retry loops BEFORE processing
+            try:
+                result = guard.inspect(msg)
+                if result == "warning":
+                    warning = guard.get_warning_message()
+                    await self._emit("task:agent_output", {"task_id": task_id, "line": warning}, db=db, pipeline_id=pid)
+            except GuardTriggered:
+                raise  # Let it propagate to the outer try/except
+
             text = _extract_activity(msg)
             if not text:
                 return
@@ -1123,21 +1138,61 @@ class ExecutorMixin:
             self._settings.agent_timeout_seconds,
             getattr(task, "complexity", None),
         )
-        result = await runtime.run_task(
-            agent_id, prompt, worktree_path, task.files,
-            allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
-            project_context=self._build_project_context(),
-            conventions_json=conventions_json,
-            conventions_md=conventions_md,
-            completed_deps=completed_deps if completed_deps else None,
-            contracts_block=contracts_block,
-            resume=resume,
-            autonomy=self._settings.autonomy,
-            questions_remaining=self._settings.question_limit,
-            timeout_seconds=task_timeout,
-            project_dir=self._project_dir,
-            agent_max_turns=self._settings.agent_max_turns,
-        )
+
+        # Inject lessons into agent prompt
+        lessons_block = ""
+        lesson_store = getattr(self, "_lesson_store", None)
+        if lesson_store:
+            try:
+                lessons = await lesson_store.get_relevant_lessons(max_count=20, max_tokens=2000)
+                lessons_block = format_lessons_block(lessons)
+            except Exception as exc:
+                logger.warning("Failed to load lessons: %s", exc)
+
+        try:
+            result = await runtime.run_task(
+                agent_id, prompt, worktree_path, task.files,
+                allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
+                project_context=self._build_project_context(),
+                conventions_json=conventions_json,
+                conventions_md=conventions_md,
+                completed_deps=completed_deps if completed_deps else None,
+                contracts_block=contracts_block,
+                lessons_block=lessons_block,
+                resume=resume,
+                autonomy=self._settings.autonomy,
+                questions_remaining=self._settings.question_limit,
+                timeout_seconds=task_timeout,
+                project_dir=self._project_dir,
+                agent_max_turns=self._settings.agent_max_turns,
+            )
+        except GuardTriggered as exc:
+            logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)
+            await self._emit("task:agent_output", {"task_id": task_id, "line": f"Agent stopped: {exc}"}, db=db, pipeline_id=pid)
+            # Create lesson from failures
+            if lesson_store:
+                try:
+                    lesson = extract_from_command_failures(exc.failures, project_dir=self._project_dir)
+                    existing = await lesson_store.find_matching(lesson.trigger)
+                    if existing:
+                        await lesson_store.bump_hit(existing.id)
+                    else:
+                        await lesson_store.add_lesson(lesson)
+                    logger.info("Lesson captured: %s", lesson.title)
+                except Exception as le:
+                    logger.warning("Failed to capture lesson: %s", le)
+            # Return a failure result
+            from forge.agents.adapter import AgentResult
+            return AgentResult(
+                success=False,
+                files_changed=[],
+                summary=f"Agent stopped by RuntimeGuard: {exc}",
+                cost_usd=0.0,
+                input_tokens=0,
+                output_tokens=0,
+                session_id=None,
+            )
+
         for line in _batch:
             await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
         _batch.clear()

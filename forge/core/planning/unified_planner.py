@@ -83,6 +83,7 @@ class UnifiedPlanner:
         spec_text: str,
         snapshot_text: str,
         conventions: str = "",
+        lessons_block: str = "",
         on_message: Callable | None = None,
         on_question: Callable | None = None,
     ) -> UnifiedPlannerResult:
@@ -118,7 +119,7 @@ class UnifiedPlanner:
                 autonomy=self._autonomy,
                 remaining=self._question_limit - questions_asked,
             )
-            system_prompt = _build_unified_system_prompt(question_protocol)
+            system_prompt = _build_unified_system_prompt(question_protocol, lessons_block=lessons_block)
 
             options = ClaudeCodeOptions(
                 system_prompt=system_prompt,
@@ -302,7 +303,7 @@ class UnifiedPlanner:
         return None, last_error or "No JSON found in output"
 
 
-def _build_unified_system_prompt(question_protocol: str) -> str:
+def _build_unified_system_prompt(question_protocol: str, lessons_block: str = "") -> str:
     """Build the unified planner's system prompt."""
     return f"""You are a planning agent for Forge, a multi-agent coding orchestration system.
 
@@ -347,6 +348,8 @@ If the request is ambiguous and you have questions remaining, ask BEFORE plannin
 It is better to pause for 30 seconds than to build the wrong plan.
 
 {question_protocol}
+
+{lessons_block}
 
 ### Phase 3: Plan
 
