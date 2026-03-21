@@ -259,6 +259,10 @@ from forge.cli.ping import ping  # noqa: E402
 
 cli.add_command(ping)
 
+from forge.cli.lessons import lessons  # noqa: E402
+
+cli.add_command(lessons)
+
 
 @cli.command()
 def upgrade() -> None:
