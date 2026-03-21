@@ -1145,17 +1145,17 @@ class TestInitRepos:
         assert daemon._repos["backend"].base_branch == "main"
         assert daemon._repos["frontend"].base_branch == "develop"
 
-    async def test_init_repos_dirty_tree_raises(self, tmp_path):
-        """If a repo has uncommitted changes, _init_repos raises ForgeError."""
+    async def test_init_repos_staged_changes_raises(self, tmp_path):
+        """If a repo has staged changes, _init_repos raises ForgeError."""
         _init_git_repo(tmp_path, "main")
-        # Create a dirty file
+        # Create and stage a file (but don't commit)
         (tmp_path / "dirty.txt").write_text("dirty")
         subprocess.run(["git", "add", "dirty.txt"], cwd=str(tmp_path),
                        check=True, capture_output=True)
 
         daemon = _make_daemon(tmp_path)
 
-        with pytest.raises(ForgeError, match="dirty"):
+        with pytest.raises(ForgeError, match="staged"):
             await daemon._init_repos()
 
     async def test_init_repos_skips_already_resolved(self, tmp_path):

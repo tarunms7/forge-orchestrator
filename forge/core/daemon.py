@@ -217,14 +217,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         from dataclasses import replace as _dc_replace
 
         for repo_id, rc in list(self._repos.items()):
-            # Check for dirty working tree
-            result = await async_subprocess(
-                ["git", "status", "--porcelain"],
+            # Check for staged changes only (modified tracked files + untracked
+            # like .forge/, .claude/, uv.lock are expected and not an error)
+            staged = await async_subprocess(
+                ["git", "diff", "--cached", "--quiet"],
                 cwd=rc.path,
             )
-            if result.stdout.strip():
+            if staged.returncode != 0:
                 raise ForgeError(
-                    f"Repository '{repo_id}' at {rc.path} has a dirty working tree. "
+                    f"Repository '{repo_id}' at {rc.path} has staged changes. "
                     "Commit or stash changes before running Forge."
                 )
 
