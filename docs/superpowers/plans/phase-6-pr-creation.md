@@ -599,6 +599,13 @@ async def create_prs_multi_repo(
             logger.error("PR creation failed for repo %s", repo_id)
             result.failures[repo_id] = "gh pr create failed"
 
+    # **NOTE — cross-link asymmetry:** The FIRST repo's PR body will NOT have a
+    # "Related PRs" section because `result.pr_urls` is empty when the first PR is
+    # created. Only the second (and subsequent) repo's PR body will contain related
+    # links. The cross-link comments below (step 4) compensate for this asymmetry
+    # by retroactively adding "Related Forge PRs" comments to ALL PRs (including the
+    # first). This is a known limitation, not a bug.
+
     # 4. Cross-link: add comments to earlier PRs with links to later PRs
     if is_multi_repo and len(result.pr_urls) > 1:
         for repo_id, url in result.pr_urls.items():
@@ -711,6 +718,60 @@ async def _add_related_prs_comment(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest forge/tui/pr_creator_test.py::TestAddRelatedPrsComment -x -v`
+Expected: PASS
+
+- [ ] **Step 5: Write test for cross-link failure being non-fatal**
+
+```python
+    @pytest.mark.asyncio
+    async def test_create_prs_cross_link_failure_non_fatal(self):
+        """Cross-link comment failure does not cause overall failure."""
+        from forge.tui.pr_creator import create_prs_multi_repo
+
+        task_summaries = [
+            {"title": "API", "state": "done", "repo_id": "backend",
+             "added": 10, "removed": 0, "files": 1, "file_list": [],
+             "description": "", "implementation_summary": "", "cost_usd": 1.0},
+            {"title": "UI", "state": "done", "repo_id": "frontend",
+             "added": 20, "removed": 0, "files": 2, "file_list": [],
+             "description": "", "implementation_summary": "", "cost_usd": 1.5},
+        ]
+        repos = {
+            "backend": {"id": "backend", "path": "/repos/backend", "base_branch": "main"},
+            "frontend": {"id": "frontend", "path": "/repos/frontend", "base_branch": "main"},
+        }
+        pipeline_branches = {"backend": "forge/pipe", "frontend": "forge/pipe"}
+
+        # Setup: 2 repos, both PR creations succeed
+        # Mock _add_related_prs_comment to raise Exception
+        with patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True), \
+             patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock, side_effect=[
+                 "https://github.com/org/backend/pull/42",
+                 "https://github.com/org/frontend/pull/89",
+             ]), \
+             patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock,
+                   side_effect=Exception("GitHub API rate limit")):
+
+            result = await create_prs_multi_repo(
+                task_summaries=task_summaries,
+                repos=repos,
+                pipeline_branches=pipeline_branches,
+                description="Feature",
+                elapsed_str="3m",
+                questions=[],
+            )
+
+        # Verify: result.pr_urls has both URLs, result.failures is empty
+        # (cross-link failure is cosmetic, logged but not fatal)
+        assert "backend" in result.pr_urls
+        assert "frontend" in result.pr_urls
+        assert len(result.pr_urls) == 2
+        assert len(result.failures) == 0
+```
+
+- [ ] **Step 6: Run test to verify it passes**
+
+Run: `.venv/bin/python -m pytest forge/tui/pr_creator_test.py::TestAddRelatedPrsComment::test_create_prs_cross_link_failure_non_fatal -x -v`
 Expected: PASS
 
 ### Task 5: Test `repos_json` updated with PR URLs

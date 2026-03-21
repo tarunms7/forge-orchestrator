@@ -74,6 +74,17 @@ In `forge/api/models/schemas.py`, add after `quality_preset` (line 25):
 
 Schema for each dict element: `{"id": str, "path": str, "base_branch": str | None}`.
 
+**Recommendation:** Instead of `list[dict]`, define a typed `RepoEntry` Pydantic model for stronger validation:
+
+```python
+class RepoEntry(BaseModel):
+    id: str
+    path: str
+    base_branch: str | None = None
+```
+
+And type the field as `repos: list[RepoEntry] | None = None` instead of `list[dict]`. This provides schema validation at the API boundary, auto-generated OpenAPI docs with the correct shape, and catches missing `id`/`path` fields without manual validation in the handler. Apply the same `RepoEntry` type to `PipelineResponse.repos` (Task 3) for consistency.
+
 - [ ] **Step 4: Run tests — expect PASS**
 
 ### Task 2: Add `repo_id` to `TaskStatusResponse` and `TaskListItem`
@@ -422,6 +433,8 @@ def _cleanup_worktree(project_dir: str, task_id: str, repo_id: str | None = None
         logger.debug("Worktree cleanup failed for %s: %s", task_id, exc)
         return False
 ```
+
+**NOTE:** The call sites at line 952 and 957 inside `approve_task._do_merge()` must ALSO be updated to pass `repo_id=task.repo_id`. Without this, the existing call sites will use `repo_id=None` (the default), which means multi-repo worktrees under `<worktrees>/<repo_id>/<task_id>/` will never be cleaned up.
 
 - [ ] **Step 4: Run tests — expect PASS**
 
