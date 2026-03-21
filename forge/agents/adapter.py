@@ -246,6 +246,16 @@ Your working directory is {cwd}.{extra_dirs_clause}
 - Do NOT run: git push, git branch, git rebase, git checkout, git reset. The orchestrator manages branches.
 - You CAN and SHOULD run: git diff, git status, git log to verify your own work.
 
+## Command Retry Discipline
+- If a shell command fails, READ the error message before retrying. Understand WHY it failed.
+- NEVER retry the same command (or trivial variation) more than 3 times. If it failed 3 times, the approach is wrong.
+- After 2 failures of the same command: STOP, diagnose the root cause, and try a fundamentally different approach.
+- Common traps to avoid:
+  - A CLI flag doesn't exist? Don't try flag variations — read the tool's --help or docs.
+  - Tests failing? Read the error output. Don't just re-run hoping for a different result.
+  - Import errors? Check what's actually installed, don't retry the same import.
+- If you cannot make something work after 3 attempts, document what you tried and move on. An honest "this didn't work because X" is infinitely better than burning 20 retries on the same dead end.
+
 ## Turn Budget
 You have {max_turns} turns for this task. Manage them wisely:
 - If you're past turn {wrap_up_turn} and not done, STOP coding and write a status summary of what's done, what's remaining, and what the next agent should do.
