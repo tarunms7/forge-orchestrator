@@ -1019,7 +1019,7 @@ Manually confirm in the test output that:
 - [ ] **Step 3: Commit**
 
 ```bash
-git add -A && git commit --no-verify -m "$(cat <<'EOF'
+git add -A && git commit -m "$(cat <<'EOF'
 feat(tui): add multi-repo display support
 
 - TuiState: add repos, per_repo_pr_urls, per_repo_merge_status fields
