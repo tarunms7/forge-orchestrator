@@ -114,7 +114,7 @@ def test_run_passes_spec_and_deep_plan(tmp_path):
          patch("forge.config.project_config.validate_repos_startup"):
         mock_asyncio.run = MagicMock(return_value=None)
         runner = CliRunner()
-        result = runner.invoke(cli, [
+        runner.invoke(cli, [
             "run", "Build it",
             "--spec", str(spec_file),
             "--deep-plan",
