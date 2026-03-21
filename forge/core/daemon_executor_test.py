@@ -1,5 +1,6 @@
 """Tests for daemon_executor — worktree rebase and prompt selection."""
 
+import os
 import subprocess
 
 import pytest
@@ -254,3 +255,155 @@ class TestDeliverInterjections:
 
         assert delivered is False
         assert session_id == "sess-1"
+
+
+@pytest.mark.asyncio
+class TestWorktreePathThreading:
+    """Verify repo_id is threaded through _execute_task to _prepare_worktree and friends."""
+
+    def _make_mixin(self):
+        """Return an ExecutorMixin with required host-class attributes mocked."""
+        mixin = ExecutorMixin()
+        mixin._project_dir = "/fake/project"
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock(allowed_dirs=[], require_approval=False, budget_limit_usd=0.0)
+        mixin._template_config = None
+        mixin._contracts = None
+        mixin._merge_lock = MagicMock()
+        mixin._merge_lock.__aenter__ = AsyncMock(return_value=None)
+        mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
+        # _worktree_path is provided by ForgeDaemon at runtime; mock it here
+        mixin._worktree_path = MagicMock(
+            side_effect=lambda repo_id, task_id: f"/fake/project/.forge/worktrees/{repo_id}/{task_id}",
+        )
+        return mixin
+
+    async def test_prepare_worktree_uses_worktree_path_on_reuse(self):
+        """When worktree_mgr.create raises ValueError, _prepare_worktree falls back
+        to self._worktree_path(repo_id, task_id) instead of hardcoded os.path.join."""
+        mixin = self._make_mixin()
+
+        worktree_mgr = MagicMock()
+        worktree_mgr.create = MagicMock(side_effect=ValueError("already exists"))
+
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+
+        # Simulate the worktree directory existing on disk
+        with patch("os.path.isdir", return_value=True):
+            with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock) as mock_rebase:
+                result = await mixin._prepare_worktree(
+                    worktree_mgr, "task-1", "pipe-1", db,
+                    base_ref="main", repo_id="backend",
+                )
+
+        assert result == "/fake/project/.forge/worktrees/backend/task-1"
+        mixin._worktree_path.assert_called_once_with("backend", "task-1")
+
+    async def test_handle_merge_fast_path_uses_worktree_path(self):
+        """_handle_merge_fast_path uses self._worktree_path(repo_id, task_id)."""
+        mixin = self._make_mixin()
+        mixin._handle_retry = AsyncMock()
+        mixin._emit = AsyncMock()
+
+        task = MagicMock()
+        task.complexity = "medium"
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+        db.release_agent = AsyncMock()
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+        worktree_mgr = MagicMock()
+
+        with patch("os.path.isdir", return_value=False):
+            await mixin._handle_merge_fast_path(
+                db, merge_worker, worktree_mgr, task,
+                "task-1", "agent-1", "pipe-1", repo_id="frontend",
+            )
+
+        mixin._worktree_path.assert_called_once_with("frontend", "task-1")
+
+    async def test_resume_task_uses_worktree_path(self):
+        """_resume_task uses self._worktree_path(repo_id, task_id)."""
+        mixin = self._make_mixin()
+        mixin._emit = AsyncMock()
+        mixin._handle_retry = AsyncMock()
+
+        db = AsyncMock()
+        task = MagicMock()
+        task.state = "awaiting_input"
+        task.session_id = "sess-1"
+        db.get_task = AsyncMock(return_value=task)
+        db.update_task_state = AsyncMock()
+        db.release_agent = AsyncMock()
+
+        worktree_mgr = MagicMock()
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+        runtime = MagicMock()
+
+        # Worktree doesn't exist — should fall back to retry
+        with patch("os.path.isdir", return_value=False):
+            await mixin._resume_task(
+                db, runtime, worktree_mgr, merge_worker,
+                "task-1", "agent-1", "answer text", "pipe-1",
+                repo_id="backend",
+            )
+
+        mixin._worktree_path.assert_called_once_with("backend", "task-1")
+
+    async def test_execute_task_reads_repo_id_from_db_task(self):
+        """_execute_task reads repo_id from DB task row and threads it to _prepare_worktree."""
+        mixin = self._make_mixin()
+        mixin._emit = AsyncMock()
+        mixin._handle_retry = AsyncMock()
+
+        task = MagicMock()
+        task.title = "Test"
+        task.retry_count = 0
+        task.retry_reason = None
+        task.repo_id = "backend"  # stored in DB — should override default
+
+        db = AsyncMock()
+        db.get_task = AsyncMock(return_value=task)
+        db.update_task_state = AsyncMock()
+        db.release_agent = AsyncMock()
+
+        worktree_mgr = MagicMock()
+        # Simulate worktree creation failure to trigger _worktree_path fallback
+        worktree_mgr.create = MagicMock(side_effect=ValueError("exists"))
+
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+
+        # Worktree doesn't exist → will go to error path and release agent
+        with patch("os.path.isdir", return_value=False):
+            await mixin._execute_task(
+                db, MagicMock(), worktree_mgr, merge_worker,
+                task_id="task-1", agent_id="agent-1",
+                pipeline_id="pipe-1",
+                repo_id="default",  # will be overridden by task.repo_id="backend"
+            )
+
+        # _worktree_path should have been called with the DB task's repo_id
+        mixin._worktree_path.assert_called_once_with("backend", "task-1")
+
+    async def test_default_repo_id(self):
+        """When no repo_id provided, defaults to 'default'."""
+        mixin = self._make_mixin()
+
+        worktree_mgr = MagicMock()
+        worktree_mgr.create = MagicMock(side_effect=ValueError("exists"))
+
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+
+        with patch("os.path.isdir", return_value=True):
+            with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
+                result = await mixin._prepare_worktree(
+                    worktree_mgr, "task-1", "pipe-1", db, base_ref="main",
+                )
+
+        # Default repo_id is 'default'
+        mixin._worktree_path.assert_called_once_with("default", "task-1")

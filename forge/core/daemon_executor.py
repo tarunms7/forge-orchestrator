@@ -69,6 +69,7 @@ class ExecutorMixin:
     async def _execute_task(
         self, db, runtime, worktree_mgr, merge_worker,
         task_id: str, agent_id: str, pipeline_id: str | None = None,
+        repo_id: str = "default",
     ) -> None:
         """Execute a single task: worktree → agent → review → merge."""
         task = await db.get_task(task_id)
@@ -80,10 +81,12 @@ class ExecutorMixin:
         console.print(f"[cyan]Starting {task_id}: {task.title}[/cyan]")
         console.print(f"[cyan]{'='*50}[/cyan]")
         await self._emit("task:state_changed", {"task_id": task_id, "state": "in_progress"}, db=db, pipeline_id=pid)
+        # Use repo_id from DB task row if available, else use parameter default.
+        repo_id = getattr(task, "repo_id", repo_id) or repo_id
         if getattr(task, "retry_reason", None) == "merge_failed":
-            await self._handle_merge_fast_path(db, merge_worker, worktree_mgr, task, task_id, agent_id, pipeline_id)
+            await self._handle_merge_fast_path(db, merge_worker, worktree_mgr, task, task_id, agent_id, pipeline_id, repo_id=repo_id)
             return
-        worktree_path = await self._prepare_worktree(worktree_mgr, task_id, pid, db, base_ref=merge_worker._main)
+        worktree_path = await self._prepare_worktree(worktree_mgr, task_id, pid, db, base_ref=merge_worker._main, repo_id=repo_id)
         if worktree_path is None:
             await db.release_agent(agent_id)
             return
@@ -171,11 +174,12 @@ class ExecutorMixin:
     async def _handle_merge_fast_path(
         self, db, merge_worker, worktree_mgr, task,
         task_id: str, agent_id: str, pipeline_id: str | None,
+        repo_id: str = "default",
     ) -> None:
         """Skip agent+review when only the merge previously failed."""
         pid = pipeline_id or ""
         console.print(f"[yellow]{task_id}: merge-only retry — skipping agent + review[/yellow]")
-        worktree_path = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
+        worktree_path = self._worktree_path(repo_id, task_id)
         if not os.path.isdir(worktree_path):
             console.print(f"[red]{task_id}: worktree missing — falling back to full retry[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
@@ -204,12 +208,12 @@ class ExecutorMixin:
 
     # -- worktree creation ----------------------------------------------
 
-    async def _prepare_worktree(self, worktree_mgr, task_id: str, pid: str, db, base_ref: str | None = None) -> str | None:
+    async def _prepare_worktree(self, worktree_mgr, task_id: str, pid: str, db, base_ref: str | None = None, repo_id: str = "default") -> str | None:
         """Create or reuse a worktree. Returns path or ``None`` on failure."""
         try:
             return worktree_mgr.create(task_id, base_ref=base_ref)
         except ValueError:
-            wt = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
+            wt = self._worktree_path(repo_id, task_id)
             if os.path.isdir(wt):
                 # Reuse the worktree as-is.  The scope gate already stripped
                 # out-of-scope changes on the previous run, so only the
@@ -562,6 +566,7 @@ class ExecutorMixin:
     async def _resume_task(
         self, db, runtime, worktree_mgr, merge_worker,
         task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+        repo_id: str = "default",
     ) -> None:
         """Resume a task after a human answered a FORGE_QUESTION.
 
@@ -586,7 +591,7 @@ class ExecutorMixin:
         await self._emit("task:resumed", {"task_id": task_id}, db=db, pipeline_id=pid)
 
         # Resolve worktree path (reuse existing — the agent's code is still there)
-        worktree_path = os.path.join(self._project_dir, ".forge", "worktrees", task_id)
+        worktree_path = self._worktree_path(repo_id, task_id)
         if not os.path.isdir(worktree_path):
             console.print(f"[red]{task_id}: worktree missing on resume — scheduling full retry[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
@@ -735,12 +740,14 @@ class ExecutorMixin:
     async def _safe_execute_resume(
         self, db, runtime, worktree_mgr, merge_worker,
         task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+        repo_id: str = "default",
     ) -> None:
         """Safe wrapper around _resume_task with cleanup on error."""
         try:
             await self._resume_task(
                 db, runtime, worktree_mgr, merge_worker,
                 task_id, agent_id, answer, pipeline_id,
+                repo_id=repo_id,
             )
         except asyncio.CancelledError:
             logger.info("Resume of %s was cancelled", task_id)
