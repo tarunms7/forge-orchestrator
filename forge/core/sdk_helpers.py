@@ -106,10 +106,9 @@ async def sdk_query(
         # Surface the actual error details instead of opaque SDK message
         error_msg = str(e)
         if "exit code" in error_msg:
-            logger.error("Claude CLI failed: %s", error_msg)
-            print(f"Claude CLI subprocess failed: {error_msg}")
+            logger.error("Claude CLI subprocess failed: %s", error_msg)
             if "CLAUDECODE" in os.environ:
-                print("Note: CLAUDECODE env var is set — this blocks nested sessions.")
+                logger.error("Note: CLAUDECODE env var is set — this blocks nested sessions.")
         raise
     finally:
         pass  # Don't restore CLAUDECODE — it should stay removed for the process lifetime

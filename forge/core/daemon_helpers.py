@@ -13,11 +13,12 @@ import os
 import re
 import subprocess
 
-from rich.console import Console
 from rich.table import Table
 
+from forge.core.logging_config import make_console
+
 logger = logging.getLogger("forge")
-console = Console()
+console = make_console()
 
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
 

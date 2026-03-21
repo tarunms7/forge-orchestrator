@@ -5,16 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from rich.console import Console
-
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
+from forge.core.logging_config import make_console
 from forge.core.models import TaskState
 from forge.merge.worktree import WorktreeManager
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge")
-console = Console()
+console = make_console()
 
 
 class MergeMixin:

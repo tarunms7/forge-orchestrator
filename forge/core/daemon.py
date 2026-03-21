@@ -10,8 +10,6 @@ import shutil
 import subprocess
 import uuid
 
-from rich.console import Console
-
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.settings import ForgeSettings
@@ -52,8 +50,10 @@ from forge.core.daemon_helpers import (  # noqa: F401
     async_subprocess,
 )
 
+from forge.core.logging_config import make_console
+
 logger = logging.getLogger("forge")
-console = Console()
+console = make_console()
 
 
 def _classify_pipeline_result(task_states: list[str]) -> str:
