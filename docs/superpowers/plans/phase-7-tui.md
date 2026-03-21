@@ -176,6 +176,8 @@ In `_on_plan_ready()` (line 107), update to:
 1. Store `self.repos = data.get("repos", [])` at the top of the method
 2. In the task dict construction (line 112-122), add `"repo": t.get("repo")` to the dict
 
+**DEPENDENCY:** The daemon must emit `repos` in the `pipeline:plan_ready` event data. If the daemon event does not include this field (Phase 3 must add it), `self.repos` will never be populated. Verify that `forge/core/daemon.py` emits `repos` in the plan_ready event payload.
+
 The task dict in the loop should become:
 
 ```python
@@ -882,7 +884,11 @@ Add a handler for the repo selector result:
         )
 ```
 
+**Textual message routing:** `RepoSelectorScreen` is pushed on top of `FinalApprovalScreen`. In Textual, messages from pushed screens bubble to the `App`, not to the screen underneath. The `on_repo_selector_screen_selected` handler must be on the `App` class (or `FinalApprovalScreen` must use a callback pattern when pushing the screen).
+
 Update `_load_and_show_diff()` to accept an optional `repo_id` parameter and adjust the git diff command for per-repo paths if needed.
+
+In multi-repo mode, `_load_and_show_diff` must resolve the repo's path and base_branch from `self._repos` (by matching `repo_id`), then run `git diff` with `cwd=repo_path` and `base_branch` from the repo config. Example: `git diff {repo_base_branch}...HEAD` in the repo's worktree path.
 
 - [ ] **Step 5: Run tests**
 

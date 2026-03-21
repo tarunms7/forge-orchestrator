@@ -126,7 +126,11 @@ async def _execute_task_followup(
     ) or "default"
 
     pipeline = await db.get_pipeline(pipeline_id)
-    repos = pipeline.get_repos()
+    try:
+        repos = pipeline.get_repos()
+    except ValueError:
+        # Pipeline has no base_branch — fall back to single-repo behavior
+        repos = [{"id": "default", "path": project_dir, "base_branch": "main"}]
     repo_config = next((r for r in repos if r["id"] == repo_id), None)
 
     if repo_config is None:
@@ -510,6 +514,8 @@ def workspace_dir(tmp_path):
 ---
 
 ### Task 8: Multi-repo E2E test
+
+**Note:** This test validates the data model and storage layer for multi-repo. A true E2E test that runs the daemon with real (or mocked) agents is significantly more complex and can be added incrementally. The current test ensures the plumbing works at the DB level, which is the most likely place for regressions. It does not actually run the daemon or executor — it is really a DB/storage integration test.
 
 **Files:**
 - Modify: `forge/tests/integration/test_pipeline_lifecycle.py`

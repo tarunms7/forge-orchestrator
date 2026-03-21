@@ -442,15 +442,13 @@ passed, feedback = await self._run_review(
 )
 
 # After:
-repo_id = getattr(task, 'repo_id', None) or getattr(task, 'repo', None) or "default"
+repo_id = task.repo_id  # TaskRow.repo_id — confirmed in db.py line 101
 passed, feedback = await self._run_review(
     task, worktree_path, diff, db=db, pipeline_id=pipeline_id,
     pipeline_branch=pipeline_branch, delta_diff=delta_diff,
     repo_id=repo_id,
 )
 ```
-
-Note: Check the actual attribute name on the task object — it may be `task.repo_id` (from `TaskRow`) or `task.repo` (from `TaskDefinition`). Use whichever is available on the runtime task object, with fallback to `"default"`.
 
 - [ ] **Step 5: Run full review test suite**
 
@@ -465,7 +463,7 @@ Expected: All existing tests pass + new tests pass.
 ### Task 5: Verify `_get_diff_stats()` uses correct worktree path
 
 **Files:**
-- Verify: `forge/core/daemon_review.py` — `_get_diff_stats()` method
+- Verify: `forge/core/daemon_helpers.py` — `_get_diff_stats()` standalone function (line 383)
 - Test: `forge/core/daemon_review_test.py`
 
 - [ ] **Step 1: Write test for diff stats in correct repo**
@@ -476,12 +474,9 @@ Expected: All existing tests pass + new tests pass.
 @pytest.mark.asyncio
 async def test_diff_stats_correct_repo(tmp_path):
     """Diff stats are computed in the correct repo's worktree, not workspace root."""
-    # _get_diff_stats receives worktree_path as a parameter.
-    # In multi-repo, the worktree_path already points to the correct repo's
-    # worktree (set by Phase 3 dispatch: self._worktree_managers[repo_id]).
-    # This test verifies that _get_diff_stats runs git commands in
-    # the provided worktree_path, not self._project_dir.
-    mixin = _make_review_mixin()
+    # _get_diff_stats is a standalone function in forge/core/daemon_helpers.py (line 383),
+    # NOT a method on ReviewMixin/daemon_review.py. Import and call it directly.
+    from forge.core.daemon_helpers import _get_diff_stats
 
     # Mock a worktree with a git repo (configure git identity for CI environments)
     import subprocess
@@ -494,13 +489,13 @@ async def test_diff_stats_correct_repo(tmp_path):
 
     # _get_diff_stats should run in worktree, not raise or use wrong path
     # The actual diff will be empty but the function should not error
-    stats = await mixin._get_diff_stats(str(worktree))
+    stats = await _get_diff_stats(str(worktree))
     assert stats is not None  # Returns stats dict, not None/error
 ```
 
 - [ ] **Step 2: Verify implementation**
 
-Read `_get_diff_stats()` in `daemon_review.py`. Confirm it receives `worktree_path` as a parameter and passes it as `cwd` to all git subprocess calls. If it does (which is expected — the function already takes `worktree_path`), no code changes are needed. The worktree_path is correctly set by Phase 3's per-repo `WorktreeManager`.
+`_get_diff_stats()` is a standalone function in `forge/core/daemon_helpers.py` at line 383 (not a method on `ReviewMixin` in `daemon_review.py`). Confirm it receives `worktree_path` as a parameter and passes it as `cwd` to all git subprocess calls. If it does (which is expected — the function already takes `worktree_path`), no code changes are needed. The worktree_path is correctly set by Phase 3's per-repo `WorktreeManager`.
 
 **No code changes expected** — this is a verification task. Phase 3 ensures the correct worktree path is passed per-repo, and `_get_diff_stats` already uses it as `cwd`.
 
