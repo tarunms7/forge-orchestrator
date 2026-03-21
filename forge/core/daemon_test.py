@@ -1217,8 +1217,8 @@ class TestDaemonPerRepoInfra:
             repos=repos,
         )
 
-        with patch("forge.core.daemon.WorktreeManager") as MockWM, \
-             patch("forge.core.daemon.MergeWorker") as MockMW:
+        with patch("forge.core.daemon.WorktreeManager"), \
+             patch("forge.core.daemon.MergeWorker"):
             daemon._setup_per_repo_infra("pipe-xyz")
 
         assert "backend" in daemon._worktree_managers
