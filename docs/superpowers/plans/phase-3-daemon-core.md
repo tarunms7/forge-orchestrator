@@ -100,7 +100,8 @@ def __init__(
 ) -> None:
     from forge.config.project_config import ProjectConfig
 
-    self._project_dir = project_dir
+    self._project_dir = project_dir  # kept for backward compat (single-repo callers)
+    self._workspace_dir = project_dir  # workspace root where .forge/ lives
     self._settings = settings or ForgeSettings()
     self._state_machine = TaskStateMachine()
     self._events = event_emitter or EventEmitter()
@@ -117,7 +118,7 @@ def __init__(
             "default": RepoConfig(
                 id="default",
                 path=project_dir,
-                base_branch="auto",  # resolved async in _init_repos()
+                base_branch="",  # empty = resolved async in _init_repos()
             ),
         }
 ```
@@ -146,29 +147,29 @@ Add to the `TestDaemonMultiRepoInit` class in `forge/core/daemon_test.py`:
 ```python
 @pytest.mark.asyncio
 async def test_init_repos_resolves_base_branch(self, tmp_path):
-    """_init_repos() resolves 'auto' base branches using git."""
+    """_init_repos() resolves empty base branches using git."""
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-b", "develop"], cwd=repo, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=repo, capture_output=True)
 
-    repos = [RepoConfig(id="myrepo", path=str(repo), base_branch="auto")]
+    repos = [RepoConfig(id="myrepo", path=str(repo), base_branch="")]
     daemon = ForgeDaemon(str(tmp_path), repos=repos)
     await daemon._init_repos()
 
-    # 'auto' should resolve to the actual branch name
+    # empty base_branch should resolve to the actual branch name
     assert daemon._repos["myrepo"].base_branch == "develop"
 
 @pytest.mark.asyncio
 async def test_init_repos_resolves_default_single_repo(self, tmp_path):
-    """Single-repo default also resolves base branch (base_branch='auto')."""
+    """Single-repo default also resolves base branch (base_branch='')."""
     subprocess.run(["git", "init", "-b", "feature-x"], cwd=tmp_path, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
 
-    daemon = ForgeDaemon(str(tmp_path))  # no repos → default with base_branch="auto"
+    daemon = ForgeDaemon(str(tmp_path))  # no repos → default with base_branch=""
     await daemon._init_repos()
 
-    # Default repo's 'auto' base_branch should resolve to the actual git branch
+    # Default repo's empty base_branch should resolve to the actual git branch
     assert daemon._repos["default"].base_branch == "feature-x"
 ```
 
@@ -178,19 +179,19 @@ Add this method to `ForgeDaemon` after `__init__`:
 
 ```python
 async def _init_repos(self) -> None:
-    """Resolve 'auto' base branches and validate repo paths."""
+    """Resolve empty base branches and validate repo paths."""
     from forge.core.daemon_helpers import _get_current_branch
 
     resolved: dict[str, RepoConfig] = {}
     for repo_id, rc in self._repos.items():
         base = rc.base_branch
-        if base == "auto":
+        if not base:
             base = await _get_current_branch(rc.path)
         resolved[repo_id] = RepoConfig(id=rc.id, path=rc.path, base_branch=base)
     self._repos = resolved
 ```
 
-Note: The default single-repo entry uses `base_branch="auto"` (set in `__init__`), so `_init_repos()` always resolves the actual git branch for single-repo mode — preserving backward compat with the current behavior where the daemon detects the working branch rather than hardcoding `"main"`.
+Note: The default single-repo entry uses `base_branch=""` (set in `__init__`), so `_init_repos()` always resolves the actual git branch for single-repo mode — preserving backward compat with the current behavior where the daemon detects the working branch rather than hardcoding `"main"`.
 
 Note: `_get_current_branch` is at `forge/core/daemon_helpers.py:224`. It safely falls back to `"main"` on detached HEAD or empty repos.
 
@@ -271,9 +272,9 @@ def _setup_per_repo_infra(self, pipeline_id: str) -> None:
     for repo_id, rc in self._repos.items():
         # Worktree dir: .forge/worktrees/ (single) or .forge/worktrees/<repo_id>/ (multi)
         if len(self._repos) == 1 and repo_id == "default":
-            wt_dir = os.path.join(self._project_dir, ".forge", "worktrees")
+            wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
         else:
-            wt_dir = os.path.join(self._project_dir, ".forge", "worktrees", repo_id)
+            wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees", repo_id)
 
         self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
         self._merge_workers[repo_id] = MergeWorker(rc.path, rc.base_branch)
@@ -411,10 +412,14 @@ def _worktree_path(self, repo_id: str, task_id: str) -> str:
 
     Single-repo (default): .forge/worktrees/<task_id>  (flat, backward compat)
     Multi-repo:            .forge/worktrees/<repo_id>/<task_id>  (nested)
+
+    IMPORTANT: Uses self._workspace_dir (not _project_dir) because .forge/
+    lives at the workspace root, which may differ from any repo path in
+    multi-repo mode.
     """
     if len(self._repos) == 1 and repo_id == "default":
-        return os.path.join(self._project_dir, ".forge", "worktrees", task_id)
-    return os.path.join(self._project_dir, ".forge", "worktrees", repo_id, task_id)
+        return os.path.join(self._workspace_dir, ".forge", "worktrees", task_id)
+    return os.path.join(self._workspace_dir, ".forge", "worktrees", repo_id, task_id)
 ```
 
 - [ ] **Step 3: Add standalone helper in `daemon_helpers.py`**
@@ -423,16 +428,21 @@ For code outside `ForgeDaemon` that needs worktree paths (e.g., `followup.py`, `
 
 ```python
 def compute_worktree_path(
-    project_dir: str, repo_id: str, task_id: str, *, multi_repo: bool = False,
+    workspace_dir: str, repo_id: str, task_id: str, *, repo_count: int = 1,
 ) -> str:
     """Compute worktree path for a task.
 
-    Single-repo: <project_dir>/.forge/worktrees/<task_id>
-    Multi-repo:  <project_dir>/.forge/worktrees/<repo_id>/<task_id>
+    Single-repo (repo_count=1, repo_id="default"):
+        <workspace_dir>/.forge/worktrees/<task_id>
+    Multi-repo (repo_count > 1):
+        <workspace_dir>/.forge/worktrees/<repo_id>/<task_id>
+
+    Uses repo_count instead of a fragile multi_repo bool — callers get this
+    from len(pipeline.get_repos()).
     """
-    if not multi_repo or repo_id == "default":
-        return os.path.join(project_dir, ".forge", "worktrees", task_id)
-    return os.path.join(project_dir, ".forge", "worktrees", repo_id, task_id)
+    if repo_count <= 1 and repo_id == "default":
+        return os.path.join(workspace_dir, ".forge", "worktrees", task_id)
+    return os.path.join(workspace_dir, ".forge", "worktrees", repo_id, task_id)
 ```
 
 - [ ] **Step 4: Run tests**
@@ -520,17 +530,59 @@ async def _execute_task(
 ) -> None:
 ```
 
-Add `repo_id: str = "default"` parameter and pass it to all internal methods that construct worktree paths.
+Add `repo_id: str = "default"` parameter and pass it to all internal methods that construct worktree paths. **This includes `_resume_task()`** which is called from within `_execute_task()` — it must also receive and forward `repo_id`.
 
-- [ ] **Step 6: Verify no hardcoded paths remain**
+- [ ] **Step 6: Thread `repo_id` through `_resume_task()`**
 
-```bash
-grep -rn 'os.path.join.*".forge".*"worktrees"' forge/core/daemon_executor.py
+`_resume_task()` is called inside `_execute_task()` and also constructs worktree paths. Update its signature:
+
+```python
+async def _resume_task(
+    self, db, runtime, worktree_mgr, merge_worker,
+    task_id: str, agent_id: str, pipeline_id: str | None = None,
+    repo_id: str = "default",
+) -> None:
 ```
 
-Expected: zero matches.
+And ensure all worktree path constructions within `_resume_task()` use `self._worktree_path(repo_id, task_id)`.
 
-- [ ] **Step 7: Run executor tests**
+- [ ] **Step 7: Replace hardcoded path in `retry_task()` (daemon.py:834)**
+
+`retry_task()` at line ~834 constructs a new `WorktreeManager` with a hardcoded path:
+
+```python
+# CURRENT (line 834):
+worktree_base = os.path.join(self._project_dir, ".forge", "worktrees")
+```
+
+Replace with:
+```python
+# Look up the task's repo to get the correct worktree base
+task = await db.get_task(task_id)
+repo_id = getattr(task, 'repo_id', 'default')
+wt_mgr, merge_w, _branch = self._get_repo_infra(repo_id)
+# Use the existing per-repo WorktreeManager instead of creating a new one
+```
+
+This is **critical** — without this fix, retrying a multi-repo task uses the wrong worktree path.
+
+- [ ] **Step 8: Verify no hardcoded paths remain in ALL daemon files**
+
+```bash
+grep -rn 'os.path.join.*".forge".*"worktrees"' forge/core/daemon_executor.py forge/core/daemon.py
+```
+
+Expected: zero matches except in `_worktree_path()` definition and `_setup_per_repo_infra()`.
+
+- [ ] **Step 9: Note: `followup.py` and `api/routes/tasks.py` also have hardcoded paths**
+
+These files are **out of Phase 3 scope** but must be fixed:
+- `forge/core/followup.py:318` — hardcoded `.forge/worktrees/<worktree_id>` — **fixed in Phase 9**
+- `forge/api/routes/tasks.py:51` — hardcoded `.forge/worktrees` cleanup paths — **fixed in Phase 8**
+
+The standalone `compute_worktree_path()` helper added above exists specifically for these callers.
+
+- [ ] **Step 10: Run executor tests**
 
 ```bash
 .venv/bin/python -m pytest forge/core/daemon_executor_test.py -x -v
@@ -825,7 +877,7 @@ async def _init_repos(self) -> None:
 
         # Resolve base branch
         base = rc.base_branch
-        if base == "auto":
+        if not base:
             base = await _get_current_branch(rc.path)
         resolved[repo_id] = RepoConfig(id=rc.id, path=rc.path, base_branch=base)
     self._repos = resolved
@@ -870,6 +922,10 @@ grep -rn 'os.path.join.*".forge".*"worktrees"' forge/core/daemon_executor.py
 # Verify daemon.py only uses _worktree_path() (except the helper definition itself)
 grep -rn 'os.path.join.*".forge".*"worktrees"' forge/core/daemon.py
 # Expected: only in _worktree_path() definition and _setup_per_repo_infra()
+
+# Verify no hardcoded paths in followup.py and API (these are Phase 8/9 scope but should be tracked)
+grep -rn 'os.path.join.*".forge".*"worktrees"' forge/core/followup.py forge/api/routes/tasks.py
+# Expected: matches exist — these are fixed in Phase 8 (tasks.py) and Phase 9 (followup.py)
 ```
 
 ---
@@ -888,6 +944,8 @@ grep -rn 'os.path.join.*".forge".*"worktrees"' forge/core/daemon.py
 | `test_pipeline_branches_created_per_repo` | `daemon_test.py::TestDaemonPerRepoInfra` | git branch -f per repo |
 | `test_allowed_dirs_union` | `daemon_test.py::TestAllowedDirs` | All repo paths in allowed_dirs |
 | `test_repos_json_stored_in_pipeline` | `daemon_test.py::TestReposJsonStorage` | PipelineRow.repos_json set correctly |
+| `test_retry_task_uses_per_repo_infra` | `daemon_test.py::TestRetryTaskMultiRepo` | retry_task() uses correct repo's WorktreeManager |
+| `test_resume_task_threads_repo_id` | `daemon_executor_test.py` | _resume_task() receives and forwards repo_id |
 
 ---
 

@@ -305,15 +305,15 @@ def parse_repo_flags(
     return repos
 ```
 
-- [ ] **Step 3: Implement `_validate_repo_list()` shared helper**
+- [ ] **Step 3: Extract shared validation into `_validate_repo_list()`**
 
-This helper validates an already-constructed list of `RepoConfig` objects (used by `resolve_repos()` for TOML-loaded repos to preserve their `base_branch` values, since `parse_repo_flags()` would auto-detect and discard them).
+**IMPORTANT:** Do NOT duplicate the validation logic from `parse_repo_flags()`. Instead, **extract** the shared validation into `_validate_repo_list()` and have `parse_repo_flags()` call it after constructing the `RepoConfig` list. This avoids the anti-pattern of fixing a bug in one place and missing it in the other.
 
 ```python
 def _validate_repo_list(repos: list[RepoConfig]) -> None:
     """Validate a list of RepoConfig objects (path existence, git, duplicates, nesting).
 
-    Used for TOML-loaded repos that already have base_branch set.
+    Shared by parse_repo_flags() and resolve_repos() (for TOML-loaded repos).
     Raises click.ClickException on any validation failure (spec Section 5.3).
     """
     import click
@@ -388,6 +388,31 @@ def _validate_repo_list(repos: list[RepoConfig]) -> None:
                     "directories."
                 )
 ```
+
+Then **refactor `parse_repo_flags()`** to use it:
+
+```python
+def parse_repo_flags(repo_flags: tuple[str, ...], project_dir: str) -> list[RepoConfig]:
+    """Parse --repo name=path flags into validated RepoConfig objects."""
+    import click
+
+    repos: list[RepoConfig] = []
+    for flag in repo_flags:
+        if "=" not in flag:
+            raise click.ClickException(
+                f"invalid --repo format: '{flag}'. Expected name=path"
+            )
+        name, path = flag.split("=", 1)
+        abs_path = os.path.abspath(os.path.join(project_dir, path))
+        base_branch = auto_detect_base_branch(abs_path)
+        repos.append(RepoConfig(id=name, path=abs_path, base_branch=base_branch))
+
+    # Shared validation — ONE source of truth for all checks
+    _validate_repo_list(repos)
+    return repos
+```
+
+This eliminates the previous code duplication where `parse_repo_flags()` had its own inline validation.
 
 - [ ] **Step 4: Verify all 8 parse tests pass**
 
@@ -718,7 +743,39 @@ from forge.config.project_config import validate_repos_startup
 
 
 class TestValidateReposStartup:
-    """Tests for validate_repos_startup() — dirty tree + base branch checks."""
+    """Tests for validate_repos_startup() — gh CLI, dirty tree, base branch checks."""
+
+    def test_validate_repos_gh_cli_missing(self, tmp_path, monkeypatch):
+        """Rejects multi-repo when gh CLI is not installed."""
+        monkeypatch.setattr("shutil.which", lambda cmd: None if cmd == "gh" else "/usr/bin/" + cmd)
+        repo_a = tmp_path / "a"
+        repo_b = tmp_path / "b"
+        repo_a.mkdir()
+        repo_b.mkdir()
+        from forge.core.models import RepoConfig
+        repos = [
+            RepoConfig(id="a", path=str(repo_a), base_branch="main"),
+            RepoConfig(id="b", path=str(repo_b), base_branch="main"),
+        ]
+        with pytest.raises(click.ClickException, match="gh.*CLI not found"):
+            validate_repos_startup(repos)
+
+    def test_validate_repos_base_branch_missing(self, tmp_path):
+        """Rejects repo whose base_branch does not exist."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        env = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t"}
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, capture_output=True, check=True)
+        (repo / "README.md").write_text("init")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, check=True, env=env)
+
+        from forge.core.models import RepoConfig
+        repos = [RepoConfig(id="repo", path=str(repo), base_branch="nonexistent")]
+
+        with pytest.raises(click.ClickException, match="base branch 'nonexistent' does not exist"):
+            validate_repos_startup(repos)
 
     def test_validate_repos_dirty_tree(self, tmp_path):
         """Rejects repo with uncommitted changes."""
@@ -748,13 +805,24 @@ class TestValidateReposStartup:
 def validate_repos_startup(repos: list[RepoConfig]) -> None:
     """Validate all repos before any LLM calls. Fail fast on first error.
 
-    Checks per repo:
-    - No uncommitted changes (clean working tree)
-    - Base branch exists
+    Checks:
+    - gh CLI is installed (multi-repo only — single-repo also needs it but
+      doesn't check today, preserving backward compat)
+    - No uncommitted changes (clean working tree) per repo
+    - Base branch exists per repo
 
     Raises click.ClickException with spec Section 5.3 error messages.
     """
+    import shutil
+
     import click
+
+    # ── gh CLI check (multi-repo only) ──
+    if len(repos) > 1 and shutil.which("gh") is None:
+        raise click.ClickException(
+            "'gh' CLI not found. Required for PR creation. "
+            "Install from https://cli.github.com"
+        )
 
     for rc in repos:
         # Skip the default single-repo — it's the CWD, dirty tree is OK
@@ -943,3 +1011,8 @@ All error messages use `click.ClickException` and match the spec exactly:
 | Nested paths | `repo '<id>' at '<path>' is inside repo '<id>' at '<path>'. Nested repos are not supported — use separate directories.` |
 | No commits | `repo '<id>' has no commits. Make an initial commit first.` |
 | No repos found | `current directory is not a git repo and no --repo flags or workspace.toml found` |
+| gh CLI missing | `'gh' CLI not found. Required for PR creation. Install from https://cli.github.com` |
+
+## ⚠ Implementation Note: Phase 3 Dependency
+
+The CLI wiring passes `repos=repos` to `ForgeDaemon()` and `ForgeApp()`, but neither constructor accepts a `repos` parameter until Phase 3 is implemented. **Phase 2 cannot be tested end-to-end until Phase 3 is merged.** Unit tests for `parse_repo_flags()`, `resolve_repos()`, `validate_repos_startup()`, etc. work independently. The daemon/TUI integration is verified in Phase 3.

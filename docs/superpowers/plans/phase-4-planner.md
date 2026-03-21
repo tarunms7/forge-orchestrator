@@ -642,7 +642,23 @@ Modify `forge/core/planning/unified_planner.py` lines 257-302. After the structu
 
 This replaces the existing `if valid: return graph, None` at line 300. When `_repo_ids` is None (single-repo mode), the repo validation block is skipped entirely, preserving backward compatibility.
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [ ] **Step 7: Wire `repo_ids` into `validate_plan()` call**
+
+In `unified_planner.py`, the `run()` method calls `validate_plan()` at line ~187. Update it to pass `repo_ids`:
+
+```python
+# BEFORE (line 187):
+validation_result = validate_plan(graph, minimal_map, spec_text)
+
+# AFTER:
+validation_result = validate_plan(graph, minimal_map, spec_text, repo_ids=self._repo_ids)
+```
+
+This ensures BOTH the inline `_parse()` repo check AND the validator's comprehensive `_check_repo_assignments()` + `_check_cross_repo_file_paths()` are exercised. The validator already accepts `repo_ids` (added in Phase 1) — this just wires it up.
+
+**This is a one-line change but critical** — without it, the validator's repo checks are never triggered and you have dead code.
+
+- [ ] **Step 8: Run tests to verify they pass**
 
 Run: `.venv/bin/python -m pytest forge/core/planning/unified_planner_test.py::TestPlannerMultiRepo -v`
 Expected: All PASS
@@ -651,9 +667,9 @@ Expected: All PASS
 
 ## Chunk 3: Daemon Planning Phase Integration — `forge/core/daemon.py`
 
-Updates the daemon's planning phase to use multi-repo snapshot gathering and pass repo IDs to the planner. This is documented here but the actual implementation happens in a later phase (Phase 6: daemon integration).
+Updates the daemon's planning phase to use multi-repo snapshot gathering and pass repo IDs to the planner. **These changes ARE part of Phase 4** — they wire the planner pieces (Tasks 1-2) into the daemon.
 
-### Task 3: Update daemon planning phase (documentation only for Phase 4)
+### Task 3: Update daemon planning phase
 
 The daemon changes are lightweight and connect the pieces built in Tasks 1-2. These changes happen in `forge/core/daemon.py` around lines 326-425:
 
@@ -726,23 +742,7 @@ planning_result = await unified_planner.run(
 ```
 
 **Validation pass-through** (line 187 in unified_planner.py `run()`):
-The existing `validate_plan()` call already accepts `repo_ids`:
-
-```python
-# Already works — pass repo_ids from the planner to the validator
-validation_result = validate_plan(graph, minimal_map, spec_text, repo_ids=self._repo_ids)
-```
-
-This line needs to be updated from:
-```python
-validation_result = validate_plan(graph, minimal_map, spec_text)
-```
-to:
-```python
-validation_result = validate_plan(graph, minimal_map, spec_text, repo_ids=self._repo_ids)
-```
-
-This ensures both the planner's inline repo check (in `_parse()`) and the validator's comprehensive check (in `validate_plan()` — `_check_repo_assignments()` and `_check_cross_repo_file_paths()`) are exercised.
+Already wired in Chunk 2, Step 7 — `validate_plan(graph, minimal_map, spec_text, repo_ids=self._repo_ids)`. No additional changes needed here.
 
 ---
 
