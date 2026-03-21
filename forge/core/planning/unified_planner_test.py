@@ -224,6 +224,27 @@ class TestPlannerMultiRepo:
         assert backend_pos > 0
         assert frontend_pos > 0
 
+    def test_planner_system_prompt_json_example_valid(self):
+        """JSON example in multi-repo prompt uses single braces (valid JSON)."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            repo_ids={"backend", "frontend"},
+        )
+        # The JSON example should contain single braces, not double
+        assert '"repo": "backend"' in prompt
+        assert '"repo": "frontend"' in prompt
+        # Extract JSON block and verify it parses
+        import re
+        # Find the last ```json block (the multi-repo one)
+        json_blocks = re.findall(r"```json\s*\n(.*?)```", prompt, re.DOTALL)
+        assert len(json_blocks) >= 1
+        # The multi-repo JSON example should be valid JSON
+        multi_repo_json = json_blocks[-1].strip()
+        parsed = json.loads(multi_repo_json)
+        assert "tasks" in parsed
+        assert parsed["tasks"][0]["repo"] == "backend"
+        assert parsed["tasks"][1]["repo"] == "frontend"
+
     def test_planner_system_prompt_no_multi_repo_for_single(self):
         """No multi-repo section when repo_ids=None."""
         prompt = _build_unified_system_prompt(

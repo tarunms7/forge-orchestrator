@@ -352,9 +352,9 @@ This workspace contains multiple repositories: {repo_list}
 ### Output Schema (with repo field)
 
 ```json
-{{{{
+{{
   "tasks": [
-    {{{{
+    {{
       "id": "task-1",
       "title": "Backend models",
       "description": "...",
@@ -362,8 +362,8 @@ This workspace contains multiple repositories: {repo_list}
       "depends_on": [],
       "complexity": "low",
       "repo": "{sorted_repos[0]}"
-    }}}},
-    {{{{
+    }},
+    {{
       "id": "task-2",
       "title": "Frontend components",
       "description": "...",
@@ -371,9 +371,9 @@ This workspace contains multiple repositories: {repo_list}
       "depends_on": ["task-1"],
       "complexity": "medium",
       "repo": "{sorted_repos[-1]}"
-    }}}}
+    }}
   ]
-}}}}
+}}
 ```
 """
 
