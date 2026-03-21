@@ -554,18 +554,36 @@ class ReviewMixin:
                 files_str += f"... (+{len(sibling.files) - 5} more)"
             if not files_str:
                 files_str = "(none)"
+
+            # Show dependency relationship to help reviewer understand task boundaries
+            dep_info = ""
+            task_deps = getattr(task, 'depends_on', None) or []
+            sibling_deps = getattr(sibling, 'depends_on', None) or []
+            if sibling.id in task_deps:
+                dep_info = " ← THIS TASK DEPENDS ON IT"
+            if task.id in sibling_deps:
+                dep_info = " ← DEPENDS ON THIS TASK (will wire later)"
+
             lines.append(
                 f"- **{sibling.id}** ({sibling.title}): "
-                f"files=[{files_str}], state={sibling.state}"
+                f"files=[{files_str}], state={sibling.state}{dep_info}"
             )
+
+            # Show what the sibling does so reviewer understands scope boundaries
+            desc = getattr(sibling, 'description', None)
+            if desc:
+                preview = desc[:200].replace('\n', ' ')
+                if len(desc) > 200:
+                    preview += "..."
+                lines.append(f"  What it does: {preview}")
 
         lines.append("")
         lines.append(
-            "IMPORTANT: If the task spec implies something needs to happen in a file "
-            "NOT in this task's allowed scope (e.g., registering a route in app.py "
-            "when app.py belongs to another task), do NOT fail the review. That "
-            "work is handled by the sibling task that owns that file. Only review "
-            "code changes within this task's allowed files."
+            "IMPORTANT: If the task description mentions wiring/integration that touches files "
+            "owned by a sibling task, do NOT fail the review for that missing wiring. "
+            "Specifically, if a sibling task DEPENDS ON this task (marked above), it will "
+            "handle integration into its own files AFTER this task completes. "
+            "Only review code changes within this task's allowed files."
         )
 
         return "\n".join(lines)
