@@ -12,8 +12,6 @@ import logging
 import time
 from dataclasses import dataclass
 
-from rich.console import Console
-
 from forge.config.project_config import CMD_DISABLED
 from forge.core.daemon_helpers import (
     _extract_text,
@@ -23,12 +21,13 @@ from forge.core.daemon_helpers import (
     _run_git,
     async_subprocess,
 )
+from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
 
 logger = logging.getLogger("forge.daemon")
-console = Console()
+console = make_console()
 
 
 # ---------------------------------------------------------------------------

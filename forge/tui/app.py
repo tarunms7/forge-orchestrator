@@ -162,6 +162,11 @@ class ForgeApp(App):
 
     async def on_mount(self) -> None:
         """Initialize DB, push home screen, wire state changes."""
+        # Redirect all logging to .forge/forge.log and suppress Rich console
+        # output so daemon prints don't corrupt the Textual TUI display.
+        from forge.core.logging_config import configure_tui_logging
+        configure_tui_logging()
+
         await self._init_db()
         # Mount the command palette overlay at the app level so it's available on all screens
         await self.mount(CommandPalette())

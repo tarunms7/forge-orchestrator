@@ -7,8 +7,6 @@ import logging
 import os
 import time
 
-from rich.console import Console
-
 from forge.core.budget import check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
@@ -24,11 +22,12 @@ from forge.core.daemon_helpers import (
     _resolve_ref,
     _run_git,
 )
+from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
 
 logger = logging.getLogger("forge")
-console = Console()
+console = make_console()
 
 _COMPLEXITY_MULTIPLIERS: dict[str, float] = {
     "low": 1.0,
