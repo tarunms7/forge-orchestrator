@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from forge.agents.adapter import AgentAdapter, AgentResult
+from forge.learning.guard import GuardTriggered
 
 logger = logging.getLogger("forge.agents.runtime")
 
@@ -69,6 +70,8 @@ class AgentRuntime:
                     summary=f"Agent '{agent_id}' timed out after {effective_timeout}s",
                     error=f"Timeout after {effective_timeout}s",
                 )
+            except GuardTriggered:
+                raise  # Must propagate to _stream_agent for lesson capture
             except Exception as e:
                 err_str = str(e).lower()
                 transient_keywords = ["rate_limit", "rate limit", "overloaded", "529", "500", "502", "503", "connection", "reset"]
