@@ -117,7 +117,7 @@ def __init__(
             "default": RepoConfig(
                 id="default",
                 path=project_dir,
-                base_branch="main",  # resolved async in _init_repos()
+                base_branch="auto",  # resolved async in _init_repos()
             ),
         }
 ```
@@ -158,6 +158,18 @@ async def test_init_repos_resolves_base_branch(self, tmp_path):
 
     # 'auto' should resolve to the actual branch name
     assert daemon._repos["myrepo"].base_branch == "develop"
+
+@pytest.mark.asyncio
+async def test_init_repos_resolves_default_single_repo(self, tmp_path):
+    """Single-repo default also resolves base branch (base_branch='auto')."""
+    subprocess.run(["git", "init", "-b", "feature-x"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+    daemon = ForgeDaemon(str(tmp_path))  # no repos → default with base_branch="auto"
+    await daemon._init_repos()
+
+    # Default repo's 'auto' base_branch should resolve to the actual git branch
+    assert daemon._repos["default"].base_branch == "feature-x"
 ```
 
 - [ ] **Step 2: Implement `_init_repos()`**
@@ -172,11 +184,13 @@ async def _init_repos(self) -> None:
     resolved: dict[str, RepoConfig] = {}
     for repo_id, rc in self._repos.items():
         base = rc.base_branch
-        if base == "auto" or (repo_id == "default" and base == "main"):
+        if base == "auto":
             base = await _get_current_branch(rc.path)
         resolved[repo_id] = RepoConfig(id=rc.id, path=rc.path, base_branch=base)
     self._repos = resolved
 ```
+
+Note: The default single-repo entry uses `base_branch="auto"` (set in `__init__`), so `_init_repos()` always resolves the actual git branch for single-repo mode — preserving backward compat with the current behavior where the daemon detects the working branch rather than hardcoding `"main"`.
 
 Note: `_get_current_branch` is at `forge/core/daemon_helpers.py:224`. It safely falls back to `"main"` on detached HEAD or empty repos.
 
@@ -271,7 +285,7 @@ def _setup_per_repo_infra(self, pipeline_id: str) -> None:
 
 - [ ] **Step 3: Create pipeline branches via `git branch -f` per repo**
 
-Add a method and call it from `_setup_per_repo_infra()`:
+Add a separate async method. This is called from `execute()` after `_setup_per_repo_infra()` — **not** from within `_setup_per_repo_infra()` itself, since `_setup_per_repo_infra()` is sync and this method is async:
 
 ```python
 async def _create_pipeline_branches(self) -> None:
