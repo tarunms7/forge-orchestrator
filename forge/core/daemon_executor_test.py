@@ -28,8 +28,9 @@ class TestRebaseWorktree:
         mixin = self._make_mixin()
         rebase_ok = _make_proc(returncode=0)
 
-        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=rebase_ok) as mock_git:
-            await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
+        with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
+            with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=rebase_ok) as mock_git:
+                await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
         assert mock_git.call_count == 1
         args, kwargs = mock_git.call_args
@@ -42,8 +43,9 @@ class TestRebaseWorktree:
         rebase_fail = _make_proc(returncode=1, stdout="CONFLICT")
         abort_ok = _make_proc(returncode=0)
 
-        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_ok]) as mock_git:
-            await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
+        with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
+            with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_ok]) as mock_git:
+                await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
         assert mock_git.call_count == 2
         # Second call should be abort
@@ -57,9 +59,10 @@ class TestRebaseWorktree:
         rebase_fail = _make_proc(returncode=1)
         abort_fail = _make_proc(returncode=1)
 
-        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_fail]):
-            # Should not raise
-            await mixin._rebase_worktree("/wt/task-1", "main", "task-1")
+        with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
+            with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_fail]):
+                # Should not raise
+                await mixin._rebase_worktree("/wt/task-1", "main", "task-1")
 
 
 class TestBuildPrompt:
@@ -96,7 +99,7 @@ class TestBuildPrompt:
 
         prompt = mixin._build_prompt(task)
 
-        assert "RETRY #1" in prompt
+        assert "Retry #1" in prompt
         assert "Missing error handling" in prompt
 
     def test_retry_without_feedback_uses_agent_prompt(self):
@@ -291,7 +294,7 @@ class TestWorktreePathThreading:
 
         # Simulate the worktree directory existing on disk
         with patch("os.path.isdir", return_value=True):
-            with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock) as mock_rebase:
+            with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
                 result = await mixin._prepare_worktree(
                     worktree_mgr, "task-1", "pipe-1", db,
                     base_ref="main", repo_id="backend",
@@ -400,7 +403,7 @@ class TestWorktreePathThreading:
 
         with patch("os.path.isdir", return_value=True):
             with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
-                result = await mixin._prepare_worktree(
+                await mixin._prepare_worktree(
                     worktree_mgr, "task-1", "pipe-1", db, base_ref="main",
                 )
 
