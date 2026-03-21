@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
