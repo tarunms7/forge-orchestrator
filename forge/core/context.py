@@ -148,6 +148,77 @@ def gather_project_snapshot(project_dir: str) -> ProjectSnapshot:
     )
 
 
+async def gather_multi_repo_snapshots(
+    repos: dict[str, "RepoConfig"],
+) -> dict[str, ProjectSnapshot]:
+    """Gather project snapshots from multiple repos in parallel.
+
+    Uses asyncio.gather with asyncio.to_thread per repo for parallel I/O
+    (each snapshot involves git and filesystem operations).
+
+    If a repo's snapshot gathering fails, an empty ProjectSnapshot is used
+    as fallback — the planner can still read the repo via tools.
+
+    Args:
+        repos: Mapping of repo_id → RepoConfig.
+
+    Returns:
+        Mapping of repo_id → ProjectSnapshot.
+    """
+    import asyncio
+    import logging
+
+    logger = logging.getLogger("forge.context")
+
+    async def _gather_one(repo_id: str, path: str) -> tuple[str, ProjectSnapshot]:
+        try:
+            snapshot = await asyncio.to_thread(gather_project_snapshot, path)
+            return repo_id, snapshot
+        except Exception as e:
+            logger.warning("Snapshot gathering failed for repo '%s': %s", repo_id, e)
+            return repo_id, ProjectSnapshot()
+
+    results = await asyncio.gather(*(
+        _gather_one(repo_id, rc.path)
+        for repo_id, rc in repos.items()
+    ))
+    return dict(results)
+
+
+def format_multi_repo_snapshot(
+    snapshots: dict[str, ProjectSnapshot],
+    repos: dict[str, "RepoConfig"],
+) -> str:
+    """Format multiple repo snapshots into a single string for the planner.
+
+    Each repo gets a labeled section with a ### Repo: header. Large repos
+    (500+ files) have their file trees truncated to depth 3.
+
+    Args:
+        snapshots: Mapping of repo_id → ProjectSnapshot.
+        repos: Mapping of repo_id → RepoConfig (for path info).
+
+    Returns:
+        Formatted multi-repo snapshot string.
+    """
+    parts: list[str] = []
+    for repo_id in sorted(snapshots.keys()):
+        snap = snapshots[repo_id]
+        rc = repos[repo_id]
+        parts.append(f"### Repo: {repo_id} ({rc.path})")
+        # Truncate large repos' file trees
+        if snap.total_files >= 500:
+            truncated_tree = _truncate_file_tree(snap.file_tree, snap.total_files)
+            # Replace the tree in the formatted output
+            formatted = snap.format_for_planner()
+            formatted = formatted.replace(snap.file_tree, truncated_tree)
+            parts.append(formatted)
+        else:
+            parts.append(snap.format_for_planner())
+        parts.append("")
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -390,3 +461,34 @@ def _format_module_index(module_index: dict[str, str]) -> str:
         else:
             lines.append(f"- **{name}**")
     return "\n".join(lines)
+
+
+def _truncate_file_tree(tree: str, total_files: int, max_depth: int = 3) -> str:
+    """Truncate a file tree to max_depth levels if the repo has too many files.
+
+    For repos with 500+ files, deep directory listings waste planner context.
+    The planner can use Glob/Read to explore deeper.
+
+    Args:
+        tree: Indented file tree string from _get_file_tree().
+        total_files: Total tracked files in the repo.
+        max_depth: Maximum directory depth to keep (default 3).
+
+    Returns:
+        Truncated tree string, or original if repo is small.
+    """
+    if total_files < 500:
+        return tree
+
+    truncated_lines: list[str] = []
+    for line in tree.split("\n"):
+        if not line.strip():
+            continue
+        # Depth = number of leading 2-space indents
+        stripped = line.lstrip(" ")
+        indent_count = (len(line) - len(stripped)) // 2
+        if indent_count < max_depth:
+            truncated_lines.append(line)
+
+    truncated_lines.append(f"  ... ({total_files} files total, tree truncated to depth {max_depth})")
+    return "\n".join(truncated_lines)
