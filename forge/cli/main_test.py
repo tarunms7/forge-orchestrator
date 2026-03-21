@@ -100,7 +100,7 @@ def test_run_help_shows_deep_plan_option():
 
 def test_run_passes_spec_and_deep_plan(tmp_path):
     """run command should forward spec and deep_plan to daemon.run()."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
 
     spec_file = tmp_path / "spec.md"
     spec_file.write_text("# Spec\nDo stuff")
