@@ -1,6 +1,5 @@
 """Tests for daemon_executor — worktree rebase and prompt selection."""
 
-import os
 import subprocess
 
 import pytest
