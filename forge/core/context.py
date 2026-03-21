@@ -10,6 +10,10 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from forge.core.models import RepoConfig
 
 
 @dataclass
