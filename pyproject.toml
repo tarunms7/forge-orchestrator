@@ -50,6 +50,7 @@ web = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.3",
 ]
 postgres = [
     "asyncpg>=0.29",
@@ -69,6 +70,7 @@ exclude = ["*_test.py", "**/*_test.py"]
 asyncio_mode = "auto"
 testpaths = ["forge"]
 python_files = ["*_test.py"]
+timeout = 60
 
 [tool.ruff]
 line-length = 100

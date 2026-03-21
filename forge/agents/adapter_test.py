@@ -250,6 +250,16 @@ def test_build_options_no_conventions_or_deps():
     assert "## Boundaries" in options.system_prompt
 
 
+def test_system_prompt_includes_retry_discipline():
+    """Agent prompt must include retry guardrails to prevent infinite command loops."""
+    adapter = ClaudeAdapter()
+    options = adapter._build_options("/tmp/wt", [])
+    prompt = options.system_prompt
+    assert "## Command Retry Discipline" in prompt
+    assert "3 times" in prompt
+    assert "fundamentally different approach" in prompt
+
+
 def test_build_options_has_no_allowed_tools():
     """Task agents should get full tool access (no allowed_tools key)."""
     adapter = ClaudeAdapter()
