@@ -1174,21 +1174,22 @@ class ExecutorMixin:
         except GuardTriggered as exc:
             logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)
             await self._emit("task:agent_output", {"task_id": task_id, "line": f"Agent stopped: {exc}"}, db=db, pipeline_id=pid)
-            # Create lesson from failures — re-fetch from self in case local var is stale
-            _ls = getattr(self, "_lesson_store", None) or lesson_store
-            if not _ls:
-                logger.warning("No lesson store available — cannot capture lesson")
-            if _ls:
+            # Create lesson from failures
+            store = getattr(self, "_lesson_store", None)
+            if store:
                 try:
+                    await store.initialize()  # ensure DB is ready
                     lesson = extract_from_command_failures(exc.failures, project_dir=self._project_dir)
-                    existing = await lesson_store.find_matching(lesson.trigger)
+                    existing = await store.find_matching(lesson.trigger)
                     if existing:
-                        await lesson_store.bump_hit(existing.id)
+                        await store.bump_hit(existing.id)
                     else:
-                        await lesson_store.add_lesson(lesson)
+                        await store.add_lesson(lesson)
                     logger.info("Lesson captured: %s", lesson.title)
                 except Exception as le:
                     logger.warning("Failed to capture lesson: %s", le)
+            else:
+                logger.warning("No lesson store available — lesson not captured")
             # Return a failure result
             from forge.agents.adapter import AgentResult
             return AgentResult(
