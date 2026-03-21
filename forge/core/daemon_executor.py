@@ -905,6 +905,7 @@ class ExecutorMixin:
                 passed, feedback = await self._run_review(
                     task, worktree_path, diff, db=db, pipeline_id=pid,
                     pipeline_branch=pipeline_branch, delta_diff=delta_diff,
+                    repo_id=getattr(task, 'repo_id', None),
                 )
                 if passed:
                     break

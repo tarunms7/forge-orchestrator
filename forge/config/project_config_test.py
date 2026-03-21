@@ -17,6 +17,7 @@ from forge.config.project_config import (
     ProjectConfig,
     apply_project_config,
     auto_detect_base_branch,
+    load_repo_configs,
     load_workspace_toml,
     parse_repo_flags,
     resolve_repos,
@@ -510,3 +511,75 @@ class TestValidateReposStartup:
         repos = [RepoConfig(id="myrepo", path=repo, base_branch="main")]
         with pytest.raises(click.ClickException, match="[Dd]irty"):
             validate_repos_startup(repos)
+
+
+# ── Chunk 5: load_repo_configs ───────────────────────────────────────
+
+
+class TestLoadRepoConfigs:
+    def test_load_repo_configs_multiple(self, tmp_path):
+        """Creates 2 repo dirs with distinct configs, asserts each loads correctly."""
+        be = tmp_path / "backend"
+        fe = tmp_path / "frontend"
+        be.mkdir()
+        fe.mkdir()
+
+        # backend: pytest test command
+        be_forge = be / ".forge"
+        be_forge.mkdir()
+        (be_forge / "forge.toml").write_text('[checks.tests]\nenabled = true\ncmd = "pytest"\n')
+
+        # frontend: npm test command
+        fe_forge = fe / ".forge"
+        fe_forge.mkdir()
+        (fe_forge / "forge.toml").write_text('[checks.tests]\nenabled = true\ncmd = "npm test"\n')
+
+        repos = {
+            "backend": RepoConfig(id="backend", path=str(be), base_branch="main"),
+            "frontend": RepoConfig(id="frontend", path=str(fe), base_branch="main"),
+        }
+        result = load_repo_configs(repos)
+
+        assert set(result.keys()) == {"backend", "frontend"}
+        assert result["backend"].tests.cmd == "pytest"
+        assert result["frontend"].tests.cmd == "npm test"
+
+    def test_load_repo_configs_missing_toml(self, tmp_path):
+        """Repo dir without .forge/forge.toml returns defaults (cmd=None)."""
+        repo_dir = tmp_path / "myrepo"
+        repo_dir.mkdir()
+
+        repos = {
+            "default": RepoConfig(id="default", path=str(repo_dir), base_branch="main"),
+        }
+        result = load_repo_configs(repos)
+
+        assert "default" in result
+        config = result["default"]
+        assert config.tests.cmd is None
+        assert config.lint.check_cmd is None
+        assert config.build.cmd is None
+
+    def test_load_repo_configs_invalid_toml(self, tmp_path, caplog):
+        """Repo dir with invalid TOML returns defaults and logs a warning."""
+        import logging
+
+        repo_dir = tmp_path / "broken"
+        repo_dir.mkdir()
+        forge_dir = repo_dir / ".forge"
+        forge_dir.mkdir()
+        (forge_dir / "forge.toml").write_text("this is not valid toml [[[")
+
+        repos = {
+            "broken": RepoConfig(id="broken", path=str(repo_dir), base_branch="main"),
+        }
+        with caplog.at_level(logging.WARNING):
+            result = load_repo_configs(repos)
+
+        assert "broken" in result
+        config = result["broken"]
+        # Defaults returned despite invalid TOML
+        assert config.tests.cmd is None
+        assert config.agents.max_turns == 75
+        # Warning was logged
+        assert any("broken" in r.message or "forge.toml" in r.message for r in caplog.records)

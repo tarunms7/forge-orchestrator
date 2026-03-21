@@ -16,6 +16,10 @@ import shutil
 import subprocess
 import tomllib
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from forge.core.models import RepoConfig
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +330,25 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
         settings.test_cmd = CMD_DISABLED
     if not config.build.enabled:
         settings.build_cmd = None
+
+
+def load_repo_configs(repos: 'dict[str, RepoConfig]') -> 'dict[str, ProjectConfig]':
+    """Load per-repo ProjectConfig from each repo's .forge/forge.toml.
+
+    Args:
+        repos: Mapping of repo_id → RepoConfig. Each RepoConfig has .id, .path,
+               and .base_branch. Keys are repo IDs like 'backend', 'frontend',
+               or 'default' for single-repo.
+
+    Returns:
+        Mapping of repo_id → ProjectConfig loaded via ProjectConfig.load(rc.path).
+        Missing .forge/forge.toml returns defaults. Invalid TOML logs warning
+        and returns defaults.
+    """
+    configs: dict[str, ProjectConfig] = {}
+    for repo_id, rc in repos.items():
+        configs[repo_id] = ProjectConfig.load(rc.path)
+    return configs
 
 
 # ── Multi-repo workspace support ─────────────────────────────────────

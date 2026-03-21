@@ -978,6 +978,17 @@ class Database:
                 row.conventions_json = conventions_json
                 await session.commit()
 
+    async def update_pipeline_repos_json(self, pipeline_id: str, repos_json: str) -> None:
+        """Update the repos_json column for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.repos_json = repos_json
+                await session.commit()
+
     async def update_task_implementation_summary(self, task_id: str, summary: str) -> None:
         """Store implementation summary for a task."""
         async with self._session_factory() as session:

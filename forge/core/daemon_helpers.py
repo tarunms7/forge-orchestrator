@@ -222,6 +222,31 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
     return f"🔧 {tool}"
 
 
+async def update_repos_json_branches(
+    db, pipeline_id: str, pipeline_branches: dict[str, str],
+) -> None:
+    """Update repos_json in the DB with per-repo branch names.
+
+    For each repo entry whose ``id`` appears in *pipeline_branches*, sets
+    ``branch_name`` to the pipeline branch and ``pr_url`` to an empty string.
+    Non-matching entries are left unchanged.
+    """
+    import json
+
+    pipeline_row = await db.get_pipeline(pipeline_id)
+    if not pipeline_row or not pipeline_row.repos_json:
+        return
+
+    repos_data = json.loads(pipeline_row.repos_json)
+    for repo_entry in repos_data:
+        repo_id = repo_entry.get("id")
+        if repo_id and repo_id in pipeline_branches:
+            repo_entry["branch_name"] = pipeline_branches[repo_id]
+            repo_entry["pr_url"] = ""
+
+    await db.update_pipeline_repos_json(pipeline_id, json.dumps(repos_data))
+
+
 async def _get_current_branch(repo_path: str) -> str:
     """Get the current branch name of the repo.
 
