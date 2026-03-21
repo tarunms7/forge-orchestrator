@@ -121,7 +121,9 @@ def configure_tui_logging() -> None:
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    logger.setLevel(logging.DEBUG)
+    # Keep the level that configure_logging() already set (INFO or DEBUG
+    # depending on --verbose).  Don't force DEBUG — that leaks noisy SDK
+    # messages like "Skipping unknown SDK message type: rate_limit_event".
 
     # Suppress noisy third-party loggers
     for name in _SUPPRESSED_LOGGERS:

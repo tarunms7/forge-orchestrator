@@ -148,6 +148,12 @@ def tui(project_dir: str, strategy: str | None, repo: tuple[str, ...]) -> None:
     repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
     validate_repos_startup(repos)
 
+    # Suppress Rich console and redirect logging to file BEFORE importing
+    # any daemon modules — module-level console = make_console() checks
+    # _TUI_MODE at call time, so this must happen first.
+    from forge.core.logging_config import configure_tui_logging
+    configure_tui_logging()
+
     from forge.config.settings import ForgeSettings
     from forge.tui.app import ForgeApp
 
