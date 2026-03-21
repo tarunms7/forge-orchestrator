@@ -38,6 +38,9 @@ from forge.core.daemon_executor import ExecutorMixin
 from forge.core.daemon_review import ReviewMixin
 from forge.core.daemon_merge import MergeMixin
 
+from forge.config.project_config import ProjectConfig, load_repo_configs
+from forge.core.daemon_helpers import update_repos_json_branches
+
 # Re-export all helpers at module level for backward compatibility.
 from forge.core.daemon_helpers import (  # noqa: F401
     _extract_activity,
@@ -887,6 +890,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # is idempotent (git branch -f) so safe to call for all repos.
         if len(self._repos) > 1 and not resume:
             await self._create_pipeline_branches()
+
+        # Load per-repo configs for review gates (build/test/lint commands)
+        self._repo_configs: dict[str, ProjectConfig] = load_repo_configs(self._repos)
+
+        # Update repos_json with per-repo branch names
+        if len(self._repos) > 1:
+            await update_repos_json_branches(db, pid, self._pipeline_branches)
 
         # For backward compat, keep single-object references for _execution_loop
         worktree_mgr = self._worktree_managers.get("default", next(iter(self._worktree_managers.values())))
