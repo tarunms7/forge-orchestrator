@@ -78,3 +78,46 @@ async def test_handle_merge_retry_cascades_on_max_retries():
 
     db.update_task_state.assert_called_once_with("t1", "error")
     mixin._cascade_blocked.assert_called_once_with(db, "t1", "pipe-1")
+
+
+@pytest.mark.asyncio
+async def test_repos_json_updated_after_merge(tmp_path):
+    """update_repos_json_branches writes branch_name and pr_url into repos_json."""
+    import json
+    from forge.storage.db import Database
+    from forge.core.daemon_helpers import update_repos_json_branches
+
+    pipeline_id = "test-pipe-001"
+    initial_repos = [
+        {"id": "backend", "path": "/path/to/backend", "base_branch": "main"},
+        {"id": "frontend", "path": "/path/to/frontend", "base_branch": "main"},
+    ]
+
+    db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
+    await db.initialize()
+
+    await db.create_pipeline(
+        pipeline_id,
+        description="test",
+        project_dir=str(tmp_path),
+        repos_json=json.dumps(initial_repos),
+    )
+
+    pipeline_branches = {
+        "backend": "forge/pipeline-test-pipe",
+        "frontend": "forge/pipeline-test-pipe",
+    }
+    await update_repos_json_branches(db, pipeline_id, pipeline_branches)
+
+    row = await db.get_pipeline(pipeline_id)
+    assert row is not None
+    updated_repos = json.loads(row.repos_json)
+
+    assert len(updated_repos) == 2
+    for entry in updated_repos:
+        assert entry["branch_name"] == "forge/pipeline-test-pipe"
+        assert entry["pr_url"] == ""
+        # Original fields preserved
+        assert "id" in entry
+        assert "path" in entry
+        assert "base_branch" in entry
