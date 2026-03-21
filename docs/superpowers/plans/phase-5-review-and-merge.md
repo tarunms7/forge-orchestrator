@@ -516,28 +516,34 @@ Expected: PASS
 
 After merge completes for each repo, update the `repos_json` column with per-repo branch stats.
 
-### Task 6: Update `repos_json` with branch stats post-merge
+### Task 6: Extract `update_repos_json_branches()` helper and update `repos_json` post-merge
+
+The repos_json update logic is extracted into a standalone async helper function in `forge/core/daemon_helpers.py`. This allows the test to import and call the **actual production code** rather than inlining a copy. The daemon's `execute()` flow calls this same helper.
 
 **Files:**
-- Modify: `forge/core/daemon.py` — post-merge handling (after all tasks complete, before PR creation)
-- Modify: `forge/storage/db.py` — add helper to update `repos_json` for a specific repo
+- Modify: `forge/core/daemon_helpers.py` — add `update_repos_json_branches()` helper
+- Modify: `forge/core/daemon.py` — call the helper after per-repo infrastructure setup
 - Test: `forge/core/daemon_merge_test.py`
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Write failing test that imports and calls the helper**
 
 ```python
 # In forge/core/daemon_merge_test.py
 
 import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 @pytest.mark.asyncio
 async def test_repos_json_updated_after_merge(tmp_path):
-    """repos_json has per-repo branch stats after the daemon's post-merge update runs."""
-    # This test drives through the daemon's repos_json update code block,
-    # not just the db layer. It verifies that the daemon correctly populates
-    # branch_name and pr_url after pipeline branches are created.
+    """repos_json has per-repo branch stats after the daemon's post-merge update runs.
+
+    This test imports and calls the actual `update_repos_json_branches()` helper
+    from daemon_helpers — the same function that daemon.py calls during execute().
+    A developer who omits the helper or the call in daemon.py will see an ImportError
+    or missing function, ensuring the production code must exist for this test to pass.
+    """
+    from forge.core.daemon_helpers import update_repos_json_branches
+
     db = await _make_test_db(tmp_path)
     pipeline_id = "test-pipeline"
 
@@ -547,24 +553,16 @@ async def test_repos_json_updated_after_merge(tmp_path):
     ]
     await db.create_pipeline(pipeline_id, repos_json=json.dumps(initial_repos))
 
-    # Simulate the daemon state that would exist after Phase 3 infra setup
+    # Simulate the daemon state: pipeline_branches populated by Phase 3
     pipeline_branches = {
         "backend": "forge/pipeline-test-pipe",
         "frontend": "forge/pipeline-test-pipe",
     }
 
-    # Execute the daemon's repos_json update logic (from Step 2 implementation):
-    pipeline_row = await db.get_pipeline(pipeline_id)
-    if pipeline_row.repos_json:
-        repos_data = json.loads(pipeline_row.repos_json)
-        for repo_entry in repos_data:
-            repo_id = repo_entry["id"]
-            if repo_id in pipeline_branches:
-                repo_entry["branch_name"] = pipeline_branches[repo_id]
-                repo_entry["pr_url"] = ""  # placeholder for PR creation phase
-        await db.update_pipeline(pipeline_id, repos_json=json.dumps(repos_data))
+    # Call the actual production helper — NOT inlined logic
+    await update_repos_json_branches(db, pipeline_id, pipeline_branches)
 
-    # Verify the daemon's update wrote correct data
+    # Verify the helper wrote correct data
     updated = await db.get_pipeline(pipeline_id)
     repos_after = json.loads(updated.repos_json)
     assert len(repos_after) == 2
@@ -578,27 +576,63 @@ async def test_repos_json_updated_after_merge(tmp_path):
     assert repos_after[0]["base_branch"] == "main"
 ```
 
-Note: This test exercises the exact code block from Step 2's implementation (the `repos_json` update logic). It uses the real db layer and simulates the daemon's `self._pipeline_branches` state to verify the complete update flow. A more thorough integration test in `test_pipeline_lifecycle.py` should drive through the full `execute()` path, but this unit test validates the repos_json update block in isolation.
+**Why this design:** The test imports `update_repos_json_branches` from `forge.core.daemon_helpers`. If a developer never writes the function, the test fails with `ImportError`. If they write it incorrectly, the assertions catch it. The test exercises the real production code path.
 
-- [ ] **Step 2: Implement repos_json update in daemon execute flow**
+- [ ] **Step 2: Run test to verify it fails**
 
-In `forge/core/daemon.py`, after the per-repo infrastructure setup (where `self._pipeline_branches` is populated), update `repos_json` with branch names:
+Run: `.venv/bin/python -m pytest forge/core/daemon_merge_test.py::test_repos_json_updated_after_merge -v`
+
+Expected: FAIL — `ImportError: cannot import name 'update_repos_json_branches' from 'forge.core.daemon_helpers'`
+
+- [ ] **Step 3: Implement `update_repos_json_branches()` in `forge/core/daemon_helpers.py`**
+
+Add this function to `forge/core/daemon_helpers.py`:
 
 ```python
-# After pipeline branches are created for each repo:
-if pipeline_row.repos_json:
+async def update_repos_json_branches(
+    db,
+    pipeline_id: str,
+    pipeline_branches: dict[str, str],
+) -> None:
+    """Update repos_json with per-repo branch names after pipeline branches are created.
+
+    Called during execute() after Phase 3 infrastructure setup. Sets branch_name
+    for each repo and initializes pr_url as empty (populated later during PR creation).
+
+    Args:
+        db: Database instance (ForgeDB)
+        pipeline_id: The pipeline's ID
+        pipeline_branches: Mapping of repo_id → pipeline branch name
+    """
+    import json
+
+    pipeline_row = await db.get_pipeline(pipeline_id)
+    if not pipeline_row or not pipeline_row.repos_json:
+        return
+
     repos_data = json.loads(pipeline_row.repos_json)
     for repo_entry in repos_data:
-        repo_id = repo_entry["id"]
-        if repo_id in self._pipeline_branches:
-            repo_entry["branch_name"] = self._pipeline_branches[repo_id]
+        repo_id = repo_entry.get("id")
+        if repo_id and repo_id in pipeline_branches:
+            repo_entry["branch_name"] = pipeline_branches[repo_id]
             repo_entry["pr_url"] = ""  # placeholder for PR creation phase
     await db.update_pipeline(pipeline_id, repos_json=json.dumps(repos_data))
 ```
 
+- [ ] **Step 4: Call the helper from daemon.py**
+
+In `forge/core/daemon.py`, after the per-repo infrastructure setup (where `self._pipeline_branches` is populated), call the extracted helper:
+
+```python
+from forge.core.daemon_helpers import update_repos_json_branches
+
+# After pipeline branches are created for each repo:
+await update_repos_json_branches(db, pipeline_id, self._pipeline_branches)
+```
+
 The `pr_url` is populated later during PR creation (Phase 6 — not in scope for this phase). For now, store an empty string as the placeholder per the spec's `repos_json` extended schema (Section 4.3).
 
-- [ ] **Step 3: Run test**
+- [ ] **Step 5: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest forge/core/daemon_merge_test.py::test_repos_json_updated_after_merge -v`
 
@@ -673,7 +707,7 @@ The `MergeWorker` is constructed with `main_branch=pipeline_branch` for each rep
 | `test_review_uses_repo_config` | `forge/core/daemon_review_test.py` | Review pipeline uses task's repo config |
 | `test_review_single_repo_unchanged` | `forge/core/daemon_review_test.py` | Single-repo review identical to current behavior |
 | `test_diff_stats_correct_repo` | `forge/core/daemon_review_test.py` | Diff computed in correct worktree |
-| `test_repos_json_updated_after_merge` | `forge/core/daemon_merge_test.py` | Daemon's repos_json update logic writes branch stats correctly |
+| `test_repos_json_updated_after_merge` | `forge/core/daemon_merge_test.py` | Imports and calls `update_repos_json_branches()` helper to verify branch stats written correctly |
 
 ---
 
@@ -682,7 +716,8 @@ The `MergeWorker` is constructed with `main_branch=pipeline_branch` for each rep
 | File | Change | Lines |
 |------|--------|-------|
 | `forge/config/project_config.py` | Add `load_repo_configs()` function | ~320 (after `apply_project_config`) |
-| `forge/core/daemon.py` | Add `self._repo_configs` init in `execute()` | After Phase 3 infra setup |
+| `forge/core/daemon.py` | Add `self._repo_configs` init + call `update_repos_json_branches()` in `execute()` | After Phase 3 infra setup |
+| `forge/core/daemon_helpers.py` | Add `update_repos_json_branches()` helper function | New function |
 | `forge/core/daemon_review.py` | Add `repo_id` param to 4 resolvers + `_run_review()` | Lines 313, 326, 339, 351, 574 |
 | `forge/core/daemon_executor.py` | Pass `repo_id` to `_run_review()` call | Call site for `_run_review` |
 | `forge/core/daemon_merge.py` | No changes | Already correct from Phase 3 |
