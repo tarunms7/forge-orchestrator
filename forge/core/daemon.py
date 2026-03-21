@@ -16,7 +16,8 @@ from forge.config.settings import ForgeSettings
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.cost_estimator import estimate_pipeline_cost
-from forge.core.models import row_to_record
+from forge.core.errors import ForgeError
+from forge.core.models import RepoConfig, row_to_record
 from forge.core.events import EventEmitter
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
 from forge.core.contracts import ContractSet, IntegrationHint
@@ -170,10 +171,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         project_dir: str,
         settings: ForgeSettings | None = None,
         event_emitter: EventEmitter | None = None,
+        repos: list[RepoConfig] | None = None,
     ) -> None:
         from forge.config.project_config import ProjectConfig
 
         self._project_dir = project_dir
+        self._workspace_dir = project_dir  # alias for multi-repo clarity
         self._settings = settings or ForgeSettings()
         self._state_machine = TaskStateMachine()
         self._events = event_emitter or EventEmitter()
@@ -181,6 +184,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._snapshot: ProjectSnapshot | None = None
         self._merge_lock = asyncio.Lock()
         self._project_config = ProjectConfig.load(project_dir)
+
+        # Multi-repo support: build repos dict
+        if repos:
+            self._repos: dict[str, RepoConfig] = {r.id: r for r in repos}
+        else:
+            self._repos = {
+                "default": RepoConfig(id="default", path=project_dir, base_branch=""),
+            }
 
         # Lessons use the central DB — no separate initialization needed
 
@@ -193,6 +204,130 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             event_type=event_type,
             payload=data,
         )
+
+    # ── Multi-repo initialization & infrastructure ─────────────────────
+
+    async def _init_repos(self) -> None:
+        """Validate repos and resolve empty base_branch values.
+
+        Called at the start of execute() before worktree/merge worker creation.
+        Checks each repo for dirty working tree and resolves any empty
+        base_branch using _get_current_branch().
+        """
+        from dataclasses import replace as _dc_replace
+
+        for repo_id, rc in list(self._repos.items()):
+            # Check for dirty working tree
+            result = await async_subprocess(
+                ["git", "status", "--porcelain"],
+                cwd=rc.path,
+            )
+            if result.stdout.strip():
+                raise ForgeError(
+                    f"Repository '{repo_id}' at {rc.path} has a dirty working tree. "
+                    "Commit or stash changes before running Forge."
+                )
+
+            # Resolve empty base_branch
+            if not rc.base_branch:
+                branch = await _get_current_branch(rc.path)
+                self._repos[repo_id] = _dc_replace(rc, base_branch=branch)
+
+    def _setup_per_repo_infra(self, pipeline_branch: str) -> None:
+        """Create per-repo WorktreeManager, MergeWorker, and pipeline branch names.
+
+        Single default repo uses flat layout (.forge/worktrees/).
+        Multi-repo nests by repo_id (.forge/worktrees/<repo_id>/).
+
+        Args:
+            pipeline_branch: The resolved pipeline branch name (e.g. 'forge/pipeline-abc12345').
+        """
+        self._worktree_managers: dict[str, WorktreeManager] = {}
+        self._merge_workers: dict[str, MergeWorker] = {}
+        self._pipeline_branches: dict[str, str] = {}
+
+        multi = len(self._repos) > 1
+
+        for repo_id, rc in self._repos.items():
+            if multi:
+                wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees", repo_id)
+            else:
+                wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
+
+            self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
+            self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=pipeline_branch)
+            self._pipeline_branches[repo_id] = pipeline_branch
+
+    async def _create_pipeline_branches(self) -> None:
+        """Create git pipeline branches for each repo using asyncio subprocess."""
+        for repo_id, rc in self._repos.items():
+            branch_name = self._pipeline_branches[repo_id]
+            result = await asyncio.create_subprocess_exec(
+                "git", "branch", "-f", branch_name, rc.base_branch,
+                cwd=rc.path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+            if result.returncode != 0:
+                raise ForgeError(
+                    f"Failed to create pipeline branch '{branch_name}' in repo "
+                    f"'{repo_id}' at {rc.path}: {stderr.decode().strip()}"
+                )
+
+    def _worktree_path(self, repo_id: str, task_id: str) -> str:
+        """Compute the filesystem path for a task's git worktree.
+
+        Single default repo: .forge/worktrees/<task_id> (flat, backward compat).
+        Multi-repo: .forge/worktrees/<repo_id>/<task_id> (nested).
+        """
+        if len(self._repos) > 1:
+            return os.path.join(self._workspace_dir, ".forge", "worktrees", repo_id, task_id)
+        return os.path.join(self._workspace_dir, ".forge", "worktrees", task_id)
+
+    def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:
+        """Return the per-repo infrastructure tuple for *repo_id*.
+
+        Returns:
+            (WorktreeManager, MergeWorker, pipeline_branch_name)
+
+        Raises:
+            ForgeError: if repo_id is not found.
+        """
+        if repo_id not in self._worktree_managers:
+            raise ForgeError(
+                f"Unknown repo '{repo_id}' — available repos: "
+                f"{sorted(self._worktree_managers.keys())}"
+            )
+        return (
+            self._worktree_managers[repo_id],
+            self._merge_workers[repo_id],
+            self._pipeline_branches[repo_id],
+        )
+
+    def _build_allowed_dirs(self) -> list[str]:
+        """Return union of settings.allowed_dirs + all repo paths."""
+        dirs = list(self._settings.allowed_dirs or [])
+        for rc in self._repos.values():
+            if rc.path not in dirs:
+                dirs.append(rc.path)
+        return dirs
+
+    def _build_repos_json(self) -> str | None:
+        """Serialize repos + pipeline branches to JSON.
+
+        Returns None for single-repo (no need to store).
+        """
+        if len(self._repos) <= 1:
+            return None
+        data: dict[str, dict] = {}
+        for repo_id, rc in self._repos.items():
+            data[repo_id] = {
+                "path": rc.path,
+                "base_branch": rc.base_branch,
+                "pipeline_branch": self._pipeline_branches.get(repo_id, ""),
+            }
+        return json.dumps(data)
 
     def _auto_detect_commands(self, project_dir: str) -> None:
         """Auto-detect build_cmd and test_cmd from project config files.
@@ -612,6 +747,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
         prefix = pid[:8]
 
+        # Multi-repo: validate repos and resolve base branches
+        await self._init_repos()
+
         if not await self._preflight_checks(self._project_dir, db, pid):
             raise RuntimeError("Pre-flight checks failed — see pipeline events for details")
 
@@ -667,7 +805,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             memory_threshold_pct=self._settings.memory_threshold_pct,
             disk_threshold_gb=self._settings.disk_threshold_gb,
         )
-        worktree_mgr = WorktreeManager(self._project_dir, f"{self._project_dir}/.forge/worktrees")
         adapter = ClaudeAdapter()
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
 
@@ -727,7 +864,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         result.stdout, result.stderr,
                     )
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
-        merge_worker = MergeWorker(self._project_dir, main_branch=pipeline_branch)
+
+        # Set up per-repo infrastructure (worktree managers, merge workers, pipeline branches)
+        self._setup_per_repo_infra(pipeline_branch)
+
+        # Create pipeline branches in all repos (multi-repo)
+        # For single-repo, the branch was already created above; _create_pipeline_branches
+        # is idempotent (git branch -f) so safe to call for all repos.
+        if len(self._repos) > 1 and not resume:
+            await self._create_pipeline_branches()
+
+        # For backward compat, keep single-object references for _execution_loop
+        worktree_mgr = self._worktree_managers.get("default", next(iter(self._worktree_managers.values())))
+        merge_worker = self._merge_workers.get("default", next(iter(self._merge_workers.values())))
 
         # ── Integration baseline capture ────────────────────────────
         from forge.config.project_config import ProjectConfig
@@ -846,11 +995,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Reset state in DB
         await db.update_task_state(task_id, "todo")
 
-        # Clear worktree if it exists
+        # Clear worktree if it exists — use per-repo infra if available
         try:
-            worktree_base = os.path.join(self._project_dir, ".forge", "worktrees")
-            worktree_mgr = WorktreeManager(self._project_dir, worktree_base)
-            worktree_mgr.remove(task_id)
+            task_row = await db.get_task(task_id)
+            repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
+            if hasattr(self, "_worktree_managers") and repo_id in self._worktree_managers:
+                wt_mgr, _, _ = self._get_repo_infra(repo_id)
+            else:
+                worktree_base = os.path.join(self._project_dir, ".forge", "worktrees")
+                wt_mgr = WorktreeManager(self._project_dir, worktree_base)
+            wt_mgr.remove(task_id)
         except Exception:
             logger.debug("No worktree to clean for task %s (or already removed)", task_id)
 
@@ -1040,12 +1194,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     async def _safe_execute_task(
         self, db, runtime, worktree_mgr, merge_worker,
         task_id: str, agent_id: str, pipeline_id: str | None = None,
+        repo_id: str | None = None,
     ) -> None:
         """Wrapper ensuring cleanup on cancellation or crash."""
         try:
             await self._execute_task(
                 db, runtime, worktree_mgr, merge_worker,
                 task_id, agent_id, pipeline_id=pipeline_id,
+                repo_id=repo_id,
             )
         except asyncio.CancelledError:
             logger.info("Task %s was cancelled (shutdown)", task_id)
@@ -1362,9 +1518,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             for task_id, agent_id in dispatch_plan:
                 await db.assign_task(task_id, agent_id)
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
+
+                # Route to the correct repo's infrastructure
+                task_row = await db.get_task(task_id)
+                repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
+                try:
+                    wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
+                except ForgeError:
+                    wt_mgr, mw = worktree_mgr, merge_worker
+
                 atask = asyncio.create_task(
-                    self._safe_execute_task(db, runtime, worktree_mgr, merge_worker,
-                                            task_id, agent_id, pipeline_id=pipeline_id),
+                    self._safe_execute_task(db, runtime, wt_mgr, mw,
+                                            task_id, agent_id, pipeline_id=pipeline_id,
+                                            repo_id=repo_id),
                     name=f"forge-task-{task_id}",
                 )
                 self._active_tasks[task_id] = atask

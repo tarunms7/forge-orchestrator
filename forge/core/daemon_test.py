@@ -9,7 +9,8 @@ import pytest
 
 from forge.config.settings import ForgeSettings
 from forge.core.daemon import ForgeDaemon, _classify_pipeline_result
-from forge.core.models import TaskState
+from forge.core.errors import ForgeError
+from forge.core.models import RepoConfig, TaskState
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +34,7 @@ def _make_task(state: str, task_id: str = "task-1") -> MagicMock:
     t.complexity = "medium"
     t.assigned_agent = None
     t.retry_count = 0
+    t.repo_id = "default"
     return t
 
 
@@ -570,6 +572,7 @@ class TestRetryTask:
 
         db = MagicMock()
         db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("error", "task-1"))
         db.log_event = AsyncMock()
 
         emitted: list[tuple] = []
@@ -591,6 +594,7 @@ class TestRetryTask:
 
         db = MagicMock()
         db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("error", "task-1"))
         db.log_event = AsyncMock()
 
         emitted: list[tuple] = []
@@ -616,6 +620,7 @@ class TestRetryTask:
 
         db = MagicMock()
         db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("error", "task-1"))
         db.log_event = AsyncMock()
 
         daemon._emit = AsyncMock()
@@ -632,6 +637,7 @@ class TestRetryTask:
 
         db = MagicMock()
         db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("error", "task-1"))
         db.log_event = AsyncMock()
 
         daemon._emit = AsyncMock()
@@ -969,7 +975,8 @@ class TestExecuteBranchCreation:
              patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]), \
              patch("forge.core.daemon.WorktreeManager"), \
              patch("forge.core.daemon.MergeWorker"), \
-             patch("forge.core.daemon.ResourceMonitor") as MockMon:
+             patch("forge.core.daemon.ResourceMonitor") as MockMon, \
+             patch.object(daemon, "_init_repos", new_callable=AsyncMock):
             MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
             MockMon.return_value.can_dispatch = MagicMock(return_value=True)
 
@@ -1020,7 +1027,8 @@ class TestExecuteBranchCreation:
              patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]), \
              patch("forge.core.daemon.WorktreeManager"), \
              patch("forge.core.daemon.MergeWorker"), \
-             patch("forge.core.daemon.ResourceMonitor") as MockMon:
+             patch("forge.core.daemon.ResourceMonitor") as MockMon, \
+             patch.object(daemon, "_init_repos", new_callable=AsyncMock):
             MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
             MockMon.return_value.can_dispatch = MagicMock(return_value=True)
 
@@ -1033,3 +1041,364 @@ class TestExecuteBranchCreation:
             if len(c.args[0]) >= 3 and "--verify" in c.args[0]
         ]
         assert len(verify_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Helpers for multi-repo tests
+# ---------------------------------------------------------------------------
+
+def _init_git_repo(path, branch: str = "main") -> None:
+    """Initialize a real git repo at *path* with one commit."""
+    subprocess.run(["git", "init", "-b", branch], cwd=str(path), check=True,
+                   capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(path),
+                   check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(path),
+                   check=True, capture_output=True)
+    # Create initial commit so HEAD is valid
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=str(path),
+                   check=True, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# Chunk 1: Multi-Repo Init Tests
+# ---------------------------------------------------------------------------
+
+class TestDaemonMultiRepoInit:
+    """Tests for ForgeDaemon.__init__ with repos parameter."""
+
+    def test_daemon_init_single_repo_default(self, tmp_path):
+        """Without repos param, daemon creates single 'default' repo entry."""
+        daemon = _make_daemon(tmp_path)
+        assert hasattr(daemon, "_repos")
+        assert "default" in daemon._repos
+        assert daemon._repos["default"].id == "default"
+        assert daemon._repos["default"].path == str(tmp_path)
+        assert daemon._repos["default"].base_branch == ""  # resolved async later
+
+    def test_daemon_init_with_repos(self, tmp_path):
+        """With repos param, daemon stores each RepoConfig keyed by id."""
+        repo_a = RepoConfig(id="backend", path=str(tmp_path / "back"), base_branch="main")
+        repo_b = RepoConfig(id="frontend", path=str(tmp_path / "front"), base_branch="develop")
+
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=[repo_a, repo_b],
+        )
+
+        assert len(daemon._repos) == 2
+        assert daemon._repos["backend"] is repo_a
+        assert daemon._repos["frontend"] is repo_b
+
+    def test_daemon_init_workspace_dir_alias(self, tmp_path):
+        """_workspace_dir is set to the same value as _project_dir."""
+        daemon = _make_daemon(tmp_path)
+        assert daemon._workspace_dir == daemon._project_dir
+        assert daemon._workspace_dir == str(tmp_path)
+
+
+@pytest.mark.asyncio
+class TestInitRepos:
+    """Tests for ForgeDaemon._init_repos() async method."""
+
+    async def test_init_repos_resolves_default_single_repo(self, tmp_path):
+        """For single default repo with empty base_branch, resolves via _get_current_branch."""
+        _init_git_repo(tmp_path, "main")
+        daemon = _make_daemon(tmp_path)
+
+        assert daemon._repos["default"].base_branch == ""
+
+        with patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"):
+            await daemon._init_repos()
+
+        assert daemon._repos["default"].base_branch == "main"
+
+    async def test_init_repos_resolves_base_branch(self, tmp_path):
+        """For multi-repo with empty base_branch, resolves each repo's branch."""
+        back_dir = tmp_path / "back"
+        front_dir = tmp_path / "front"
+        back_dir.mkdir()
+        front_dir.mkdir()
+        _init_git_repo(back_dir, "main")
+        _init_git_repo(front_dir, "develop")
+
+        repos = [
+            RepoConfig(id="backend", path=str(back_dir), base_branch=""),
+            RepoConfig(id="frontend", path=str(front_dir), base_branch="develop"),
+        ]
+
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        async def mock_get_branch(repo_path):
+            if "back" in repo_path:
+                return "main"
+            return "develop"
+
+        with patch("forge.core.daemon._get_current_branch", side_effect=mock_get_branch):
+            await daemon._init_repos()
+
+        assert daemon._repos["backend"].base_branch == "main"
+        assert daemon._repos["frontend"].base_branch == "develop"
+
+    async def test_init_repos_dirty_tree_raises(self, tmp_path):
+        """If a repo has uncommitted changes, _init_repos raises ForgeError."""
+        _init_git_repo(tmp_path, "main")
+        # Create a dirty file
+        (tmp_path / "dirty.txt").write_text("dirty")
+        subprocess.run(["git", "add", "dirty.txt"], cwd=str(tmp_path),
+                       check=True, capture_output=True)
+
+        daemon = _make_daemon(tmp_path)
+
+        with pytest.raises(ForgeError, match="dirty"):
+            await daemon._init_repos()
+
+    async def test_init_repos_skips_already_resolved(self, tmp_path):
+        """If base_branch is already set, _init_repos does not overwrite it."""
+        _init_git_repo(tmp_path, "main")
+        repos = [RepoConfig(id="backend", path=str(tmp_path), base_branch="release")]
+
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        # Should not call _get_current_branch for this repo
+        with patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock) as mock_branch:
+            await daemon._init_repos()
+
+        mock_branch.assert_not_called()
+        assert daemon._repos["backend"].base_branch == "release"
+
+
+# ---------------------------------------------------------------------------
+# Chunk 2: Per-Repo Infrastructure Tests
+# ---------------------------------------------------------------------------
+
+class TestDaemonPerRepoInfra:
+    """Tests for _setup_per_repo_infra and _create_pipeline_branches."""
+
+    def test_setup_per_repo_infra_single_repo(self, tmp_path):
+        """Single default repo creates flat worktree layout."""
+        daemon = _make_daemon(tmp_path)
+        # Manually set base_branch so it's valid
+        daemon._repos["default"] = RepoConfig(
+            id="default", path=str(tmp_path), base_branch="main",
+        )
+
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
+
+        assert "default" in daemon._worktree_managers
+        assert "default" in daemon._merge_workers
+        assert "default" in daemon._pipeline_branches
+        assert daemon._pipeline_branches["default"] == "forge/pipeline-pipe-abc"
+
+    def test_setup_per_repo_infra_multi_repo(self, tmp_path):
+        """Multi-repo creates nested worktree layout per repo_id."""
+        back_dir = tmp_path / "back"
+        front_dir = tmp_path / "front"
+        back_dir.mkdir()
+        front_dir.mkdir()
+
+        repos = [
+            RepoConfig(id="backend", path=str(back_dir), base_branch="main"),
+            RepoConfig(id="frontend", path=str(front_dir), base_branch="develop"),
+        ]
+
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        with patch("forge.core.daemon.WorktreeManager"), \
+             patch("forge.core.daemon.MergeWorker"):
+            daemon._setup_per_repo_infra("forge/pipeline-pipe-xyz")
+
+        assert "backend" in daemon._worktree_managers
+        assert "frontend" in daemon._worktree_managers
+        assert "backend" in daemon._merge_workers
+        assert "frontend" in daemon._merge_workers
+
+    def test_daemon_init_with_repos_creates_managers(self, tmp_path):
+        """Alias test: verifying per-repo infra dict structure."""
+        daemon = _make_daemon(tmp_path)
+        daemon._repos["default"] = RepoConfig(
+            id="default", path=str(tmp_path), base_branch="main",
+        )
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-123")
+
+        assert isinstance(daemon._worktree_managers, dict)
+        assert isinstance(daemon._merge_workers, dict)
+        assert isinstance(daemon._pipeline_branches, dict)
+
+    def test_pipeline_branches_created_per_repo(self, tmp_path):
+        """Each repo gets its own pipeline branch name."""
+        repos = [
+            RepoConfig(id="backend", path=str(tmp_path / "b"), base_branch="main"),
+            RepoConfig(id="frontend", path=str(tmp_path / "f"), base_branch="develop"),
+        ]
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        with patch("forge.core.daemon.WorktreeManager"), \
+             patch("forge.core.daemon.MergeWorker"):
+            daemon._setup_per_repo_infra("forge/pipeline-abc12345")
+
+        assert daemon._pipeline_branches["backend"] == "forge/pipeline-abc12345"
+        assert daemon._pipeline_branches["frontend"] == "forge/pipeline-abc12345"
+
+
+# ---------------------------------------------------------------------------
+# Chunk 2: Worktree Path Tests
+# ---------------------------------------------------------------------------
+
+class TestWorktreePath:
+    """Tests for ForgeDaemon._worktree_path."""
+
+    def test_worktree_path_single_repo(self, tmp_path):
+        """Single default repo uses flat layout: .forge/worktrees/<task_id>."""
+        daemon = _make_daemon(tmp_path)
+
+        result = daemon._worktree_path("default", "task-1")
+        expected = os.path.join(str(tmp_path), ".forge", "worktrees", "task-1")
+        assert result == expected
+
+    def test_worktree_path_multi_repo(self, tmp_path):
+        """Multi-repo uses nested layout: .forge/worktrees/<repo_id>/<task_id>."""
+        repos = [
+            RepoConfig(id="backend", path=str(tmp_path / "b"), base_branch="main"),
+            RepoConfig(id="frontend", path=str(tmp_path / "f"), base_branch="develop"),
+        ]
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        result = daemon._worktree_path("backend", "task-1")
+        expected = os.path.join(str(tmp_path), ".forge", "worktrees", "backend", "task-1")
+        assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# Chunk 4: Task Dispatch Routing Tests
+# ---------------------------------------------------------------------------
+
+class TestDispatchTaskRouting:
+    """Tests for _get_repo_infra routing."""
+
+    def test_dispatch_task_routes_to_correct_repo(self, tmp_path):
+        """_get_repo_infra returns the correct infrastructure tuple."""
+        daemon = _make_daemon(tmp_path)
+        daemon._repos["default"] = RepoConfig(
+            id="default", path=str(tmp_path), base_branch="main",
+        )
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
+
+        wt_mgr, merge_worker, branch = daemon._get_repo_infra("default")
+
+        assert wt_mgr is daemon._worktree_managers["default"]
+        assert merge_worker is daemon._merge_workers["default"]
+        assert branch == "forge/pipeline-pipe-abc"
+
+    def test_dispatch_task_unknown_repo_raises(self, tmp_path):
+        """_get_repo_infra raises ForgeError for unknown repo_id."""
+        daemon = _make_daemon(tmp_path)
+        daemon._repos["default"] = RepoConfig(
+            id="default", path=str(tmp_path), base_branch="main",
+        )
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
+
+        with pytest.raises(ForgeError, match="Unknown repo"):
+            daemon._get_repo_infra("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# Chunk 5: Allowed Dirs & Repos JSON Tests
+# ---------------------------------------------------------------------------
+
+class TestAllowedDirs:
+    """Tests for _build_allowed_dirs."""
+
+    def test_allowed_dirs_union(self, tmp_path):
+        """_build_allowed_dirs returns union of settings.allowed_dirs + repo paths."""
+        extra_dir = str(tmp_path / "extra")
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(allowed_dirs=[extra_dir]),
+        )
+
+        dirs = daemon._build_allowed_dirs()
+
+        assert str(tmp_path) in dirs
+        assert extra_dir in dirs
+
+    def test_allowed_dirs_multi_repo(self, tmp_path):
+        """Multi-repo includes all repo paths."""
+        back_dir = str(tmp_path / "back")
+        front_dir = str(tmp_path / "front")
+
+        repos = [
+            RepoConfig(id="backend", path=back_dir, base_branch="main"),
+            RepoConfig(id="frontend", path=front_dir, base_branch="develop"),
+        ]
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        dirs = daemon._build_allowed_dirs()
+        assert back_dir in dirs
+        assert front_dir in dirs
+
+
+class TestReposJsonStorage:
+    """Tests for _build_repos_json."""
+
+    def test_repos_json_single_repo_returns_none(self, tmp_path):
+        """Single-repo returns None (no need to store)."""
+        daemon = _make_daemon(tmp_path)
+        daemon._repos["default"] = RepoConfig(
+            id="default", path=str(tmp_path), base_branch="main",
+        )
+        daemon._pipeline_branches = {"default": "forge/pipeline-abc"}
+
+        result = daemon._build_repos_json()
+        assert result is None
+
+    def test_repos_json_stored_in_pipeline(self, tmp_path):
+        """Multi-repo returns JSON string with repo info."""
+        import json
+
+        repos = [
+            RepoConfig(id="backend", path=str(tmp_path / "b"), base_branch="main"),
+            RepoConfig(id="frontend", path=str(tmp_path / "f"), base_branch="develop"),
+        ]
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+        daemon._pipeline_branches = {
+            "backend": "forge/pipeline-abc",
+            "frontend": "forge/pipeline-abc",
+        }
+
+        result = daemon._build_repos_json()
+        assert result is not None
+        data = json.loads(result)
+        assert "backend" in data
+        assert "frontend" in data
+        assert data["backend"]["path"] == str(tmp_path / "b")
+        assert data["backend"]["pipeline_branch"] == "forge/pipeline-abc"

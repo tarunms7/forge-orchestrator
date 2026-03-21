@@ -733,6 +733,19 @@ async def _find_related_test_files(
     return in_scope, out_of_scope
 
 
+def compute_worktree_path(
+    workspace_dir: str, repo_id: str, task_id: str, *, repo_count: int = 1,
+) -> str:
+    """Compute worktree path for a task.
+
+    Single-repo (repo_count=1, repo_id='default'): <workspace_dir>/.forge/worktrees/<task_id>
+    Multi-repo (repo_count > 1): <workspace_dir>/.forge/worktrees/<repo_id>/<task_id>
+    """
+    if repo_count <= 1 and repo_id == "default":
+        return os.path.join(workspace_dir, ".forge", "worktrees", task_id)
+    return os.path.join(workspace_dir, ".forge", "worktrees", repo_id, task_id)
+
+
 async def _run_git(
     args: list[str],
     cwd: str,
