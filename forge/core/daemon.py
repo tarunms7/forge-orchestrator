@@ -187,6 +187,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         project_db_path = os.path.join(project_dir, ".forge", "lessons.db")
         self._global_lesson_store = LessonStore(global_db_path)
         self._project_lesson_store = LessonStore(project_db_path)
+        self._lesson_store = self._project_lesson_store  # Primary store for executor/merge access
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""

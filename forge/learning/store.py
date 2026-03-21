@@ -54,6 +54,7 @@ class LessonStore:
             return
         os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
         async with aiosqlite.connect(self._db_path) as conn:
+            await conn.execute("PRAGMA journal_mode=WAL")
             await conn.executescript(_SCHEMA)
             await conn.commit()
         self._initialized = True

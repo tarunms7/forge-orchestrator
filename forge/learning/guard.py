@@ -147,9 +147,16 @@ class RuntimeGuard:
             # Check tool results for failures
             if hasattr(block, 'tool_use_id') and hasattr(block, 'is_error'):
                 tool_id = block.tool_use_id
-                if tool_id in self._pending_bash and block.is_error:
+                if tool_id in self._pending_bash and block.is_error is True:
                     cmd, norm = self._pending_bash.pop(tool_id)
-                    error_text = str(getattr(block, 'content', '') or '')[:500]
+                    raw_content = getattr(block, 'content', '') or ''
+                    if isinstance(raw_content, list):
+                        error_text = ' '.join(
+                            item.get('text', '') for item in raw_content
+                            if isinstance(item, dict)
+                        )[:500]
+                    else:
+                        error_text = str(raw_content)[:500]
                     err_class = classify_error(error_text)
                     sig = approach_signature(norm, err_class)
 
@@ -174,7 +181,7 @@ class RuntimeGuard:
                     if len(attempts) == self._max_attempts - 1:
                         self.warning_issued = True
                         return "warning"
-                elif tool_id in self._pending_bash and not block.is_error:
+                elif tool_id in self._pending_bash and block.is_error is False:
                     # Success -- remove from pending, don't track
                     self._pending_bash.pop(tool_id, None)
 

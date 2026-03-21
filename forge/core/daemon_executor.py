@@ -1139,13 +1139,18 @@ class ExecutorMixin:
             getattr(task, "complexity", None),
         )
 
-        # Inject lessons into agent prompt
+        # Inject lessons into agent prompt (project + global)
         lessons_block = ""
         lesson_store = getattr(self, "_lesson_store", None)
-        if lesson_store:
+        global_lesson_store = getattr(self, "_global_lesson_store", None)
+        if lesson_store or global_lesson_store:
             try:
-                lessons = await lesson_store.get_relevant_lessons(max_count=20, max_tokens=2000)
-                lessons_block = format_lessons_block(lessons)
+                all_lessons = []
+                if lesson_store:
+                    all_lessons.extend(await lesson_store.get_relevant_lessons(max_count=15, max_tokens=1500))
+                if global_lesson_store:
+                    all_lessons.extend(await global_lesson_store.get_relevant_lessons(max_count=10, max_tokens=500))
+                lessons_block = format_lessons_block(all_lessons)
             except Exception as exc:
                 logger.warning("Failed to load lessons: %s", exc)
 
