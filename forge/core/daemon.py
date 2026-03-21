@@ -233,11 +233,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 branch = await _get_current_branch(rc.path)
                 self._repos[repo_id] = _dc_replace(rc, base_branch=branch)
 
-    def _setup_per_repo_infra(self, pipeline_id: str) -> None:
+    def _setup_per_repo_infra(self, pipeline_branch: str) -> None:
         """Create per-repo WorktreeManager, MergeWorker, and pipeline branch names.
 
         Single default repo uses flat layout (.forge/worktrees/).
         Multi-repo nests by repo_id (.forge/worktrees/<repo_id>/).
+
+        Args:
+            pipeline_branch: The resolved pipeline branch name (e.g. 'forge/pipeline-abc12345').
         """
         self._worktree_managers: dict[str, WorktreeManager] = {}
         self._merge_workers: dict[str, MergeWorker] = {}
@@ -252,8 +255,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
 
             self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
-            self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=f"forge/pipeline-{pipeline_id}")
-            self._pipeline_branches[repo_id] = f"forge/pipeline-{pipeline_id}"
+            self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=pipeline_branch)
+            self._pipeline_branches[repo_id] = pipeline_branch
 
     async def _create_pipeline_branches(self) -> None:
         """Create git pipeline branches for each repo using asyncio subprocess."""
@@ -863,13 +866,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
 
         # Set up per-repo infrastructure (worktree managers, merge workers, pipeline branches)
-        self._setup_per_repo_infra(pid[:8])
-        # Override with the actual computed pipeline branch (which may differ from the auto-generated one)
-        for repo_id in self._repos:
-            self._pipeline_branches[repo_id] = pipeline_branch
-            self._merge_workers[repo_id] = MergeWorker(
-                self._repos[repo_id].path, main_branch=pipeline_branch,
-            )
+        self._setup_per_repo_infra(pipeline_branch)
+
+        # Create pipeline branches in all repos (multi-repo)
+        # For single-repo, the branch was already created above; _create_pipeline_branches
+        # is idempotent (git branch -f) so safe to call for all repos.
+        if len(self._repos) > 1 and not resume:
+            await self._create_pipeline_branches()
 
         # For backward compat, keep single-object references for _execution_loop
         worktree_mgr = self._worktree_managers.get("default", next(iter(self._worktree_managers.values())))

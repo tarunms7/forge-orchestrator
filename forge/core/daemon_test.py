@@ -1192,7 +1192,7 @@ class TestDaemonPerRepoInfra:
             id="default", path=str(tmp_path), base_branch="main",
         )
 
-        daemon._setup_per_repo_infra("pipe-abc")
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
 
         assert "default" in daemon._worktree_managers
         assert "default" in daemon._merge_workers
@@ -1219,7 +1219,7 @@ class TestDaemonPerRepoInfra:
 
         with patch("forge.core.daemon.WorktreeManager"), \
              patch("forge.core.daemon.MergeWorker"):
-            daemon._setup_per_repo_infra("pipe-xyz")
+            daemon._setup_per_repo_infra("forge/pipeline-pipe-xyz")
 
         assert "backend" in daemon._worktree_managers
         assert "frontend" in daemon._worktree_managers
@@ -1232,7 +1232,7 @@ class TestDaemonPerRepoInfra:
         daemon._repos["default"] = RepoConfig(
             id="default", path=str(tmp_path), base_branch="main",
         )
-        daemon._setup_per_repo_infra("pipe-123")
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-123")
 
         assert isinstance(daemon._worktree_managers, dict)
         assert isinstance(daemon._merge_workers, dict)
@@ -1252,7 +1252,7 @@ class TestDaemonPerRepoInfra:
 
         with patch("forge.core.daemon.WorktreeManager"), \
              patch("forge.core.daemon.MergeWorker"):
-            daemon._setup_per_repo_infra("abc12345")
+            daemon._setup_per_repo_infra("forge/pipeline-abc12345")
 
         assert daemon._pipeline_branches["backend"] == "forge/pipeline-abc12345"
         assert daemon._pipeline_branches["frontend"] == "forge/pipeline-abc12345"
@@ -1303,7 +1303,7 @@ class TestDispatchTaskRouting:
         daemon._repos["default"] = RepoConfig(
             id="default", path=str(tmp_path), base_branch="main",
         )
-        daemon._setup_per_repo_infra("pipe-abc")
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
 
         wt_mgr, merge_worker, branch = daemon._get_repo_infra("default")
 
@@ -1317,7 +1317,7 @@ class TestDispatchTaskRouting:
         daemon._repos["default"] = RepoConfig(
             id="default", path=str(tmp_path), base_branch="main",
         )
-        daemon._setup_per_repo_infra("pipe-abc")
+        daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
 
         with pytest.raises(ForgeError, match="Unknown repo"):
             daemon._get_repo_infra("nonexistent")
