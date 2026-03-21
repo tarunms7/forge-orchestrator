@@ -53,6 +53,7 @@ class TestBuildTaskSummariesRepoId:
                 "description": "REST endpoint",
                 "state": "done",
                 "repo_id": "backend",
+                "cost_usd": 3.50,
                 "merge_result": {"success": True, "linesAdded": 50, "linesRemoved": 5, "filesChanged": 3},
                 "files": ["src/api.py"],
             },
@@ -61,6 +62,7 @@ class TestBuildTaskSummariesRepoId:
                 "description": "Login UI",
                 "state": "done",
                 "repo_id": "frontend",
+                "cost_usd": 1.25,
                 "merge_result": {"success": True, "linesAdded": 120, "linesRemoved": 0, "filesChanged": 4},
                 "files": ["src/Login.tsx"],
             },
@@ -79,6 +81,11 @@ class TestBuildTaskSummariesRepoId:
         assert summaries[1]["repo_id"] == "frontend"
         # Missing repo_id defaults to "default"
         assert summaries[2]["repo_id"] == "default"
+
+        # cost_usd propagated for per-repo cost tracking
+        assert summaries[0]["cost_usd"] == 3.50
+        assert summaries[1]["cost_usd"] == 1.25
+        assert summaries[2]["cost_usd"] == 0  # missing cost_usd defaults to 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -102,6 +109,7 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
                 or t.get("implementation_summary", ""),
             "state": t.get("state", "done"),
             "repo_id": t.get("repo_id", "default"),  # NEW — propagate repo_id
+            "cost_usd": t.get("cost_usd", 0),           # NEW — propagate cost for per-repo totals
             "added": mr.get("linesAdded", 0) if mr.get("success") else 0,
             "removed": mr.get("linesRemoved", 0) if mr.get("success") else 0,
             "files": mr.get("filesChanged", 0) if mr.get("success") else 0,
@@ -206,23 +214,25 @@ def generate_pr_body(
 
     if failed_tasks:
         lines = ["## Summary", f"Built by Forge pipeline • {total} tasks • {completed}/{total} completed • {time} • ${cost:.2f}", ""]
-        lines.append("## Completed Tasks")
     else:
         lines = ["## Summary", f"Built by Forge pipeline • {total} tasks • {time} • ${cost:.2f}", ""]
 
-        # Related PRs section — only in multi-repo mode
-        if related_prs:
-            lines.append("## Related PRs")
-            for rp_repo_id, rp_url in related_prs.items():
-                lines.append(f"- **{rp_repo_id}**: {rp_url}")
-            lines.append("")
+    # Related PRs section — always inserted when present (both success and partial-failure bodies)
+    if related_prs:
+        lines.append("## Related PRs")
+        for rp_repo_id, rp_url in related_prs.items():
+            lines.append(f"- **{rp_repo_id}**: {rp_url}")
+        lines.append("")
 
+    if failed_tasks:
+        lines.append("## Completed Tasks")
+    else:
         lines.append("## Tasks")
 
     # ... rest of the function unchanged (task details, failed tasks, questions, footer)
 ```
 
-**Important:** The "## Related PRs" section is inserted between "## Summary" and "## Tasks" (or "## Completed Tasks"), matching the format in spec Section 9.2. When `failed_tasks` is present, the Related PRs section goes after "## Completed Tasks" header line — but before the task list. Keep the logic consistent: insert `related_prs` block right after the summary line, before any task section.
+**Important:** The "## Related PRs" section is always inserted between "## Summary" and the task section ("## Tasks" or "## Completed Tasks"), regardless of whether `failed_tasks` is present. This ensures cross-links appear in both success and partial-failure PR bodies, matching the format in spec Section 9.2.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
