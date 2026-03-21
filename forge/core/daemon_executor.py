@@ -26,7 +26,7 @@ from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
 from forge.learning.guard import RuntimeGuard, GuardTriggered
-from forge.learning.store import LessonStore, format_lessons_block
+from forge.learning.store import format_lessons_block, row_to_lesson
 from forge.learning.extractor import extract_from_command_failures
 
 logger = logging.getLogger("forge")
@@ -1139,20 +1139,15 @@ class ExecutorMixin:
             getattr(task, "complexity", None),
         )
 
-        # Inject lessons into agent prompt (project + global)
+        # Inject lessons into agent prompt
         lessons_block = ""
-        lesson_store = getattr(self, "_lesson_store", None)
-        global_lesson_store = getattr(self, "_global_lesson_store", None)
-        if lesson_store or global_lesson_store:
-            try:
-                all_lessons = []
-                if lesson_store:
-                    all_lessons.extend(await lesson_store.get_relevant_lessons(max_count=15, max_tokens=1500))
-                if global_lesson_store:
-                    all_lessons.extend(await global_lesson_store.get_relevant_lessons(max_count=10, max_tokens=500))
-                lessons_block = format_lessons_block(all_lessons)
-            except Exception as exc:
-                logger.warning("Failed to load lessons: %s", exc)
+        try:
+            lesson_rows = await db.get_relevant_lessons(
+                project_dir=self._project_dir, max_count=20,
+            )
+            lessons_block = format_lessons_block([row_to_lesson(r) for r in lesson_rows])
+        except Exception as exc:
+            logger.warning("Failed to load lessons: %s", exc)
 
         try:
             result = await runtime.run_task(
@@ -1174,22 +1169,22 @@ class ExecutorMixin:
         except GuardTriggered as exc:
             logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)
             await self._emit("task:agent_output", {"task_id": task_id, "line": f"Agent stopped: {exc}"}, db=db, pipeline_id=pid)
-            # Create lesson from failures
-            store = getattr(self, "_lesson_store", None)
-            if store:
-                try:
-                    await store.initialize()  # ensure DB is ready
-                    lesson = extract_from_command_failures(exc.failures, project_dir=self._project_dir)
-                    existing = await store.find_matching(lesson.trigger)
-                    if existing:
-                        await store.bump_hit(existing.id)
-                    else:
-                        await store.add_lesson(lesson)
-                    logger.info("Lesson captured: %s", lesson.title)
-                except Exception as le:
-                    logger.warning("Failed to capture lesson: %s", le)
-            else:
-                logger.warning("No lesson store available — lesson not captured")
+            # Create lesson from failures — db is always available
+            try:
+                lesson = extract_from_command_failures(exc.failures, project_dir=self._project_dir)
+                existing = await db.find_matching_lesson(lesson.trigger, project_dir=self._project_dir)
+                if existing:
+                    await db.bump_lesson_hit(existing.id)
+                else:
+                    await db.add_lesson(
+                        scope=lesson.scope, category=lesson.category,
+                        title=lesson.title, content=lesson.content,
+                        trigger=lesson.trigger, resolution=lesson.resolution,
+                        project_dir=self._project_dir if lesson.scope == "project" else None,
+                    )
+                logger.info("Lesson captured: %s", lesson.title)
+            except Exception as le:
+                logger.warning("Failed to capture lesson: %s", le)
             # Return a failure result
             from forge.agents.adapter import AgentResult
             return AgentResult(

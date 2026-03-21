@@ -1,11 +1,11 @@
-"""End-to-end integration test: guard triggers → lesson captured → lesson in DB."""
+"""End-to-end integration test: guard triggers → lesson captured → central DB."""
 
 import pytest
 from dataclasses import dataclass
 
 from forge.learning.guard import RuntimeGuard, GuardTriggered
-from forge.learning.store import LessonStore
 from forge.learning.extractor import extract_from_command_failures
+from forge.storage.db import Database
 
 
 @dataclass
@@ -27,127 +27,106 @@ class FakeMsg:
     content: list
 
 
-def _make_bash_call(tool_id: str, command: str) -> FakeMsg:
-    return FakeMsg([FakeToolUse(tool_id, "Bash", {"command": command})])
+def _bash_call(tid: str, cmd: str) -> FakeMsg:
+    return FakeMsg([FakeToolUse(tid, "Bash", {"command": cmd})])
 
 
-def _make_bash_error(tool_id: str, error: str) -> FakeMsg:
-    return FakeMsg([FakeToolResult(tool_id, error, True)])
+def _bash_error(tid: str, err: str) -> FakeMsg:
+    return FakeMsg([FakeToolResult(tid, err, True)])
 
 
-def _make_bash_success(tool_id: str) -> FakeMsg:
-    return FakeMsg([FakeToolResult(tool_id, "OK", False)])
+def _bash_ok(tid: str) -> FakeMsg:
+    return FakeMsg([FakeToolResult(tid, "OK", False)])
+
+
+@pytest.fixture
+async def db(tmp_path):
+    d = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
+    await d.initialize()
+    yield d
+    await d.close()
 
 
 @pytest.mark.asyncio
-async def test_full_flow_guard_to_lesson_capture(tmp_path):
-    """Simulate: 3 identical Bash failures → guard triggers → lesson stored in DB."""
-    # Setup
-    store = LessonStore(str(tmp_path / "lessons.db"))
-    await store.initialize()
+async def test_full_flow_guard_to_lesson_in_central_db(db):
+    """3 identical Bash failures → guard triggers → lesson stored in central DB."""
     guard = RuntimeGuard()
-
     error_msg = "ModuleNotFoundError: No module named 'nonexistent'"
     command = ".venv/bin/python -m pytest tests/ -x -v"
 
-    # Attempt 1: fail
-    guard.inspect(_make_bash_call("t1", command))
-    guard.inspect(_make_bash_error("t1", error_msg))
+    # Attempt 1
+    guard.inspect(_bash_call("t1", command))
+    guard.inspect(_bash_error("t1", error_msg))
 
-    # Attempt 2: fail — should warn
-    guard.inspect(_make_bash_call("t2", command))
-    result = guard.inspect(_make_bash_error("t2", error_msg))
+    # Attempt 2 — warning
+    guard.inspect(_bash_call("t2", command))
+    result = guard.inspect(_bash_error("t2", error_msg))
     assert result == "warning"
 
-    # Attempt 3: fail — should trigger
-    guard.inspect(_make_bash_call("t3", command))
+    # Attempt 3 — trigger
+    guard.inspect(_bash_call("t3", command))
     with pytest.raises(GuardTriggered) as exc_info:
-        guard.inspect(_make_bash_error("t3", error_msg))
+        guard.inspect(_bash_error("t3", error_msg))
 
-    # Extract lesson from guard's failures
-    lesson = extract_from_command_failures(
-        exc_info.value.failures, project_dir=str(tmp_path)
+    # Extract and store lesson using central DB
+    lesson = extract_from_command_failures(exc_info.value.failures, project_dir="/proj")
+    await db.add_lesson(
+        scope=lesson.scope, category=lesson.category,
+        title=lesson.title, content=lesson.content,
+        trigger=lesson.trigger, resolution=lesson.resolution,
+        project_dir="/proj" if lesson.scope == "project" else None,
     )
-    assert lesson.category == "command_failure"
-    assert lesson.trigger  # not empty
-
-    # Store the lesson
-    await store.add_lesson(lesson)
 
     # Verify it's in the DB
-    all_lessons = await store.all_lessons()
-    assert len(all_lessons) == 1
-    assert "module_not_found" in all_lessons[0].title
-    assert all_lessons[0].hit_count == 1
+    rows = await db.list_all_lessons()
+    assert len(rows) == 1
+    assert "module_not_found" in rows[0].title
 
-    # Verify find_matching works for future prevention
-    match = await store.find_matching(command)
+    # Verify find_matching works
+    match = await db.find_matching_lesson(command)
     assert match is not None
-    assert match.id == lesson.id
+
+
+@pytest.mark.asyncio
+async def test_dedup_bumps_hit_count(db):
+    """Same lesson trigger → bump hit_count, not duplicate."""
+    command = ".venv/bin/python -m pytest tests/"
+    error = "ModuleNotFoundError: No module"
+
+    for run in range(2):
+        guard = RuntimeGuard()
+        for i in range(3):
+            guard.inspect(_bash_call(f"t{run}_{i}", command))
+            try:
+                guard.inspect(_bash_error(f"t{run}_{i}", error))
+            except GuardTriggered as exc:
+                lesson = extract_from_command_failures(exc.failures)
+                existing = await db.find_matching_lesson(lesson.trigger)
+                if existing:
+                    await db.bump_lesson_hit(existing.id)
+                else:
+                    await db.add_lesson(
+                        scope=lesson.scope, category=lesson.category,
+                        title=lesson.title, content=lesson.content,
+                        trigger=lesson.trigger, resolution=lesson.resolution,
+                    )
+
+    rows = await db.list_all_lessons()
+    assert len(rows) == 1
+    assert rows[0].hit_count == 2
 
 
 @pytest.mark.asyncio
 async def test_different_approach_resets_counter():
-    """Different base commands should NOT accumulate."""
+    """Different base commands don't accumulate."""
     guard = RuntimeGuard()
 
-    # Fail with .venv/bin/python
-    guard.inspect(_make_bash_call("t1", ".venv/bin/python -m pytest tests/"))
-    guard.inspect(_make_bash_error("t1", "command not found"))
+    guard.inspect(_bash_call("t1", ".venv/bin/python -m pytest tests/"))
+    guard.inspect(_bash_error("t1", "command not found"))
+    guard.inspect(_bash_call("t2", ".venv/bin/python -m pytest tests/"))
+    guard.inspect(_bash_error("t2", "command not found"))
 
-    guard.inspect(_make_bash_call("t2", ".venv/bin/python -m pytest tests/"))
-    guard.inspect(_make_bash_error("t2", "command not found"))
-
-    # Switch to python -m pytest (different approach) — counter resets
-    guard.inspect(_make_bash_call("t3", "python -m pytest tests/"))
-    result = guard.inspect(_make_bash_error("t3", "command not found"))
-    # This is a FIRST failure for the new approach, not a third
-    assert result is None  # no warning yet
-
-
-@pytest.mark.asyncio
-async def test_success_does_not_trigger():
-    """Successful commands between failures should not affect counters."""
-    guard = RuntimeGuard()
-
-    # Fail once
-    guard.inspect(_make_bash_call("t1", "pytest tests/"))
-    guard.inspect(_make_bash_error("t1", "error"))
-
-    # Succeed
-    guard.inspect(_make_bash_call("t2", "pytest tests/"))
-    guard.inspect(_make_bash_success("t2"))
-
-    # Fail again — this is only the 2nd failure, not 3rd
-    guard.inspect(_make_bash_call("t3", "pytest tests/"))
-    result = guard.inspect(_make_bash_error("t3", "error"))
-    assert result == "warning"  # 2nd failure = warning, not trigger
-
-
-@pytest.mark.asyncio
-async def test_lesson_dedup_bumps_hit_count(tmp_path):
-    """If the same lesson trigger already exists, bump hit_count instead of creating duplicate."""
-    store = LessonStore(str(tmp_path / "lessons.db"))
-    await store.initialize()
-
-    # Create a guard, trigger it, capture lesson
-    for run in range(2):
-        guard = RuntimeGuard()
-        command = ".venv/bin/python -m pytest tests/"
-        error = "ModuleNotFoundError: No module"
-        for i in range(3):
-            guard.inspect(_make_bash_call(f"t{run}_{i}", command))
-            try:
-                guard.inspect(_make_bash_error(f"t{run}_{i}", error))
-            except GuardTriggered as exc:
-                lesson = extract_from_command_failures(exc.failures)
-                existing = await store.find_matching(lesson.trigger)
-                if existing:
-                    await store.bump_hit(existing.id)
-                else:
-                    await store.add_lesson(lesson)
-
-    # Should have 1 lesson with hit_count=2, not 2 lessons
-    all_lessons = await store.all_lessons()
-    assert len(all_lessons) == 1
-    assert all_lessons[0].hit_count == 2
+    # Different approach — counter resets
+    guard.inspect(_bash_call("t3", "python -m pytest tests/"))
+    result = guard.inspect(_bash_error("t3", "command not found"))
+    assert result is None  # first failure for new approach

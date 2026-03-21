@@ -10,48 +10,10 @@ from rich.console import Console
 from rich.table import Table
 
 
-def _get_db_path(project_dir: str, is_global: bool) -> str:
-    from forge.core.paths import forge_data_dir, project_forge_dir
-    if is_global:
-        return os.path.join(forge_data_dir(), "lessons.db")
-    return os.path.join(project_forge_dir(project_dir), "lessons.db")
-
-
-async def _list_lessons(db_path: str) -> list[dict]:
-    from forge.learning.store import LessonStore
-
-    store = LessonStore(db_path)
-    await store.initialize()
-    lessons = await store.all_lessons()
-    return [
-        {
-            "id": l.id[:8],
-            "scope": l.scope,
-            "category": l.category,
-            "title": l.title,
-            "trigger": l.trigger[:60],
-            "resolution": l.resolution[:80],
-            "hits": l.hit_count,
-            "last_hit": l.last_hit_at[:10] if l.last_hit_at else "",
-        }
-        for l in lessons
-    ]
-
-
-async def _clear_lessons(db_path: str) -> int:
-    from forge.learning.store import LessonStore
-
-    store = LessonStore(db_path)
-    await store.initialize()
-    import aiosqlite
-
-    async with aiosqlite.connect(db_path) as conn:
-        cursor = await conn.execute("SELECT COUNT(*) FROM lessons")
-        row = await cursor.fetchone()
-        count = row[0] if row else 0
-        await conn.execute("DELETE FROM lessons")
-        await conn.commit()
-    return count
+def _get_db():
+    from forge.core.paths import forge_db_url
+    from forge.storage.db import Database
+    return Database(forge_db_url())
 
 
 @click.group("lessons")
@@ -63,45 +25,52 @@ def lessons() -> None:
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
     "--global", "show_global", is_flag=True, default=False,
-    help="Show global lessons instead of project lessons",
+    help="Show only global lessons",
 )
 def lessons_list(project_dir: str, show_global: bool) -> None:
     """List all captured lessons."""
     project_dir = os.path.abspath(project_dir)
-    db_path = _get_db_path(project_dir, show_global)
-    label = "Global" if show_global else "Project"
 
-    if not os.path.exists(db_path):
-        click.echo(f"No {label.lower()} lessons DB found at {db_path}")
-        return
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            if show_global:
+                rows = await db.get_relevant_lessons(max_count=100)
+            else:
+                rows = await db.get_relevant_lessons(project_dir=project_dir, max_count=100)
+            return rows
+        finally:
+            await db.close()
 
     try:
-        items = asyncio.run(_list_lessons(db_path))
+        rows = asyncio.run(_run())
     except Exception as e:
         click.echo(f"Error reading lessons: {e}")
         raise SystemExit(1)
 
-    if not items:
-        click.echo(f"No {label.lower()} lessons captured yet.")
+    if not rows:
+        click.echo("No lessons captured yet.")
         return
 
     console = Console()
-    table = Table(title=f"{label} Lessons ({len(items)})")
+    label = "Global" if show_global else "All"
+    table = Table(title=f"{label} Lessons ({len(rows)})")
     table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Scope", style="blue")
     table.add_column("Category", style="cyan")
     table.add_column("Title", style="bold")
     table.add_column("Trigger")
     table.add_column("Hits", justify="right", style="yellow")
-    table.add_column("Last Hit", style="dim")
 
-    for item in items:
+    for row in rows:
         table.add_row(
-            item["id"],
-            item["category"],
-            item["title"],
-            item["trigger"],
-            str(item["hits"]),
-            item["last_hit"],
+            row.id[:8],
+            row.scope,
+            row.category,
+            row.title,
+            row.trigger[:60],
+            str(row.hit_count),
         )
 
     console.print(table)
@@ -111,36 +80,32 @@ def lessons_list(project_dir: str, show_global: bool) -> None:
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
     "--global", "is_global", is_flag=True, default=False,
-    help="Add as a global lesson instead of project-scoped",
+    help="Add as a global lesson",
 )
-@click.option("--category", type=click.Choice(["command_failure", "review_failure", "code_pattern"]), default="command_failure", help="Lesson category")
+@click.option("--category", type=click.Choice(["command_failure", "review_failure", "code_pattern"]), default="command_failure")
 @click.argument("title")
 @click.argument("resolution")
 @click.option("--trigger", default=None, help="Trigger pattern (defaults to title)")
 def lessons_add(project_dir: str, is_global: bool, category: str, title: str, resolution: str, trigger: str | None) -> None:
-    """Add a lesson manually. TITLE and RESOLUTION are required arguments."""
+    """Add a lesson manually. TITLE and RESOLUTION are required."""
     project_dir = os.path.abspath(project_dir)
-    db_path = _get_db_path(project_dir, is_global)
     scope = "global" if is_global else "project"
 
-    async def _add():
-        from forge.learning.store import LessonStore, Lesson
-        store = LessonStore(db_path)
-        await store.initialize()
-        lesson = Lesson(
-            id="",
-            scope=scope,
-            category=category,
-            title=title,
-            content=title,
-            trigger=trigger or title,
-            resolution=resolution,
-        )
-        lid = await store.add_lesson(lesson)
-        return lid
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            return await db.add_lesson(
+                scope=scope, category=category,
+                title=title, content=title,
+                trigger=trigger or title, resolution=resolution,
+                project_dir=None if is_global else project_dir,
+            )
+        finally:
+            await db.close()
 
     try:
-        lid = asyncio.run(_add())
+        lid = asyncio.run(_run())
     except Exception as e:
         click.echo(f"Error adding lesson: {e}")
         raise SystemExit(1)
@@ -151,24 +116,28 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
 @lessons.command("clear")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--global", "clear_global", is_flag=True, default=False,
-    help="Clear global lessons instead of project lessons",
+    "--all", "clear_all", is_flag=True, default=False,
+    help="Clear ALL lessons (global + project)",
 )
-@click.confirmation_option(prompt="Are you sure you want to delete all lessons?")
-def lessons_clear(project_dir: str, clear_global: bool) -> None:
-    """Clear all captured lessons."""
+@click.confirmation_option(prompt="Are you sure you want to delete lessons?")
+def lessons_clear(project_dir: str, clear_all: bool) -> None:
+    """Clear lessons for the current project (or all with --all)."""
     project_dir = os.path.abspath(project_dir)
-    db_path = _get_db_path(project_dir, clear_global)
-    label = "global" if clear_global else "project"
 
-    if not os.path.exists(db_path):
-        click.echo(f"No {label} lessons DB found.")
-        return
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            if clear_all:
+                return await db.clear_lessons()
+            return await db.clear_lessons(project_dir=project_dir)
+        finally:
+            await db.close()
 
     try:
-        count = asyncio.run(_clear_lessons(db_path))
+        count = asyncio.run(_run())
     except Exception as e:
         click.echo(f"Error clearing lessons: {e}")
         raise SystemExit(1)
 
-    click.echo(f"Cleared {count} {label} lesson(s).")
+    click.echo(f"Cleared {count} lesson(s).")

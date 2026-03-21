@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, Text, JSON, func, select, text
+from sqlalchemy import DateTime, Integer, String, Text, JSON, func, literal_column, or_, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -244,8 +244,32 @@ class InterjectionRow(Base):
     delivered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
 
 
+class LessonRow(Base):
+    """Learned lesson from agent failures — injected into future prompts."""
+
+    __tablename__ = "lessons"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+    )
+    scope: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 'global' or 'project'
+    project_dir: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None, index=True)
+    category: Mapped[str] = mapped_column(String, nullable=False)  # 'command_failure', 'review_failure', 'code_pattern'
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    resolution: Mapped[str] = mapped_column(Text, nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[str] = mapped_column(
+        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+    last_hit_at: Mapped[str] = mapped_column(
+        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+
+
 # ── All model classes (used by _add_missing_columns) ──────────────────
-_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow, TaskQuestionRow, InterjectionRow)
+_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow, TaskQuestionRow, InterjectionRow, LessonRow)
 
 
 class Database:
@@ -1207,3 +1231,102 @@ class Database:
                 row.delivered = True
                 row.delivered_at = datetime.now(timezone.utc).isoformat()
                 await session.commit()
+
+    # ── Lessons ────────────────────────────────────────────────────────
+
+    async def add_lesson(
+        self, *, scope: str, category: str, title: str, content: str,
+        trigger: str, resolution: str, project_dir: str | None = None,
+    ) -> str:
+        """Add a lesson. Returns the lesson ID."""
+        now = datetime.now(timezone.utc).isoformat()
+        row = LessonRow(
+            scope=scope, project_dir=project_dir, category=category,
+            title=title, content=content, trigger=trigger,
+            resolution=resolution, hit_count=1,
+            created_at=now, last_hit_at=now,
+        )
+        async with self._session_factory() as session:
+            session.add(row)
+            await session.commit()
+            return row.id
+
+    async def find_matching_lesson(self, trigger: str, project_dir: str | None = None) -> LessonRow | None:
+        """Find a lesson whose trigger matches (substring in either direction)."""
+        async with self._session_factory() as session:
+            from sqlalchemy import or_
+            query = (
+                select(LessonRow)
+                .where(
+                    or_(
+                        LessonRow.trigger.contains(trigger),
+                        literal_column(f"'{trigger.replace(chr(39), chr(39)+chr(39))}'").contains(LessonRow.trigger),
+                    )
+                )
+            )
+            if project_dir:
+                query = query.where(
+                    or_(LessonRow.scope == "global", LessonRow.project_dir == project_dir)
+                )
+            query = query.order_by(LessonRow.hit_count.desc()).limit(1)
+            result = await session.execute(query)
+            return result.scalar_one_or_none()
+
+    async def bump_lesson_hit(self, lesson_id: str) -> None:
+        """Increment hit_count and update last_hit_at."""
+        async with self._session_factory() as session:
+            row = await session.get(LessonRow, lesson_id)
+            if row:
+                row.hit_count += 1
+                row.last_hit_at = datetime.now(timezone.utc).isoformat()
+                await session.commit()
+
+    async def get_relevant_lessons(
+        self, project_dir: str | None = None,
+        categories: list[str] | None = None,
+        max_count: int = 20,
+    ) -> list[LessonRow]:
+        """Get lessons ranked by recency-weighted hit count.
+
+        Returns both global lessons and project-scoped lessons for the given project_dir.
+        """
+        async with self._session_factory() as session:
+            query = select(LessonRow)
+            conditions = []
+            if project_dir:
+                conditions.append(
+                    or_(LessonRow.scope == "global", LessonRow.project_dir == project_dir)
+                )
+            else:
+                conditions.append(LessonRow.scope == "global")
+            if categories:
+                conditions.append(LessonRow.category.in_(categories))
+            if conditions:
+                query = query.where(*conditions)
+            query = query.order_by(LessonRow.hit_count.desc()).limit(max_count)
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
+    async def list_all_lessons(self) -> list[LessonRow]:
+        """Return all lessons."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(LessonRow).order_by(LessonRow.hit_count.desc())
+            )
+            return list(result.scalars().all())
+
+    async def clear_lessons(self, project_dir: str | None = None) -> int:
+        """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
+        async with self._session_factory() as session:
+            if project_dir:
+                result = await session.execute(
+                    select(LessonRow).where(LessonRow.project_dir == project_dir)
+                )
+            else:
+                result = await session.execute(select(LessonRow))
+            rows = list(result.scalars().all())
+            count = len(rows)
+            for row in rows:
+                await session.delete(row)
+            await session.commit()
+            return count
