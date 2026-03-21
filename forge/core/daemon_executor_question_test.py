@@ -115,7 +115,6 @@ class TestExecuteTaskQuestionDetection:
         mixin._merge_lock = MagicMock()
         mixin._merge_lock.__aenter__ = AsyncMock(return_value=None)
         mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
-        mixin._worktree_path = MagicMock(side_effect=lambda repo_id, task_id: f"/fake/project/.forge/worktrees/{task_id}")
         return mixin
 
     async def test_execute_task_emits_question_event_and_returns_early(self):
