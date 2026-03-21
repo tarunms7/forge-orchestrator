@@ -464,9 +464,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await self._events.emit("planner:output", {"line": text})
 
         # Run snapshot gathering in a thread to avoid blocking the event loop
-        self._snapshot = await asyncio.get_event_loop().run_in_executor(
-            None, gather_project_snapshot, self._project_dir,
-        )
+        if len(self._repos) == 1:
+            repo = next(iter(self._repos.values()))
+            self._snapshot = await asyncio.get_event_loop().run_in_executor(
+                None, gather_project_snapshot, repo.path,
+            )
+            snapshot_text = self._snapshot.format_for_planner() if self._snapshot else ''
+            repo_ids = None
+        else:
+            from forge.core.context import gather_multi_repo_snapshots, format_multi_repo_snapshot
+            snapshots = await gather_multi_repo_snapshots(self._repos)
+            snapshot_text = format_multi_repo_snapshot(snapshots, self._repos)
+            repo_ids = set(self._repos.keys())
+            self._snapshot = next(iter(snapshots.values())) if snapshots else None
 
         # Decide planning mode
         spec_text = ""
@@ -486,10 +496,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             console.print(f"[dim]Unified planning: {planner_model} (full codebase access)[/dim]")
 
+            planner_cwd = self._workspace_dir if len(self._repos) > 1 else self._project_dir
             unified_planner = UnifiedPlanner(
-                model=planner_model, cwd=self._project_dir,
+                model=planner_model,
+                cwd=planner_cwd,
                 autonomy=self._settings.autonomy,
                 question_limit=self._settings.question_limit,
+                repo_ids=repo_ids,
             )
 
             async def _on_unified_msg(msg):
@@ -570,7 +583,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 planning_result = await unified_planner.run(
                     user_input=user_input,
                     spec_text=spec_text,
-                    snapshot_text=self._snapshot.format_for_planner() if self._snapshot else "",
+                    snapshot_text=snapshot_text,
                     conventions=planner_prompt_modifier,
                     on_message=_on_unified_msg,
                     on_question=_on_planner_question,
