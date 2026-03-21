@@ -298,7 +298,12 @@ async def _create_pipeline_branches(self) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await proc.wait()
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise ForgeError(
+                f"Failed to create pipeline branch '{branch_name}' in repo "
+                f"'{repo_id}' at {rc.path}: {stderr.decode().strip()}"
+            )
 ```
 
 - [ ] **Step 4: Write test for pipeline branch creation**
@@ -606,7 +611,7 @@ def _get_repo_infra(
 In the `execute()` method, where tasks are dispatched (currently passing a single `worktree_mgr` and `merge_worker`), change to:
 
 ```python
-repo_id = task.repo if hasattr(task, 'repo') else "default"
+repo_id = getattr(task, 'repo_id', 'default')
 wt_mgr, merge_worker, _branch = self._get_repo_infra(repo_id)
 
 await self._execute_task(
