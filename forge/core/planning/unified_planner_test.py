@@ -2,7 +2,11 @@
 import json
 import pytest
 from forge.core.models import TaskGraph
-from forge.core.planning.unified_planner import UnifiedPlanner, UnifiedPlannerResult
+from forge.core.planning.unified_planner import (
+    UnifiedPlanner,
+    UnifiedPlannerResult,
+    _build_unified_system_prompt,
+)
 
 
 class FakeSdkResult:
@@ -184,3 +188,157 @@ async def test_unified_planner_handles_sdk_error(monkeypatch):
     result = await planner.run(user_input="x", spec_text="x", snapshot_text="x")
     assert result.task_graph is not None
     assert call_count == 2
+
+
+class TestPlannerMultiRepo:
+    """Tests for multi-repo workspace support in UnifiedPlanner."""
+
+    def test_planner_prompt_includes_repo_list(self):
+        """Multi-repo prompt includes repo list in system prompt."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            repo_ids={"backend", "frontend"},
+        )
+        assert "## Multi-Repo Workspace" in prompt
+        assert "backend" in prompt
+        assert "frontend" in prompt
+
+    def test_planner_prompt_single_repo_no_repos(self):
+        """Single-repo mode (repo_ids=None) has no multi-repo section."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            repo_ids=None,
+        )
+        assert "## Multi-Repo Workspace" not in prompt
+
+    def test_planner_system_prompt_includes_multi_repo_instructions(self):
+        """System prompt has '## Multi-Repo Workspace' section when repo_ids provided."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            repo_ids={"backend", "frontend"},
+        )
+        assert "## Multi-Repo Workspace" in prompt
+        # Should list repos sorted
+        backend_pos = prompt.index("backend")
+        frontend_pos = prompt.index("frontend")
+        # Both should appear in the multi-repo section
+        assert backend_pos > 0
+        assert frontend_pos > 0
+
+    def test_planner_system_prompt_no_multi_repo_for_single(self):
+        """No multi-repo section when repo_ids=None."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+        )
+        assert "## Multi-Repo Workspace" not in prompt
+
+    def test_planner_system_prompt_no_multi_repo_for_single_entry(self):
+        """No multi-repo section when repo_ids has only one entry."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            repo_ids={"default"},
+        )
+        assert "## Multi-Repo Workspace" not in prompt
+
+    def test_parse_validates_repo_assignments(self):
+        """_parse() rejects unknown repo IDs when repo_ids is set."""
+        planner = UnifiedPlanner(repo_ids={"backend", "frontend"})
+        raw = json.dumps({
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "description": "A detailed description for task with enough characters here",
+                    "files": ["src/app.py"],
+                    "repo": "unknown-repo",
+                }
+            ]
+        })
+        graph, error = planner._parse(raw)
+        assert graph is None
+        assert "unknown-repo" in error
+
+    def test_parse_missing_repo_defaults_to_default(self):
+        """Single-repo mode (repo_ids=None) accepts default repo."""
+        planner = UnifiedPlanner(repo_ids=None)
+        raw = json.dumps({
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "description": "A detailed description for task with enough characters here",
+                    "files": ["src/app.py"],
+                }
+            ]
+        })
+        graph, error = planner._parse(raw)
+        assert graph is not None
+        assert graph.tasks[0].repo == "default"
+
+    def test_parse_cross_repo_file_path_rejected(self):
+        """File path starting with another repo name is rejected."""
+        planner = UnifiedPlanner(repo_ids={"backend", "frontend"})
+        raw = json.dumps({
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Task",
+                    "description": "A detailed description for task with enough characters here",
+                    "files": ["frontend/src/app.py"],
+                    "repo": "backend",
+                }
+            ]
+        })
+        graph, error = planner._parse(raw)
+        assert graph is None
+        assert "frontend" in error
+
+    def test_planner_cwd_is_workspace_root(self):
+        """CWD is set correctly when provided."""
+        planner = UnifiedPlanner(cwd="/workspace/root", repo_ids={"backend", "frontend"})
+        assert planner._cwd == "/workspace/root"
+
+    @pytest.mark.asyncio
+    async def test_planner_retry_on_invalid_repo(self, monkeypatch):
+        """Planner retries with feedback when repo assignment is invalid."""
+        call_count = 0
+
+        async def mock_sdk_query(prompt, options, on_message=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First attempt: unknown repo
+                return FakeSdkResult(json.dumps({
+                    "tasks": [
+                        {
+                            "id": "t1",
+                            "title": "Task",
+                            "description": "A detailed description for task with enough characters here",
+                            "files": ["src/app.py"],
+                            "repo": "unknown-repo",
+                        }
+                    ]
+                }))
+            # Second attempt: valid repo
+            return FakeSdkResult(json.dumps({
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Task",
+                        "description": "A detailed description for task with enough characters here",
+                        "files": ["src/app.py"],
+                        "repo": "backend",
+                    }
+                ]
+            }))
+
+        monkeypatch.setattr("forge.core.planning.unified_planner.sdk_query", mock_sdk_query)
+        planner = UnifiedPlanner(
+            model="opus",
+            cwd="/workspace",
+            repo_ids={"backend", "frontend"},
+        )
+        result = await planner.run(user_input="x", spec_text="x", snapshot_text="x")
+        assert result.task_graph is not None
+        assert result.task_graph.tasks[0].repo == "backend"
+        assert call_count == 2
