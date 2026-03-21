@@ -305,7 +305,91 @@ def parse_repo_flags(
     return repos
 ```
 
-- [ ] **Step 3: Verify all 8 parse tests pass**
+- [ ] **Step 3: Implement `_validate_repo_list()` shared helper**
+
+This helper validates an already-constructed list of `RepoConfig` objects (used by `resolve_repos()` for TOML-loaded repos to preserve their `base_branch` values, since `parse_repo_flags()` would auto-detect and discard them).
+
+```python
+def _validate_repo_list(repos: list[RepoConfig]) -> None:
+    """Validate a list of RepoConfig objects (path existence, git, duplicates, nesting).
+
+    Used for TOML-loaded repos that already have base_branch set.
+    Raises click.ClickException on any validation failure (spec Section 5.3).
+    """
+    import click
+
+    seen_ids: dict[str, str] = {}
+    seen_paths: dict[str, str] = {}
+
+    for rc in repos:
+        # ── ID format validation ──
+        if not _REPO_ID_RE.match(rc.id):
+            raise click.ClickException(
+                f"invalid repo ID '{rc.id}' — must match [a-z0-9][a-z0-9-]* "
+                "(lowercase alphanumeric and hyphens only)"
+            )
+
+        # ── Duplicate ID check ──
+        if rc.id in seen_ids:
+            raise click.ClickException(
+                f"duplicate repo ID '{rc.id}' — each repo must have a unique name"
+            )
+
+        # ── Path existence check ──
+        if not os.path.isdir(rc.path):
+            raise click.ClickException(
+                f"repo '{rc.id}' path '{rc.path}' does not exist"
+            )
+
+        # ── Git repo check ──
+        git_check = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=rc.path, capture_output=True, text=True,
+        )
+        if git_check.returncode != 0:
+            raise click.ClickException(
+                f"repo '{rc.id}' at '{rc.path}' is not a git repository "
+                "(no .git directory)"
+            )
+
+        # ── No commits check ──
+        head_check = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=rc.path, capture_output=True, text=True,
+        )
+        if head_check.returncode != 0:
+            raise click.ClickException(
+                f"repo '{rc.id}' has no commits. Make an initial commit first."
+            )
+
+        # ── Duplicate path check ──
+        if rc.path in seen_paths:
+            raise click.ClickException(
+                f"repos '{seen_paths[rc.path]}' and '{rc.id}' both point to "
+                f"'{rc.path}' — each repo must be a distinct directory"
+            )
+
+        seen_ids[rc.id] = rc.path
+        seen_paths[rc.path] = rc.id
+
+    # ── Nested path detection (all pairs) ──
+    for i, a in enumerate(repos):
+        for b in repos[i + 1:]:
+            if a.path.startswith(b.path + "/"):
+                raise click.ClickException(
+                    f"repo '{a.id}' at '{a.path}' is inside repo '{b.id}' at "
+                    f"'{b.path}'. Nested repos are not supported — use separate "
+                    "directories."
+                )
+            if b.path.startswith(a.path + "/"):
+                raise click.ClickException(
+                    f"repo '{b.id}' at '{b.path}' is inside repo '{a.id}' at "
+                    f"'{a.path}'. Nested repos are not supported — use separate "
+                    "directories."
+                )
+```
+
+- [ ] **Step 4: Verify all 8 parse tests pass**
 
 ```bash
 .venv/bin/python -m pytest forge/config/project_config_test.py::TestParseRepoFlags -x -v
@@ -535,19 +619,21 @@ class TestResolveRepos:
         assert repos[1].id == "frontend"
 
     def test_resolve_repos_toml_fallback(self, tmp_path):
-        """Uses workspace.toml when no CLI flags provided."""
+        """Uses workspace.toml when no CLI flags provided. Preserves base_branch."""
         backend = tmp_path / "backend"
         self._make_git_repo(backend)
 
         forge_dir = tmp_path / ".forge"
         forge_dir.mkdir()
         (forge_dir / "workspace.toml").write_text(
-            f'[[repos]]\nid = "backend"\npath = "./backend"\nbase_branch = "main"\n'
+            f'[[repos]]\nid = "backend"\npath = "./backend"\nbase_branch = "develop"\n'
         )
 
         repos = resolve_repos(repo_flags=(), project_dir=str(tmp_path))
         assert len(repos) == 1
         assert repos[0].id == "backend"
+        # Critical: TOML base_branch must be preserved, not auto-detected
+        assert repos[0].base_branch == "develop"
 
     def test_resolve_repos_single_repo_default(self, tmp_path):
         """No flags, no toml = single repo from CWD."""
@@ -588,11 +674,10 @@ def resolve_repos(
     # 2. Workspace TOML fallback
     toml_repos = load_workspace_toml(project_dir)
     if toml_repos:
-        # Validate the TOML-loaded repos the same way as CLI flags
-        # (path existence, git repo, no commits, nested paths, etc.)
-        # Re-use parse_repo_flags by converting to flag format
-        flags = tuple(f"{r.id}={r.path}" for r in toml_repos)
-        return parse_repo_flags(flags, project_dir)
+        # Validate TOML-loaded repos inline to preserve base_branch values
+        # (parse_repo_flags would auto-detect and discard TOML base_branch)
+        _validate_repo_list(toml_repos)
+        return toml_repos
 
     # 3. Single-repo mode from CWD
     git_check = subprocess.run(
