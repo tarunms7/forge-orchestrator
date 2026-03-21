@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, Text, JSON, func, literal_column, or_, select, text
+from sqlalchemy import DateTime, Integer, String, Text, JSON, func, or_, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -1254,13 +1254,14 @@ class Database:
     async def find_matching_lesson(self, trigger: str, project_dir: str | None = None) -> LessonRow | None:
         """Find a lesson whose trigger matches (substring in either direction)."""
         async with self._session_factory() as session:
-            from sqlalchemy import or_
+            # Use parameterized raw SQL for the reverse-contains check
+            # (trigger param contains stored trigger value)
             query = (
                 select(LessonRow)
                 .where(
                     or_(
                         LessonRow.trigger.contains(trigger),
-                        literal_column(f"'{trigger.replace(chr(39), chr(39)+chr(39))}'").contains(LessonRow.trigger),
+                        text("instr(:trigger_param, trigger) > 0").bindparams(trigger_param=trigger),
                     )
                 )
             )
@@ -1285,10 +1286,12 @@ class Database:
         self, project_dir: str | None = None,
         categories: list[str] | None = None,
         max_count: int = 20,
+        max_tokens: int = 2000,
     ) -> list[LessonRow]:
-        """Get lessons ranked by recency-weighted hit count.
+        """Get lessons ranked by hit count, capped at token budget.
 
-        Returns both global lessons and project-scoped lessons for the given project_dir.
+        Returns both global and project-scoped lessons for the given project_dir.
+        Token budget is approximate (1 token ~ 4 chars).
         """
         async with self._session_factory() as session:
             query = select(LessonRow)
@@ -1305,7 +1308,19 @@ class Database:
                 query = query.where(*conditions)
             query = query.order_by(LessonRow.hit_count.desc()).limit(max_count)
             result = await session.execute(query)
-            return list(result.scalars().all())
+            rows = list(result.scalars().all())
+
+        # Apply token budget
+        char_budget = max_tokens * 4
+        total_chars = 0
+        filtered = []
+        for row in rows:
+            row_chars = len(row.title) + len(row.content) + len(row.resolution)
+            if total_chars + row_chars > char_budget:
+                break
+            filtered.append(row)
+            total_chars += row_chars
+        return filtered
 
     async def list_all_lessons(self) -> list[LessonRow]:
         """Return all lessons."""
@@ -1317,16 +1332,15 @@ class Database:
 
     async def clear_lessons(self, project_dir: str | None = None) -> int:
         """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
+        from sqlalchemy import delete, func as sa_func
         async with self._session_factory() as session:
             if project_dir:
-                result = await session.execute(
-                    select(LessonRow).where(LessonRow.project_dir == project_dir)
-                )
+                count_q = select(sa_func.count()).select_from(LessonRow).where(LessonRow.project_dir == project_dir)
+                del_q = delete(LessonRow).where(LessonRow.project_dir == project_dir)
             else:
-                result = await session.execute(select(LessonRow))
-            rows = list(result.scalars().all())
-            count = len(rows)
-            for row in rows:
-                await session.delete(row)
+                count_q = select(sa_func.count()).select_from(LessonRow)
+                del_q = delete(LessonRow)
+            count = (await session.execute(count_q)).scalar() or 0
+            await session.execute(del_q)
             await session.commit()
             return count

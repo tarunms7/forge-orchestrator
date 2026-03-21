@@ -1,8 +1,11 @@
 """Lesson storage — thin wrapper around the central Database.
 
+
 All lessons live in the central forge.db. The `scope` and `project_dir`
 columns distinguish global vs project-scoped lessons.
 """
+
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
