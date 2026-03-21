@@ -229,6 +229,8 @@ Your working directory is {cwd}.{extra_dirs_clause}
 
 {conventions_block}
 
+{lessons_block}
+
 {claude_md_block}
 
 {contracts_block}
@@ -391,6 +393,7 @@ class AgentAdapter(ABC):
         conventions_md: str | None = None,
         completed_deps: list[dict] | None = None,
         contracts_block: str = "",
+        lessons_block: str = "",
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
@@ -415,6 +418,7 @@ class ClaudeAdapter(AgentAdapter):
         resume: str | None = None,
         project_dir: str | None = None,
         agent_max_turns: int = 75,
+        lessons_block: str = "",
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -459,6 +463,7 @@ class ClaudeAdapter(AgentAdapter):
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
             claude_md_block=claude_md_block,
+            lessons_block=lessons_block,
             max_turns=max_turns,
             wrap_up_turn=wrap_up_turn,
         )
@@ -496,6 +501,7 @@ class ClaudeAdapter(AgentAdapter):
         questions_remaining: int = 3,
         project_dir: str | None = None,
         agent_max_turns: int = 75,
+        lessons_block: str = "",
     ) -> AgentResult:
         options = self._build_options(
             worktree_path, allowed_dirs or [], model=model,
@@ -510,6 +516,7 @@ class ClaudeAdapter(AgentAdapter):
             resume=resume,
             project_dir=project_dir,
             agent_max_turns=agent_max_turns,
+            lessons_block=lessons_block,
         )
 
         try:
