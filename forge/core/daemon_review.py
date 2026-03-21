@@ -309,12 +309,20 @@ class ReviewMixin:
 
     # -- command resolution ------------------------------------------------
 
-    def _resolve_build_cmd(self) -> str | None:
-        """Return the build command: template override → pipeline override → settings fallback.
+    def _resolve_build_cmd(self, *, repo_id: str | None = None) -> str | None:
+        """Return the build command: per-repo → template override → pipeline override → settings fallback.
 
         If the template sets build_cmd to '' (empty string), the build gate
         is explicitly skipped. Returns None if disabled via forge.toml.
         """
+        if repo_id:
+            repo_configs = getattr(self, '_repo_configs', {})
+            if repo_id in repo_configs:
+                cfg = repo_configs[repo_id]
+                if cfg.build.cmd:
+                    return cfg.build.cmd
+                if not cfg.build.enabled:
+                    return None
         template_config = getattr(self, "_template_config", None)
         if template_config and "build_cmd" in template_config:
             val = template_config["build_cmd"]
@@ -322,12 +330,20 @@ class ReviewMixin:
         result = getattr(self, '_pipeline_build_cmd', None) or getattr(self._settings, 'build_cmd', None)
         return None if result == CMD_DISABLED else result
 
-    def _resolve_test_cmd(self) -> str | None:
-        """Return the test command: template override → pipeline override → settings fallback.
+    def _resolve_test_cmd(self, *, repo_id: str | None = None) -> str | None:
+        """Return the test command: per-repo → template override → pipeline override → settings fallback.
 
         If the template sets test_cmd to '' (empty string), the test gate
         is explicitly skipped. Returns None if disabled via forge.toml.
         """
+        if repo_id:
+            repo_configs = getattr(self, '_repo_configs', {})
+            if repo_id in repo_configs:
+                cfg = repo_configs[repo_id]
+                if cfg.tests.cmd:
+                    return cfg.tests.cmd
+                if not cfg.tests.enabled:
+                    return None
         template_config = getattr(self, "_template_config", None)
         if template_config and "test_cmd" in template_config:
             val = template_config["test_cmd"]
@@ -335,11 +351,19 @@ class ReviewMixin:
         result = getattr(self, '_pipeline_test_cmd', None) or getattr(self._settings, 'test_cmd', None)
         return None if result == CMD_DISABLED else result
 
-    def _resolve_lint_cmd(self) -> str | None:
-        """Return the lint check command: template override → settings fallback.
+    def _resolve_lint_cmd(self, *, repo_id: str | None = None) -> str | None:
+        """Return the lint check command: per-repo → template override → settings fallback.
 
         Returns None if disabled via forge.toml.
         """
+        if repo_id:
+            repo_configs = getattr(self, '_repo_configs', {})
+            if repo_id in repo_configs:
+                cfg = repo_configs[repo_id]
+                if cfg.lint.check_cmd:
+                    return cfg.lint.check_cmd
+                if not cfg.lint.enabled:
+                    return None
         template_config = getattr(self, "_template_config", None)
         if template_config and "lint_cmd" in template_config:
             val = template_config["lint_cmd"]
@@ -347,11 +371,19 @@ class ReviewMixin:
         result = getattr(self._settings, 'lint_cmd', None)
         return None if result == CMD_DISABLED else result
 
-    def _resolve_lint_fix_cmd(self) -> str | None:
-        """Return the lint fix command: template override → settings fallback.
+    def _resolve_lint_fix_cmd(self, *, repo_id: str | None = None) -> str | None:
+        """Return the lint fix command: per-repo → template override → settings fallback.
 
         Returns None if disabled via forge.toml.
         """
+        if repo_id:
+            repo_configs = getattr(self, '_repo_configs', {})
+            if repo_id in repo_configs:
+                cfg = repo_configs[repo_id]
+                if cfg.lint.fix_cmd:
+                    return cfg.lint.fix_cmd
+                if not cfg.lint.enabled:
+                    return None
         template_config = getattr(self, "_template_config", None)
         if template_config and "lint_fix_cmd" in template_config:
             val = template_config["lint_fix_cmd"]
@@ -592,6 +624,7 @@ class ReviewMixin:
         self, task, worktree_path: str, diff: str, *, db, pipeline_id: str,
         pipeline_branch: str | None = None,
         delta_diff: str | None = None,
+        repo_id: str | None = None,
     ) -> tuple[bool, str | None]:
         """Run the 3-gate review pipeline.
 
@@ -610,7 +643,7 @@ class ReviewMixin:
         gate_timeout = self._settings.agent_timeout_seconds // 2
 
         # Gate 0: Build gate (skip silently if no command configured)
-        build_cmd = self._resolve_build_cmd()
+        build_cmd = self._resolve_build_cmd(repo_id=repo_id)
         if build_cmd:
             console.print(f"[blue]  Gate 0 (build): Running build for {task.id}...[/blue]")
             await self._emit("review:gate_started", {
@@ -654,7 +687,7 @@ class ReviewMixin:
         await self._emit("review:gate_started", {
             "task_id": task.id, "gate": "gate1_lint",
         }, db=db, pipeline_id=pipeline_id)
-        gate1_result = await self._run_lint_gate(worktree_path, pipeline_branch=pipeline_branch)
+        gate1_result = await self._run_lint_gate(worktree_path, pipeline_branch=pipeline_branch, repo_id=repo_id)
         await self._emit(
             "review:gate_passed" if gate1_result.passed else "review:gate_failed",
             {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details},
@@ -687,7 +720,7 @@ class ReviewMixin:
             diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
 
         # Gate 1.5: Test gate — scoped to changed files when possible
-        test_cmd = self._resolve_test_cmd()
+        test_cmd = self._resolve_test_cmd(repo_id=repo_id)
         if test_cmd:
             console.print(f"[blue]  Gate 1.5 (test): Running tests for {task.id}...[/blue]")
             await self._emit("review:gate_started", {
@@ -882,7 +915,7 @@ class ReviewMixin:
         console.print("[dim]  Gate 3 (merge readiness): deferred to merge step[/dim]")
         return True, None
 
-    async def _run_lint_gate(self, worktree_path: str, *, pipeline_branch: str | None = None) -> GateResult:
+    async def _run_lint_gate(self, worktree_path: str, *, pipeline_branch: str | None = None, repo_id: str | None = None) -> GateResult:
         """Gate 1: Language-agnostic lint check on the worktree.
 
         Uses LintStrategy detection to support any language/toolchain.
@@ -899,8 +932,8 @@ class ReviewMixin:
             return GateResult(passed=True, gate="gate1_auto_check", details="No files changed")
 
         # Resolve overrides
-        lint_cmd_override = self._resolve_lint_cmd()
-        lint_fix_cmd_override = self._resolve_lint_fix_cmd()
+        lint_cmd_override = self._resolve_lint_cmd(repo_id=repo_id)
+        lint_fix_cmd_override = self._resolve_lint_fix_cmd(repo_id=repo_id)
 
         strategy = detect_lint_strategy(
             worktree_path, changed_files,

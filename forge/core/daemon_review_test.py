@@ -2,10 +2,12 @@
 
 
 import subprocess
+import tempfile
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from forge.config.project_config import ProjectConfig, CheckConfig
 from forge.core.daemon_review import ReviewMixin, _summarize_auto_fix, LintStrategy, detect_lint_strategy
 from forge.review.pipeline import GateResult
 
@@ -960,3 +962,213 @@ class TestDetectLintStrategy:
         assert result is not None
         assert result.name == "make-lint"
         assert result.fix_cmd == ["make", "lint-fix"]
+
+
+class TestPerRepoCommandResolution:
+    """Verify per-repo command resolution via _repo_configs."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock()
+        mixin._emit = AsyncMock()
+        mixin._template_config = None
+        return mixin
+
+    def test_resolve_test_cmd_per_repo(self):
+        """Per-repo test commands are returned when repo_id is provided."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(tests=CheckConfig(cmd='pytest')),
+            'frontend': ProjectConfig(tests=CheckConfig(cmd='npm test')),
+        }
+        assert mixin._resolve_test_cmd(repo_id='backend') == 'pytest'
+        assert mixin._resolve_test_cmd(repo_id='frontend') == 'npm test'
+
+    def test_resolve_lint_cmd_per_repo(self):
+        """Per-repo lint commands are returned when repo_id is provided."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(lint=CheckConfig(check_cmd='ruff check .')),
+            'frontend': ProjectConfig(lint=CheckConfig(check_cmd='eslint .')),
+        }
+        assert mixin._resolve_lint_cmd(repo_id='backend') == 'ruff check .'
+        assert mixin._resolve_lint_cmd(repo_id='frontend') == 'eslint .'
+
+    def test_resolve_build_cmd_per_repo(self):
+        """Per-repo build commands are returned when repo_id is provided."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(build=CheckConfig(cmd='make build')),
+            'frontend': ProjectConfig(build=CheckConfig(cmd='npm run build')),
+        }
+        assert mixin._resolve_build_cmd(repo_id='backend') == 'make build'
+        assert mixin._resolve_build_cmd(repo_id='frontend') == 'npm run build'
+
+    def test_resolve_lint_fix_cmd_per_repo(self):
+        """Per-repo lint fix commands are returned when repo_id is provided."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(lint=CheckConfig(fix_cmd='ruff check --fix .')),
+            'frontend': ProjectConfig(lint=CheckConfig(fix_cmd='eslint --fix .')),
+        }
+        assert mixin._resolve_lint_fix_cmd(repo_id='backend') == 'ruff check --fix .'
+        assert mixin._resolve_lint_fix_cmd(repo_id='frontend') == 'eslint --fix .'
+
+    def test_review_single_repo_unchanged(self):
+        """Without repo_id, resolvers fall back to settings as before."""
+        mixin = self._make_mixin()
+        mixin._settings.test_cmd = 'pytest'
+        mixin._settings.build_cmd = 'make build'
+        mixin._settings.lint_cmd = 'ruff check .'
+        mixin._settings.lint_fix_cmd = 'ruff check --fix .'
+        mixin._repo_configs = {}
+        mixin._pipeline_build_cmd = None
+        mixin._pipeline_test_cmd = None
+
+        assert mixin._resolve_test_cmd() == 'pytest'
+        assert mixin._resolve_build_cmd() == 'make build'
+        assert mixin._resolve_lint_cmd() == 'ruff check .'
+        assert mixin._resolve_lint_fix_cmd() == 'ruff check --fix .'
+
+    def test_resolve_test_cmd_disabled_per_repo(self):
+        """When per-repo tests are disabled, resolver returns None."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(tests=CheckConfig(enabled=False)),
+        }
+        assert mixin._resolve_test_cmd(repo_id='backend') is None
+
+    def test_resolve_build_cmd_disabled_per_repo(self):
+        """When per-repo build is disabled, resolver returns None."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(build=CheckConfig(enabled=False)),
+        }
+        assert mixin._resolve_build_cmd(repo_id='backend') is None
+
+    def test_resolve_unknown_repo_id_falls_through(self):
+        """Unknown repo_id falls through to existing resolution chain."""
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(tests=CheckConfig(cmd='pytest')),
+        }
+        mixin._settings.test_cmd = 'npm test'
+        mixin._pipeline_test_cmd = None
+        # 'unknown' repo_id not in _repo_configs → fall through to settings
+        assert mixin._resolve_test_cmd(repo_id='unknown') == 'npm test'
+
+
+class TestReviewUsesRepoConfig:
+    """Verify _run_review threads repo_id to all resolvers."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock()
+        mixin._settings.agent_timeout_seconds = 600
+        mixin._settings.lint_cmd = None
+        mixin._settings.lint_fix_cmd = None
+        mixin._emit = AsyncMock()
+        mixin._template_config = None
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_review_uses_repo_config(self):
+        """Build and test resolvers receive repo_id when passed through _run_review.
+
+        Lint resolvers are called inside _run_lint_gate (not directly in _run_review),
+        so we verify them via _run_lint_gate's repo_id parameter instead.
+        """
+        mixin = self._make_mixin()
+        mixin._repo_configs = {
+            'backend': ProjectConfig(
+                build=CheckConfig(cmd='make build'),
+                tests=CheckConfig(cmd='pytest -x'),
+                lint=CheckConfig(check_cmd='ruff check .', fix_cmd='ruff check --fix .'),
+            ),
+        }
+
+        task = _make_task_for_review()
+        task.repo_id = 'backend'
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._pipeline_build_cmd = None
+        mixin._pipeline_test_cmd = None
+
+        # Track which repo_ids are passed to resolvers
+        resolve_calls = {}
+        original_build = ReviewMixin._resolve_build_cmd
+        original_test = ReviewMixin._resolve_test_cmd
+
+        def track_build(self_inner, *, repo_id=None):
+            resolve_calls['build'] = repo_id
+            return original_build(self_inner, repo_id=repo_id)
+
+        def track_test(self_inner, *, repo_id=None):
+            resolve_calls['test'] = repo_id
+            return original_test(self_inner, repo_id=repo_id)
+
+        # Track _run_lint_gate to verify repo_id is passed
+        lint_gate_calls = {}
+
+        async def track_lint_gate(worktree_path, *, pipeline_branch=None, repo_id=None):
+            lint_gate_calls['repo_id'] = repo_id
+            return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch.object(mixin, "_gate_build", return_value=GateResult(
+                passed=True, gate="gate0_build", details="OK",
+            )),
+            patch.object(mixin, "_run_lint_gate", side_effect=track_lint_gate),
+            patch.object(mixin, "_gate_test", return_value=GateResult(
+                passed=True, gate="gate1_5_test", details="OK",
+            )),
+            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
+                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                MagicMock(cost_usd=0),
+            )),
+            patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
+            patch.object(ReviewMixin, '_resolve_build_cmd', track_build),
+            patch.object(ReviewMixin, '_resolve_test_cmd', track_test),
+        ):
+            passed, _ = await mixin._run_review(
+                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                repo_id='backend',
+            )
+
+        assert passed is True
+        assert resolve_calls.get('build') == 'backend'
+        assert resolve_calls.get('test') == 'backend'
+        assert lint_gate_calls.get('repo_id') == 'backend'
+
+
+class TestDiffStatsCorrectRepo:
+    """Verify _get_diff_stats works correctly with a real git repo."""
+
+    @pytest.mark.asyncio
+    async def test_diff_stats_correct_repo(self):
+        """Create a temp git repo, call _get_diff_stats, assert it returns a dict."""
+        from forge.core.daemon_helpers import _get_diff_stats
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Initialize a git repo with a commit
+            import subprocess
+            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True, check=True)
+            # Create initial commit
+            import os
+            filepath = os.path.join(tmpdir, "hello.py")
+            with open(filepath, "w") as f:
+                f.write("print('hello')\n")
+            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True, check=True)
+
+            result = await _get_diff_stats(tmpdir)
+            assert isinstance(result, dict)
