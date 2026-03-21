@@ -157,22 +157,25 @@ class MergeMixin:
             await db.retry_task(task_id, review_feedback=review_feedback)
             # Extract lesson from review feedback if this is a repeated failure
             if review_feedback and task.retry_count >= 2:  # 3rd+ attempt
-                lesson_store = getattr(self, "_lesson_store", None)
-                if lesson_store:
-                    try:
-                        lesson = extract_from_review_feedback(
-                            feedback=review_feedback,
-                            task_title=getattr(task, "title", ""),
-                            project_dir=getattr(self, "_project_dir", None),
+                try:
+                    lesson = extract_from_review_feedback(
+                        feedback=review_feedback,
+                        task_title=getattr(task, "title", ""),
+                        project_dir=getattr(self, "_project_dir", None),
+                    )
+                    existing = await db.find_matching_lesson(lesson.trigger, project_dir=getattr(self, "_project_dir", None))
+                    if existing:
+                        await db.bump_lesson_hit(existing.id)
+                    else:
+                        await db.add_lesson(
+                            scope=lesson.scope, category=lesson.category,
+                            title=lesson.title, content=lesson.content,
+                            trigger=lesson.trigger, resolution=lesson.resolution,
+                            project_dir=getattr(self, "_project_dir", None) if lesson.scope == "project" else None,
                         )
-                        existing = await lesson_store.find_matching(lesson.trigger)
-                        if existing:
-                            await lesson_store.bump_hit(existing.id)
-                        else:
-                            await lesson_store.add_lesson(lesson)
-                        logger.info("Review lesson captured: %s", lesson.title)
-                    except Exception as exc:
-                        logger.warning("Failed to capture review lesson: %s", exc)
+                    logger.info("Review lesson captured: %s", lesson.title)
+                except Exception as exc:
+                    logger.warning("Failed to capture review lesson: %s", exc)
             if pipeline_id:
                 await self._emit(
                     "task:state_changed",

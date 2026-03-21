@@ -1,5 +1,7 @@
 """Lesson extraction — converts failures into structured lessons."""
 
+from __future__ import annotations
+
 import logging
 import os
 import re

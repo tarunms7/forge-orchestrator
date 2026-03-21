@@ -29,7 +29,7 @@ from forge.core.scheduler import Scheduler
 from forge.core.state import TaskStateMachine
 from forge.merge.worker import MergeWorker
 from forge.merge.worktree import WorktreeManager
-from forge.learning.store import LessonStore, format_lessons_block
+from forge.learning.store import format_lessons_block, row_to_lesson
 from forge.storage.db import Database
 
 # Mixin classes providing decomposed daemon functionality
@@ -182,12 +182,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._merge_lock = asyncio.Lock()
         self._project_config = ProjectConfig.load(project_dir)
 
-        # Lesson store for self-evolving learning
-        global_db_path = os.path.expanduser("~/.forge/forge_lessons.db")
-        project_db_path = os.path.join(project_dir, ".forge", "lessons.db")
-        self._global_lesson_store = LessonStore(global_db_path)
-        self._project_lesson_store = LessonStore(project_db_path)
-        self._lesson_store = self._project_lesson_store  # Primary store for executor/merge access
+        # Lessons use the central DB — no separate initialization needed
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB."""
@@ -425,15 +420,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Gather lessons for the planner
             try:
-                lessons = await self._project_lesson_store.get_relevant_lessons(
+                lesson_rows = await db.get_relevant_lessons(
+                    project_dir=self._project_dir,
                     categories=["review_failure", "code_pattern"],
-                    max_count=20, max_tokens=2000,
+                    max_count=20,
                 )
-                global_lessons = await self._global_lesson_store.get_relevant_lessons(
-                    categories=["review_failure", "code_pattern"],
-                    max_count=10, max_tokens=1000,
-                )
-                planner_lessons_block = format_lessons_block(lessons + global_lessons)
+                planner_lessons_block = format_lessons_block([row_to_lesson(r) for r in lesson_rows])
             except Exception as exc:
                 logger.warning("Failed to retrieve lessons for planner: %s", exc)
                 planner_lessons_block = ""
@@ -680,13 +672,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
 
         # Initialize lesson stores
-        try:
-            await self._global_lesson_store.initialize()
-            await self._project_lesson_store.initialize()
-        except Exception as exc:
-            logger.warning("Failed to initialize lesson stores: %s", exc)
-        self._lesson_store = self._project_lesson_store  # Primary store for this project
-
         # Determine pipeline branch name: use user-supplied name, or auto-generate from description
         pipeline_record = await db.get_pipeline(pid)
 
