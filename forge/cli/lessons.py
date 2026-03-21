@@ -105,6 +105,52 @@ def lessons_list(project_dir: str, show_global: bool) -> None:
     console.print(table)
 
 
+@lessons.command("add")
+@click.option("--project-dir", default=".", help="Project root directory")
+@click.option(
+    "--global", "is_global", is_flag=True, default=False,
+    help="Add as a global lesson instead of project-scoped",
+)
+@click.option("--category", type=click.Choice(["command_failure", "review_failure", "code_pattern"]), default="command_failure", help="Lesson category")
+@click.argument("title")
+@click.argument("resolution")
+@click.option("--trigger", default=None, help="Trigger pattern (defaults to title)")
+def lessons_add(project_dir: str, is_global: bool, category: str, title: str, resolution: str, trigger: str | None) -> None:
+    """Add a lesson manually. TITLE and RESOLUTION are required arguments."""
+    project_dir = os.path.abspath(project_dir)
+
+    if is_global:
+        db_path = os.path.expanduser("~/.forge/forge_lessons.db")
+        scope = "global"
+    else:
+        db_path = os.path.join(project_dir, ".forge", "lessons.db")
+        scope = "project"
+
+    async def _add():
+        from forge.learning.store import LessonStore, Lesson
+        store = LessonStore(db_path)
+        await store.initialize()
+        lesson = Lesson(
+            id="",
+            scope=scope,
+            category=category,
+            title=title,
+            content=title,
+            trigger=trigger or title,
+            resolution=resolution,
+        )
+        lid = await store.add_lesson(lesson)
+        return lid
+
+    try:
+        lid = asyncio.run(_add())
+    except Exception as e:
+        click.echo(f"Error adding lesson: {e}")
+        raise SystemExit(1)
+
+    click.echo(f"Added {scope} lesson: {title} (id: {lid[:8]})")
+
+
 @lessons.command("clear")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
