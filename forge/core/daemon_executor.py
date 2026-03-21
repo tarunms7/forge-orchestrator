@@ -906,21 +906,22 @@ class ExecutorMixin:
                     continue
                 break
             if not passed:
-                # Build focused retry feedback: reviewer feedback + changed files.
-                # The agent has the worktree and can read its own code — no need
-                # to dump the raw diff which wastes context on unchanged code.
+                # Build focused retry feedback: reviewer feedback + changed files + diff snippet.
+                # Include the diff so the retry agent can see what it wrote without re-reading every file.
                 enriched_feedback = feedback or ""
                 changed_files = await _get_changed_files_vs_main(
                     worktree_path, base_ref=pipeline_branch,
                 )
                 if changed_files:
                     files_summary = "\n".join(f"  - {f}" for f in changed_files)
+                    diff_snippet = diff[:3000] if diff else "(no diff available)"
                     enriched_feedback = (
                         f"=== REVIEWER FEEDBACK ===\n{enriched_feedback}\n\n"
                         f"=== FILES YOU MODIFIED ===\n{files_summary}\n\n"
-                        "Your code is still in the worktree. Read the files above to "
-                        "understand what you wrote, then fix the specific issues the "
-                        "reviewer flagged."
+                        f"=== YOUR CURRENT DIFF (for reference) ===\n"
+                        f"```diff\n{diff_snippet}\n```\n\n"
+                        "Your code is still in the worktree. Read the specific files and lines "
+                        "mentioned in the reviewer feedback above, then fix ONLY those issues."
                     )
                 else:
                     enriched_feedback = (

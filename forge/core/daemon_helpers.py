@@ -274,10 +274,18 @@ def _build_retry_prompt(
         f"## Task: {title} (Retry #{retry_number})\n\n"
         f"{description}\n\n"
         f"**Files in scope:** {files_str}\n\n"
-        f"## Review Feedback\n\n"
-        f"Your previous attempt was reviewed and needs fixes. "
-        f"The worktree has your previous code — fix the issues, don't start over.\n\n"
-        f"{review_feedback}\n"
+        f"## Review Feedback — FIX THESE SPECIFIC ISSUES\n\n"
+        f"Your previous attempt was reviewed and rejected. "
+        f"The worktree has your previous code. "
+        f"DO NOT start over. Read your existing code, find the specific issues below, and fix them.\n\n"
+        f"{review_feedback}\n\n"
+        f"## Retry Instructions\n\n"
+        f"1. Read the files you modified (listed above) to see your current code\n"
+        f"2. For each issue the reviewer flagged, find the EXACT location in your code\n"
+        f"3. Make the MINIMAL fix for each issue — do not rewrite unrelated code\n"
+        f"4. If the reviewer says something is 'missing' or 'not wired', check if it's in YOUR task scope.\n"
+        f"   If it belongs to a sibling task, note that in your commit message and move on.\n"
+        f"5. Run linting before committing: `ruff check <files>`\n"
     )
     if agent_prompt_modifier:
         prompt += "\n" + agent_prompt_modifier
