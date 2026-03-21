@@ -38,7 +38,7 @@ from forge.core.daemon_executor import ExecutorMixin
 from forge.core.daemon_review import ReviewMixin
 from forge.core.daemon_merge import MergeMixin
 
-from forge.config.project_config import ProjectConfig, load_repo_configs
+from forge.config.project_config import load_repo_configs
 from forge.core.daemon_helpers import update_repos_json_branches
 
 # Re-export all helpers at module level for backward compatibility.
@@ -892,7 +892,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await self._create_pipeline_branches()
 
         # Load per-repo configs for review gates (build/test/lint commands)
-        self._repo_configs: dict[str, ProjectConfig] = load_repo_configs(self._repos)
+        self._repo_configs = load_repo_configs(self._repos)
 
         # Update repos_json with per-repo branch names
         if len(self._repos) > 1:
