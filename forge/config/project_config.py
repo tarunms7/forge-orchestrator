@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import shutil
+import subprocess
 import tomllib
 from dataclasses import dataclass, field
 
@@ -323,3 +326,248 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
         settings.test_cmd = CMD_DISABLED
     if not config.build.enabled:
         settings.build_cmd = None
+
+
+# ── Multi-repo workspace support ─────────────────────────────────────
+
+_REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def auto_detect_base_branch(repo_path: str) -> str:
+    """Detect the default branch for a git repo.
+
+    Checks for 'main', then 'master', then falls back to HEAD,
+    then 'main' as ultimate default.
+    """
+    for candidate in ("main", "master"):
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"refs/heads/{candidate}"],
+            cwd=repo_path,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return candidate
+
+    # Fall back to HEAD symbolic ref
+    result = subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+
+    return "main"
+
+
+def _validate_repo_list(repos: list) -> None:
+    """Validate a list of RepoConfig entries.
+
+    Checks: valid IDs, existing paths, git repos, no duplicates, no nesting.
+    Raises click.ClickException on any failure.
+    """
+    import click
+
+    seen_ids: set[str] = set()
+    seen_paths: set[str] = set()
+    abs_paths: list[str] = []
+
+    for repo in repos:
+        # ID validation
+        if not _REPO_ID_RE.match(repo.id):
+            raise click.ClickException(
+                f"Invalid repo id '{repo.id}' — must match ^[a-z0-9][a-z0-9-]*$"
+            )
+
+        # Duplicate ID
+        if repo.id in seen_ids:
+            raise click.ClickException(f"Duplicate repo id: '{repo.id}'")
+        seen_ids.add(repo.id)
+
+        # Path existence
+        if not os.path.isdir(repo.path):
+            raise click.ClickException(
+                f"Repo '{repo.id}': path '{repo.path}' does not exist"
+            )
+
+        # Git repo check
+        git_dir = os.path.join(repo.path, ".git")
+        if not os.path.exists(git_dir):
+            raise click.ClickException(
+                f"Repo '{repo.id}': '{repo.path}' is not a git repo"
+            )
+
+        # Duplicate path
+        real_path = os.path.realpath(repo.path)
+        if real_path in seen_paths:
+            raise click.ClickException(
+                f"Duplicate repo path: '{repo.path}'"
+            )
+        seen_paths.add(real_path)
+        abs_paths.append(real_path)
+
+    # Nesting check — no repo path should be a prefix of another
+    sorted_paths = sorted(abs_paths)
+    for i in range(len(sorted_paths) - 1):
+        if sorted_paths[i + 1].startswith(sorted_paths[i] + os.sep):
+            raise click.ClickException(
+                f"Nested repo paths detected: '{sorted_paths[i]}' and '{sorted_paths[i + 1]}'"
+            )
+
+
+def parse_repo_flags(
+    repo_flags: tuple[str, ...], project_dir: str
+) -> list:
+    """Parse --repo name=path CLI flags into RepoConfig list.
+
+    Resolves relative paths against *project_dir*, auto-detects base branch.
+    Raises click.ClickException on validation errors.
+    """
+    import click
+    from forge.core.models import RepoConfig
+
+    repos = []
+    for flag in repo_flags:
+        if "=" not in flag:
+            raise click.ClickException(
+                f"Invalid --repo flag '{flag}' — expected name=path"
+            )
+        repo_id, raw_path = flag.split("=", 1)
+
+        # Resolve relative paths
+        if not os.path.isabs(raw_path):
+            raw_path = os.path.join(project_dir, raw_path)
+        raw_path = os.path.realpath(raw_path)
+
+        repos.append(
+            RepoConfig(
+                id=repo_id,
+                path=raw_path,
+                base_branch=auto_detect_base_branch(raw_path) if os.path.isdir(raw_path) else "main",
+            )
+        )
+
+    _validate_repo_list(repos)
+    return repos
+
+
+def load_workspace_toml(workspace_dir: str) -> list | None:
+    """Load repo definitions from .forge/workspace.toml.
+
+    Returns a list of RepoConfig or None if the file is missing or invalid.
+    """
+    from forge.core.models import RepoConfig
+
+    toml_path = os.path.join(workspace_dir, ".forge", "workspace.toml")
+    if not os.path.isfile(toml_path):
+        return None
+
+    try:
+        with open(toml_path, "rb") as f:
+            data = tomllib.load(f)
+    except Exception as e:
+        logger.warning("Failed to parse %s: %s", toml_path, e)
+        return None
+
+    raw_repos = data.get("repos", [])
+    if not raw_repos:
+        logger.warning("No [[repos]] entries in %s", toml_path)
+        return None
+
+    repos = []
+    for entry in raw_repos:
+        repo_id = entry.get("id", "")
+        raw_path = entry.get("path", "")
+
+        # Resolve relative paths against workspace dir
+        if not os.path.isabs(raw_path):
+            raw_path = os.path.join(workspace_dir, raw_path)
+        raw_path = os.path.realpath(raw_path)
+
+        base_branch = entry.get("base_branch") or (
+            auto_detect_base_branch(raw_path) if os.path.isdir(raw_path) else "main"
+        )
+
+        repos.append(RepoConfig(id=repo_id, path=raw_path, base_branch=base_branch))
+
+    return repos
+
+
+def resolve_repos(
+    repo_flags: tuple[str, ...], project_dir: str
+) -> list:
+    """Resolve repository configurations.
+
+    Priority: CLI flags → workspace.toml → single-repo CWD → error.
+    Returns a list of RepoConfig.
+    """
+    from forge.core.models import RepoConfig
+
+    # 1. CLI flags take highest priority
+    if repo_flags:
+        return parse_repo_flags(repo_flags, project_dir)
+
+    # 2. workspace.toml fallback
+    toml_repos = load_workspace_toml(project_dir)
+    if toml_repos:
+        _validate_repo_list(toml_repos)
+        return toml_repos
+
+    # 3. Single-repo CWD default
+    base_branch = auto_detect_base_branch(project_dir) if os.path.isdir(
+        os.path.join(project_dir, ".git")
+    ) else "main"
+
+    return [
+        RepoConfig(id="default", path=project_dir, base_branch=base_branch)
+    ]
+
+
+def validate_repos_startup(repos: list) -> None:
+    """Validate repos at startup.
+
+    Checks:
+    - gh CLI availability (multi-repo only)
+    - Dirty working trees (skipped for single default repo)
+    - Base branch existence
+
+    Raises click.ClickException on any failure.
+    """
+    import click
+
+    is_single_default = len(repos) == 1 and repos[0].id == "default"
+
+    # gh CLI check for multi-repo
+    if not is_single_default:
+        if shutil.which("gh") is None:
+            raise click.ClickException(
+                "gh (GitHub CLI) not found — required for multi-repo workspaces. "
+                "Install: https://cli.github.com/"
+            )
+
+    for repo in repos:
+        # Dirty working tree check (skip for single default repo)
+        if not is_single_default:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo.path,
+                capture_output=True,
+                text=True,
+            )
+            if result.stdout.strip():
+                raise click.ClickException(
+                    f"Dirty working tree in repo '{repo.id}' ({repo.path}). "
+                    "Commit or stash changes before running a pipeline."
+                )
+
+        # Base branch existence check
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}"],
+            cwd=repo.path,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"Base branch '{repo.base_branch}' not found in repo '{repo.id}' ({repo.path})"
+            )

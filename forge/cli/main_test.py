@@ -100,7 +100,7 @@ def test_run_help_shows_deep_plan_option():
 
 def test_run_passes_spec_and_deep_plan(tmp_path):
     """run command should forward spec and deep_plan to daemon.run()."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
 
     spec_file = tmp_path / "spec.md"
     spec_file.write_text("# Spec\nDo stuff")
@@ -109,10 +109,12 @@ def test_run_passes_spec_and_deep_plan(tmp_path):
     mock_daemon.run = MagicMock(return_value=None)
 
     with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
-         patch("forge.cli.main.asyncio") as mock_asyncio:
+         patch("forge.cli.main.asyncio") as mock_asyncio, \
+         patch("forge.config.project_config.resolve_repos", return_value=[]), \
+         patch("forge.config.project_config.validate_repos_startup"):
         mock_asyncio.run = MagicMock(return_value=None)
         runner = CliRunner()
-        result = runner.invoke(cli, [
+        runner.invoke(cli, [
             "run", "Build it",
             "--spec", str(spec_file),
             "--deep-plan",
@@ -122,6 +124,22 @@ def test_run_passes_spec_and_deep_plan(tmp_path):
         mock_daemon.run.assert_called_once_with(
             "Build it", spec_path=str(spec_file), deep_plan=True
         )
+
+
+def test_run_help_shows_repo_option():
+    """--repo option must appear in run --help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--repo" in result.output
+
+
+def test_tui_help_shows_repo_option():
+    """--repo option must appear in tui --help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["tui", "--help"])
+    assert result.exit_code == 0
+    assert "--repo" in result.output
 
 
 def test_serve_uses_central_db_url_by_default():

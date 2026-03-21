@@ -74,7 +74,12 @@ def init(project_dir: str) -> None:
 )
 @click.option("--spec", default=None, type=click.Path(exists=True), help="Path to spec document (markdown or text)")
 @click.option("--deep-plan", is_flag=True, default=False, help="Force multi-pass deep planning")
-def run(task: str, project_dir: str, strategy: str | None, spec: str | None, deep_plan: bool) -> None:
+@click.option(
+    "--repo",
+    multiple=True,
+    help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
+)
+def run(task: str, project_dir: str, strategy: str | None, spec: str | None, deep_plan: bool, repo: tuple[str, ...]) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -90,6 +95,12 @@ def run(task: str, project_dir: str, strategy: str | None, spec: str | None, dee
         _write_if_missing(os.path.join(forge_dir, "build-log.md"), "# Forge Build Log\n")
         _write_if_missing(os.path.join(forge_dir, "decisions.md"), "# Architectural Decisions\n")
         _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
+
+    from forge.config.project_config import resolve_repos, validate_repos_startup
+
+    # Resolve repos: CLI flags → workspace.toml → single-repo default
+    repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
+    validate_repos_startup(repos)
 
     from forge.config.settings import ForgeSettings
     from forge.core.daemon import ForgeDaemon
@@ -119,12 +130,23 @@ def run(task: str, project_dir: str, strategy: str | None, spec: str | None, dee
     envvar="FORGE_MODEL_STRATEGY",
     help="Model routing: auto, fast, quality",
 )
-def tui(project_dir: str, strategy: str | None) -> None:
+@click.option(
+    "--repo",
+    multiple=True,
+    help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
+)
+def tui(project_dir: str, strategy: str | None, repo: tuple[str, ...]) -> None:
     """Launch the Forge terminal UI."""
     project_dir = os.path.abspath(project_dir)
     forge_dir = os.path.join(project_dir, ".forge")
     if not os.path.isdir(forge_dir):
         os.makedirs(forge_dir, exist_ok=True)
+
+    from forge.config.project_config import resolve_repos, validate_repos_startup
+
+    # Resolve repos: CLI flags → workspace.toml → single-repo default
+    repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
+    validate_repos_startup(repos)
 
     from forge.config.settings import ForgeSettings
     from forge.tui.app import ForgeApp

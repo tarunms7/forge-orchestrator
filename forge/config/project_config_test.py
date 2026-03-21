@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 
+import click
 import pytest
 
 from forge.config.project_config import (
@@ -13,7 +16,13 @@ from forge.config.project_config import (
     IntegrationCheckConfig,
     ProjectConfig,
     apply_project_config,
+    auto_detect_base_branch,
+    load_workspace_toml,
+    parse_repo_flags,
+    resolve_repos,
+    validate_repos_startup,
 )
+from forge.core.models import RepoConfig
 
 
 class TestProjectConfigDefaults:
@@ -306,3 +315,198 @@ class TestIntegrationCheckConfigValidation:
     def test_invalid_on_failure_raises(self):
         with pytest.raises(ValueError, match="on_failure must be"):
             IntegrationCheckConfig(on_failure="crash")
+
+
+# ── Helpers for git-based tests ──────────────────────────────────────
+
+
+def _make_git_repo(path: str, branch: str = "main") -> None:
+    """Create a minimal git repo at *path* with one commit on *branch*."""
+    os.makedirs(path, exist_ok=True)
+    subprocess.run(["git", "init", "-b", branch], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
+    # Create an initial commit so HEAD exists
+    dummy = os.path.join(path, "README.md")
+    with open(dummy, "w") as f:
+        f.write("# test\n")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=path, check=True, capture_output=True)
+
+
+# ── Chunk 1: parse_repo_flags & auto_detect_base_branch ─────────────
+
+
+class TestAutoDetectBaseBranch:
+    def test_detects_main(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _make_git_repo(repo, branch="main")
+        assert auto_detect_base_branch(repo) == "main"
+
+
+class TestParseRepoFlags:
+    def test_valid_single_repo(self, tmp_path):
+        repo = str(tmp_path / "backend")
+        _make_git_repo(repo)
+        result = parse_repo_flags(("backend=" + repo,), str(tmp_path))
+        assert len(result) == 1
+        assert result[0].id == "backend"
+        assert result[0].path == repo
+        assert result[0].base_branch == "main"
+
+    def test_valid_multiple_repos(self, tmp_path):
+        be = str(tmp_path / "backend")
+        fe = str(tmp_path / "frontend")
+        _make_git_repo(be)
+        _make_git_repo(fe)
+        result = parse_repo_flags(("backend=" + be, "frontend=" + fe), str(tmp_path))
+        assert len(result) == 2
+        ids = {r.id for r in result}
+        assert ids == {"backend", "frontend"}
+
+    def test_invalid_id_raises(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _make_git_repo(repo)
+        with pytest.raises(click.ClickException, match="Invalid repo id"):
+            parse_repo_flags(("UPPER=" + repo,), str(tmp_path))
+
+    def test_duplicate_id_raises(self, tmp_path):
+        r1 = str(tmp_path / "a")
+        r2 = str(tmp_path / "b")
+        _make_git_repo(r1)
+        _make_git_repo(r2)
+        with pytest.raises(click.ClickException, match="Duplicate repo id"):
+            parse_repo_flags(("dup=" + r1, "dup=" + r2), str(tmp_path))
+
+    def test_duplicate_path_raises(self, tmp_path):
+        repo = str(tmp_path / "repo")
+        _make_git_repo(repo)
+        with pytest.raises(click.ClickException, match="Duplicate repo path"):
+            parse_repo_flags(("a=" + repo, "b=" + repo), str(tmp_path))
+
+    def test_nested_paths_raises(self, tmp_path):
+        parent = str(tmp_path / "parent")
+        child = str(tmp_path / "parent" / "child")
+        _make_git_repo(parent)
+        _make_git_repo(child)
+        with pytest.raises(click.ClickException, match="[Nn]ested"):
+            parse_repo_flags(("parent=" + parent, "child=" + child), str(tmp_path))
+
+    def test_nonexistent_path_raises(self, tmp_path):
+        with pytest.raises(click.ClickException, match="does not exist"):
+            parse_repo_flags(("bad=/no/such/path",), str(tmp_path))
+
+    def test_not_git_repo_raises(self, tmp_path):
+        plain = str(tmp_path / "plain")
+        os.makedirs(plain)
+        with pytest.raises(click.ClickException, match="not a git repo"):
+            parse_repo_flags(("plain=" + plain,), str(tmp_path))
+
+
+# ── Chunk 2: load_workspace_toml ─────────────────────────────────────
+
+
+class TestLoadWorkspaceToml:
+    def test_valid_workspace(self, tmp_path):
+        repo = str(tmp_path / "backend")
+        _make_git_repo(repo)
+        forge_dir = tmp_path / ".forge"
+        forge_dir.mkdir()
+        (forge_dir / "workspace.toml").write_text(
+            f'[[repos]]\nid = "backend"\npath = "{repo}"\n'
+        )
+        result = load_workspace_toml(str(tmp_path))
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].id == "backend"
+        assert result[0].path == repo
+
+    def test_missing_file_returns_none(self, tmp_path):
+        assert load_workspace_toml(str(tmp_path)) is None
+
+    def test_invalid_toml_returns_none(self, tmp_path):
+        forge_dir = tmp_path / ".forge"
+        forge_dir.mkdir()
+        (forge_dir / "workspace.toml").write_text("not valid toml [[[")
+        assert load_workspace_toml(str(tmp_path)) is None
+
+
+# ── Chunk 3: resolve_repos ───────────────────────────────────────────
+
+
+class TestResolveRepos:
+    def test_cli_overrides_toml(self, tmp_path):
+        """CLI --repo flags take priority over workspace.toml."""
+        cli_repo = str(tmp_path / "cli-repo")
+        toml_repo = str(tmp_path / "toml-repo")
+        _make_git_repo(cli_repo)
+        _make_git_repo(toml_repo)
+        # Write a workspace.toml that would normally be picked up
+        forge_dir = tmp_path / ".forge"
+        forge_dir.mkdir()
+        (forge_dir / "workspace.toml").write_text(
+            f'[[repos]]\nid = "toml"\npath = "{toml_repo}"\n'
+        )
+        result = resolve_repos(("cli=" + cli_repo,), str(tmp_path))
+        assert len(result) == 1
+        assert result[0].id == "cli"
+
+    def test_toml_fallback(self, tmp_path):
+        """No CLI flags → falls back to workspace.toml."""
+        repo = str(tmp_path / "backend")
+        _make_git_repo(repo)
+        forge_dir = tmp_path / ".forge"
+        forge_dir.mkdir()
+        (forge_dir / "workspace.toml").write_text(
+            f'[[repos]]\nid = "backend"\npath = "{repo}"\n'
+        )
+        result = resolve_repos((), str(tmp_path))
+        assert len(result) == 1
+        assert result[0].id == "backend"
+
+    def test_single_repo_default(self, tmp_path):
+        """No CLI flags, no workspace.toml → single-repo CWD default."""
+        _make_git_repo(str(tmp_path))
+        result = resolve_repos((), str(tmp_path))
+        assert len(result) == 1
+        assert result[0].id == "default"
+        assert result[0].path == str(tmp_path)
+
+
+# ── Chunk 4: validate_repos_startup ──────────────────────────────────
+
+
+class TestValidateReposStartup:
+    def test_gh_cli_missing_multi_repo(self, tmp_path, monkeypatch):
+        """Multi-repo requires gh CLI."""
+        r1 = str(tmp_path / "a")
+        r2 = str(tmp_path / "b")
+        _make_git_repo(r1)
+        _make_git_repo(r2)
+        repos = [
+            RepoConfig(id="a", path=r1, base_branch="main"),
+            RepoConfig(id="b", path=r2, base_branch="main"),
+        ]
+        monkeypatch.setattr("shutil.which", lambda _name: None)
+        with pytest.raises(click.ClickException, match="gh .* not found"):
+            validate_repos_startup(repos)
+
+    def test_base_branch_missing(self, tmp_path):
+        """Raises when base branch doesn't exist."""
+        repo = str(tmp_path / "repo")
+        _make_git_repo(repo, branch="main")
+        repos = [RepoConfig(id="default", path=repo, base_branch="nonexistent")]
+        with pytest.raises(click.ClickException, match="nonexistent"):
+            validate_repos_startup(repos)
+
+    def test_dirty_tree_raises(self, tmp_path, monkeypatch):
+        """Dirty working tree is rejected for non-default repos."""
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/gh")
+        repo = str(tmp_path / "repo")
+        _make_git_repo(repo)
+        # Make the tree dirty
+        with open(os.path.join(repo, "dirty.txt"), "w") as f:
+            f.write("uncommitted")
+        repos = [RepoConfig(id="myrepo", path=repo, base_branch="main")]
+        with pytest.raises(click.ClickException, match="[Dd]irty"):
+            validate_repos_startup(repos)
