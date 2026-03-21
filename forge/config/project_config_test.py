@@ -499,8 +499,9 @@ class TestValidateReposStartup:
         with pytest.raises(click.ClickException, match="nonexistent"):
             validate_repos_startup(repos)
 
-    def test_dirty_tree_raises(self, tmp_path):
+    def test_dirty_tree_raises(self, tmp_path, monkeypatch):
         """Dirty working tree is rejected for non-default repos."""
+        monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/gh")
         repo = str(tmp_path / "repo")
         _make_git_repo(repo)
         # Make the tree dirty
