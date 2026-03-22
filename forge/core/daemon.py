@@ -470,6 +470,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Without this, the planner reads whatever branch is checked out locally
         # instead of the branch specified in workspace.toml.
         for repo_id, rc in self._repos.items():
+            if not rc.base_branch:
+                continue  # Skip repos with no base_branch set
             current = await _get_current_branch(rc.path)
             if current != rc.base_branch:
                 result = await async_subprocess(
