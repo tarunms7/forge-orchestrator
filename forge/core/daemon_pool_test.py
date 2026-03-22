@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,7 +46,10 @@ class TestSafeExecuteTask:
         db = MagicMock()
         db.release_agent = AsyncMock()
         daemon._execute_task = AsyncMock(return_value=None)
-        await daemon._safe_execute_task(db, MagicMock(), MagicMock(), MagicMock(), "task-1", "agent-1", pipeline_id="pipe-1")
+        await daemon._safe_execute_task(
+            db, MagicMock(), MagicMock(), MagicMock(),
+            "task-1", "agent-1", pipeline_id="pipe-1",
+        )
         db.release_agent.assert_called_once_with("agent-1")
 
     async def test_exception_releases_agent_and_reraises(self, tmp_path):
@@ -54,7 +58,10 @@ class TestSafeExecuteTask:
         db.release_agent = AsyncMock()
         daemon._execute_task = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(RuntimeError, match="boom"):
-            await daemon._safe_execute_task(db, MagicMock(), MagicMock(), MagicMock(), "task-1", "agent-1")
+            await daemon._safe_execute_task(
+                db, MagicMock(), MagicMock(), MagicMock(),
+                "task-1", "agent-1",
+            )
         db.release_agent.assert_called_once_with("agent-1")
 
     async def test_cancellation_releases_agent_and_reraises(self, tmp_path):
@@ -63,7 +70,10 @@ class TestSafeExecuteTask:
         db.release_agent = AsyncMock()
         daemon._execute_task = AsyncMock(side_effect=asyncio.CancelledError())
         with pytest.raises(asyncio.CancelledError):
-            await daemon._safe_execute_task(db, MagicMock(), MagicMock(), MagicMock(), "task-1", "agent-1")
+            await daemon._safe_execute_task(
+                db, MagicMock(), MagicMock(), MagicMock(),
+                "task-1", "agent-1",
+            )
         db.release_agent.assert_called_once_with("agent-1")
 
     async def test_release_failure_does_not_mask_original_error(self, tmp_path):
@@ -72,7 +82,10 @@ class TestSafeExecuteTask:
         db.release_agent = AsyncMock(side_effect=Exception("DB down"))
         daemon._execute_task = AsyncMock(side_effect=RuntimeError("task crash"))
         with pytest.raises(RuntimeError, match="task crash"):
-            await daemon._safe_execute_task(db, MagicMock(), MagicMock(), MagicMock(), "task-1", "agent-1")
+            await daemon._safe_execute_task(
+                db, MagicMock(), MagicMock(), MagicMock(),
+                "task-1", "agent-1",
+            )
 
 
 @pytest.mark.asyncio
@@ -90,7 +103,10 @@ class TestHandleTaskException:
         db.log_event = AsyncMock()
         worktree_mgr = MagicMock()
         worktree_mgr.remove = MagicMock()
-        await daemon._handle_task_exception("task-1", RuntimeError("exploded"), db, worktree_mgr, "pipe-1")
+        await daemon._handle_task_exception(
+            "task-1", RuntimeError("exploded"),
+            db, worktree_mgr, "pipe-1",
+        )
         db.update_task_state.assert_called_once_with("task-1", TaskState.ERROR.value)
         db.release_agent.assert_called_once_with("agent-1")
         worktree_mgr.remove.assert_called_once_with("task-1")
@@ -103,7 +119,10 @@ class TestHandleTaskException:
         daemon._emit = mock_emit
         task_rec = _make_task("error", "task-1")
         task_rec.assigned_agent = "agent-1"
-        all_tasks = [_make_task(TaskState.DONE.value, "task-2"), _make_task(TaskState.ERROR.value, "task-1")]
+        all_tasks = [
+            _make_task(TaskState.DONE.value, "task-2"),
+            _make_task(TaskState.ERROR.value, "task-1"),
+        ]
         db = MagicMock()
         db.update_task_state = AsyncMock()
         db.get_task = AsyncMock(return_value=task_rec)
@@ -112,7 +131,10 @@ class TestHandleTaskException:
         db.log_event = AsyncMock()
         worktree_mgr = MagicMock()
         worktree_mgr.remove = MagicMock()
-        await daemon._handle_task_exception("task-1", RuntimeError("crash"), db, worktree_mgr, "pipe-1")
+        await daemon._handle_task_exception(
+            "task-1", RuntimeError("crash"),
+            db, worktree_mgr, "pipe-1",
+        )
         assert any(e[0] == "pipeline:error" for e in emitted)
 
     async def test_no_pipeline_error_when_tasks_still_active(self, tmp_path):
@@ -123,7 +145,10 @@ class TestHandleTaskException:
         daemon._emit = mock_emit
         task_rec = _make_task("error", "task-1")
         task_rec.assigned_agent = "agent-1"
-        remaining = [_make_task(TaskState.IN_PROGRESS.value, "task-2"), _make_task(TaskState.ERROR.value, "task-1")]
+        remaining = [
+            _make_task(TaskState.IN_PROGRESS.value, "task-2"),
+            _make_task(TaskState.ERROR.value, "task-1"),
+        ]
         db = MagicMock()
         db.update_task_state = AsyncMock()
         db.get_task = AsyncMock(return_value=task_rec)
@@ -132,7 +157,10 @@ class TestHandleTaskException:
         db.log_event = AsyncMock()
         worktree_mgr = MagicMock()
         worktree_mgr.remove = MagicMock()
-        await daemon._handle_task_exception("task-1", RuntimeError("crash"), db, worktree_mgr, "pipe-1")
+        await daemon._handle_task_exception(
+            "task-1", RuntimeError("crash"),
+            db, worktree_mgr, "pipe-1",
+        )
         assert not any(e[0] == "pipeline:error" for e in emitted)
 
 
@@ -148,7 +176,10 @@ class TestContinuousTaskPool:
         both_dispatched = asyncio.Event()
         call_order = []
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
+        async def fake_execute(
+            db, runtime, wt, mw, task_id, agent_id,
+            pipeline_id=None, repo_id=None,
+        ):
             call_order.append(task_id)
             if len(call_order) >= 2:
                 both_dispatched.set()
@@ -221,10 +252,8 @@ class TestContinuousTaskPool:
             gate_task2.set()
             await asyncio.sleep(0.05)
             loop_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await loop_task
-            except asyncio.CancelledError:
-                pass
 
     async def test_active_tasks_guard_prevents_double_dispatch(self, tmp_path):
         """Tasks already in the pool are filtered from dispatch_plan."""
@@ -234,7 +263,10 @@ class TestContinuousTaskPool:
         gate = asyncio.Event()
         first_dispatched = asyncio.Event()
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
+        async def fake_execute(
+            db, runtime, wt, mw, task_id, agent_id,
+            pipeline_id=None, repo_id=None,
+        ):
             dispatch_count[task_id] = dispatch_count.get(task_id, 0) + 1
             first_dispatched.set()
             await gate.wait()
@@ -277,7 +309,10 @@ class TestContinuousTaskPool:
              patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
 
             loop_task = asyncio.create_task(
-                daemon._execution_loop_inner(db, MagicMock(), MagicMock(), MagicMock(), monitor, "pipe-1")
+                daemon._execution_loop_inner(
+                    db, MagicMock(), MagicMock(),
+                    MagicMock(), monitor, "pipe-1",
+                )
             )
             # Wait for the first dispatch (event-driven, no sleep)
             await asyncio.wait_for(first_dispatched.wait(), timeout=5.0)
@@ -286,12 +321,12 @@ class TestContinuousTaskPool:
             gate.set()
             await asyncio.sleep(0.05)
             loop_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await loop_task
-            except asyncio.CancelledError:
-                pass
 
-        assert dispatch_count["task-1"] == 1, f"task-1 dispatched {dispatch_count['task-1']} times, expected 1"
+        assert dispatch_count["task-1"] == 1, (
+            f"task-1 dispatched {dispatch_count['task-1']}x, expected 1"
+        )
 
     async def test_exception_in_one_task_does_not_affect_other(self, tmp_path):
         """If task-1 crashes, task-2 still runs to completion."""
@@ -299,7 +334,10 @@ class TestContinuousTaskPool:
 
         task2_completed = asyncio.Event()
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
+        async def fake_execute(
+            db, runtime, wt, mw, task_id, agent_id,
+            pipeline_id=None, repo_id=None,
+        ):
             if task_id == "task-1":
                 raise RuntimeError("task-1 crash")
             task2_completed.set()
@@ -323,8 +361,14 @@ class TestContinuousTaskPool:
             nonlocal call_count
             call_count += 1
             if call_count <= 1:
-                return [_make_task(TaskState.TODO.value, "task-1"), _make_task(TaskState.TODO.value, "task-2")]
-            return [_make_task(TaskState.ERROR.value, "task-1"), _make_task(TaskState.DONE.value, "task-2")]
+                return [
+                    _make_task(TaskState.TODO.value, "task-1"),
+                    _make_task(TaskState.TODO.value, "task-2"),
+                ]
+            return [
+                _make_task(TaskState.ERROR.value, "task-1"),
+                _make_task(TaskState.DONE.value, "task-2"),
+            ]
         db.list_tasks_by_pipeline = list_tasks_seq
 
         db.list_agents = AsyncMock(return_value=[
@@ -343,18 +387,21 @@ class TestContinuousTaskPool:
              patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
 
             loop_task = asyncio.create_task(
-                daemon._execution_loop_inner(db, MagicMock(), MagicMock(), MagicMock(), monitor, "pipe-1")
+                daemon._execution_loop_inner(
+                    db, MagicMock(), MagicMock(),
+                    MagicMock(), monitor, "pipe-1",
+                )
             )
             try:
-                await asyncio.wait_for(task2_completed.wait(), timeout=5.0)
+                await asyncio.wait_for(
+                    task2_completed.wait(), timeout=5.0,
+                )
             except TimeoutError:
-                pytest.fail("task-2 did not complete within timeout")
+                pytest.fail("task-2 did not complete")
             finally:
                 loop_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await loop_task
-                except asyncio.CancelledError:
-                    pass
 
         assert task2_completed.is_set(), "task-2 should have completed despite task-1 crashing"
 
@@ -365,7 +412,10 @@ class TestContinuousTaskPool:
         task_started = asyncio.Event()
         was_cancelled = False
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
+        async def fake_execute(
+            db, runtime, wt, mw, task_id, agent_id,
+            pipeline_id=None, repo_id=None,
+        ):
             nonlocal was_cancelled
             task_started.set()
             try:
@@ -420,10 +470,8 @@ class TestContinuousTaskPool:
             await task_started.wait()
             # Cancel the loop (simulating shutdown)
             loop_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await loop_task
-            except asyncio.CancelledError:
-                pass
 
         assert was_cancelled, "Active task should have been cancelled on shutdown"
         db.release_agent.assert_called_with("agent-0")

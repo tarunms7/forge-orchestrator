@@ -29,7 +29,11 @@ async def test_flow_a_full_success(tmp_path):
         )
         await db.update_pipeline_status(pid, "executing")
         for i in range(3):
-            await db.create_task(id=f"t{i}", title=f"Task {i}", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+            await db.create_task(
+                id=f"t{i}", title=f"Task {i}", description="",
+                files=[], depends_on=[], complexity="low",
+                pipeline_id=pid,
+            )
             await db.update_task_state(f"t{i}", "done")
 
         tasks = await db.list_tasks_by_pipeline(pid)
@@ -63,8 +67,16 @@ async def test_flow_b_partial_success(tmp_path):
             model_strategy="balanced", budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "executing")
-        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-        await db.create_task(id="t1", title="B", description="", files=[], depends_on=["t0"], complexity="low", pipeline_id=pid)
+        await db.create_task(
+            id="t0", title="A", description="",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
+        await db.create_task(
+            id="t1", title="B", description="",
+            files=[], depends_on=["t0"], complexity="low",
+            pipeline_id=pid,
+        )
         await db.update_task_state("t0", "done")
         await db.update_task_state("t1", "error")
 
@@ -72,7 +84,12 @@ async def test_flow_b_partial_success(tmp_path):
         states = [t.state for t in tasks]
         done_count = states.count("done")
         error_count = states.count("error") + states.count("blocked")
-        result = "complete" if error_count == 0 else ("error" if done_count == 0 else "partial_success")
+        if error_count == 0:
+            result = "complete"
+        elif done_count == 0:
+            result = "error"
+        else:
+            result = "partial_success"
 
         await db.update_pipeline_status(pid, result)
         p = await db.get_pipeline(pid)
@@ -94,8 +111,16 @@ async def test_flow_c_retry_resets_and_resumes(tmp_path):
             model_strategy="balanced", budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "partial_success")
-        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-        await db.create_task(id="t1", title="B", description="", files=[], depends_on=["t0"], complexity="low", pipeline_id=pid)
+        await db.create_task(
+            id="t0", title="A", description="",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
+        await db.create_task(
+            id="t1", title="B", description="",
+            files=[], depends_on=["t0"], complexity="low",
+            pipeline_id=pid,
+        )
         await db.update_task_state("t0", "error")
         await db.update_task_state("t1", "blocked")
 
@@ -128,8 +153,16 @@ async def test_flow_f_skip_and_finish(tmp_path):
             model_strategy="balanced", budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "partial_success")
-        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-        await db.create_task(id="t1", title="B", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.create_task(
+            id="t0", title="A", description="",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
+        await db.create_task(
+            id="t1", title="B", description="",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
         await db.update_task_state("t0", "done")
         await db.update_task_state("t1", "error")
 
@@ -161,12 +194,23 @@ async def test_flow_gh_quit_and_resume(tmp_path):
             model_strategy="balanced", budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "executing")
-        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-        await db.create_task(id="t1", title="B", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.create_task(
+            id="t0", title="A", description="",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
+        await db.create_task(
+            id="t1", title="B", description="",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
         await db.update_task_state("t0", "done")
         await db.update_task_state("t1", "in_progress")
 
-        non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
+        non_terminal = (
+            "in_progress", "in_review", "merging",
+            "awaiting_input", "awaiting_approval",
+        )
         for t in await db.list_tasks_by_pipeline(pid):
             if t.state in non_terminal:
                 await db.update_task_state(t.id, "todo")
