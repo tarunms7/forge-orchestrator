@@ -340,11 +340,17 @@ def _build_unified_system_prompt(question_protocol: str, lessons_block: str = ""
 
 This workspace contains multiple repositories: {repo_list}
 
+### CRITICAL: Repo Exclusion Rule
+**Read the user's task description carefully.** If the user says to "ignore", "skip", "exclude", or says a repo "has nothing to do with" the task — that repo is OFF LIMITS. You MUST NOT:
+- Create any tasks for that repo
+- Read or browse files in that repo
+- Reference that repo in any task description
+Violating this rule will cause the pipeline to fail. Only create tasks for repos the user explicitly wants changed.
+
 ### Repo Assignment Rules
 - Every task MUST have a `"repo"` field set to one of the available repos.
 - A task operates in exactly ONE repo. If work spans repos, split into separate tasks with dependencies.
 - File paths are RELATIVE to the repo root (not the workspace root).
-- If the user says to "ignore", "skip", or "exclude" a specific repo, do NOT create any tasks for that repo AND do NOT read or browse files in that repo during planning. Only assign tasks to repos the user wants changed.
 
 ### Cross-Repo Dependencies
 - If task B in repo `frontend` depends on an API from task A in repo `backend`, use `depends_on`.
