@@ -31,9 +31,11 @@ async def get_pipeline_diff(
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
     events = await db.list_events(pipeline_id, event_type="task:merge_result")
-    diff_parts = [
-        evt.payload.get("diff", "")
-        for evt in events
-        if evt.payload and evt.payload.get("success")
-    ]
-    return {"pipeline_id": pipeline_id, "diff": "\n".join(filter(None, diff_parts))}
+    diff_parts = []
+    for evt in events:
+        if evt.payload and evt.payload.get("success"):
+            diff_text = evt.payload.get("diff", "")
+            if diff_text:
+                repo_id = evt.payload.get("repo_id", "default")
+                diff_parts.append(f"# repo: {repo_id}\n{diff_text}")
+    return {"pipeline_id": pipeline_id, "diff": "\n".join(diff_parts)}

@@ -72,3 +72,71 @@ class TestWebSocketEndpoint:
         # Connection closes when exiting context manager
         manager = app.state.ws_manager
         assert len(manager.active_connections.get("pipe-xyz", [])) == 0
+
+
+class TestWebSocketBroadcastRepoId:
+    """Test that broadcasts can include repo_id field."""
+
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_includes_repo_id(self):
+        """ConnectionManager.broadcast passes repo_id through to clients."""
+        import json
+
+        from forge.api.ws.manager import ConnectionManager
+
+        manager = ConnectionManager()
+
+        # Mock WebSocket that captures sent messages
+        sent_messages: list[str] = []
+
+        class MockWebSocket:
+            async def send_text(self, data: str) -> None:
+                sent_messages.append(data)
+
+        mock_ws = MockWebSocket()
+        manager.active_connections["pipe-repo"].append(mock_ws)
+
+        # Broadcast a task:state_changed event with repo_id
+        await manager.broadcast("pipe-repo", {
+            "type": "task:state_changed",
+            "task_id": "t1",
+            "state": "merging",
+            "repo_id": "backend",
+        })
+
+        assert len(sent_messages) == 1
+        received = json.loads(sent_messages[0])
+        assert received["type"] == "task:state_changed"
+        assert received["task_id"] == "t1"
+        assert received["state"] == "merging"
+        assert received["repo_id"] == "backend"
+
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_default_repo_id(self):
+        """Broadcast without repo_id should not break anything."""
+        import json
+
+        from forge.api.ws.manager import ConnectionManager
+
+        manager = ConnectionManager()
+
+        sent_messages: list[str] = []
+
+        class MockWebSocket:
+            async def send_text(self, data: str) -> None:
+                sent_messages.append(data)
+
+        mock_ws = MockWebSocket()
+        manager.active_connections["pipe-single"].append(mock_ws)
+
+        # Broadcast without repo_id (single-repo backward compat)
+        await manager.broadcast("pipe-single", {
+            "type": "task:state_changed",
+            "task_id": "t2",
+            "state": "merged",
+        })
+
+        assert len(sent_messages) == 1
+        received = json.loads(sent_messages[0])
+        assert received["type"] == "task:state_changed"
+        assert "repo_id" not in received  # Not added if not provided
