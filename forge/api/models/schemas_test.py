@@ -1,6 +1,5 @@
 """Tests for multi-repo schema fields in forge/api/models/schemas.py."""
 
-import pytest
 
 from forge.api.models.schemas import (
     CreateTaskRequest,
