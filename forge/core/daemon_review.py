@@ -1005,8 +1005,36 @@ class ReviewMixin:
                 )
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
-        # Failed — include output
+        # Failed — check if errors are only in files this task didn't modify.
+        # When supports_file_args=False (e.g., npm run lint), the linter checks
+        # ALL files, so pre-existing errors in untouched files would fail the gate.
         combined_output = (lint_result.stdout or "") + (lint_result.stderr or "")
+        if not strategy.supports_file_args and changed_files:
+            # Filter lint output: only keep lines referencing files this task changed.
+            # Lint tools typically output error lines starting with the file path.
+            changed_basenames = {os.path.basename(f) for f in changed_files}
+            changed_set = set(changed_files)
+            relevant_lines = []
+            for line in combined_output.splitlines():
+                # Check if this error line references any file the task modified
+                # Match both full relative paths and basenames (different linters vary)
+                is_relevant = any(f in line for f in changed_set) or any(b in line for b in changed_basenames)
+                if is_relevant:
+                    relevant_lines.append(line)
+            if not relevant_lines:
+                # All lint errors are in files this task didn't touch — pass
+                logger.info(
+                    "Lint errors found but none in task's changed files — passing. "
+                    "Pre-existing errors in: %s",
+                    combined_output[:200],
+                )
+                return GateResult(
+                    passed=True, gate="gate1_auto_check",
+                    details="Lint clean (pre-existing errors in unchanged files ignored)",
+                )
+            # Errors exist in files this task touched — fail with only relevant output
+            combined_output = "\n".join(relevant_lines)
+
         output = (combined_output or "Unknown error")[:500]
         is_infra = any(pattern in combined_output for pattern in self._INFRA_ERROR_PATTERNS)
         return GateResult(
