@@ -137,7 +137,7 @@ class TestCreatePrsMultiRepo:
         branches = {"backend": "forge/backend", "frontend": "forge/frontend"}
 
         with (
-            patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True) as mock_push,
+            patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True),
             patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock) as mock_create,
             patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock) as mock_comment,
         ):
