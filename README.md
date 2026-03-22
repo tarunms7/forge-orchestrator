@@ -224,11 +224,12 @@ fix_cmd = "npm run lint:fix"
 ## Web dashboard
 
 ```bash
-pip install forge-orchestrator[web]
-forge serve
+forge serve   # Starts backend on :8000 + frontend on :3000
 ```
 
 Live pipeline progress via WebSocket, interactive plan editing, contract viewer, review gate results, and cost tracking. Set `FORGE_JWT_SECRET` for multi-user auth.
+
+> Requires a [git clone install](#contributing), not the one-line installer.
 
 ---
 
