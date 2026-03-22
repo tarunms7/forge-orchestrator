@@ -107,7 +107,9 @@ class ContractBuilderLLM:
 
         try:
             result = await sdk_query(
-                prompt=prompt, options=options, on_message=on_message,
+                prompt=prompt,
+                options=options,
+                on_message=on_message,
             )
         except Exception as e:
             logger.warning("SDK call failed during contract generation: %s", e)
@@ -143,9 +145,7 @@ class ContractBuilderLLM:
                 f"  Description: {hint.description}"
             )
             if hint.endpoint_hints:
-                parts.append(
-                    f"  Endpoints: {', '.join(hint.endpoint_hints)}"
-                )
+                parts.append(f"  Endpoints: {', '.join(hint.endpoint_hints)}")
 
         if project_context:
             parts.append(f"\n## Project Context\n{project_context}")
@@ -185,7 +185,10 @@ class ContractBuilder:
         for attempt in range(self._max_retries):
             logger.info("Contract generation attempt %d/%d", attempt + 1, self._max_retries)
             raw = await self._llm.generate_contracts(
-                graph, hints, project_context, on_message,
+                graph,
+                hints,
+                project_context,
+                on_message,
                 feedback=last_error,
             )
             contract_set, error = self._parse_and_validate(raw, graph)
@@ -196,11 +199,16 @@ class ContractBuilder:
             logger.warning("Attempt %d validation failed: %s", attempt + 1, error)
 
         # If all retries fail, return empty ContractSet (graceful degradation)
-        logger.warning("Contract generation failed after %d retries — proceeding without contracts", self._max_retries)
+        logger.warning(
+            "Contract generation failed after %d retries — proceeding without contracts",
+            self._max_retries,
+        )
         return ContractSet()
 
     def _parse_and_validate(
-        self, raw: str, graph: TaskGraph,
+        self,
+        raw: str,
+        graph: TaskGraph,
     ) -> tuple[ContractSet | None, str | None]:
         """Parse JSON and validate contract references."""
         if not raw or not raw.strip():
@@ -220,15 +228,24 @@ class ContractBuilder:
         task_ids = {t.id for t in graph.tasks}
         for api in contract_set.api_contracts:
             if api.producer_task_id not in task_ids:
-                return None, f"API contract {api.id} references unknown producer task: {api.producer_task_id}"
+                return (
+                    None,
+                    f"API contract {api.id} references unknown producer task: {api.producer_task_id}",
+                )
             for consumer_id in api.consumer_task_ids:
                 if consumer_id not in task_ids:
-                    return None, f"API contract {api.id} references unknown consumer task: {consumer_id}"
+                    return (
+                        None,
+                        f"API contract {api.id} references unknown consumer task: {consumer_id}",
+                    )
 
         for type_contract in contract_set.type_contracts:
             for task_id in type_contract.used_by_tasks:
                 if task_id not in task_ids:
-                    return None, f"Type contract {type_contract.name} references unknown task: {task_id}"
+                    return (
+                        None,
+                        f"Type contract {type_contract.name} references unknown task: {task_id}",
+                    )
 
         return contract_set, None
 

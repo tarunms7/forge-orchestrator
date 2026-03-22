@@ -1,6 +1,13 @@
 """Tests for the FastAPI app factory."""
 
+from importlib.metadata import version as pkg_version
+
 from httpx import ASGITransport, AsyncClient
+
+try:
+    _expected_version = pkg_version("forge-orchestrator")
+except Exception:
+    _expected_version = "0.1.0"  # fallback for editable installs
 
 
 async def test_health_endpoint_returns_ok():
@@ -15,7 +22,7 @@ async def test_health_endpoint_returns_ok():
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["version"] == "0.1.0"
+    assert data["version"] == _expected_version
 
 
 async def test_cors_allows_localhost_3000():
@@ -54,4 +61,4 @@ async def test_app_metadata():
 
     app = create_app(jwt_secret="test-secret")
     assert app.title == "Forge"
-    assert app.version == "0.1.0"
+    assert app.version == _expected_version

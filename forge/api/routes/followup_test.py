@@ -99,14 +99,16 @@ async def _create_complete_pipeline(app, user_id: str) -> str:
 
     db = app.state.db
     async with db._session_factory() as session:
-        session.add(PipelineRow(
-            id=pipeline_id,
-            description="Build auth system",
-            project_dir="/tmp/test-project",
-            status="complete",
-            user_id=user_id,
-            task_graph_json=json.dumps(task_graph),
-        ))
+        session.add(
+            PipelineRow(
+                id=pipeline_id,
+                description="Build auth system",
+                project_dir="/tmp/test-project",
+                status="complete",
+                user_id=user_id,
+                task_graph_json=json.dumps(task_graph),
+            )
+        )
         await session.commit()
 
     return pipeline_id
@@ -199,13 +201,15 @@ class TestFollowUpPipelineChecks:
         pipeline_id = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pipeline_id,
-                description="In progress",
-                project_dir="/tmp/proj",
-                status="executing",
-                user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pipeline_id,
+                    description="In progress",
+                    project_dir="/tmp/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         resp = await client.post(
@@ -230,14 +234,16 @@ class TestFollowUpPipelineChecks:
         pipeline_id = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pipeline_id,
-                description="No tasks",
-                project_dir="/tmp/proj",
-                status="complete",
-                user_id=user_id,
-                task_graph_json=None,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pipeline_id,
+                    description="No tasks",
+                    project_dir="/tmp/proj",
+                    status="complete",
+                    user_id=user_id,
+                    task_graph_json=None,
+                )
+            )
             await session.commit()
 
         resp = await client.post(
@@ -257,9 +263,7 @@ class TestSubmitFollowUp:
 
     @patch("forge.api.routes.followup.classify_questions")
     @patch("forge.api.routes.followup.execute_followups")
-    async def test_submit_followup_returns_202(
-        self, mock_execute, mock_classify, client_with_app
-    ):
+    async def test_submit_followup_returns_202(self, mock_execute, mock_classify, client_with_app):
         """Valid follow-up submission returns 202 with followup_id."""
         mock_classify.return_value = {0: "task-1"}
         mock_execute.return_value = MagicMock()

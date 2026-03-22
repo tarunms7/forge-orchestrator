@@ -1,14 +1,14 @@
 """Tests for FollowUpInput widget."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-
 from forge.tui.widgets.followup_input import (
+    DEFAULT_SUGGESTIONS,
     FollowUpInput,
     format_context_badge,
     format_followup_history,
-    DEFAULT_SUGGESTIONS,
 )
 
 
@@ -189,6 +189,7 @@ def test_suggestion_chip_selected():
     widget.query_one = MagicMock(return_value=mock_static)
 
     from forge.tui.widgets.suggestion_chips import SuggestionChips
+
     event = SuggestionChips.Selected("Add tests")
 
     widget.on_suggestion_chips_selected(event)

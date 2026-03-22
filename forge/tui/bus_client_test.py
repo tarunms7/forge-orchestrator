@@ -1,15 +1,20 @@
 """Tests for ClientSource."""
 
 import json
+
 import pytest
-from forge.tui.bus import EventBus, ClientSource
+
+from forge.tui.bus import ClientSource, EventBus
 
 
 @pytest.mark.asyncio
 async def test_client_source_parses_messages():
     bus = EventBus()
     received = []
-    async def handler(data): received.append(data)
+
+    async def handler(data):
+        received.append(data)
+
     bus.subscribe("task:state_changed", handler)
 
     source = ClientSource("ws://localhost:8000/api/ws/test-pipeline", bus, token="fake")
@@ -24,7 +29,10 @@ async def test_client_source_parses_messages():
 async def test_client_source_ignores_auth_ok():
     bus = EventBus()
     received = []
-    async def handler(data): received.append(data)
+
+    async def handler(data):
+        received.append(data)
+
     bus.subscribe("auth_ok", handler)
 
     source = ClientSource("ws://localhost:8000/api/ws/test", bus, token="fake")
@@ -45,7 +53,10 @@ async def test_client_source_ignores_invalid_json():
 async def test_client_source_ignores_missing_type():
     bus = EventBus()
     received = []
-    async def handler(data): received.append(data)
+
+    async def handler(data):
+        received.append(data)
+
     bus.subscribe("task:state_changed", handler)
 
     source = ClientSource("ws://localhost:8000/api/ws/test", bus, token="fake")

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger("forge.conventions")
 
@@ -91,7 +91,7 @@ def update_conventions_file(
     if not existing_content:
         parts.append("# Project Conventions\n")
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     separator = f"---\n_Auto-discovered by Forge planner on {timestamp}:_"
     parts.append(separator)
     parts.extend(new_sections)
@@ -113,7 +113,7 @@ def update_conventions_file(
 def _read_file(filepath: str) -> str:
     """Read a UTF-8 text file, returning empty string on failure."""
     try:
-        with open(filepath, "r", encoding="utf-8") as fh:
+        with open(filepath, encoding="utf-8") as fh:
             return fh.read()
     except OSError:
         return ""

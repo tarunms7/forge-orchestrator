@@ -62,9 +62,7 @@ class TaskDefinition(BaseModel):
     @classmethod
     def repo_id_valid(cls, v: str) -> str:
         if not v or not _REPO_ID_RE.match(v):
-            raise ValueError(
-                f"repo must be non-empty and match ^[a-z0-9][a-z0-9-]*$, got {v!r}"
-            )
+            raise ValueError(f"repo must be non-empty and match ^[a-z0-9][a-z0-9-]*$, got {v!r}")
         return v
 
     @field_validator("files")
@@ -101,7 +99,7 @@ class TaskRecord(BaseModel):
     repo: str = "default"
 
     @classmethod
-    def from_definition(cls, defn: TaskDefinition) -> "TaskRecord":
+    def from_definition(cls, defn: TaskDefinition) -> TaskRecord:
         return cls(
             id=defn.id,
             title=defn.title,
@@ -123,12 +121,16 @@ class AgentRecord(BaseModel):
 
 def row_to_record(row) -> TaskRecord:
     return TaskRecord(
-        id=row.id, title=row.title, description=row.description,
-        files=row.files, depends_on=row.depends_on, complexity=row.complexity,
+        id=row.id,
+        title=row.title,
+        description=row.description,
+        files=row.files,
+        depends_on=row.depends_on,
+        complexity=row.complexity,
         state=TaskState(row.state),
         assigned_agent=row.assigned_agent,
         retry_count=row.retry_count,
-        repo=getattr(row, 'repo_id', None) or 'default',
+        repo=getattr(row, "repo_id", None) or "default",
     )
 
 

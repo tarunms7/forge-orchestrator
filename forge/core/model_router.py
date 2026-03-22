@@ -61,12 +61,16 @@ def select_model(strategy: str, stage: str, complexity: str, overrides: dict | N
 
     stage_map = table.get(stage)
     if stage_map is None:
-        logger.warning("Unknown stage '%s' for strategy '%s', falling back to 'agent'", stage, strategy)
+        logger.warning(
+            "Unknown stage '%s' for strategy '%s', falling back to 'agent'", stage, strategy
+        )
         stage_map = table["agent"]
 
     model = stage_map.get(complexity)
     if model is None:
-        logger.warning("Unknown complexity '%s' for stage '%s', falling back to 'sonnet'", complexity, stage)
+        logger.warning(
+            "Unknown complexity '%s' for stage '%s', falling back to 'sonnet'", complexity, stage
+        )
         model = "sonnet"
 
     return model

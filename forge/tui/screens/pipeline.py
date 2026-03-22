@@ -6,55 +6,64 @@ import asyncio
 import logging
 
 from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Input
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
-from forge.tui.widgets.task_list import TaskList
 from forge.tui.widgets.agent_output import AgentOutput
-from forge.tui.widgets.progress_bar import PipelineProgress
-from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.chat_thread import ChatThread
-from forge.tui.widgets.suggestion_chips import SuggestionChips
-from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.copy_overlay import CopyOverlay
+from forge.tui.widgets.dag import DagOverlay
+from forge.tui.widgets.diff_viewer import DiffViewer
+from forge.tui.widgets.progress_bar import PipelineProgress
 from forge.tui.widgets.search_overlay import SearchOverlay
 from forge.tui.widgets.shortcut_bar import ShortcutBar
+from forge.tui.widgets.suggestion_chips import SuggestionChips
+from forge.tui.widgets.task_list import TaskList
 
 logger = logging.getLogger("forge.tui.screens.pipeline")
 
 # Map phase → display label and colour
 _PHASE_BANNER: dict[str, tuple[str, str]] = {
-    "idle":           ("Idle",              "#8b949e"),
-    "planning":       ("◌ Planning",        "#58a6ff"),
-    "planned":        ("◉ Plan Approval",   "#a371f7"),
-    "contracts":      ("⚙ Contracts",       "#d2a8ff"),
-    "executing":      ("⚡ Execution",       "#f0883e"),
-    "in_progress":    ("⚡ Execution",       "#f0883e"),
-    "review":         ("🔍 Review",          "#79c0ff"),
-    "in_review":      ("🔍 Review",          "#79c0ff"),
-    "final_approval": ("◎ Final Approval",  "#f0883e"),
-    "pr_creating":    ("⚙ Creating PR",     "#d2a8ff"),
-    "pr_created":     ("✔ PR Created",      "#3fb950"),
-    "complete":       ("✔ Complete",        "#3fb950"),
-    "error":          ("✖ Error",           "#f85149"),
-    "cancelled":      ("✘ Cancelled",       "#8b949e"),
-    "paused":         ("⏸ Paused",          "#d29922"),
+    "idle": ("Idle", "#8b949e"),
+    "planning": ("◌ Planning", "#58a6ff"),
+    "planned": ("◉ Plan Approval", "#a371f7"),
+    "contracts": ("⚙ Contracts", "#d2a8ff"),
+    "executing": ("⚡ Execution", "#f0883e"),
+    "in_progress": ("⚡ Execution", "#f0883e"),
+    "review": ("🔍 Review", "#79c0ff"),
+    "in_review": ("🔍 Review", "#79c0ff"),
+    "final_approval": ("◎ Final Approval", "#f0883e"),
+    "pr_creating": ("⚙ Creating PR", "#d2a8ff"),
+    "pr_created": ("✔ PR Created", "#3fb950"),
+    "complete": ("✔ Complete", "#3fb950"),
+    "error": ("✖ Error", "#f85149"),
+    "cancelled": ("✘ Cancelled", "#8b949e"),
+    "paused": ("⏸ Paused", "#d29922"),
     "partial_success": ("⚠ Partial Success", "#d29922"),
-    "retrying":        ("⟳ Retrying Failed",  "#f0883e"),
-    "interrupted":     ("⏸ Interrupted",      "#d29922"),
+    "retrying": ("⟳ Retrying Failed", "#f0883e"),
+    "interrupted": ("⏸ Interrupted", "#d29922"),
 }
 
 _VIEW_NAMES = ("output", "chat", "diff")
 
-_SIDEBAR_HIDDEN_PHASES = frozenset({
-    "idle", "planning", "planned", "contracts",
-    "final_approval", "complete", "pr_creating", "pr_created", "cancelled",
-})
+_SIDEBAR_HIDDEN_PHASES = frozenset(
+    {
+        "idle",
+        "planning",
+        "planned",
+        "contracts",
+        "final_approval",
+        "complete",
+        "pr_creating",
+        "pr_created",
+        "cancelled",
+    }
+)
 
 
 class PhaseBanner(Widget):
@@ -294,11 +303,13 @@ class PipelineScreen(Screen):
                 yield ChatThread()
                 yield DiffViewer()
         yield SearchOverlay()
-        yield ShortcutBar([
-            ("d", "View Diff"),
-            ("↑↓", "Select Task"),
-            ("q", "Quit (tasks saved)"),
-        ])
+        yield ShortcutBar(
+            [
+                ("d", "View Diff"),
+                ("↑↓", "Select Task"),
+                ("q", "Quit (tasks saved)"),
+            ]
+        )
         yield PipelineProgress()
 
     def on_mount(self) -> None:
@@ -312,7 +323,9 @@ class PipelineScreen(Screen):
             created = getattr(self._state, "_replay_date", None) or ""
             date_str = str(created)[:10] if created else "unknown date"
             banner = self.query_one(PhaseBanner)
-            banner.set_read_only_banner(f"📖 Viewing pipeline from {date_str} — press Esc to return")
+            banner.set_read_only_banner(
+                f"📖 Viewing pipeline from {date_str} — press Esc to return"
+            )
 
     def on_unmount(self) -> None:
         self._state.remove_change_callback(self._on_state_change)
@@ -341,13 +354,22 @@ class PipelineScreen(Screen):
                     try:
                         task = self._state.tasks.get(tid, {})
                         self.query_one(DiffViewer).update_diff(
-                            tid, task.get("title", ""), self._state.task_diffs[tid],
+                            tid,
+                            task.get("title", ""),
+                            self._state.task_diffs[tid],
                         )
                     except Exception:
                         pass
             return
-        if field in ("tasks", "cost", "phase", "elapsed", "planner_output",
-                     "contracts_output", "planning"):
+        if field in (
+            "tasks",
+            "cost",
+            "phase",
+            "elapsed",
+            "planner_output",
+            "contracts_output",
+            "planning",
+        ):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
             if field == "tasks":
                 for cache_tid in list(self._diff_cache):
@@ -370,11 +392,15 @@ class PipelineScreen(Screen):
             error = self._state.error
             if error:
                 from forge.tui.app import _escape_markup
-                self.app.notify(f"Pipeline error: {_escape_markup(error)}", severity="error", timeout=10)
+
+                self.app.notify(
+                    f"Pipeline error: {_escape_markup(error)}", severity="error", timeout=10
+                )
         if field == "auto_decided":
             info = self._state.last_auto_decided
             if info:
                 from forge.tui.app import _escape_markup
+
                 self.app.notify(
                     f"Question auto-answered for task {_escape_markup(info['task_id'])} "
                     f"(reason: {info['reason']}). Agent resumed with best judgment.",
@@ -503,10 +529,7 @@ class PipelineScreen(Screen):
             return
         state = self._state
         # Check if any integration check is currently running
-        checking = any(
-            c.get("status") == "running"
-            for c in state.integration_checks.values()
-        )
+        checking = any(c.get("status") == "running" for c in state.integration_checks.values())
         if not checking and state.integration_baseline:
             checking = state.integration_baseline.get("status") == "running"
         if not checking and state.integration_final_gate:
@@ -524,7 +547,9 @@ class PipelineScreen(Screen):
         self._refresh_integration_badge()
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
-        task_list.update_tasks(ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo)
+        task_list.update_tasks(
+            ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo
+        )
 
         tid = state.selected_task_id
 
@@ -557,13 +582,20 @@ class PipelineScreen(Screen):
             agent_output.clear_error_detail()
             if state.contracts_output:
                 agent_output.update_output(
-                    "contracts", "⚙ Contracts", "contracts", state.contracts_output,
+                    "contracts",
+                    "⚙ Contracts",
+                    "contracts",
+                    state.contracts_output,
                 )
             else:
                 agent_output.update_output(
-                    "contracts", "Generating Contracts", "contracts",
-                    ["⚙ Building API contracts...",
-                     "  This enables tasks to run in parallel instead of sequentially."],
+                    "contracts",
+                    "Generating Contracts",
+                    "contracts",
+                    [
+                        "⚙ Building API contracts...",
+                        "  This enables tasks to run in parallel instead of sequentially.",
+                    ],
                 )
         else:
             agent_output.clear_error_detail()
@@ -578,14 +610,19 @@ class PipelineScreen(Screen):
                     diff_viewer.update_diff(tid, task.get("title", ""), self._diff_cache[tid])
                 else:
                     diff_viewer.update_diff(tid, task.get("title", ""), "Loading diff...")
-                    safe_create_task(self._refresh_diff_async(tid), logger=logger, name="refresh-diff")
+                    safe_create_task(
+                        self._refresh_diff_async(tid), logger=logger, name="refresh-diff"
+                    )
             else:
                 diff_text = self._diff_cache.get(tid, "")
                 diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
 
         progress.update_progress(
-            state.done_count, state.total_count,
-            state.total_cost_usd, state.elapsed_seconds, state.phase,
+            state.done_count,
+            state.total_count,
+            state.total_cost_usd,
+            state.elapsed_seconds,
+            state.phase,
         )
         dag.update_tasks(ordered_tasks)
         phase_banner.update_phase(state.phase)
@@ -609,7 +646,10 @@ class PipelineScreen(Screen):
             return branch
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -693,7 +733,7 @@ class PipelineScreen(Screen):
 
         for name, cls in widget_map.items():
             w = self.query_one(cls)
-            w.display = (name == view)
+            w.display = name == view
 
     def _auto_switch_planning_chat(self, question: dict) -> None:
         """Switch to chat view for a planning question from the Architect."""
@@ -755,7 +795,9 @@ class PipelineScreen(Screen):
         # We post as a regular message so the App can catch it.
         self.post_message(event)
 
-    def on_chat_thread_interjection_submitted(self, event: ChatThread.InterjectionSubmitted) -> None:
+    def on_chat_thread_interjection_submitted(
+        self, event: ChatThread.InterjectionSubmitted
+    ) -> None:
         """Forward interjection to the TUI app for DB persistence."""
         self.post_message(event)
 
@@ -767,7 +809,8 @@ class PipelineScreen(Screen):
         else:
             self.app.notify(
                 "Clipboard unavailable — install xclip or xsel",
-                severity="warning", timeout=5,
+                severity="warning",
+                timeout=5,
             )
 
     def on_copy_overlay_cancelled(self, event: CopyOverlay.Cancelled) -> None:
@@ -848,6 +891,7 @@ class PipelineScreen(Screen):
         # Fallback: read rendered text from the Static widget
         try:
             from textual.widgets import Static
+
             content = agent_output.query_one("#agent-content", Static)
             text = content.renderable
             if isinstance(text, str) and text.strip():
@@ -859,6 +903,7 @@ class PipelineScreen(Screen):
     def action_copy_all(self) -> None:
         """Instant copy of all visible output to clipboard."""
         from forge.tui.widgets.copy_overlay import copy_to_clipboard
+
         lines = self._get_copyable_lines()
         if not lines:
             self.app.notify("No output to copy", timeout=3)
@@ -876,7 +921,8 @@ class PipelineScreen(Screen):
         else:
             self.app.notify(
                 "Clipboard unavailable — install xclip or xsel",
-                severity="warning", timeout=5,
+                severity="warning",
+                timeout=5,
             )
 
     def action_open_review(self) -> None:
@@ -889,6 +935,7 @@ class PipelineScreen(Screen):
             return
         try:
             from forge.tui.screens.review import ReviewScreen
+
             self.app.push_screen(ReviewScreen(self._state))
         except Exception:
             logger.debug("Failed to push ReviewScreen", exc_info=True)

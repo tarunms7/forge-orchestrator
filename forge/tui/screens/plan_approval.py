@@ -6,14 +6,13 @@ import copy
 import uuid
 
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
-from textual.containers import VerticalScroll
-from textual.binding import Binding
-from textual.message import Message
 
 from forge.tui.widgets.shortcut_bar import ShortcutBar
-
 
 _COMPLEXITY_COLORS = {
     "low": "#3fb950",
@@ -245,11 +244,13 @@ class PlanApprovalScreen(Screen):
             "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [Esc] cancel",
             id="plan-footer",
         )
-        yield ShortcutBar([
-            ("Enter", "Approve Plan"),
-            ("↑↓", "Scroll"),
-            ("Esc", "Cancel"),
-        ])
+        yield ShortcutBar(
+            [
+                ("Enter", "Approve Plan"),
+                ("↑↓", "Scroll"),
+                ("Esc", "Cancel"),
+            ]
+        )
 
     def _refresh_task_list(self) -> None:
         """Re-render all task widgets and the header summary."""
@@ -261,9 +262,7 @@ class PlanApprovalScreen(Screen):
             widget.update(_format_task_line(task, i + 1, selected, modified, removed))
 
         summary = format_plan_summary(self._active_tasks, self._estimated_cost)
-        self.query_one("#plan-header", Static).update(
-            f"[bold #58a6ff]PLAN REVIEW[/]  {summary}"
-        )
+        self.query_one("#plan-header", Static).update(f"[bold #58a6ff]PLAN REVIEW[/]  {summary}")
 
     def _clamp_cursor(self) -> None:
         """Ensure cursor is within bounds."""
@@ -300,7 +299,9 @@ class PlanApprovalScreen(Screen):
         task = self._tasks[self._cursor]
         self._editing = "description"
         label = self.query_one("#edit-label", Static)
-        label.update(f"[#d29922]Editing task {self._cursor + 1} — title | description (Ctrl+S to save, Esc to cancel)[/]")
+        label.update(
+            f"[#d29922]Editing task {self._cursor + 1} — title | description (Ctrl+S to save, Esc to cancel)[/]"
+        )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
         area.text = f"{task.get('title', '')}\n{task.get('description', '')}"
@@ -314,7 +315,9 @@ class PlanApprovalScreen(Screen):
         task = self._tasks[self._cursor]
         self._editing = "files"
         label = self.query_one("#edit-label", Static)
-        label.update(f"[#d29922]Editing files for task {self._cursor + 1} — comma-separated (Ctrl+S to save, Esc to cancel)[/]")
+        label.update(
+            f"[#d29922]Editing files for task {self._cursor + 1} — comma-separated (Ctrl+S to save, Esc to cancel)[/]"
+        )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
         area.text = ", ".join(task.get("files", []))
@@ -328,7 +331,9 @@ class PlanApprovalScreen(Screen):
         task = self._tasks[self._cursor]
         self._editing = "note"
         label = self.query_one("#edit-label", Static)
-        label.update(f"[#d29922]Agent note for task {self._cursor + 1} (Ctrl+S to save, Esc to cancel)[/]")
+        label.update(
+            f"[#d29922]Agent note for task {self._cursor + 1} (Ctrl+S to save, Esc to cancel)[/]"
+        )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
         area.text = task.get("agent_notes", "")

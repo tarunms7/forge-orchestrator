@@ -119,14 +119,19 @@ Output ONLY valid JSON. No markdown fences, no explanation, no commentary. Just 
 class ClaudePlannerLLM(PlannerLLM):
     """Concrete planner that calls Claude via claude-code-sdk."""
 
-    def __init__(self, model: str = "sonnet", cwd: str | None = None, system_prompt_modifier: str = "") -> None:
+    def __init__(
+        self, model: str = "sonnet", cwd: str | None = None, system_prompt_modifier: str = ""
+    ) -> None:
         self._model = model
         self._cwd = cwd
         self._system_prompt_modifier = system_prompt_modifier
         self._last_sdk_result: SdkResult | None = None
 
     async def generate_plan(
-        self, user_input: str, context: str, feedback: str | None = None,
+        self,
+        user_input: str,
+        context: str,
+        feedback: str | None = None,
         on_message: Callable | None = None,
     ) -> str:
         prompt = self._build_prompt(user_input, context, feedback)
@@ -162,15 +167,25 @@ class ClaudePlannerLLM(PlannerLLM):
 
         self._last_sdk_result = result
         logger.info("SDK result type: %s", type(result).__name__ if result else "None")
-        logger.info("SDK result.result: %s", (result.result[:300] if result.result else "<None>") if result else "<no result obj>")
+        logger.info(
+            "SDK result.result: %s",
+            (result.result[:300] if result.result else "<None>") if result else "<no result obj>",
+        )
 
         result_text = result.result if result and result.result else ""
         extracted = _extract_json(result_text)
-        logger.info("Extracted JSON (%d chars): %s", len(extracted), extracted[:300] if extracted else "<empty>")
+        logger.info(
+            "Extracted JSON (%d chars): %s",
+            len(extracted),
+            extracted[:300] if extracted else "<empty>",
+        )
         return extracted
 
     def _build_prompt(
-        self, user_input: str, context: str, feedback: str | None,
+        self,
+        user_input: str,
+        context: str,
+        feedback: str | None,
     ) -> str:
         parts = [f"User request: {user_input}"]
         if context:
@@ -191,7 +206,9 @@ class ClaudePlannerLLM(PlannerLLM):
 
         if feedback:
             parts.append(f"Previous attempt feedback:\n{feedback}")
-        parts.append("Respond with ONLY the TaskGraph JSON. No markdown, no explanation. NEVER re-read a file you have already seen — if you catch yourself looping, output JSON immediately with what you have.")
+        parts.append(
+            "Respond with ONLY the TaskGraph JSON. No markdown, no explanation. NEVER re-read a file you have already seen — if you catch yourself looping, output JSON immediately with what you have."
+        )
         return "\n\n".join(parts)
 
 

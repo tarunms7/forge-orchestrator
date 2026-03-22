@@ -46,6 +46,7 @@ web = [
     "python-jose[cryptography]>=3.3",
     "bcrypt>=4.0",
     "python-multipart>=0.0.9",
+    "email-validator>=2.0",
 ]
 dev = [
     "pytest>=8.0",
@@ -75,3 +76,20 @@ timeout = 60
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",    # line too long — prompt strings and multiline log messages exceed 100 chars by design
+    "SIM105",  # use contextlib.suppress — would require rewriting 44 try/except blocks
+    "SIM117",  # multiple-with-statements — combining with statements reduces readability in our patterns
+    "SIM115",  # open-file-with-context-handler — false positives on our async file patterns
+    "SIM108",  # if-else-block-instead-of-if-exp — ternaries reduce readability for multi-line conditions
+    "SIM102",  # collapsible-if — nested ifs are often more readable than combined conditions
+    "SIM103",  # needless-bool — return-condition-directly is a style preference
+    "B904",    # raise-without-from-inside-except — bulk fix deferred to separate PR
+    "UP042",   # replace-str-enum — StrEnum requires Python 3.11+ migration of Enum patterns
+]
+
+[tool.ruff.lint.per-file-ignores]
+"*_test.py" = ["B017", "B008"]  # assert-raises-exception and function-call-in-default-argument ok in tests

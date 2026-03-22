@@ -38,8 +38,12 @@ class IntegrationCheckResult:
 
 
 _SKIPPED = IntegrationCheckResult(
-    status="skipped", exit_code=None, stdout="", stderr="",
-    elapsed_seconds=0.0, is_regression=False,
+    status="skipped",
+    exit_code=None,
+    stdout="",
+    stderr="",
+    elapsed_seconds=0.0,
+    is_regression=False,
 )
 
 
@@ -91,13 +95,13 @@ async def run_health_check(
         return IntegrationCheckResult(
             status="passed" if exit_code == 0 else "failed",
             exit_code=exit_code,
-            stdout=stdout[-10_000:],   # cap output to avoid memory bloat
+            stdout=stdout[-10_000:],  # cap output to avoid memory bloat
             stderr=stderr[-10_000:],
             elapsed_seconds=elapsed,
             is_regression=False,  # caller sets this based on baseline
         )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         # Kill the process if it's still running
         try:
@@ -147,14 +151,21 @@ async def _temp_health_worktree(project_dir: str, ref: str):
 
     # Create detached worktree
     create_proc = await asyncio.create_subprocess_exec(
-        "git", "worktree", "add", "--detach", wt_path, ref,
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        wt_path,
+        ref,
         cwd=project_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     _, create_stderr = await create_proc.communicate()
     if create_proc.returncode != 0:
-        err_msg = create_stderr.decode("utf-8", errors="replace") if create_stderr else "unknown error"
+        err_msg = (
+            create_stderr.decode("utf-8", errors="replace") if create_stderr else "unknown error"
+        )
         raise RuntimeError(f"Failed to create health check worktree: {err_msg}")
 
     try:
@@ -163,7 +174,11 @@ async def _temp_health_worktree(project_dir: str, ref: str):
         # Always clean up
         try:
             remove_proc = await asyncio.create_subprocess_exec(
-                "git", "worktree", "remove", "--force", wt_path,
+                "git",
+                "worktree",
+                "remove",
+                "--force",
+                wt_path,
                 cwd=project_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -235,8 +250,12 @@ async def run_post_merge_check(
     except RuntimeError as exc:
         logger.warning("Post-merge health check worktree error for %s: %s", task_id, exc)
         return IntegrationCheckResult(
-            status="infra_error", exit_code=None, stdout="",
-            stderr=str(exc), elapsed_seconds=0.0, is_regression=False,
+            status="infra_error",
+            exit_code=None,
+            stdout="",
+            stderr=str(exc),
+            elapsed_seconds=0.0,
+            is_regression=False,
         )
 
     # Determine regression: only if baseline was green and this is red
@@ -266,8 +285,12 @@ async def run_final_gate(
     except RuntimeError as exc:
         logger.warning("Final gate worktree error: %s", exc)
         return IntegrationCheckResult(
-            status="infra_error", exit_code=None, stdout="",
-            stderr=str(exc), elapsed_seconds=0.0, is_regression=False,
+            status="infra_error",
+            exit_code=None,
+            stdout="",
+            stderr=str(exc),
+            elapsed_seconds=0.0,
+            is_regression=False,
         )
 
     return result

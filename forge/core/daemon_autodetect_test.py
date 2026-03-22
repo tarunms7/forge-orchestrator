@@ -169,7 +169,10 @@ class TestAutoDetectMultipleFiles:
 # Tests: _auto_detect_commands called from async _preflight_checks
 # ---------------------------------------------------------------------------
 
-def _mock_completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+
+def _mock_completed(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
@@ -192,14 +195,18 @@ class TestAutoDetectViaPreflightAsync:
         db.update_pipeline_status = AsyncMock()
         db.log_event = AsyncMock()
 
-        async_sub = AsyncMock(side_effect=[
-            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
-            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
-            _mock_completed(0, "origin\n"),  # git remote
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                _mock_completed(0, "true\n"),  # git rev-parse --is-inside-work-tree
+                _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+                _mock_completed(0, "origin\n"),  # git remote
+            ]
+        )
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value=None):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value=None),
+        ):
             result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
 
         assert result is True

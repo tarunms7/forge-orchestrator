@@ -46,12 +46,13 @@ async def async_subprocess(
     )
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
+            proc.communicate(),
+            timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
-        raise asyncio.TimeoutError(
+        raise TimeoutError(
             f"Command {cmd} timed out after {timeout}s",
         )
 
@@ -79,7 +80,7 @@ def _parse_forge_question(text: str | None) -> dict | None:
     if marker_idx == -1:
         return None
 
-    after_marker = text[marker_idx + len(_FORGE_QUESTION_MARKER):].strip()
+    after_marker = text[marker_idx + len(_FORGE_QUESTION_MARKER) :].strip()
 
     # Check nothing substantial follows the JSON (agent continued working)
     # Strip markdown fences if present
@@ -148,7 +149,7 @@ def _parse_forge_learning(text: str | None) -> dict | None:
     if marker_idx == -1:
         return None
 
-    after_marker = text[marker_idx + len(_FORGE_LEARNING_MARKER):].strip()
+    after_marker = text[marker_idx + len(_FORGE_LEARNING_MARKER) :].strip()
 
     # Extract JSON: find matching braces
     json_text = after_marker
@@ -199,7 +200,7 @@ def _extract_text(message) -> str | None:
         return None
     if isinstance(message, AssistantMessage):
         parts = []
-        for block in (message.content or []):
+        for block in message.content or []:
             if hasattr(block, "text"):
                 text = block.text.strip()
                 # Skip empty, JSON blobs, and tool metadata
@@ -232,7 +233,7 @@ def _extract_activity(message) -> str | None:
 
     if isinstance(message, AssistantMessage):
         parts: list[str] = []
-        for block in (message.content or []):
+        for block in message.content or []:
             # Text blocks — same filtering as _extract_text
             if hasattr(block, "text"):
                 text = block.text.strip()
@@ -296,7 +297,9 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
 
 
 async def update_repos_json_branches(
-    db, pipeline_id: str, pipeline_branches: dict[str, str],
+    db,
+    pipeline_id: str,
+    pipeline_branches: dict[str, str],
 ) -> None:
     """Update repos_json in the DB with per-repo branch names.
 
@@ -345,21 +348,22 @@ async def _get_current_branch(repo_path: str) -> str:
     return sym_branch if sym_branch else "main"
 
 
-def _build_agent_prompt(title: str, description: str, files: list[str], agent_prompt_modifier: str = "") -> str:
+def _build_agent_prompt(
+    title: str, description: str, files: list[str], agent_prompt_modifier: str = ""
+) -> str:
     files_str = ", ".join(files) if files else "(no file restrictions)"
-    prompt = (
-        f"## Task: {title}\n\n"
-        f"{description}\n\n"
-        f"**Files in scope:** {files_str}\n"
-    )
+    prompt = f"## Task: {title}\n\n{description}\n\n**Files in scope:** {files_str}\n"
     if agent_prompt_modifier:
         prompt += "\n" + agent_prompt_modifier
     return prompt
 
 
 def _build_retry_prompt(
-    title: str, description: str, files: list[str],
-    review_feedback: str, retry_number: int,
+    title: str,
+    description: str,
+    files: list[str],
+    review_feedback: str,
+    retry_number: int,
     agent_prompt_modifier: str = "",
 ) -> str:
     """Build a prompt for a retry that includes the review failure feedback.
@@ -444,7 +448,8 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
         logger.warning(
             "_get_diff_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",
-            base_ref, worktree_path,
+            base_ref,
+            worktree_path,
         )
 
     # ── Fallback: commit-count heuristic ──────────────────────────────
@@ -594,7 +599,9 @@ async def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None
     return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
 
 
-async def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None = None) -> list[str]:
+async def _get_changed_files_vs_main(
+    worktree_path: str, *, base_ref: str | None = None
+) -> list[str]:
     """Get list of files changed by the agent (not the entire feature branch).
 
     Args:
@@ -618,7 +625,8 @@ async def _get_changed_files_vs_main(worktree_path: str, *, base_ref: str | None
         logger.warning(
             "_get_changed_files_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",
-            base_ref, worktree_path,
+            base_ref,
+            worktree_path,
         )
 
     # ── Fallback: commit-count heuristic ──────────────────────────────
@@ -667,7 +675,7 @@ def _load_conventions_md(project_dir: str) -> str | None:
     """
     filepath = os.path.join(project_dir, ".forge", "conventions.md")
     try:
-        with open(filepath, "r", encoding="utf-8") as fh:
+        with open(filepath, encoding="utf-8") as fh:
             content = fh.read().strip()
             return content if content else None
     except (OSError, FileNotFoundError):
@@ -700,9 +708,7 @@ async def _extract_implementation_summary(
             )
             if result.returncode == 0 and result.stdout.strip():
                 commit_messages = [
-                    line.strip()
-                    for line in result.stdout.strip().splitlines()
-                    if line.strip()
+                    line.strip() for line in result.stdout.strip().splitlines() if line.strip()
                 ]
 
     # Fallback: recent local-only commits
@@ -713,9 +719,7 @@ async def _extract_implementation_summary(
         )
         if result.returncode == 0 and result.stdout.strip():
             commit_messages = [
-                line.strip()
-                for line in result.stdout.strip().splitlines()
-                if line.strip()
+                line.strip() for line in result.stdout.strip().splitlines() if line.strip()
             ]
 
     parts: list[str] = []
@@ -846,7 +850,11 @@ async def _find_related_test_files(
 
 
 def compute_worktree_path(
-    workspace_dir: str, repo_id: str, task_id: str, *, repo_count: int = 1,
+    workspace_dir: str,
+    repo_id: str,
+    task_id: str,
+    *,
+    repo_count: int = 1,
 ) -> str:
     """Compute worktree path for a task.
 
@@ -883,14 +891,23 @@ async def _run_git(
         if check:
             logger.error(
                 "git %s failed (exit %d) in %s: %s",
-                desc, result.returncode, cwd, result.stderr.strip(),
+                desc,
+                result.returncode,
+                cwd,
+                result.stderr.strip(),
             )
             raise subprocess.CalledProcessError(
-                result.returncode, cmd, result.stdout, result.stderr,
+                result.returncode,
+                cmd,
+                result.stdout,
+                result.stderr,
             )
         else:
             logger.warning(
                 "git %s returned %d in %s: %s",
-                desc, result.returncode, cwd, result.stderr.strip(),
+                desc,
+                result.returncode,
+                cwd,
+                result.stderr.strip(),
             )
     return result

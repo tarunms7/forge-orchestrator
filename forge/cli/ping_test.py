@@ -13,10 +13,10 @@ import click
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Inline definition of the ping command under test
 # ---------------------------------------------------------------------------
+
 
 @click.command("ping")
 def ping() -> None:
@@ -31,9 +31,7 @@ def ping() -> None:
         if result.returncode == 0:
             click.echo(result.stdout.strip())
         else:
-            click.echo(
-                f"Error: claude --version returned non-zero exit code {result.returncode}"
-            )
+            click.echo(f"Error: claude --version returned non-zero exit code {result.returncode}")
             raise SystemExit(1)
     except FileNotFoundError:
         click.echo("Error: claude CLI not found on PATH")

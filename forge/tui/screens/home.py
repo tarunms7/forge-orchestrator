@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Static, TextArea, Input
-from textual.containers import Vertical, Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.screen import Screen
+from textual.widgets import Input, Static, TextArea
 
 from forge.tui.widgets.logo import ForgeLogo
 from forge.tui.widgets.pipeline_list import PipelineList
@@ -28,6 +28,7 @@ class PromptTextArea(TextArea):
 
     class Submitted(Message):
         """Fired when user presses Ctrl+S."""
+
         def __init__(self, text: str) -> None:
             self.text = text
             super().__init__()
@@ -54,6 +55,7 @@ _PIPELINE_STATUS_ICONS = {
 
 def format_recent_pipelines(pipelines: list[dict]) -> str:
     import os
+
     if not pipelines:
         return "[#8b949e]No recent pipelines[/]"
     lines = []
@@ -69,7 +71,9 @@ def format_recent_pipelines(pipelines: list[dict]) -> str:
             folder = os.path.basename(project_dir.rstrip("/"))[:20]
             if folder:
                 project_tag = f"[#8b949e]{folder}[/]  "
-        lines.append(f"  [{color}]{icon}[/] {desc}  {project_tag}[#8b949e]{date} \u00b7 ${cost:.2f}[/]")
+        lines.append(
+            f"  [{color}]{icon}[/] {desc}  {project_tag}[#8b949e]{date} \u00b7 ${cost:.2f}[/]"
+        )
     return "\n".join(lines)
 
 
@@ -160,7 +164,9 @@ class HomeScreen(Screen):
             self.branch_name = branch_name
             super().__init__()
 
-    def __init__(self, recent_pipelines: list[dict] | None = None, repos: list | None = None) -> None:
+    def __init__(
+        self, recent_pipelines: list[dict] | None = None, repos: list | None = None
+    ) -> None:
         super().__init__()
         self._recent_pipelines = recent_pipelines or []
         self._repos = repos or []
@@ -187,8 +193,7 @@ class HomeScreen(Screen):
             if self._is_workspace:
                 # Workspace mode: show repos as read-only info
                 repo_lines = "  ".join(
-                    f"[#58a6ff]{r.id}[/] [#8b949e]({r.base_branch})[/]"
-                    for r in self._repos
+                    f"[#58a6ff]{r.id}[/] [#8b949e]({r.base_branch})[/]" for r in self._repos
                 )
                 yield Static(
                     f"[#8b949e]Workspace repos:[/]  {repo_lines}\n"
@@ -205,12 +210,14 @@ class HomeScreen(Screen):
                         yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
             yield Static("Recent pipelines", id="recent-label")
             yield PipelineList()
-        yield ShortcutBar([
-            ("Ctrl+S", "Submit Task"),
-            ("j/k", "History"),
-            ("Enter", "Resume Selected"),
-            ("q", "Quit"),
-        ])
+        yield ShortcutBar(
+            [
+                ("Ctrl+S", "Submit Task"),
+                ("j/k", "History"),
+                ("Enter", "Resume Selected"),
+                ("q", "Quit"),
+            ]
+        )
 
     def on_mount(self) -> None:
         pipeline_list = self.query_one(PipelineList)
@@ -227,13 +234,16 @@ class HomeScreen(Screen):
             else:
                 base_branch = self.query_one("#base-branch-input", Input).value.strip() or "main"
                 branch_name = self.query_one("#branch-name-input", Input).value.strip()
-            self.post_message(self.TaskSubmitted(event.text, base_branch=base_branch, branch_name=branch_name))
+            self.post_message(
+                self.TaskSubmitted(event.text, base_branch=base_branch, branch_name=branch_name)
+            )
 
     def on_click(self, event) -> None:
         """Click outside focused widget to unfocus it."""
         # Let Textual handle focus naturally — clicking a focusable widget
         # focuses it. If user clicks a non-focusable area, blur everything.
         from textual.widgets import Input
+
         target = getattr(event, "widget", None) if hasattr(event, "widget") else None
         if target is not None and not isinstance(target, (PromptTextArea, Input, PipelineList)):
             self.set_focus(None)

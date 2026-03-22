@@ -3,7 +3,6 @@
 import json
 
 
-
 class FakeWebSocket:
     """Fake WebSocket for testing — mimics FastAPI WebSocket interface."""
 

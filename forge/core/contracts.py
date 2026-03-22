@@ -1,12 +1,15 @@
 """Contract models for cross-task interface alignment."""
 
 from __future__ import annotations
+
 from enum import Enum
+
 from pydantic import BaseModel, Field
 
 
 class ContractType(str, Enum):
     """Types of cross-task contracts."""
+
     API_ENDPOINT = "api_endpoint"
     SHARED_TYPE = "shared_type"
     EVENT = "event"
@@ -15,31 +18,34 @@ class ContractType(str, Enum):
 
 class FieldSpec(BaseModel):
     """A single field in a type contract."""
+
     name: str
-    type: str              # e.g., "string", "number", "boolean", "Template[]"
+    type: str  # e.g., "string", "number", "boolean", "Template[]"
     required: bool = True
     description: str = ""
 
 
 class TypeContract(BaseModel):
     """Contract for a shared data structure used across tasks."""
-    name: str                   # e.g., "PipelineTemplate", "ReviewConfig"
+
+    name: str  # e.g., "PipelineTemplate", "ReviewConfig"
     description: str = ""
     field_specs: list[FieldSpec]
-    used_by_tasks: list[str]    # task IDs that reference this type
+    used_by_tasks: list[str]  # task IDs that reference this type
 
 
 class APIContract(BaseModel):
     """Contract for a single API endpoint."""
-    id: str                     # e.g., "contract-api-1"
-    method: str                 # GET, POST, PUT, DELETE, PATCH
-    path: str                   # e.g., "/api/templates"
+
+    id: str  # e.g., "contract-api-1"
+    method: str  # GET, POST, PUT, DELETE, PATCH
+    path: str  # e.g., "/api/templates"
     description: str = ""
     request_body: list[FieldSpec] | None = None
     response_body: list[FieldSpec]
     response_example: str = ""  # JSON example string for clarity
     auth_required: bool = True
-    producer_task_id: str       # task that implements this endpoint
+    producer_task_id: str  # task that implements this endpoint
     consumer_task_ids: list[str]  # tasks that call this endpoint
 
 
@@ -49,13 +55,14 @@ class IntegrationHint(BaseModel):
     The planner doesn't define contracts — it just flags where they exist.
     The Contract Builder uses these hints to generate precise contracts.
     """
-    producer_task_id: str       # task that creates/defines the interface
+
+    producer_task_id: str  # task that creates/defines the interface
     consumer_task_ids: list[str]  # tasks that consume the interface
-    interface_type: str         # e.g., "api_endpoint", "shared_type", "event", "file_import"
-    description: str            # e.g., "REST API for template CRUD"
+    interface_type: str  # e.g., "api_endpoint", "shared_type", "event", "file_import"
+    description: str  # e.g., "REST API for template CRUD"
     # Optional hints from planner to guide contract generation
     endpoint_hints: list[str] = Field(default_factory=list)
-        # e.g., ["GET /api/templates", "POST /api/templates"]
+    # e.g., ["GET /api/templates", "POST /api/templates"]
 
     @property
     def contract_type(self) -> ContractType | None:
@@ -68,6 +75,7 @@ class IntegrationHint(BaseModel):
 
 class ContractSet(BaseModel):
     """All contracts for a pipeline. Output of the Contract Builder."""
+
     api_contracts: list[APIContract] = Field(default_factory=list)
     type_contracts: list[TypeContract] = Field(default_factory=list)
     # Original hints (kept for traceability)
@@ -77,9 +85,7 @@ class ContractSet(BaseModel):
         """Get only the contracts relevant to a specific task."""
         producing_apis = [c for c in self.api_contracts if c.producer_task_id == task_id]
         consuming_apis = [c for c in self.api_contracts if task_id in c.consumer_task_ids]
-        relevant_types = [
-            t for t in self.type_contracts if task_id in t.used_by_tasks
-        ]
+        relevant_types = [t for t in self.type_contracts if task_id in t.used_by_tasks]
         return TaskContracts(
             producing=producing_apis,
             consuming=consuming_apis,
@@ -90,7 +96,7 @@ class ContractSet(BaseModel):
         """Whether any contracts exist (used to decide if phase should run)."""
         return bool(self.api_contracts or self.type_contracts)
 
-    def remap_task_ids(self, id_map: dict[str, str]) -> "ContractSet":
+    def remap_task_ids(self, id_map: dict[str, str]) -> ContractSet:
         """Return a new ContractSet with task IDs remapped via *id_map*.
 
         Used after the execute() ID-prefix step so contracts reference the
@@ -98,27 +104,39 @@ class ContractSet(BaseModel):
         """
         new_apis = []
         for api in self.api_contracts:
-            new_apis.append(api.model_copy(update={
-                "producer_task_id": id_map.get(api.producer_task_id, api.producer_task_id),
-                "consumer_task_ids": [
-                    id_map.get(cid, cid) for cid in api.consumer_task_ids
-                ],
-            }))
+            new_apis.append(
+                api.model_copy(
+                    update={
+                        "producer_task_id": id_map.get(api.producer_task_id, api.producer_task_id),
+                        "consumer_task_ids": [
+                            id_map.get(cid, cid) for cid in api.consumer_task_ids
+                        ],
+                    }
+                )
+            )
         new_types = []
         for tc in self.type_contracts:
-            new_types.append(tc.model_copy(update={
-                "used_by_tasks": [
-                    id_map.get(tid, tid) for tid in tc.used_by_tasks
-                ],
-            }))
+            new_types.append(
+                tc.model_copy(
+                    update={
+                        "used_by_tasks": [id_map.get(tid, tid) for tid in tc.used_by_tasks],
+                    }
+                )
+            )
         new_hints = []
         for hint in self.integration_hints:
-            new_hints.append(hint.model_copy(update={
-                "producer_task_id": id_map.get(hint.producer_task_id, hint.producer_task_id),
-                "consumer_task_ids": [
-                    id_map.get(cid, cid) for cid in hint.consumer_task_ids
-                ],
-            }))
+            new_hints.append(
+                hint.model_copy(
+                    update={
+                        "producer_task_id": id_map.get(
+                            hint.producer_task_id, hint.producer_task_id
+                        ),
+                        "consumer_task_ids": [
+                            id_map.get(cid, cid) for cid in hint.consumer_task_ids
+                        ],
+                    }
+                )
+            )
         return ContractSet(
             api_contracts=new_apis,
             type_contracts=new_types,
@@ -128,6 +146,7 @@ class ContractSet(BaseModel):
 
 class TaskContracts(BaseModel):
     """Contracts relevant to a single task. Injected into agent prompt."""
+
     producing: list[APIContract] = Field(default_factory=list)
     consuming: list[APIContract] = Field(default_factory=list)
     types: list[TypeContract] = Field(default_factory=list)
@@ -153,7 +172,11 @@ class TaskContracts(BaseModel):
                 parts.append("```")
                 for f in t.field_specs:
                     req = "" if f.required else " (optional)"
-                    parts.append(f"  {f.name}: {f.type}{req}  // {f.description}" if f.description else f"  {f.name}: {f.type}{req}")
+                    parts.append(
+                        f"  {f.name}: {f.type}{req}  // {f.description}"
+                        if f.description
+                        else f"  {f.name}: {f.type}{req}"
+                    )
                 parts.append("```")
                 parts.append("")
 
@@ -217,14 +240,20 @@ class TaskContracts(BaseModel):
         ]
 
         for api in self.producing:
-            parts.append(f"- **{api.method} {api.path}**: Must return EXACTLY these fields: "
-                         + ", ".join(f"`{f.name}` ({f.type})" for f in api.response_body))
+            parts.append(
+                f"- **{api.method} {api.path}**: Must return EXACTLY these fields: "
+                + ", ".join(f"`{f.name}` ({f.type})" for f in api.response_body)
+            )
 
         for api in self.consuming:
-            parts.append(f"- Code calling **{api.method} {api.path}** must expect EXACTLY these fields: "
-                         + ", ".join(f"`{f.name}` ({f.type})" for f in api.response_body))
+            parts.append(
+                f"- Code calling **{api.method} {api.path}** must expect EXACTLY these fields: "
+                + ", ".join(f"`{f.name}` ({f.type})" for f in api.response_body)
+            )
 
         parts.append("")
-        parts.append("If any field names, types, or response shapes don't match the contract, FAIL the review.")
+        parts.append(
+            "If any field names, types, or response shapes don't match the contract, FAIL the review."
+        )
 
         return "\n".join(parts)

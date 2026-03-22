@@ -5,16 +5,16 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from forge.core.models import (
+    AgentRecord,
+    AgentState,
     Complexity,
     RepoConfig,
     TaskDefinition,
     TaskGraph,
-    TaskState,
     TaskRecord,
-    AgentRecord,
-    AgentState,
-    row_to_record,
+    TaskState,
     row_to_agent,
+    row_to_record,
 )
 
 
@@ -308,6 +308,7 @@ class TestRowToRecord:
 
     def test_row_to_record_without_repo_id(self):
         """Backward compat: rows without repo_id default to 'default'."""
+
         # Use a simple namespace without repo_id attribute (MagicMock auto-creates attrs)
         class FakeRow:
             id = "task-1"

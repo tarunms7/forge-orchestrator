@@ -1,6 +1,7 @@
 """Review gate result cards for task review status display."""
 
 from __future__ import annotations
+
 from textual.widget import Widget
 
 _GATE_NAMES = {
@@ -33,7 +34,9 @@ def format_gates(gates: dict[str, dict]) -> str:
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 
-def format_streaming_output(lines: list[str], streaming: bool = False, typing_frame: int = 0) -> str:
+def format_streaming_output(
+    lines: list[str], streaming: bool = False, typing_frame: int = 0
+) -> str:
     """Format streaming LLM review output lines with optional typing indicator."""
     if not lines:
         return ""

@@ -13,6 +13,7 @@ from rich.table import Table
 def _get_db():
     from forge.core.paths import forge_db_url
     from forge.storage.db import Database
+
     return Database(forge_db_url())
 
 
@@ -24,7 +25,10 @@ def lessons() -> None:
 @lessons.command("list")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--global", "show_global", is_flag=True, default=False,
+    "--global",
+    "show_global",
+    is_flag=True,
+    default=False,
     help="Show only global lessons",
 )
 def lessons_list(project_dir: str, show_global: bool) -> None:
@@ -79,14 +83,28 @@ def lessons_list(project_dir: str, show_global: bool) -> None:
 @lessons.command("add")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--global", "is_global", is_flag=True, default=False,
+    "--global",
+    "is_global",
+    is_flag=True,
+    default=False,
     help="Add as a global lesson",
 )
-@click.option("--category", type=click.Choice(["command_failure", "review_failure", "code_pattern"]), default="command_failure")
+@click.option(
+    "--category",
+    type=click.Choice(["command_failure", "review_failure", "code_pattern"]),
+    default="command_failure",
+)
 @click.argument("title")
 @click.argument("resolution")
 @click.option("--trigger", default=None, help="Trigger pattern (defaults to title)")
-def lessons_add(project_dir: str, is_global: bool, category: str, title: str, resolution: str, trigger: str | None) -> None:
+def lessons_add(
+    project_dir: str,
+    is_global: bool,
+    category: str,
+    title: str,
+    resolution: str,
+    trigger: str | None,
+) -> None:
     """Add a lesson manually. TITLE and RESOLUTION are required."""
     project_dir = os.path.abspath(project_dir)
     scope = "global" if is_global else "project"
@@ -99,7 +117,8 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
         await db.initialize()
         try:
             return await db.find_matching_lesson(
-                effective_trigger, project_dir=effective_project_dir,
+                effective_trigger,
+                project_dir=effective_project_dir,
             )
         finally:
             await db.close()
@@ -122,9 +141,12 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
         await db.initialize()
         try:
             return await db.add_lesson(
-                scope=scope, category=category,
-                title=title, content=title,
-                trigger=effective_trigger, resolution=resolution,
+                scope=scope,
+                category=category,
+                title=title,
+                content=title,
+                trigger=effective_trigger,
+                resolution=resolution,
                 project_dir=effective_project_dir,
             )
         finally:
@@ -142,7 +164,10 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
 @lessons.command("clear")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--all", "clear_all", is_flag=True, default=False,
+    "--all",
+    "clear_all",
+    is_flag=True,
+    default=False,
     help="Clear ALL lessons (global + project)",
 )
 @click.confirmation_option(prompt="Are you sure you want to delete lessons?")

@@ -27,15 +27,21 @@ def _make_issue(number: int = 42, title: str = "Login Returns 500 on Expired Tok
 
 _GIT_REPO_OK = subprocess.CompletedProcess(
     args=["git", "rev-parse", "--is-inside-work-tree"],
-    returncode=0, stdout="true\n", stderr="",
+    returncode=0,
+    stdout="true\n",
+    stderr="",
 )
 _GIT_BRANCH_OK = subprocess.CompletedProcess(
     args=["git", "checkout", "-b", "fix/42-login-returns-500-on-expired-token"],
-    returncode=0, stdout="", stderr="",
+    returncode=0,
+    stdout="",
+    stderr="",
 )
 _GH_PR_OK = subprocess.CompletedProcess(
-    args=["gh", "pr", "create"], returncode=0,
-    stdout="https://github.com/org/repo/pull/1\n", stderr="",
+    args=["gh", "pr", "create"],
+    returncode=0,
+    stdout="https://github.com/org/repo/pull/1\n",
+    stderr="",
 )
 
 PROMPT_TEXT = "Fix GitHub Issue #42: Login Returns 500 on Expired Token"
@@ -93,7 +99,16 @@ def test_bare_issue_number(runner):
     """Bare number dispatches to parse_issue_ref correctly."""
     daemon = _make_daemon()
     patches = _full_flow_patches(daemon)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+    ):
         result = runner.invoke(fix, ["42", "--yes"])
     assert result.exit_code == 0
 
@@ -154,7 +169,10 @@ def test_gh_not_installed(runner):
 def test_not_in_git_repo(runner):
     """Not in a git repo exits with error."""
     git_fail = subprocess.CompletedProcess(
-        args=["git", "rev-parse"], returncode=128, stdout="", stderr="fatal",
+        args=["git", "rev-parse"],
+        returncode=128,
+        stdout="",
+        stderr="fatal",
     )
     with (
         patch(f"{_P}._parse_ref", return_value=(42, None)),
@@ -193,7 +211,9 @@ def test_branch_creation_failure(runner):
         name = cmd[0] if cmd else ""
         if name == "git" and "checkout" in cmd:
             return subprocess.CompletedProcess(
-                args=cmd, returncode=128, stdout="",
+                args=cmd,
+                returncode=128,
+                stdout="",
                 stderr="fatal: a branch named 'fix/42-login' already exists",
             )
         return _subprocess_dispatch(cmd, **kwargs)
@@ -255,7 +275,16 @@ def test_pipeline_failure_shows_orphan_branch_note(runner):
     daemon.run = AsyncMock(side_effect=RuntimeError("agent crashed"))
 
     patches = _full_flow_patches(daemon)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+    ):
         result = runner.invoke(fix, ["42", "--yes"])
 
     assert result.exit_code == 1
@@ -271,7 +300,16 @@ def test_yes_skips_confirmation(runner):
     """--yes flag skips the confirmation prompt."""
     daemon = _make_daemon()
     patches = _full_flow_patches(daemon)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+    ):
         result = runner.invoke(fix, ["42", "--yes"])
     assert result.exit_code == 0
     assert "Aborted" not in result.output
@@ -342,7 +380,16 @@ def test_full_flow_plan_and_execute(runner):
     """Full flow calls daemon.run() with composed prompt."""
     daemon = _make_daemon()
     patches = _full_flow_patches(daemon)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patches[4],
+        patches[5],
+        patches[6],
+        patches[7],
+    ):
         result = runner.invoke(fix, ["42", "--yes"])
 
     assert result.exit_code == 0

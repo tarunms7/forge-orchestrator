@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from textual.binding import Binding
-from textual.widget import Widget
-from textual.widgets import Static, TextArea
 from textual.containers import Vertical
 from textual.message import Message
+from textual.widget import Widget
+from textual.widgets import Static, TextArea
 
 from forge.tui.widgets.suggestion_chips import SuggestionChips
-
 
 DEFAULT_SUGGESTIONS = ["Add tests", "Fix linting", "Add docs", "Refactor"]
 
@@ -140,9 +139,7 @@ class FollowUpInput(Widget):
             text = ta.text.strip()
             if text:
                 self.add_history(text)
-                self.post_message(
-                    self.Submitted(text, self._branch, self._files_changed)
-                )
+                self.post_message(self.Submitted(text, self._branch, self._files_changed))
                 ta.clear()
         except Exception:
             pass
@@ -150,6 +147,4 @@ class FollowUpInput(Widget):
     def on_suggestion_chips_selected(self, event: SuggestionChips.Selected) -> None:
         """When a chip is selected, fill and submit it as the follow-up prompt."""
         self.add_history(event.text)
-        self.post_message(
-            self.Submitted(event.text, self._branch, self._files_changed)
-        )
+        self.post_message(self.Submitted(event.text, self._branch, self._files_changed))

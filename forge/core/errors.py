@@ -26,9 +26,7 @@ class FileConflictError(ValidationError):
         self.file_path = file_path
         self.task_a = task_a
         self.task_b = task_b
-        super().__init__(
-            f"File conflict: '{file_path}' claimed by both '{task_a}' and '{task_b}'"
-        )
+        super().__init__(f"File conflict: '{file_path}' claimed by both '{task_a}' and '{task_b}'")
 
 
 class SchedulerError(ForgeError):
@@ -57,9 +55,7 @@ class AgentTimeoutError(AgentError):
     def __init__(self, agent_id: str, timeout_seconds: int) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
-        super().__init__(
-            f"Agent '{agent_id}' timed out after {timeout_seconds}s"
-        )
+        super().__init__(f"Agent '{agent_id}' timed out after {timeout_seconds}s")
 
 
 class ReviewError(ForgeError):
@@ -75,9 +71,7 @@ class MergeConflictError(MergeError):
 
     def __init__(self, conflicting_files: list[str]) -> None:
         self.conflicting_files = conflicting_files
-        super().__init__(
-            f"Merge conflicts in: {', '.join(conflicting_files)}"
-        )
+        super().__init__(f"Merge conflicts in: {', '.join(conflicting_files)}")
 
 
 class SdkCallError(ForgeError):

@@ -1,7 +1,8 @@
 import subprocess
+
 import pytest
 
-from forge.merge.worker import MergeWorker, MergeResult, _parse_conflict_files_from_stderr
+from forge.merge.worker import MergeResult, MergeWorker, _parse_conflict_files_from_stderr
 
 
 @pytest.fixture
@@ -9,8 +10,12 @@ def git_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True
+    )
     (repo / "base.py").write_text("# base\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
@@ -21,7 +26,9 @@ def _create_branch_with_commit(repo, branch: str, filename: str, content: str):
     subprocess.run(["git", "checkout", "-b", branch], cwd=repo, check=True, capture_output=True)
     (repo / filename).write_text(content)
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", f"add {filename}"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"add {filename}"], cwd=repo, check=True, capture_output=True
+    )
     subprocess.run(["git", "checkout", "master"], cwd=repo, check=True, capture_output=True)
 
 
@@ -39,7 +46,9 @@ async def test_merge_conflict_detected(git_repo):
     _create_branch_with_commit(git_repo, "forge/task-2", "conflict.py", "version A\n")
     (git_repo / "conflict.py").write_text("version B\n")
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "conflict on master"], cwd=git_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "conflict on master"], cwd=git_repo, check=True, capture_output=True
+    )
     worker = MergeWorker(repo_path=str(git_repo))
     result = await worker.merge("forge/task-2")
     assert result.success is False
@@ -54,25 +63,33 @@ async def test_retry_merge_after_rebase_conflict(git_repo):
     # Create a branch with changes
     subprocess.run(
         ["git", "checkout", "-b", "forge/task-1"],
-        cwd=git_repo, check=True, capture_output=True,
+        cwd=git_repo,
+        check=True,
+        capture_output=True,
     )
     (git_repo / "feature.py").write_text("# feature\n")
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "feat: add feature"],
-        cwd=git_repo, check=True, capture_output=True,
+        cwd=git_repo,
+        check=True,
+        capture_output=True,
     )
 
     # Go back to master and add a non-conflicting change
     subprocess.run(
         ["git", "checkout", "master"],
-        cwd=git_repo, check=True, capture_output=True,
+        cwd=git_repo,
+        check=True,
+        capture_output=True,
     )
     (git_repo / "other.py").write_text("# other\n")
     subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "feat: add other"],
-        cwd=git_repo, check=True, capture_output=True,
+        cwd=git_repo,
+        check=True,
+        capture_output=True,
     )
 
     # retry_merge should succeed since there's no conflict
@@ -89,6 +106,7 @@ def test_merge_result_fields():
 # ---------------------------------------------------------------------------
 # Worktree-aware _find_conflicts tests
 # ---------------------------------------------------------------------------
+
 
 def _run(cmd, cwd, **kw):
     """Shorthand for subprocess.run with common defaults."""
@@ -148,15 +166,11 @@ async def test_find_conflicts_with_worktree_returns_files(worktree_conflict_setu
 
     # Without worktree_path: main repo has no rebase state -> empty
     conflicts_main = await worker._find_conflicts()
-    assert conflicts_main == [], (
-        "Main repo should have no conflicts (rebase is in the worktree)"
-    )
+    assert conflicts_main == [], "Main repo should have no conflicts (rebase is in the worktree)"
 
     # With worktree_path: the worktree has a rebase in progress -> non-empty
     conflicts_wt = await worker._find_conflicts(worktree_path)
-    assert len(conflicts_wt) > 0, (
-        "_find_conflicts should detect conflicts when given worktree_path"
-    )
+    assert len(conflicts_wt) > 0, "_find_conflicts should detect conflicts when given worktree_path"
     assert conflicting_file in conflicts_wt
 
     # Clean up rebase state
@@ -289,18 +303,14 @@ async def test_prepare_for_resolution_leaves_rebase_paused(tmp_path):
 
     # The rebase should STILL be in progress (not aborted)
     # In a worktree .git is a file pointing to the main repo, so check via git status
-    status = subprocess.run(
-        ["git", "status"], cwd=wt, capture_output=True, text=True
-    )
+    status = subprocess.run(["git", "status"], cwd=wt, capture_output=True, text=True)
     assert "rebase in progress" in status.stdout.lower() or "rebase" in status.stdout.lower(), (
         f"Rebase should still be in progress but git status says: {status.stdout}"
     )
 
     # The conflict markers should be present in the file
     content = (wt / "shared.py").read_text()
-    assert "<<<<<<<" in content, (
-        f"Conflict markers should be present but file contains: {content}"
-    )
+    assert "<<<<<<<" in content, f"Conflict markers should be present but file contains: {content}"
     assert "=======" in content
     assert ">>>>>>>" in content
 
@@ -388,7 +398,10 @@ async def test_prepare_resolve_then_merge_full_flow(tmp_path):
     env = {**subprocess.os.environ, "GIT_EDITOR": "true"}
     subprocess.run(
         ["git", "rebase", "--continue"],
-        cwd=wt, check=True, capture_output=True, env=env,
+        cwd=wt,
+        check=True,
+        capture_output=True,
+        env=env,
     )
 
     # Step 3: merge() should now succeed (rebase is complete, just need ff)
@@ -399,7 +412,10 @@ async def test_prepare_resolve_then_merge_full_flow(tmp_path):
     # because update-ref advances the ref without updating the working tree)
     show_result = subprocess.run(
         ["git", "show", "master:shared.py"],
-        cwd=repo, capture_output=True, text=True, check=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert show_result.stdout == "merged: both task and master version\n"
 
@@ -473,8 +489,7 @@ def test_parse_conflict_files_from_stderr_modify_delete():
 def test_parse_conflict_files_from_stderr_rename_delete():
     """rename/delete conflicts use yet another format."""
     stderr = (
-        "CONFLICT (rename/delete): old_name.py renamed to "
-        "new_name.py in HEAD, deleted in abc1234\n"
+        "CONFLICT (rename/delete): old_name.py renamed to new_name.py in HEAD, deleted in abc1234\n"
     )
     files = _parse_conflict_files_from_stderr(stderr)
     assert files == ["old_name.py"]

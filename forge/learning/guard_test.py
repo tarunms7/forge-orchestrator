@@ -11,10 +11,10 @@ from forge.learning.guard import (
     normalize_command,
 )
 
-
 # ---------------------------------------------------------------------------
 # Mock SDK message types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MockToolUse:
@@ -39,21 +39,25 @@ class MockMessage:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _bash_call_msg(tool_id: str, command: str) -> MockMessage:
     return MockMessage(content=[MockToolUse(id=tool_id, name="Bash", input={"command": command})])
 
 
 def _result_msg(tool_id: str, content: str, is_error: bool) -> MockMessage:
-    return MockMessage(content=[MockToolResult(tool_use_id=tool_id, content=content, is_error=is_error)])
+    return MockMessage(
+        content=[MockToolResult(tool_use_id=tool_id, content=content, is_error=is_error)]
+    )
 
 
 # ---------------------------------------------------------------------------
 # normalize_command tests
 # ---------------------------------------------------------------------------
 
+
 class TestNormalizeCommand:
     def test_strips_redirects(self):
-        assert "pytest tests/" == normalize_command("pytest tests/ 2>&1 | tail -80")
+        assert normalize_command("pytest tests/ 2>&1 | tail -80") == "pytest tests/"
 
     def test_strips_temp_paths(self):
         result = normalize_command("cat /tmp/pytest-abc123/output.log")
@@ -74,6 +78,7 @@ class TestNormalizeCommand:
 # classify_error tests
 # ---------------------------------------------------------------------------
 
+
 class TestClassifyError:
     def test_module_not_found(self):
         assert classify_error("ModuleNotFoundError: No module named 'foo'") == "module_not_found"
@@ -88,6 +93,7 @@ class TestClassifyError:
 # ---------------------------------------------------------------------------
 # RuntimeGuard tests
 # ---------------------------------------------------------------------------
+
 
 class TestRuntimeGuard:
     def test_no_trigger_on_success(self):
@@ -122,10 +128,14 @@ class TestRuntimeGuard:
         guard = RuntimeGuard()
 
         guard.inspect(_bash_call_msg("t1", "pytest tests/"))
-        guard.inspect(_result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True))
+        guard.inspect(
+            _result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
 
         guard.inspect(_bash_call_msg("t2", "pytest tests/"))
-        result = guard.inspect(_result_msg("t2", "ModuleNotFoundError: No module named 'foo'", is_error=True))
+        result = guard.inspect(
+            _result_msg("t2", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
 
         assert result == "warning"
         assert guard.warning_issued
@@ -135,14 +145,20 @@ class TestRuntimeGuard:
         guard = RuntimeGuard()
 
         guard.inspect(_bash_call_msg("t1", "pytest tests/"))
-        guard.inspect(_result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True))
+        guard.inspect(
+            _result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
 
         guard.inspect(_bash_call_msg("t2", "pytest tests/"))
-        guard.inspect(_result_msg("t2", "ModuleNotFoundError: No module named 'bar'", is_error=True))
+        guard.inspect(
+            _result_msg("t2", "ModuleNotFoundError: No module named 'bar'", is_error=True)
+        )
 
         guard.inspect(_bash_call_msg("t3", "pytest tests/"))
         with pytest.raises(GuardTriggered) as exc_info:
-            guard.inspect(_result_msg("t3", "ModuleNotFoundError: No module named 'baz'", is_error=True))
+            guard.inspect(
+                _result_msg("t3", "ModuleNotFoundError: No module named 'baz'", is_error=True)
+            )
 
         assert guard.triggered
         assert len(exc_info.value.failures) == 3
@@ -168,10 +184,14 @@ class TestRuntimeGuard:
         guard = RuntimeGuard()
 
         guard.inspect(_bash_call_msg("t1", "pytest tests/"))
-        guard.inspect(_result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True))
+        guard.inspect(
+            _result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
 
         guard.inspect(_bash_call_msg("t2", "pytest tests/"))
-        guard.inspect(_result_msg("t2", "ModuleNotFoundError: No module named 'foo'", is_error=True))
+        guard.inspect(
+            _result_msg("t2", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
 
         msg = guard.get_warning_message()
         assert "pytest tests/" in msg
@@ -182,7 +202,9 @@ class TestRuntimeGuard:
         guard = RuntimeGuard()
 
         guard.inspect(_bash_call_msg("t1", "pytest tests/"))
-        guard.inspect(_result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True))
+        guard.inspect(
+            _result_msg("t1", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
 
         guard.inspect(_bash_call_msg("t2", "pip install bar"))
         guard.inspect(_result_msg("t2", "permission denied", is_error=True))

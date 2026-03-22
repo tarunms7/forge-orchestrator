@@ -77,7 +77,8 @@ def _list_forge_branches(project_dir: str) -> list[str]:
 
 
 def _delete_orphaned_branches(
-    project_dir: str, worktrees_dir: str,
+    project_dir: str,
+    worktrees_dir: str,
 ) -> list[str]:
     """Delete forge/* branches that have no corresponding worktree directory.
 

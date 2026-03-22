@@ -317,8 +317,18 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       payload: entry.payload as Record<string, unknown> || entry,
       timestamp: (entry.timestamp as string) || new Date().toISOString(),
     }));
+    const existing = get().tasks;
+    const merged: Record<string, TaskState> = {};
+    for (const [id, newTask] of Object.entries(newTasks)) {
+      const existingTask = existing[id];
+      if (existingTask && existingTask.output.length > newTask.output.length) {
+        merged[id] = { ...newTask, output: existingTask.output };
+      } else {
+        merged[id] = newTask;
+      }
+    }
     set({
-      tasks: newTasks,
+      tasks: merged,
       phase,
       timeline,
       prUrl: data.pr_url ?? null,
@@ -613,7 +623,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                costUsd: (existing.costUsd || 0) + ((data.agent_cost_usd as number) || (data.review_cost_usd as number) || 0),
+                costUsd: (data.agent_cost_usd as number) || (data.review_cost_usd as number) || existing.costUsd,
                 agentCostUsd: data.agent_cost_usd != null
                   ? (data.agent_cost_usd as number)
                   : existing.agentCostUsd,
@@ -707,3 +717,6 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       }
     }),
 }));
+
+export const useTask = (taskId: string) =>
+  useTaskStore((s) => s.tasks[taskId]);

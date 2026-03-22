@@ -55,16 +55,35 @@ export default function DashboardPage() {
   });
   const [recent, setRecent] = useState<RecentPipeline[]>([]);
   const [pipelineInput, setPipelineInput] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [healthOk, setHealthOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!token) return;
-    apiGet("/tasks/stats", token)
-      .then(setStats)
-      .catch(() => {});
-    apiGet("/history", token)
-      .then((data) => setRecent(data.slice(0, 5)))
-      .catch(() => {});
+    Promise.all([
+      apiGet("/tasks/stats", token).catch(() => {
+        setError("Failed to load stats");
+        return null;
+      }),
+      apiGet("/history", token).catch(() => {
+        setError("Failed to load history");
+        return null;
+      }),
+    ])
+      .then(([statsData, historyData]) => {
+        if (statsData) setStats(statsData);
+        if (historyData) setRecent(historyData.slice(0, 5));
+      })
+      .finally(() => setLoading(false));
   }, [token]);
+
+  useEffect(() => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "/api";
+    fetch(`${apiBase}/health`)
+      .then((res) => setHealthOk(res.ok))
+      .catch(() => setHealthOk(false));
+  }, []);
 
   const handleStartPipeline = () => {
     const params = pipelineInput.trim()
@@ -78,6 +97,16 @@ export default function DashboardPage() {
       ? Math.round((stats.completed / stats.total_runs) * 100)
       : null;
 
+  if (loading) {
+    return (
+      <div className="page-content" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "400px" }}>
+        <div style={{ width: "192px", height: "6px", borderRadius: "999px", background: "var(--bg-surface-3)", overflow: "hidden" }}>
+          <div style={{ width: "33%", height: "100%", borderRadius: "999px", background: "var(--accent)", animation: "pulse 2s ease-in-out infinite" }} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page-content">
       {/* Welcome */}
@@ -87,6 +116,13 @@ export default function DashboardPage() {
           Here&apos;s what&apos;s happening with your pipelines
         </p>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div style={{ borderRadius: "var(--radius-md)", border: "1px solid rgba(239,68,68,0.3)", background: "var(--red-dim)", padding: "12px 16px", fontSize: "13px", color: "#fca5a5", marginBottom: "16px" }}>
+          {error}
+        </div>
+      )}
 
       {/* New Pipeline */}
       <div className="new-pipeline-card">
@@ -205,32 +241,18 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* System Status */}
-      <div className="system-section">
-        <h2 className="section-title">System Status</h2>
-        <div className="status-grid">
-          <div className="status-card">
-            <div className="status-dot-lg green" />
-            <div className="status-info">
-              <div className="status-name">Claude SDK</div>
-              <div className="status-detail">Connected &middot; claude-opus-4-6</div>
-            </div>
-          </div>
-          <div className="status-card">
-            <div className="status-dot-lg green" />
-            <div className="status-info">
-              <div className="status-name">Git Repository</div>
-              <div className="status-detail">forge-orchestrator &middot; main</div>
-            </div>
-          </div>
-          <div className="status-card">
-            <div className="status-dot-lg green" />
-            <div className="status-info">
-              <div className="status-name">Worktrees</div>
-              <div className="status-detail">/tmp/forge-worktrees &middot; 0 active</div>
-            </div>
-          </div>
-        </div>
+      {/* Backend Health */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--text-dim)", marginTop: "8px" }}>
+        <div style={{
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          background: healthOk === null ? "var(--text-dim)" : healthOk ? "#22c55e" : "#ef4444",
+          flexShrink: 0,
+        }} />
+        <span>
+          {healthOk === null ? "Checking backend…" : healthOk ? "Backend connected" : "Backend unreachable"}
+        </span>
       </div>
     </div>
   );

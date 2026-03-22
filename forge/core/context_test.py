@@ -1,4 +1,5 @@
 """Tests for project snapshot gathering."""
+
 import asyncio
 import os
 import subprocess
@@ -8,10 +9,10 @@ import pytest
 
 from forge.core.context import (
     ProjectSnapshot,
-    gather_project_snapshot,
-    gather_multi_repo_snapshots,
-    format_multi_repo_snapshot,
     _truncate_file_tree,
+    format_multi_repo_snapshot,
+    gather_multi_repo_snapshots,
+    gather_project_snapshot,
 )
 from forge.core.models import RepoConfig
 
@@ -20,7 +21,9 @@ from forge.core.models import RepoConfig
 def git_repo(tmp_path):
     """Create a minimal git repo with some files."""
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True
+    )
     subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
 
     # Create some files
@@ -89,7 +92,9 @@ def test_snapshot_git_branch(git_repo):
 def test_snapshot_no_readme(git_repo):
     os.remove(git_repo / "README.md")
     subprocess.run(["git", "add", "-A"], cwd=git_repo, capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "rm readme"], cwd=git_repo, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "rm readme"], cwd=git_repo, capture_output=True, check=True
+    )
     snap = gather_project_snapshot(str(git_repo))
     assert snap.readme_excerpt == ""
 
@@ -129,7 +134,9 @@ class TestGatherMultiRepoSnapshots:
 
         repos = {
             "backend": RepoConfig(id="backend", path=str(tmp_path / "backend"), base_branch="main"),
-            "frontend": RepoConfig(id="frontend", path=str(tmp_path / "frontend"), base_branch="main"),
+            "frontend": RepoConfig(
+                id="frontend", path=str(tmp_path / "frontend"), base_branch="main"
+            ),
         }
 
         with patch("forge.core.context.gather_project_snapshot") as mock_gather:
@@ -151,7 +158,9 @@ class TestGatherMultiRepoSnapshots:
         """If one repo's snapshot fails, return empty snapshot for that repo."""
         repos = {
             "backend": RepoConfig(id="backend", path=str(tmp_path / "backend"), base_branch="main"),
-            "frontend": RepoConfig(id="frontend", path=str(tmp_path / "frontend"), base_branch="main"),
+            "frontend": RepoConfig(
+                id="frontend", path=str(tmp_path / "frontend"), base_branch="main"
+            ),
         }
 
         def side_effect(path):

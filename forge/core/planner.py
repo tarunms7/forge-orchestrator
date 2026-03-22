@@ -18,7 +18,13 @@ class PlannerLLM(ABC):
     """Interface for the LLM that generates plans."""
 
     @abstractmethod
-    async def generate_plan(self, user_input: str, context: str, feedback: str | None = None, on_message: Callable | None = None) -> str:
+    async def generate_plan(
+        self,
+        user_input: str,
+        context: str,
+        feedback: str | None = None,
+        on_message: Callable | None = None,
+    ) -> str:
         """Generate a TaskGraph JSON string from user input."""
 
 
@@ -29,20 +35,26 @@ class Planner:
         self._llm = llm
         self._max_retries = max_retries
 
-    async def plan(self, user_input: str, context: str = "", on_message: Callable | None = None) -> TaskGraph:
+    async def plan(
+        self, user_input: str, context: str = "", on_message: Callable | None = None
+    ) -> TaskGraph:
         feedback: str | None = None
 
         for attempt in range(self._max_retries):
             logger.info("Planning attempt %d/%d", attempt + 1, self._max_retries)
             try:
-                raw = await self._llm.generate_plan(user_input, context, feedback, on_message=on_message)
+                raw = await self._llm.generate_plan(
+                    user_input, context, feedback, on_message=on_message
+                )
             except SdkCallError as e:
                 logger.warning("Attempt %d/%d SDK error: %s", attempt + 1, self._max_retries, e)
                 feedback = f"Previous attempt hit SDK error: {e}. Retrying."
                 continue
             logger.info(
                 "Attempt %d raw response (%d chars): %s",
-                attempt + 1, len(raw), raw[:500] if raw else "<empty>",
+                attempt + 1,
+                len(raw),
+                raw[:500] if raw else "<empty>",
             )
             graph, error = self._parse_and_validate(raw)
             if graph is not None:

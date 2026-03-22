@@ -1,5 +1,6 @@
 """Integration tests for task REST endpoints."""
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -309,6 +310,7 @@ class TestCancelEndpoint:
     async def test_cancel_returns_cancelled_task_ids(self, client_with_app):
         """POST /tasks/{id}/cancel should return list of cancelled task IDs."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -322,22 +324,51 @@ class TestCancelEndpoint:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Cancel test", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id="ct1", title="T1", description="D", files=[], depends_on=[],
-                complexity="low", state="in_progress", pipeline_id=pid,
-            ))
-            session.add(TaskRow(
-                id="ct2", title="T2", description="D", files=[], depends_on=[],
-                complexity="low", state="todo", pipeline_id=pid,
-            ))
-            session.add(TaskRow(
-                id="ct3", title="T3", description="D", files=[], depends_on=[],
-                complexity="low", state="done", pipeline_id=pid,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Cancel test",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id="ct1",
+                    title="T1",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="in_progress",
+                    pipeline_id=pid,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id="ct2",
+                    title="T2",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="todo",
+                    pipeline_id=pid,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id="ct3",
+                    title="T3",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="done",
+                    pipeline_id=pid,
+                )
+            )
             await session.commit()
 
         resp = await client.post(f"/api/tasks/{pid}/cancel", headers=headers)
@@ -351,6 +382,7 @@ class TestCancelEndpoint:
     async def test_cancel_already_cancelled_returns_already(self, client_with_app):
         """POST /tasks/{id}/cancel on already-cancelled pipeline returns already_cancelled."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -364,10 +396,15 @@ class TestCancelEndpoint:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Already cancelled", project_dir="/proj",
-                status="cancelled", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Already cancelled",
+                    project_dir="/proj",
+                    status="cancelled",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         resp = await client.post(f"/api/tasks/{pid}/cancel", headers=headers)
@@ -420,7 +457,7 @@ class TestStats:
         Pipeline A: 60 s  |  Pipeline B: 120 s  ->  average = 90.0 s
         """
         import uuid
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
@@ -436,7 +473,7 @@ class TestStats:
         user_id = payload["sub"]
 
         # Build deterministic timestamps: A = 60 s, B = 120 s -> avg = 90 s.
-        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         created_a = base.isoformat()
         completed_a = (base + timedelta(seconds=60)).isoformat()
 
@@ -450,24 +487,28 @@ class TestStats:
 
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pipeline_id_a,
-                description="Pipeline A",
-                project_dir="/proj/a",
-                status="complete",
-                user_id=user_id,
-                created_at=created_a,
-                completed_at=completed_a,
-            ))
-            session.add(PipelineRow(
-                id=pipeline_id_b,
-                description="Pipeline B",
-                project_dir="/proj/b",
-                status="complete",
-                user_id=user_id,
-                created_at=created_b,
-                completed_at=completed_b,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pipeline_id_a,
+                    description="Pipeline A",
+                    project_dir="/proj/a",
+                    status="complete",
+                    user_id=user_id,
+                    created_at=created_a,
+                    completed_at=completed_a,
+                )
+            )
+            session.add(
+                PipelineRow(
+                    id=pipeline_id_b,
+                    description="Pipeline B",
+                    project_dir="/proj/b",
+                    status="complete",
+                    user_id=user_id,
+                    created_at=created_b,
+                    completed_at=completed_b,
+                )
+            )
             await session.commit()
 
         resp = await client.get("/api/tasks/stats", headers=headers)
@@ -508,33 +549,51 @@ class TestStats:
 
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid_a, description="Cost A", project_dir="/proj/a",
-                status="complete", user_id=user_id,
-            ))
-            session.add(PipelineRow(
-                id=pid_b, description="Cost B", project_dir="/proj/b",
-                status="complete", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid_a,
+                    description="Cost A",
+                    project_dir="/proj/a",
+                    status="complete",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                PipelineRow(
+                    id=pid_b,
+                    description="Cost B",
+                    project_dir="/proj/b",
+                    status="complete",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         # Log cost events across both pipelines.
         await db.log_event(
-            pipeline_id=pid_a, task_id="t1",
-            event_type="task:cost_update", payload={"cost_usd": 0.05},
+            pipeline_id=pid_a,
+            task_id="t1",
+            event_type="task:cost_update",
+            payload={"cost_usd": 0.05},
         )
         await db.log_event(
-            pipeline_id=pid_a, task_id="t2",
-            event_type="task:cost_update", payload={"cost_usd": 0.10},
+            pipeline_id=pid_a,
+            task_id="t2",
+            event_type="task:cost_update",
+            payload={"cost_usd": 0.10},
         )
         await db.log_event(
-            pipeline_id=pid_b, task_id="t3",
-            event_type="task:cost_update", payload={"cost_usd": 0.25},
+            pipeline_id=pid_b,
+            task_id="t3",
+            event_type="task:cost_update",
+            payload={"cost_usd": 0.25},
         )
         # Non-cost event should be ignored.
         await db.log_event(
-            pipeline_id=pid_a, task_id="t1",
-            event_type="task:agent_output", payload={"line": "hello"},
+            pipeline_id=pid_a,
+            task_id="t1",
+            event_type="task:agent_output",
+            payload={"line": "hello"},
         )
 
         resp = await client.get("/api/tasks/stats", headers=headers)
@@ -640,6 +699,7 @@ class TestRestartEndpoint:
     async def test_restart_resets_pipeline(self, client_with_app):
         """POST /tasks/{id}/restart should reset pipeline to pending and clear state."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -653,19 +713,34 @@ class TestRestartEndpoint:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Restart me", project_dir="/proj",
-                status="error", user_id=user_id,
-                task_graph_json='{"tasks": []}',
-            ))
-            session.add(TaskRow(
-                id="rt1", title="T1", description="D", files=[], depends_on=[],
-                complexity="low", state="error", pipeline_id=pid,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Restart me",
+                    project_dir="/proj",
+                    status="error",
+                    user_id=user_id,
+                    task_graph_json='{"tasks": []}',
+                )
+            )
+            session.add(
+                TaskRow(
+                    id="rt1",
+                    title="T1",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="error",
+                    pipeline_id=pid,
+                )
+            )
             await session.commit()
 
         # Log an event so we can verify it gets deleted
-        await db.log_event(pipeline_id=pid, task_id="rt1", event_type="agent_output", payload={"line": "hi"})
+        await db.log_event(
+            pipeline_id=pid, task_id="rt1", event_type="agent_output", payload={"line": "hi"}
+        )
 
         resp = await client.post(f"/api/tasks/{pid}/restart", headers=headers)
         assert resp.status_code == 200
@@ -683,6 +758,7 @@ class TestRestartEndpoint:
     async def test_restart_idor_protection(self, client_with_app):
         """POST /tasks/{id}/restart should 404 for another user's pipeline."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -696,10 +772,15 @@ class TestRestartEndpoint:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="User A pipeline", project_dir="/proj",
-                status="error", user_id=user_id_a,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="User A pipeline",
+                    project_dir="/proj",
+                    status="error",
+                    user_id=user_id_a,
+                )
+            )
             await session.commit()
 
         # User B tries to restart user A's pipeline
@@ -839,7 +920,9 @@ class TestGeneratePrTitle:
         mock_result = MagicMock()
         mock_result.result = "fix: copy button alignment and commit formatting"
 
-        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+        with patch(
+            "forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result
+        ):
             title = await _generate_pr_title(
                 "Fix copy button and commit messages",
                 "- Fix copy button\n- Fix commit formatting",
@@ -853,7 +936,9 @@ class TestGeneratePrTitle:
         mock_result = MagicMock()
         mock_result.result = "forge: fix button alignment"
 
-        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+        with patch(
+            "forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result
+        ):
             title = await _generate_pr_title("Fix button", "- Fix button")
         assert title == "fix button alignment"
 
@@ -864,7 +949,9 @@ class TestGeneratePrTitle:
         mock_result = MagicMock()
         mock_result.result = '"fix: improve error handling"'
 
-        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+        with patch(
+            "forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result
+        ):
             title = await _generate_pr_title("Improve error handling", "")
         assert title == "fix: improve error handling"
 
@@ -872,7 +959,11 @@ class TestGeneratePrTitle:
         """When sdk_query raises, fall back to heuristic."""
         from forge.api.routes.tasks import _generate_pr_title
 
-        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, side_effect=RuntimeError("SDK down")):
+        with patch(
+            "forge.core.sdk_helpers.sdk_query",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("SDK down"),
+        ):
             title = await _generate_pr_title("Fix the login button", "")
         assert title == "fix the login button"
 
@@ -891,7 +982,9 @@ class TestGeneratePrTitle:
         mock_result = MagicMock()
         mock_result.result = ""
 
-        with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result):
+        with patch(
+            "forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock, return_value=mock_result
+        ):
             title = await _generate_pr_title("Fix the login button", "")
         assert title == "fix the login button"
 
@@ -919,6 +1012,7 @@ class TestExecuteWithEditedGraph:
     async def test_execute_with_invalid_graph_returns_422(self, client_with_app):
         """POST /tasks/{id}/execute with cyclic deps should return 422."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -934,19 +1028,30 @@ class TestExecuteWithEditedGraph:
 
         # Create pipeline in DB
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Test exec", project_dir="/proj",
-                status="planned", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Test exec",
+                    project_dir="/proj",
+                    status="planned",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         # Store a pending graph (mocked daemon)
         mock_daemon = MagicMock()
-        from forge.core.models import TaskDefinition, TaskGraph, Complexity
-        original_graph = TaskGraph(tasks=[
-            TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
-        ])
+        from forge.core.models import Complexity, TaskDefinition, TaskGraph
+
+        original_graph = TaskGraph(
+            tasks=[
+                TaskDefinition(
+                    id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW
+                ),
+            ]
+        )
         import time as _time
+
         app.state.pending_graphs[pid] = (original_graph, mock_daemon, _time.monotonic())
 
         # Submit edited graph with cyclic dependencies
@@ -954,10 +1059,22 @@ class TestExecuteWithEditedGraph:
             f"/api/tasks/{pid}/execute",
             json={
                 "tasks": [
-                    {"id": "t1", "title": "T1", "description": "D1", "files": ["a.py"],
-                     "depends_on": ["t2"], "complexity": "low"},
-                    {"id": "t2", "title": "T2", "description": "D2", "files": ["b.py"],
-                     "depends_on": ["t1"], "complexity": "medium"},
+                    {
+                        "id": "t1",
+                        "title": "T1",
+                        "description": "D1",
+                        "files": ["a.py"],
+                        "depends_on": ["t2"],
+                        "complexity": "low",
+                    },
+                    {
+                        "id": "t2",
+                        "title": "T2",
+                        "description": "D2",
+                        "files": ["b.py"],
+                        "depends_on": ["t1"],
+                        "complexity": "medium",
+                    },
                 ]
             },
             headers=headers,
@@ -968,6 +1085,7 @@ class TestExecuteWithEditedGraph:
     async def test_execute_with_valid_edited_graph(self, client_with_app):
         """POST /tasks/{id}/execute with valid edited tasks should return 202."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -982,30 +1100,53 @@ class TestExecuteWithEditedGraph:
         db = app.state.db
 
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Test exec valid", project_dir="/proj",
-                status="planned", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Test exec valid",
+                    project_dir="/proj",
+                    status="planned",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         # Store a pending graph with mocked daemon
         mock_daemon = MagicMock()
         mock_daemon.execute = AsyncMock()
-        from forge.core.models import TaskDefinition, TaskGraph, Complexity
-        original_graph = TaskGraph(tasks=[
-            TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
-        ])
+        from forge.core.models import Complexity, TaskDefinition, TaskGraph
+
+        original_graph = TaskGraph(
+            tasks=[
+                TaskDefinition(
+                    id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW
+                ),
+            ]
+        )
         import time as _time
+
         app.state.pending_graphs[pid] = (original_graph, mock_daemon, _time.monotonic())
 
         resp = await client.post(
             f"/api/tasks/{pid}/execute",
             json={
                 "tasks": [
-                    {"id": "t1", "title": "Task One", "description": "Do A", "files": ["a.py"],
-                     "depends_on": [], "complexity": "low"},
-                    {"id": "t2", "title": "Task Two", "description": "Do B", "files": ["b.py"],
-                     "depends_on": ["t1"], "complexity": "high"},
+                    {
+                        "id": "t1",
+                        "title": "Task One",
+                        "description": "Do A",
+                        "files": ["a.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    },
+                    {
+                        "id": "t2",
+                        "title": "Task Two",
+                        "description": "Do B",
+                        "files": ["b.py"],
+                        "depends_on": ["t1"],
+                        "complexity": "high",
+                    },
                 ]
             },
             headers=headers,
@@ -1018,6 +1159,7 @@ class TestExecuteWithEditedGraph:
     async def test_execute_without_edited_graph_uses_original(self, client_with_app):
         """POST /tasks/{id}/execute without tasks field uses original plan."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1032,19 +1174,30 @@ class TestExecuteWithEditedGraph:
         db = app.state.db
 
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Test no edit", project_dir="/proj",
-                status="planned", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Test no edit",
+                    project_dir="/proj",
+                    status="planned",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         mock_daemon = MagicMock()
         mock_daemon.execute = AsyncMock()
-        from forge.core.models import TaskDefinition, TaskGraph, Complexity
-        original_graph = TaskGraph(tasks=[
-            TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
-        ])
+        from forge.core.models import Complexity, TaskDefinition, TaskGraph
+
+        original_graph = TaskGraph(
+            tasks=[
+                TaskDefinition(
+                    id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW
+                ),
+            ]
+        )
         import time as _time
+
         app.state.pending_graphs[pid] = (original_graph, mock_daemon, _time.monotonic())
 
         resp = await client.post(
@@ -1079,6 +1232,7 @@ class TestGetTaskDiff:
     async def test_diff_wrong_task_state_returns_409(self, client_with_app):
         """GET diff for a task not in awaiting_approval returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1093,15 +1247,27 @@ class TestGetTaskDiff:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Diff test", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="in_progress",
-                pipeline_id=pid,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Diff test",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="in_progress",
+                    pipeline_id=pid,
+                )
+            )
             await session.commit()
 
         resp = await client.get(
@@ -1114,6 +1280,7 @@ class TestGetTaskDiff:
         """GET diff when worktree doesn't exist returns 410."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1128,19 +1295,33 @@ class TestGetTaskDiff:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Diff worktree", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-                approval_context=json.dumps({
-                    "worktree_path": "/nonexistent/path/worktree",
-                    "pipeline_branch": "forge/pipeline-abc",
-                }),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Diff worktree",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    approval_context=json.dumps(
+                        {
+                            "worktree_path": "/nonexistent/path/worktree",
+                            "pipeline_branch": "forge/pipeline-abc",
+                        }
+                    ),
+                )
+            )
             await session.commit()
 
         resp = await client.get(
@@ -1153,6 +1334,7 @@ class TestGetTaskDiff:
         """GET diff with valid worktree returns diff text and stats."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1169,29 +1351,48 @@ class TestGetTaskDiff:
 
         # Use /tmp as a real existing directory
         import tempfile
+
         worktree_dir = tempfile.mkdtemp()
 
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Diff OK", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-                approval_context=json.dumps({
-                    "worktree_path": worktree_dir,
-                    "pipeline_branch": "main",
-                }),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Diff OK",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    approval_context=json.dumps(
+                        {
+                            "worktree_path": worktree_dir,
+                            "pipeline_branch": "main",
+                        }
+                    ),
+                )
+            )
             await session.commit()
 
         # Mock _get_diff_vs_main and _get_diff_stats for the temp worktree
         mock_diff = "diff --git a/foo.py b/foo.py\n+added line\n-removed line\n"
         mock_stats = {"filesChanged": 1, "linesAdded": 1, "linesRemoved": 1}
-        with patch("forge.api.routes.tasks._get_diff_vs_main", new=AsyncMock(return_value=mock_diff)), \
-             patch("forge.api.routes.tasks._get_diff_stats", new=AsyncMock(return_value=mock_stats)):
+        with (
+            patch(
+                "forge.api.routes.tasks._get_diff_vs_main", new=AsyncMock(return_value=mock_diff)
+            ),
+            patch("forge.api.routes.tasks._get_diff_stats", new=AsyncMock(return_value=mock_stats)),
+        ):
             resp = await client.get(
                 f"/api/tasks/{pid}/tasks/{tid}/diff",
                 headers=headers,
@@ -1206,6 +1407,7 @@ class TestGetTaskDiff:
 
         # Cleanup
         import shutil
+
         shutil.rmtree(worktree_dir, ignore_errors=True)
 
 
@@ -1232,6 +1434,7 @@ class TestApproveTask:
     async def test_approve_wrong_state_returns_409(self, client_with_app):
         """POST approve for a task not in awaiting_approval returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1246,15 +1449,27 @@ class TestApproveTask:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Approve test", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="done",
-                pipeline_id=pid,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Approve test",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="done",
+                    pipeline_id=pid,
+                )
+            )
             await session.commit()
 
         resp = await client.post(
@@ -1267,6 +1482,7 @@ class TestApproveTask:
         """POST approve for task in awaiting_approval returns 202 and merging."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1281,19 +1497,33 @@ class TestApproveTask:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Approve OK", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-                approval_context=json.dumps({
-                    "worktree_path": "/tmp/wt",
-                    "pipeline_branch": "forge/pipeline-abc",
-                }),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Approve OK",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    approval_context=json.dumps(
+                        {
+                            "worktree_path": "/tmp/wt",
+                            "pipeline_branch": "forge/pipeline-abc",
+                        }
+                    ),
+                )
+            )
             await session.commit()
 
         # Set up ws_manager mock
@@ -1340,6 +1570,7 @@ class TestRejectTask:
     async def test_reject_wrong_state_returns_409(self, client_with_app):
         """POST reject for a task not in awaiting_approval returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1354,15 +1585,27 @@ class TestRejectTask:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Reject test", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="in_progress",
-                pipeline_id=pid,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Reject test",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="in_progress",
+                    pipeline_id=pid,
+                )
+            )
             await session.commit()
 
         resp = await client.post(
@@ -1376,6 +1619,7 @@ class TestRejectTask:
         """POST reject for awaiting_approval task resets to todo."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1390,19 +1634,33 @@ class TestRejectTask:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Reject OK", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-                approval_context=json.dumps({
-                    "worktree_path": "/tmp/wt",
-                    "pipeline_branch": "forge/pipeline-abc",
-                }),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Reject OK",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    approval_context=json.dumps(
+                        {
+                            "worktree_path": "/tmp/wt",
+                            "pipeline_branch": "forge/pipeline-abc",
+                        }
+                    ),
+                )
+            )
             await session.commit()
 
         # Set up ws_manager mock
@@ -1428,6 +1686,7 @@ class TestRejectTask:
         """POST reject without a reason uses 'Rejected by user' default."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1442,19 +1701,33 @@ class TestRejectTask:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Reject no reason", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-                approval_context=json.dumps({
-                    "worktree_path": "/tmp/wt",
-                    "pipeline_branch": "forge/pipeline-abc",
-                }),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Reject no reason",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    approval_context=json.dumps(
+                        {
+                            "worktree_path": "/tmp/wt",
+                            "pipeline_branch": "forge/pipeline-abc",
+                        }
+                    ),
+                )
+            )
             await session.commit()
 
         app.state.ws_manager = AsyncMock()
@@ -1493,6 +1766,7 @@ class TestPausePipeline:
     async def test_pause_non_running_returns_409(self, client_with_app):
         """POST /tasks/{id}/pause on a completed pipeline returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1506,10 +1780,15 @@ class TestPausePipeline:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Pause test", project_dir="/proj",
-                status="complete", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Pause test",
+                    project_dir="/proj",
+                    status="complete",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         resp = await client.post(f"/api/tasks/{pid}/pause", headers=headers)
@@ -1518,6 +1797,7 @@ class TestPausePipeline:
     async def test_pause_executing_pipeline(self, client_with_app):
         """POST /tasks/{id}/pause on executing pipeline returns paused."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1531,10 +1811,15 @@ class TestPausePipeline:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Pause exec", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Pause exec",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         app.state.ws_manager = AsyncMock()
@@ -1552,6 +1837,7 @@ class TestPausePipeline:
     async def test_pause_planned_pipeline(self, client_with_app):
         """POST /tasks/{id}/pause on planned pipeline also works."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1565,10 +1851,15 @@ class TestPausePipeline:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Pause planned", project_dir="/proj",
-                status="planned", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Pause planned",
+                    project_dir="/proj",
+                    status="planned",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         app.state.ws_manager = AsyncMock()
@@ -1587,6 +1878,7 @@ class TestResumePausedPipeline:
     async def test_resume_paused_pipeline(self, client_with_app):
         """POST /tasks/{id}/resume on paused pipeline returns executing."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1600,11 +1892,16 @@ class TestResumePausedPipeline:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Resume paused", project_dir="/proj",
-                status="paused", user_id=user_id,
-                paused=True,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Resume paused",
+                    project_dir="/proj",
+                    status="paused",
+                    user_id=user_id,
+                    paused=True,
+                )
+            )
             await session.commit()
 
         app.state.ws_manager = AsyncMock()
@@ -1622,6 +1919,7 @@ class TestResumePausedPipeline:
     async def test_pause_then_resume_roundtrip(self, client_with_app):
         """Pause then resume a pipeline end-to-end."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1635,10 +1933,15 @@ class TestResumePausedPipeline:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Roundtrip", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Roundtrip",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
             await session.commit()
 
         app.state.ws_manager = AsyncMock()
@@ -1745,6 +2048,7 @@ class TestNewEndpointIDOR:
         """GET diff for another user's pipeline returns 404."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1759,16 +2063,30 @@ class TestNewEndpointIDOR:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="IDOR diff", project_dir="/proj",
-                status="executing", user_id=user_id_a,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-                approval_context=json.dumps({"worktree_path": "/tmp/wt", "pipeline_branch": "main"}),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="IDOR diff",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id_a,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    approval_context=json.dumps(
+                        {"worktree_path": "/tmp/wt", "pipeline_branch": "main"}
+                    ),
+                )
+            )
             await session.commit()
 
         # User B tries to access
@@ -1782,6 +2100,7 @@ class TestNewEndpointIDOR:
     async def test_approve_idor_protection(self, client_with_app):
         """POST approve for another user's pipeline returns 404."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1795,15 +2114,27 @@ class TestNewEndpointIDOR:
         tid = f"{pid[:8]}-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="IDOR approve", project_dir="/proj",
-                status="executing", user_id=user_id_a,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=["a.py"],
-                depends_on=[], complexity="low", state="awaiting_approval",
-                pipeline_id=pid,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="IDOR approve",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id_a,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=["a.py"],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                )
+            )
             await session.commit()
 
         token_b = await _register_and_get_token(client, email="idor-approve-b@example.com")
@@ -1816,6 +2147,7 @@ class TestNewEndpointIDOR:
     async def test_pause_idor_protection(self, client_with_app):
         """POST pause for another user's pipeline returns 404."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1828,10 +2160,15 @@ class TestNewEndpointIDOR:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="IDOR pause", project_dir="/proj",
-                status="executing", user_id=user_id_a,
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="IDOR pause",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id_a,
+                )
+            )
             await session.commit()
 
         token_b = await _register_and_get_token(client, email="idor-pause-b@example.com")
@@ -2059,11 +2396,16 @@ class TestMultiRepoPipelineStatus:
 
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Status test", project_dir=str(tmp_path),
-                status="planned", user_id=user_id,
-                repos_json=json_mod.dumps(repos_data),
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Status test",
+                    project_dir=str(tmp_path),
+                    status="planned",
+                    user_id=user_id,
+                    repos_json=json_mod.dumps(repos_data),
+                )
+            )
             await session.commit()
 
         resp = await client.get(f"/api/tasks/{pid}", headers=headers)
@@ -2092,18 +2434,42 @@ class TestMultiRepoPipelineStatus:
         pid = str(uuid.uuid4())
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Repo ID test", project_dir=str(tmp_path),
-                status="executing", user_id=user_id,
-                task_graph_json=json_mod.dumps({"tasks": [
-                    {"id": "t1", "title": "Backend task", "description": "D", "files": [], "depends_on": [], "complexity": "low"},
-                ]}),
-            ))
-            session.add(TaskRow(
-                id="t1", title="Backend task", description="D", files=[], depends_on=[],
-                complexity="low", state="in_progress", pipeline_id=pid,
-                repo_id="backend",
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Repo ID test",
+                    project_dir=str(tmp_path),
+                    status="executing",
+                    user_id=user_id,
+                    task_graph_json=json_mod.dumps(
+                        {
+                            "tasks": [
+                                {
+                                    "id": "t1",
+                                    "title": "Backend task",
+                                    "description": "D",
+                                    "files": [],
+                                    "depends_on": [],
+                                    "complexity": "low",
+                                },
+                            ]
+                        }
+                    ),
+                )
+            )
+            session.add(
+                TaskRow(
+                    id="t1",
+                    title="Backend task",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="in_progress",
+                    pipeline_id=pid,
+                    repo_id="backend",
+                )
+            )
             await session.commit()
 
         resp = await client.get(f"/api/tasks/{pid}", headers=headers)
@@ -2120,7 +2486,7 @@ class TestMultiRepoWorktreeCleanup:
     def test_cleanup_worktree_multi_repo(self, tmp_path):
         """_cleanup_worktree with repo_id resolves to <worktrees>/backend/<task_id>/."""
         import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_worktree
 
@@ -2137,7 +2503,7 @@ class TestMultiRepoWorktreeCleanup:
     def test_cleanup_worktree_default_repo(self, tmp_path):
         """_cleanup_worktree with repo_id='default' uses standard worktrees dir."""
         import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_worktree
 
@@ -2152,7 +2518,7 @@ class TestMultiRepoWorktreeCleanup:
     def test_cleanup_worktree_no_repo_id(self, tmp_path):
         """_cleanup_worktree without repo_id uses standard worktrees dir."""
         import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_worktree
 
@@ -2166,7 +2532,7 @@ class TestMultiRepoWorktreeCleanup:
 
     async def test_cleanup_all_worktrees_multi_repo(self):
         """_cleanup_all_pipeline_worktrees passes each task's repo_id."""
-        from unittest.mock import patch, AsyncMock, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_all_pipeline_worktrees
 
@@ -2179,8 +2545,10 @@ class TestMultiRepoWorktreeCleanup:
         task2.repo_id = "frontend"
         mock_db.list_tasks_by_pipeline.return_value = [task1, task2]
 
-        with patch("forge.api.routes.tasks._cleanup_worktree") as mock_cleanup, \
-             patch("subprocess.run"):
+        with (
+            patch("forge.api.routes.tasks._cleanup_worktree") as mock_cleanup,
+            patch("subprocess.run"),
+        ):
             mock_cleanup.return_value = True
             await _cleanup_all_pipeline_worktrees(mock_db, "pipe-1", "/proj")
 
@@ -2243,16 +2611,29 @@ class TestMultiRepoWebSocketBroadcasts:
         tid = "ws-task-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="WS test", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=[], depends_on=[],
-                complexity="low", state="awaiting_approval", pipeline_id=pid,
-                repo_id="backend",
-                approval_context='{"worktree_path": "/tmp/wt", "pipeline_branch": "forge/branch"}',
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="WS test",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    repo_id="backend",
+                    approval_context='{"worktree_path": "/tmp/wt", "pipeline_branch": "forge/branch"}',
+                )
+            )
             await session.commit()
 
         # Mock ws_manager to capture broadcasts
@@ -2266,9 +2647,15 @@ class TestMultiRepoWebSocketBroadcasts:
         app.state.ws_manager = mock_ws
 
         # Mock the merge worker and diff stats to avoid filesystem access
-        with patch("forge.merge.worker.MergeWorker"), \
-             patch("forge.core.daemon_helpers._get_diff_stats", new_callable=AsyncMock, return_value={"linesAdded": 0, "linesRemoved": 0}), \
-             patch("forge.api.routes.tasks._cleanup_worktree"):
+        with (
+            patch("forge.merge.worker.MergeWorker"),
+            patch(
+                "forge.core.daemon_helpers._get_diff_stats",
+                new_callable=AsyncMock,
+                return_value={"linesAdded": 0, "linesRemoved": 0},
+            ),
+            patch("forge.api.routes.tasks._cleanup_worktree"),
+        ):
             resp = await client.post(
                 f"/api/tasks/{pid}/tasks/{tid}/approve",
                 headers=headers,
@@ -2276,7 +2663,11 @@ class TestMultiRepoWebSocketBroadcasts:
             assert resp.status_code == 202
 
         # The first broadcast should be the "merging" state change with repo_id
-        merging_broadcasts = [c for c in captured if c.get("type") == "task:state_changed" and c.get("state") == "merging"]
+        merging_broadcasts = [
+            c
+            for c in captured
+            if c.get("type") == "task:state_changed" and c.get("state") == "merging"
+        ]
         assert len(merging_broadcasts) >= 1
         assert merging_broadcasts[0].get("repo_id") == "backend"
 
@@ -2298,15 +2689,28 @@ class TestMultiRepoWebSocketBroadcasts:
         tid = "ws-reject-1"
         db = app.state.db
         async with db._session_factory() as session:
-            session.add(PipelineRow(
-                id=pid, description="Reject test", project_dir="/proj",
-                status="executing", user_id=user_id,
-            ))
-            session.add(TaskRow(
-                id=tid, title="T1", description="D", files=[], depends_on=[],
-                complexity="low", state="awaiting_approval", pipeline_id=pid,
-                repo_id="frontend",
-            ))
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Reject test",
+                    project_dir="/proj",
+                    status="executing",
+                    user_id=user_id,
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    repo_id="frontend",
+                )
+            )
             await session.commit()
 
         # Mock ws_manager

@@ -1,6 +1,7 @@
 """PR creation utilities for TUI — push, generate, create."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -12,8 +13,14 @@ async def push_branch(project_dir: str, branch: str) -> bool:
     logger.info("Pushing branch %r from %s", branch, project_dir)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "push", "-u", "origin", branch,
-            cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            "git",
+            "push",
+            "-u",
+            "origin",
+            branch,
+            cwd=project_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
@@ -41,9 +48,17 @@ def generate_pr_body(
 
     summary_suffix = f" [{repo_id}]" if repo_id else ""
     if failed_tasks:
-        lines = ["## Summary", f"Built by Forge pipeline • {total} tasks • {completed}/{total} completed • {time} • ${cost:.2f}{summary_suffix}", ""]
+        lines = [
+            "## Summary",
+            f"Built by Forge pipeline • {total} tasks • {completed}/{total} completed • {time} • ${cost:.2f}{summary_suffix}",
+            "",
+        ]
     else:
-        lines = ["## Summary", f"Built by Forge pipeline • {total} tasks • {time} • ${cost:.2f}{summary_suffix}", ""]
+        lines = [
+            "## Summary",
+            f"Built by Forge pipeline • {total} tasks • {time} • ${cost:.2f}{summary_suffix}",
+            "",
+        ]
 
     if related_prs:
         lines.append("## Related PRs")
@@ -100,12 +115,18 @@ def generate_pr_body(
         for q in questions:
             lines.append(f"- **Q:** {q['question']} → **A:** {q['answer']}")
 
-    lines.extend(["", "\U0001f916 Built with [Forge](https://github.com/tarunms7/forge-orchestrator)"])
+    lines.extend(
+        ["", "\U0001f916 Built with [Forge](https://github.com/tarunms7/forge-orchestrator)"]
+    )
     return "\n".join(lines)
 
 
 async def create_pr(
-    project_dir: str, title: str, body: str, base: str = "main", head: str | None = None,
+    project_dir: str,
+    title: str,
+    body: str,
+    base: str = "main",
+    head: str | None = None,
 ) -> str | None:
     # --head is REQUIRED: the working directory is on main, not the pipeline branch.
     # Without --head, gh tries to create a PR from main→main which always fails.
@@ -116,7 +137,9 @@ async def create_pr(
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            cwd=project_dir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=project_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
@@ -177,7 +200,7 @@ async def create_prs_multi_repo(
 
         # Compute per-repo cost
         repo_tasks = tasks_by_repo.get(repo_id, [])
-        repo_failed = failed_by_repo.get(repo_id, None) or None
+        repo_failed = failed_by_repo.get(repo_id) or None
         repo_cost = sum(t.get("cost_usd", 0) for t in repo_tasks)
         if repo_failed:
             repo_cost += sum(t.get("cost_usd", 0) for t in repo_failed)
@@ -242,7 +265,12 @@ async def _add_related_prs_comment(
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "gh", "pr", "comment", pr_number, "--body", comment_body,
+            "gh",
+            "pr",
+            "comment",
+            pr_number,
+            "--body",
+            comment_body,
             cwd=project_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -251,7 +279,9 @@ async def _add_related_prs_comment(
         if proc.returncode != 0:
             logger.warning(
                 "Failed to add related PRs comment to %s (exit %d): %s",
-                pr_url, proc.returncode, stderr.decode(),
+                pr_url,
+                proc.returncode,
+                stderr.decode(),
             )
     except Exception:
         logger.warning("Failed to add related PRs comment to %s", pr_url, exc_info=True)

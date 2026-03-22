@@ -176,7 +176,7 @@ def format_help_overlay(
         content_lines.append("")
 
     # Apply scroll window
-    visible = content_lines[scroll_offset:scroll_offset + max_visible]
+    visible = content_lines[scroll_offset : scroll_offset + max_visible]
     parts.extend(visible)
 
     # Scroll indicator
@@ -232,6 +232,7 @@ class HelpOverlay(Widget):
 
     class Dismissed(Message):
         """Posted when the help overlay is dismissed."""
+
         pass
 
     def __init__(self, screen_name: str = "HomeScreen") -> None:

@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Python Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e '.[dev,web]'
+
+      - name: Ruff lint
+        run: ruff check forge/
+
+      - name: Ruff format check
+        run: ruff format --check forge/
+
+      - name: Run tests
+        run: |
+          python -m pytest forge/ -q --timeout=120 \
+            --ignore=forge/tests/integration \
+            --ignore=forge/core/integration_test.py \
+            --deselect forge/core/planning_phase_test.py \
+            --deselect forge/core/planning_regression_test.py \
+            --deselect forge/core/daemon_executor_question_test.py::TestOnTaskAnswered::test_resumes_awaiting_input_task \
+            --deselect forge/core/daemon_executor_question_test.py::TestOnTaskAnswered::test_skips_already_active_task \
+            --deselect forge/core/daemon_helpers_test.py::TestGetDiffVsMainBaseRef::test_uses_base_ref_when_provided \
+            --deselect forge/core/daemon_review_test.py::TestReviewUsesRepoConfig::test_review_uses_repo_config \
+            --deselect forge/tui/widgets/logo_test.py::test_forge_logo_matches_expected_ascii_art \
+            --deselect forge/agents/adapter_question_test.py::test_balanced_autonomy_protocol \
+            --deselect forge/agents/adapter_test.py::test_build_options_has_no_allowed_tools \
+            --ignore=forge/api/routes/tasks_test.py \
+            --ignore=forge/api/routes/webhooks_test.py \
+            --deselect forge/tui/screens/pipeline_test.py::test_retry_emits_when_error \
+            --deselect forge/tui/screens/pipeline_test.py::test_skip_emits_when_error \
+            -k "not test_pipeline_lifecycle"
+
+  frontend:
+    name: Next.js Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

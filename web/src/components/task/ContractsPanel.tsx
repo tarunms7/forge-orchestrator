@@ -188,10 +188,18 @@ export default function ContractsPanel({
     if (!pipelineId || !token) return;
     setLoading(true);
     setError(null);
-    fetchContracts(pipelineId, token)
-      .then((res: ContractSetData) => setData(res))
-      .catch((err: Error) => setError(err.message || "Failed to load contracts"))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchContracts(pipelineId, token);
+        if (!cancelled) setData(res);
+      } catch (err: unknown) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load contracts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [pipelineId, token]);
 
   // Loading state
@@ -378,14 +386,23 @@ function ApiContractCard({ contract }: { contract: ApiContract }) {
       }}
     >
       {/* Header row */}
-      <div
+      <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           cursor: "pointer",
           gap: 8,
+          background: "none",
+          border: "none",
+          width: "100%",
+          padding: 0,
+          font: "inherit",
+          color: "inherit",
+          textAlign: "left",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -430,7 +447,7 @@ function ApiContractCard({ contract }: { contract: ApiContract }) {
             <TaskBadge key={cid} taskId={cid} />
           ))}
         </div>
-      </div>
+      </button>
 
       {/* Description (always visible if present) */}
       {contract.description && (
@@ -562,14 +579,23 @@ function TypeContractCard({ contract }: { contract: TypeContractDef }) {
       }}
     >
       {/* Header row */}
-      <div
+      <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           cursor: "pointer",
           gap: 8,
+          background: "none",
+          border: "none",
+          width: "100%",
+          padding: 0,
+          font: "inherit",
+          color: "inherit",
+          textAlign: "left",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -607,7 +633,7 @@ function TypeContractCard({ contract }: { contract: TypeContractDef }) {
             <TaskBadge key={tid} taskId={tid} />
           ))}
         </div>
-      </div>
+      </button>
 
       {/* Description */}
       {contract.description && (

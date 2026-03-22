@@ -1,21 +1,29 @@
 """Tests for FinalApprovalScreen."""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from forge.tui.screens.final_approval import (
+    DiffScreen,
+    FinalApprovalScreen,
     format_summary_stats,
     format_task_table,
-    FinalApprovalScreen,
-    DiffScreen,
 )
 from forge.tui.widgets.followup_input import FollowUpInput
 
 
 def test_format_summary_stats():
-    stats = {"added": 342, "removed": 28, "files": 12, "elapsed": "8m 23s", "cost": 0.42, "questions": 2}
+    stats = {
+        "added": 342,
+        "removed": 28,
+        "files": 12,
+        "elapsed": "8m 23s",
+        "cost": 0.42,
+        "questions": 2,
+    }
     result = format_summary_stats(stats)
     assert "+342" in result
     assert "$0.42" in result
@@ -23,7 +31,14 @@ def test_format_summary_stats():
 
 def test_format_task_table():
     tasks = [
-        {"title": "JWT middleware", "added": 89, "removed": 4, "tests_passed": 14, "tests_total": 14, "review": "passed"},
+        {
+            "title": "JWT middleware",
+            "added": 89,
+            "removed": 4,
+            "tests_passed": 14,
+            "tests_total": 14,
+            "review": "passed",
+        },
     ]
     result = format_task_table(tasks)
     assert "JWT middleware" in result
@@ -81,7 +96,9 @@ def test_action_view_diff_no_branch_notifies():
 async def test_load_and_show_diff_success():
     """_load_and_show_diff should run git diff and push DiffScreen."""
     screen = FinalApprovalScreen(
-        stats={}, tasks=[], pipeline_branch="forge/my-branch",
+        stats={},
+        tasks=[],
+        pipeline_branch="forge/my-branch",
     )
     mock_app = MagicMock()
     screen._app = mock_app
@@ -108,7 +125,9 @@ async def test_load_and_show_diff_success():
 async def test_load_and_show_diff_git_error():
     """_load_and_show_diff should show error text if git fails."""
     screen = FinalApprovalScreen(
-        stats={}, tasks=[], pipeline_branch="forge/bad-branch",
+        stats={},
+        tasks=[],
+        pipeline_branch="forge/bad-branch",
     )
     mock_app = MagicMock()
     type(screen).app = property(lambda self: mock_app)
@@ -128,7 +147,9 @@ async def test_load_and_show_diff_git_error():
 async def test_load_and_show_diff_exception():
     """_load_and_show_diff should handle subprocess exceptions."""
     screen = FinalApprovalScreen(
-        stats={}, tasks=[], pipeline_branch="forge/branch",
+        stats={},
+        tasks=[],
+        pipeline_branch="forge/branch",
     )
     mock_app = MagicMock()
     type(screen).app = property(lambda self: mock_app)
@@ -150,7 +171,9 @@ def test_diff_screen_stores_params():
 def test_action_view_diff_with_branch_creates_task():
     """action_view_diff with a branch should schedule _load_and_show_diff."""
     screen = FinalApprovalScreen(
-        stats={}, tasks=[], pipeline_branch="forge/branch",
+        stats={},
+        tasks=[],
+        pipeline_branch="forge/branch",
     )
     with patch("asyncio.create_task") as mock_create_task:
         screen.action_view_diff()
@@ -244,6 +267,7 @@ def test_help_text_includes_followup():
 
 def test_format_task_table_partial_mode():
     from forge.tui.screens.final_approval import format_task_table
+
     tasks = [
         {"title": "Auth", "state": "done", "added": 100, "removed": 10},
         {"title": "API", "state": "error", "error": "timed out (5 attempts)"},
@@ -267,9 +291,36 @@ class TestMultiRepoFinalApproval:
     def test_format_task_table_multi_repo(self):
         """Multi-repo task table groups tasks by repo with headers and aggregate stats."""
         tasks = [
-            {"title": "Add auth", "state": "done", "added": 80, "removed": 20, "files": 2, "tests_passed": 5, "tests_total": 5, "repo": "backend"},
-            {"title": "Add models", "state": "done", "added": 40, "removed": 10, "files": 1, "tests_passed": 3, "tests_total": 3, "repo": "backend"},
-            {"title": "Add login page", "state": "done", "added": 50, "removed": 5, "files": 3, "tests_passed": 2, "tests_total": 2, "repo": "frontend"},
+            {
+                "title": "Add auth",
+                "state": "done",
+                "added": 80,
+                "removed": 20,
+                "files": 2,
+                "tests_passed": 5,
+                "tests_total": 5,
+                "repo": "backend",
+            },
+            {
+                "title": "Add models",
+                "state": "done",
+                "added": 40,
+                "removed": 10,
+                "files": 1,
+                "tests_passed": 3,
+                "tests_total": 3,
+                "repo": "backend",
+            },
+            {
+                "title": "Add login page",
+                "state": "done",
+                "added": 50,
+                "removed": 5,
+                "files": 3,
+                "tests_passed": 2,
+                "tests_total": 2,
+                "repo": "frontend",
+            },
         ]
         result = format_task_table(tasks, multi_repo=True)
         # Should have repo headers
@@ -286,7 +337,15 @@ class TestMultiRepoFinalApproval:
     def test_format_task_table_single_repo(self):
         """Single-repo task table should be identical to current behavior (no repo headers)."""
         tasks = [
-            {"title": "Add auth", "state": "done", "added": 80, "removed": 20, "files": 2, "tests_passed": 5, "tests_total": 5},
+            {
+                "title": "Add auth",
+                "state": "done",
+                "added": 80,
+                "removed": 20,
+                "files": 2,
+                "tests_passed": 5,
+                "tests_total": 5,
+            },
         ]
         result_single = format_task_table(tasks, multi_repo=False)
         result_default = format_task_table(tasks)
@@ -299,8 +358,14 @@ class TestMultiRepoFinalApproval:
     def test_format_summary_stats_multi_repo(self):
         """Multi-repo summary stats should prepend repo/task counts."""
         stats = {
-            "added": 170, "removed": 35, "files": 5, "elapsed": "3m 42s",
-            "cost": 1.23, "questions": 2, "repo_count": 2, "task_count": 5,
+            "added": 170,
+            "removed": 35,
+            "files": 5,
+            "elapsed": "3m 42s",
+            "cost": 1.23,
+            "questions": 2,
+            "repo_count": 2,
+            "task_count": 5,
         }
         result = format_summary_stats(stats, multi_repo=True)
         assert "2 repos, 5 tasks" in result
@@ -311,8 +376,12 @@ class TestMultiRepoFinalApproval:
     def test_format_summary_stats_single_repo(self):
         """Single-repo summary stats should NOT have repo/task prefix."""
         stats = {
-            "added": 170, "removed": 35, "files": 5, "elapsed": "3m 42s",
-            "cost": 1.23, "questions": 2,
+            "added": 170,
+            "removed": 35,
+            "files": 5,
+            "elapsed": "3m 42s",
+            "cost": 1.23,
+            "questions": 2,
         }
         result_single = format_summary_stats(stats, multi_repo=False)
         result_default = format_summary_stats(stats)
@@ -322,7 +391,14 @@ class TestMultiRepoFinalApproval:
     def test_format_task_table_multi_repo_with_errors(self):
         """Multi-repo task table should handle error/blocked/cancelled states."""
         tasks = [
-            {"title": "Add auth", "state": "done", "added": 80, "removed": 20, "files": 2, "repo": "backend"},
+            {
+                "title": "Add auth",
+                "state": "done",
+                "added": 80,
+                "removed": 20,
+                "files": 2,
+                "repo": "backend",
+            },
             {"title": "Add API", "state": "error", "error": "timed out", "repo": "backend"},
             {"title": "Add login", "state": "cancelled", "repo": "frontend"},
         ]
@@ -341,13 +417,18 @@ class TestFinalApprovalCreatePrsButton:
         """Button text should be 'Create PRs' for multi-repo and 'Create PR' for single."""
         # Multi-repo screen
         multi_screen = FinalApprovalScreen(
-            stats={}, tasks=[], pipeline_branch="feat/x",
-            multi_repo=True, repos=[{"repo_id": "backend"}, {"repo_id": "frontend"}],
+            stats={},
+            tasks=[],
+            pipeline_branch="feat/x",
+            multi_repo=True,
+            repos=[{"repo_id": "backend"}, {"repo_id": "frontend"}],
         )
         assert multi_screen._multi_repo is True
 
         # Single-repo screen
         single_screen = FinalApprovalScreen(
-            stats={}, tasks=[], pipeline_branch="feat/x",
+            stats={},
+            tasks=[],
+            pipeline_branch="feat/x",
         )
         assert single_screen._multi_repo is False

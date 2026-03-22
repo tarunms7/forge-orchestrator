@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.widget import Widget
 
-from forge.tui.widgets.task_list import STATE_ICONS, STATE_COLORS
+from forge.tui.widgets.task_list import STATE_COLORS, STATE_ICONS
 
 logger = logging.getLogger("forge.tui.widgets.pipeline_list")
 
@@ -16,7 +16,10 @@ logger = logging.getLogger("forge.tui.widgets.pipeline_list")
 _STATUS_MAP: dict[str, tuple[str, str]] = {
     "complete": (STATE_ICONS.get("done", "✔"), STATE_COLORS.get("done", "#3fb950")),
     "error": (STATE_ICONS.get("error", "✖"), STATE_COLORS.get("error", "#f85149")),
-    "in_progress": (STATE_ICONS.get("in_progress", "●"), STATE_COLORS.get("in_progress", "#f0883e")),
+    "in_progress": (
+        STATE_ICONS.get("in_progress", "●"),
+        STATE_COLORS.get("in_progress", "#f0883e"),
+    ),
     "executing": (STATE_ICONS.get("in_progress", "●"), STATE_COLORS.get("in_progress", "#f0883e")),
     "cancelled": (STATE_ICONS.get("cancelled", "✘"), STATE_COLORS.get("cancelled", "#8b949e")),
     "planning": ("◌", "#58a6ff"),
@@ -44,6 +47,7 @@ class PipelineList(Widget, can_focus=True):
 
     class Selected(Message):
         """Posted when user presses Enter on a pipeline."""
+
         def __init__(self, pipeline_id: str) -> None:
             self.pipeline_id = pipeline_id
             super().__init__()
@@ -86,6 +90,7 @@ class PipelineList(Widget, can_focus=True):
             project_tag = ""
             if project_dir:
                 import os
+
                 folder = os.path.basename(project_dir.rstrip("/"))[:20]
                 if folder:
                     project_tag = f"[#8b949e]{folder}[/]  "

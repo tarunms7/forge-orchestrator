@@ -7,15 +7,16 @@ interface Props {
 
 interface State {
   hasError: boolean;
+  btnHover: boolean;
 }
 
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, btnHover: false };
   }
 
-  static getDerivedStateFromError(): State {
+  static getDerivedStateFromError(): Partial<State> {
     return { hasError: true };
   }
 
@@ -26,12 +27,40 @@ export class ErrorBoundary extends React.Component<Props, State> {
   render(): React.ReactNode {
     if (this.state.hasError) {
       return (
-        <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-100">
-          <div className="text-center space-y-4">
+        <div
+          style={{
+            display: "flex",
+            minHeight: "100vh",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "var(--bg-surface-1)",
+            color: "var(--text-primary)",
+          }}
+        >
+          <div
+            style={{
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              gap: "1rem",
+            }}
+          >
             <h1 className="text-2xl font-semibold">Something went wrong</h1>
-            <p className="text-zinc-400">An unexpected error occurred.</p>
+            <p style={{ color: "var(--text-secondary)" }}>An unexpected error occurred.</p>
             <button
-              className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: "0.375rem",
+                background: this.state.btnHover
+                  ? "var(--bg-surface-4)"
+                  : "var(--bg-surface-3)",
+                border: "none",
+                color: "var(--text-primary)",
+                cursor: "pointer",
+                transition: "background 150ms",
+              }}
+              onMouseEnter={() => this.setState({ btnHover: true })}
+              onMouseLeave={() => this.setState({ btnHover: false })}
               onClick={() => {
                 this.setState({ hasError: false });
                 window.location.reload();

@@ -1,10 +1,11 @@
 """Chat thread widget for agent Q&A interaction."""
 
 from __future__ import annotations
-from textual.widget import Widget
-from textual.widgets import Input, Static
+
 from textual.containers import VerticalScroll
 from textual.message import Message
+from textual.widget import Widget
+from textual.widgets import Input, Static
 
 from forge.tui.widgets.suggestion_chips import SuggestionChips
 
@@ -97,7 +98,9 @@ class ChatThread(Widget):
 
         scroll.scroll_end(animate=False)
 
-    def update_question(self, question: dict, work_lines: list[str], history: list[dict] | None = None) -> None:
+    def update_question(
+        self, question: dict, work_lines: list[str], history: list[dict] | None = None
+    ) -> None:
         self._question = question
         self._work_lines = work_lines
         self._history = history or []

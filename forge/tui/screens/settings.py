@@ -7,10 +7,10 @@ import subprocess
 from typing import Any
 
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
-from textual.containers import VerticalScroll
-from textual.binding import Binding
 
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
@@ -64,30 +64,34 @@ def _render_autonomy(settings: Any, selected_field: int) -> str:
             radio_parts.append(f"[bold #3fb950][[{opt}]][/]")
         else:
             radio_parts.append(f"[#8b949e][{opt}][/]")
-    lines.append(f"{cursor}[#8b949e]autonomy[/]: {' '.join(radio_parts)}"
-                 f"  [dim](FORGE_AUTONOMY)[/dim]")
+    lines.append(
+        f"{cursor}[#8b949e]autonomy[/]: {' '.join(radio_parts)}  [dim](FORGE_AUTONOMY)[/dim]"
+    )
 
     # --- question_limit +/- ---
     field_idx = 1
     cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
     ql = getattr(settings, "question_limit", 3)
-    lines.append(f"{cursor}[#8b949e]question_limit[/]: [bold][-] {ql} [+][/]"
-                 f"  [dim](FORGE_QUESTION_LIMIT, 1-10)[/dim]")
+    lines.append(
+        f"{cursor}[#8b949e]question_limit[/]: [bold][-] {ql} [+][/]"
+        f"  [dim](FORGE_QUESTION_LIMIT, 1-10)[/dim]"
+    )
 
     # --- question_timeout +/- ---
     field_idx = 2
     cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
     qt = getattr(settings, "question_timeout", 1800)
-    lines.append(f"{cursor}[#8b949e]question_timeout[/]: [bold][-] {qt} [+][/]"
-                 f"  [dim](FORGE_QUESTION_TIMEOUT, 60-7200)[/dim]")
+    lines.append(
+        f"{cursor}[#8b949e]question_timeout[/]: [bold][-] {qt} [+][/]"
+        f"  [dim](FORGE_QUESTION_TIMEOUT, 60-7200)[/dim]"
+    )
 
     # --- auto_pr toggle ---
     field_idx = 3
     cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
     apr = getattr(settings, "auto_pr", False)
     toggle = "[bold #3fb950][ON][/]" if apr else "[#8b949e][OFF][/]"
-    lines.append(f"{cursor}[#8b949e]auto_pr[/]: {toggle}"
-                 f"  [dim](FORGE_AUTO_PR)[/dim]")
+    lines.append(f"{cursor}[#8b949e]auto_pr[/]: {toggle}  [dim](FORGE_AUTO_PR)[/dim]")
 
     return "\n".join(lines)
 
@@ -150,11 +154,13 @@ class SettingsScreen(Screen):
             "[↑↓] navigate  [←→] change  [Enter] edit config  [Esc] close",
             id="settings-footer",
         )
-        yield ShortcutBar([
-            ("Enter", "Save"),
-            ("Tab", "Next Field"),
-            ("Esc", "Back"),
-        ])
+        yield ShortcutBar(
+            [
+                ("Enter", "Save"),
+                ("Tab", "Next Field"),
+                ("Esc", "Back"),
+            ]
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -206,13 +212,13 @@ class SettingsScreen(Screen):
         if field == "autonomy":
             modes = _AUTONOMY_MODES
             idx = modes.index(getattr(self._settings, "autonomy", "balanced"))
-            setattr(self._settings, "autonomy", modes[(idx - 1) % len(modes)])
+            self._settings.autonomy = modes[(idx - 1) % len(modes)]
         elif field in _FIELD_BOUNDS:
             lo, hi, step = _FIELD_BOUNDS[field]
             val = getattr(self._settings, field)
             setattr(self._settings, field, max(lo, val - step))
         elif field == "auto_pr":
-            setattr(self._settings, "auto_pr", False)
+            self._settings.auto_pr = False
         self._persist()
         self._refresh_autonomy()
 
@@ -221,13 +227,13 @@ class SettingsScreen(Screen):
         if field == "autonomy":
             modes = _AUTONOMY_MODES
             idx = modes.index(getattr(self._settings, "autonomy", "balanced"))
-            setattr(self._settings, "autonomy", modes[(idx + 1) % len(modes)])
+            self._settings.autonomy = modes[(idx + 1) % len(modes)]
         elif field in _FIELD_BOUNDS:
             lo, hi, step = _FIELD_BOUNDS[field]
             val = getattr(self._settings, field)
             setattr(self._settings, field, min(hi, val + step))
         elif field == "auto_pr":
-            setattr(self._settings, "auto_pr", True)
+            self._settings.auto_pr = True
         self._persist()
         self._refresh_autonomy()
 
@@ -236,14 +242,14 @@ class SettingsScreen(Screen):
         field = _AUTONOMY_FIELDS[self._selected]
         if field == "auto_pr":
             cur = getattr(self._settings, "auto_pr", False)
-            setattr(self._settings, "auto_pr", not cur)
+            self._settings.auto_pr = not cur
             self._persist()
             self._refresh_autonomy()
         elif field == "autonomy":
             # Cycle forward through modes on Enter.
             modes = _AUTONOMY_MODES
             idx = modes.index(getattr(self._settings, "autonomy", "balanced"))
-            setattr(self._settings, "autonomy", modes[(idx + 1) % len(modes)])
+            self._settings.autonomy = modes[(idx + 1) % len(modes)]
             self._persist()
             self._refresh_autonomy()
         else:

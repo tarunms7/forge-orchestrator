@@ -11,15 +11,15 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.agents.adapter import ClaudeAdapter
-from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.agents.runtime import AgentRuntime
 from forge.core.events import EventEmitter
+from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.core.sdk_helpers import sdk_query
 from forge.storage.db import Database
 
@@ -28,6 +28,7 @@ logger = logging.getLogger("forge.followup")
 
 class FollowUpStatus(str, Enum):
     """Status of a follow-up execution."""
+
     PENDING = "pending"
     CLASSIFYING = "classifying"
     EXECUTING = "executing"
@@ -38,6 +39,7 @@ class FollowUpStatus(str, Enum):
 @dataclass
 class FollowUpQuestion:
     """A single follow-up question from the user."""
+
     text: str
     context: str | None = None
 
@@ -45,6 +47,7 @@ class FollowUpQuestion:
 @dataclass
 class ClassifiedQuestion:
     """A question that has been mapped to an original task."""
+
     question_index: int
     question: FollowUpQuestion
     task_id: str
@@ -54,6 +57,7 @@ class ClassifiedQuestion:
 @dataclass
 class FollowUpResult:
     """Result of executing follow-ups for a single task."""
+
     task_id: str
     task_title: str
     questions: list[FollowUpQuestion]
@@ -67,6 +71,7 @@ class FollowUpResult:
 @dataclass
 class FollowUpExecution:
     """Full follow-up execution state."""
+
     id: str
     pipeline_id: str
     status: FollowUpStatus
@@ -74,7 +79,7 @@ class FollowUpExecution:
     classification: dict[int, str] = field(default_factory=dict)  # question_index -> task_id
     results: list[FollowUpResult] = field(default_factory=list)
     error: str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 async def classify_questions(
@@ -214,12 +219,15 @@ async def execute_followups(
         questions_for_task = [q for _, q in indexed_questions]
 
         if emitter:
-            await emitter.emit("followup:task_started", {
-                "followup_id": followup.id,
-                "task_id": task_id,
-                "task_title": task_title,
-                "question_count": len(questions_for_task),
-            })
+            await emitter.emit(
+                "followup:task_started",
+                {
+                    "followup_id": followup.id,
+                    "task_id": task_id,
+                    "task_title": task_title,
+                    "question_count": len(questions_for_task),
+                },
+            )
 
         try:
             result = await _execute_task_followup(
@@ -237,13 +245,16 @@ async def execute_followups(
             followup.results.append(result)
 
             if emitter:
-                await emitter.emit("followup:task_completed", {
-                    "followup_id": followup.id,
-                    "task_id": task_id,
-                    "success": result.success,
-                    "summary": result.summary,
-                    "files_changed": result.files_changed,
-                })
+                await emitter.emit(
+                    "followup:task_completed",
+                    {
+                        "followup_id": followup.id,
+                        "task_id": task_id,
+                        "success": result.success,
+                        "summary": result.summary,
+                        "files_changed": result.files_changed,
+                    },
+                )
 
         except Exception as exc:
             logger.exception("Follow-up execution failed for task %s", task_id)
@@ -258,11 +269,14 @@ async def execute_followups(
             followup.results.append(error_result)
 
             if emitter:
-                await emitter.emit("followup:task_error", {
-                    "followup_id": followup.id,
-                    "task_id": task_id,
-                    "error": str(exc),
-                })
+                await emitter.emit(
+                    "followup:task_error",
+                    {
+                        "followup_id": followup.id,
+                        "task_id": task_id,
+                        "error": str(exc),
+                    },
+                )
 
     # Determine overall status
     all_success = all(r.success for r in followup.results)
@@ -322,7 +336,8 @@ async def _execute_task_followup(
                 logger.warning(
                     "repo_id '%s' not found in pipeline repos_json, "
                     "falling back to project_dir '%s'",
-                    repo_id, project_dir,
+                    repo_id,
+                    project_dir,
                 )
     except ValueError:
         # get_repos() raises ValueError if base_branch is missing
@@ -378,11 +393,14 @@ async def _execute_task_followup(
                 elif hasattr(msg, "result"):
                     text = msg.result or ""
                 if text:
-                    await emitter.emit("followup:agent_output", {
-                        "followup_id": followup_id,
-                        "task_id": task_id,
-                        "line": text[:500],
-                    })
+                    await emitter.emit(
+                        "followup:agent_output",
+                        {
+                            "followup_id": followup_id,
+                            "task_id": task_id,
+                            "line": text[:500],
+                        },
+                    )
 
         # Run the agent
         adapter = ClaudeAdapter()
@@ -511,7 +529,10 @@ async def _setup_worktree(
 
     # Check if the branch exists
     proc = await asyncio.create_subprocess_exec(
-        "git", "rev-parse", "--verify", branch_name,
+        "git",
+        "rev-parse",
+        "--verify",
+        branch_name,
         cwd=repo_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -520,13 +541,16 @@ async def _setup_worktree(
 
     if proc.returncode != 0:
         raise RuntimeError(
-            f"Pipeline branch '{branch_name}' does not exist. "
-            f"Cannot create worktree for follow-up."
+            f"Pipeline branch '{branch_name}' does not exist. Cannot create worktree for follow-up."
         )
 
     # Create worktree from the pipeline branch (detached)
     proc = await asyncio.create_subprocess_exec(
-        "git", "worktree", "add", worktree_dir, branch_name,
+        "git",
+        "worktree",
+        "add",
+        worktree_dir,
+        branch_name,
         cwd=repo_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -576,7 +600,8 @@ async def _commit_and_push(
     if remotes:
         remote_name = remotes.split("\n")[0]
         rc, _, push_err = await _run_git(
-            ["git", "push", remote_name, f"HEAD:{branch_name}"], cwd=worktree_dir,
+            ["git", "push", remote_name, f"HEAD:{branch_name}"],
+            cwd=worktree_dir,
         )
         if rc != 0:
             logger.warning(
@@ -594,7 +619,11 @@ async def _cleanup_worktree(
     """Remove a follow-up worktree."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "worktree", "remove", worktree_dir, "--force",
+            "git",
+            "worktree",
+            "remove",
+            worktree_dir,
+            "--force",
             cwd=repo_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

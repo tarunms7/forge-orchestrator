@@ -35,13 +35,41 @@ class ErrorSuggestion:
 # Patterns for error classification, ordered by specificity
 _PATTERNS: list[tuple[str, str, str]] = [
     (r"SyntaxError", "syntax_error", "Python syntax error — the agent produced invalid syntax"),
-    (r"IndentationError", "syntax_error", "Indentation error — inconsistent indentation in generated code"),
-    (r"ImportError|ModuleNotFoundError|No module named", "import_error", "Import error — the agent tried to import a module that doesn't exist or isn't installed"),
-    (r"CONFLICT|merge conflict|rebase.*conflict|Merge.*failed", "git_conflict", "Git conflict — changes conflict with upstream code that needs manual resolution"),
-    (r"budget|cost.*exceed|spending.*limit|budget_exceeded", "budget_exceeded", "Budget exceeded — the task ran over its allocated cost budget"),
-    (r"TimeoutError|timed?\s*out|deadline exceeded|took too long", "timeout", "Timeout — the agent exceeded the time limit for this task"),
-    (r"PermissionError|permission denied|EACCES|Operation not permitted", "permission", "Permission denied — the agent couldn't access a required file or resource"),
-    (r"FAILED|AssertionError|pytest|test.*fail|failures?=\d+", "test_failure", "Test failure — one or more tests did not pass"),
+    (
+        r"IndentationError",
+        "syntax_error",
+        "Indentation error — inconsistent indentation in generated code",
+    ),
+    (
+        r"ImportError|ModuleNotFoundError|No module named",
+        "import_error",
+        "Import error — the agent tried to import a module that doesn't exist or isn't installed",
+    ),
+    (
+        r"CONFLICT|merge conflict|rebase.*conflict|Merge.*failed",
+        "git_conflict",
+        "Git conflict — changes conflict with upstream code that needs manual resolution",
+    ),
+    (
+        r"budget|cost.*exceed|spending.*limit|budget_exceeded",
+        "budget_exceeded",
+        "Budget exceeded — the task ran over its allocated cost budget",
+    ),
+    (
+        r"TimeoutError|timed?\s*out|deadline exceeded|took too long",
+        "timeout",
+        "Timeout — the agent exceeded the time limit for this task",
+    ),
+    (
+        r"PermissionError|permission denied|EACCES|Operation not permitted",
+        "permission",
+        "Permission denied — the agent couldn't access a required file or resource",
+    ),
+    (
+        r"FAILED|AssertionError|pytest|test.*fail|failures?=\d+",
+        "test_failure",
+        "Test failure — one or more tests did not pass",
+    ),
 ]
 
 # Traceback file/line extraction pattern
@@ -161,7 +189,9 @@ def get_suggestions(classification: ErrorClassification, task: dict) -> list[Err
     The task dict provides additional context (e.g. files, state) for
     potentially customized suggestions.
     """
-    return list(_CATEGORY_SUGGESTIONS.get(classification.category, _CATEGORY_SUGGESTIONS["unknown"]))
+    return list(
+        _CATEGORY_SUGGESTIONS.get(classification.category, _CATEGORY_SUGGESTIONS["unknown"])
+    )
 
 
 _ERROR_TAIL_LINES = 20
@@ -172,6 +202,7 @@ def _escape(text: str | None) -> str:
     if text is None:
         return ""
     return text.replace("[", "\\[").replace("]", "\\]")
+
 
 # Category display configuration
 _CATEGORY_ICONS: dict[str, str] = {
@@ -233,7 +264,9 @@ def format_error_panel(
     parts: list[str] = []
 
     # Header with classification
-    parts.append(f"[bold {color}]{icon} {_escape(title)} — {classification.category.upper().replace('_', ' ')}[/]")
+    parts.append(
+        f"[bold {color}]{icon} {_escape(title)} — {classification.category.upper().replace('_', ' ')}[/]"
+    )
     parts.append(f"[#30363d]{'─' * 60}[/]")
 
     # Root cause analysis
@@ -342,8 +375,6 @@ class ErrorPanel(Widget):
             from textual.widgets import Static
 
             content = self.query_one("#error-panel-content", Static)
-            content.update(
-                format_error_panel(task_id, task, output_lines, error_history)
-            )
+            content.update(format_error_panel(task_id, task, output_lines, error_history))
         except Exception:
             pass

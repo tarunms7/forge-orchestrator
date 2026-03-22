@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 # Remove CLAUDECODE immediately — before any SDK imports.
 # Claude Code sets this env var in its terminal sessions. The Claude CLI
@@ -12,9 +13,9 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 # a nested session — we're an orchestrator spawning independent agents.
 os.environ.pop("CLAUDECODE", None)
 
-from forge.core.logging_config import configure_logging
-
 import click
+
+from forge.core.logging_config import configure_logging
 
 try:
     _version = _pkg_version("forge-orchestrator")
@@ -54,10 +55,13 @@ def init(project_dir: str) -> None:
     _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
 
     gitignore_path = os.path.join(forge_dir, ".gitignore")
-    _ensure_gitignore_entries(gitignore_path, [
-        "codebase_map.json",
-        "codebase_map_meta.json",
-    ])
+    _ensure_gitignore_entries(
+        gitignore_path,
+        [
+            "codebase_map.json",
+            "codebase_map_meta.json",
+        ],
+    )
 
     click.echo(f"Forge initialized in {forge_dir}")
     click.echo(f"  Config: {os.path.join(forge_dir, 'forge.toml')} — edit to customize")
@@ -72,7 +76,12 @@ def init(project_dir: str) -> None:
     envvar="FORGE_MODEL_STRATEGY",
     help="Model routing: auto, fast, quality (default: auto, or $FORGE_MODEL_STRATEGY)",
 )
-@click.option("--spec", default=None, type=click.Path(exists=True), help="Path to spec document (markdown or text)")
+@click.option(
+    "--spec",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to spec document (markdown or text)",
+)
 @click.option("--deep-plan", is_flag=True, default=False, help="Force multi-pass deep planning")
 @click.option(
     "--repo",
@@ -80,7 +89,15 @@ def init(project_dir: str) -> None:
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
 )
 @click.pass_context
-def run(ctx: click.Context, task: str, project_dir: str, strategy: str | None, spec: str | None, deep_plan: bool, repo: tuple[str, ...]) -> None:
+def run(
+    ctx: click.Context,
+    task: str,
+    project_dir: str,
+    strategy: str | None,
+    spec: str | None,
+    deep_plan: bool,
+    repo: tuple[str, ...],
+) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -122,6 +139,7 @@ def run(ctx: click.Context, task: str, project_dir: str, strategy: str | None, s
         click.echo(f"Forge failed: {e}")
         if ctx.obj.get("verbose"):
             import traceback
+
             traceback.print_exc()
         else:
             click.echo("Run with --verbose for full traceback.")
@@ -158,6 +176,7 @@ def tui(project_dir: str, strategy: str | None, repo: tuple[str, ...]) -> None:
     # any daemon modules — module-level console = make_console() checks
     # _TUI_MODE at call time, so this must happen first.
     from forge.core.logging_config import configure_tui_logging
+
     configure_tui_logging()
 
     from forge.config.settings import ForgeSettings
@@ -190,6 +209,7 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
     """Start the Forge web server."""
     try:
         import uvicorn
+
         from forge.api.app import create_app
     except ImportError:
         click.echo(
@@ -207,6 +227,7 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
     # Use the central Forge database when no explicit DB URL is provided.
     if db_url is None:
         from forge.core.paths import forge_db_url
+
         db_url = forge_db_url()
 
     app = create_app(db_url=db_url, jwt_secret=jwt_secret)
@@ -292,7 +313,8 @@ def upgrade() -> None:
 
     result = subprocess.run(
         [uv, "tool", "install", "--upgrade", "--force", repo],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
 
     if result.returncode != 0:
@@ -302,7 +324,8 @@ def upgrade() -> None:
     # Get the new version — forge --version outputs "Forge, version X.Y.Z"
     ver_result = subprocess.run(
         [uv, "tool", "run", "forge", "--version"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if ver_result.returncode == 0 and ver_result.stdout.strip():
         raw = ver_result.stdout.strip()
@@ -326,7 +349,7 @@ def _ensure_gitignore_entries(gitignore_path: str, entries: list[str]) -> None:
     """Ensure specific entries exist in a .gitignore file."""
     existing = set()
     if os.path.exists(gitignore_path):
-        with open(gitignore_path, "r", encoding="utf-8") as f:
+        with open(gitignore_path, encoding="utf-8") as f:
             existing = {line.strip() for line in f if line.strip() and not line.startswith("#")}
 
     new_entries = [e for e in entries if e not in existing]

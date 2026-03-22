@@ -20,7 +20,9 @@ def copy_to_clipboard(text: str) -> bool:
     try:
         if system == "Darwin":
             proc = subprocess.Popen(
-                ["pbcopy"], stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                ["pbcopy"],
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             proc.communicate(input=text.encode("utf-8"), timeout=5)
             if proc.returncode == 0:
@@ -28,14 +30,17 @@ def copy_to_clipboard(text: str) -> bool:
         elif system == "Linux":
             proc = subprocess.Popen(
                 ["xclip", "-selection", "clipboard"],
-                stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             proc.communicate(input=text.encode("utf-8"), timeout=5)
             if proc.returncode == 0:
                 return True
         elif system == "Windows":
             proc = subprocess.Popen(
-                ["clip"], stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                ["clip"],
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             proc.communicate(input=text.encode("utf-8"), timeout=5)
             if proc.returncode == 0:
@@ -72,6 +77,7 @@ class CopyOverlay(Widget):
 
     class CopyComplete(Message):
         """Posted when copy completes or is cancelled."""
+
         def __init__(self, text: str, success: bool) -> None:
             self.text = text
             self.success = success
@@ -79,6 +85,7 @@ class CopyOverlay(Widget):
 
     class Cancelled(Message):
         """Posted when user presses Esc."""
+
         pass
 
     def __init__(self, lines: list[str] | None = None) -> None:
@@ -101,7 +108,9 @@ class CopyOverlay(Widget):
             "[bold #f0883e]── COPY MODE ── [/]"
             "[#8b949e]j/k: move │ space: toggle │ Enter: copy │ Esc: cancel[/]"
         )
-        parts.append(f"[#8b949e]{self.selected_count} line{'s' if self.selected_count != 1 else ''} selected[/]")
+        parts.append(
+            f"[#8b949e]{self.selected_count} line{'s' if self.selected_count != 1 else ''} selected[/]"
+        )
         parts.append("")
 
         # Visible window around cursor
@@ -153,8 +162,7 @@ class CopyOverlay(Widget):
                 return
         else:
             selected_lines = [
-                self._lines[i] for i in sorted(self._selected)
-                if 0 <= i < len(self._lines)
+                self._lines[i] for i in sorted(self._selected) if 0 <= i < len(self._lines)
             ]
             text = "\n".join(selected_lines)
 

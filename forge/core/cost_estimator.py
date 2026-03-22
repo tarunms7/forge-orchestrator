@@ -27,7 +27,7 @@ def _model_family(model_name: str) -> str:
     return "sonnet"
 
 
-def _get_rates(family: str, settings: "ForgeSettings") -> tuple[float, float]:
+def _get_rates(family: str, settings: ForgeSettings) -> tuple[float, float]:
     """Return (input_rate, output_rate) per 1K tokens for a model family."""
     if family == "opus":
         return settings.cost_rate_opus_input, settings.cost_rate_opus_output
@@ -36,18 +36,15 @@ def _get_rates(family: str, settings: "ForgeSettings") -> tuple[float, float]:
     return settings.cost_rate_sonnet_input, settings.cost_rate_sonnet_output
 
 
-def _estimate_session_cost(family: str, settings: "ForgeSettings") -> float:
+def _estimate_session_cost(family: str, settings: ForgeSettings) -> float:
     """Estimate the cost of a single session for a given model family."""
     input_rate, output_rate = _get_rates(family, settings)
-    return (
-        (_AVG_INPUT_TOKENS / 1000) * input_rate
-        + (_AVG_OUTPUT_TOKENS / 1000) * output_rate
-    )
+    return (_AVG_INPUT_TOKENS / 1000) * input_rate + (_AVG_OUTPUT_TOKENS / 1000) * output_rate
 
 
 async def estimate_pipeline_cost(
     task_count: int,
-    settings: "ForgeSettings",
+    settings: ForgeSettings,
     strategy: str = "auto",
 ) -> float:
     """Estimate total pipeline cost based on task count and model rates.

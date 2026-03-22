@@ -17,13 +17,13 @@ class BudgetExceededError(ForgeError):
     def __init__(self, spent: float, limit: float) -> None:
         self.spent = spent
         self.limit = limit
-        super().__init__(
-            f"Budget exceeded: spent ${spent:.4f} of ${limit:.4f} limit"
-        )
+        super().__init__(f"Budget exceeded: spent ${spent:.4f} of ${limit:.4f} limit")
 
 
 async def check_budget(
-    db: "Database", pipeline_id: str, settings: "ForgeSettings",
+    db: Database,
+    pipeline_id: str,
+    settings: ForgeSettings,
 ) -> None:
     """Check whether a pipeline has exceeded its budget.
 

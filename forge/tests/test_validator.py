@@ -10,8 +10,12 @@ from forge.core.planning.validator import (
 )
 
 
-def _make_task(id: str, description: str, files: list[str], depends_on: list[str] | None = None) -> TaskDefinition:
-    return TaskDefinition(id=id, title=f"Task {id}", description=description, files=files, depends_on=depends_on or [])
+def _make_task(
+    id: str, description: str, files: list[str], depends_on: list[str] | None = None
+) -> TaskDefinition:
+    return TaskDefinition(
+        id=id, title=f"Task {id}", description=description, files=files, depends_on=depends_on or []
+    )
 
 
 def _make_graph(*tasks: TaskDefinition) -> TaskGraph:
@@ -41,8 +45,14 @@ class TestFileOwnership:
 
 class TestValidatePlan:
     def test_passes_clean_plan(self):
-        t1 = _make_task("task-1", "Rewrite README.md with new features and simplified structure.", ["README.md"])
-        t2 = _make_task("task-2", "Update pyproject.toml description field to be simpler and clearer.", ["pyproject.toml"])
+        t1 = _make_task(
+            "task-1", "Rewrite README.md with new features and simplified structure.", ["README.md"]
+        )
+        t2 = _make_task(
+            "task-2",
+            "Update pyproject.toml description field to be simpler and clearer.",
+            ["pyproject.toml"],
+        )
         codebase_map = CodebaseMap(architecture_summary="Test project")
         result = validate_plan(_make_graph(t1, t2), codebase_map)
         assert result.status == "pass"

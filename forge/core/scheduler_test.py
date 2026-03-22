@@ -1,13 +1,18 @@
-
-from forge.core.models import TaskRecord, TaskState, Complexity, AgentRecord, AgentState
+from forge.core.models import AgentRecord, AgentState, Complexity, TaskRecord, TaskState
 from forge.core.scheduler import Scheduler
 
 
-def _record(id: str, depends_on: list[str] | None = None, state: TaskState = TaskState.TODO) -> TaskRecord:
+def _record(
+    id: str, depends_on: list[str] | None = None, state: TaskState = TaskState.TODO
+) -> TaskRecord:
     return TaskRecord(
-        id=id, title=f"Task {id}", description="Desc",
-        files=[f"{id}.py"], depends_on=depends_on or [],
-        complexity=Complexity.LOW, state=state,
+        id=id,
+        title=f"Task {id}",
+        description="Desc",
+        files=[f"{id}.py"],
+        depends_on=depends_on or [],
+        complexity=Complexity.LOW,
+        state=state,
     )
 
 
@@ -105,9 +110,13 @@ class TestDependsOnNoneSafety:
         # Use model_construct to bypass pydantic validation, simulating
         # data arriving with None (e.g. from a dict with missing key).
         task = TaskRecord.model_construct(
-            id="x", title="Task x", description="Desc",
-            files=["x.py"], depends_on=None,
-            complexity=Complexity.LOW, state=TaskState.TODO,
+            id="x",
+            title="Task x",
+            description="Desc",
+            files=["x.py"],
+            depends_on=None,
+            complexity=Complexity.LOW,
+            state=TaskState.TODO,
         )
         ready = Scheduler.ready_tasks([task])
         assert [t.id for t in ready] == ["x"]

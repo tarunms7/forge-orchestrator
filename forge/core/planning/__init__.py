@@ -5,17 +5,17 @@ The unified planner replaces the former 4-stage pipeline
 that has full codebase read access.
 """
 
-from forge.core.planning.unified_planner import UnifiedPlanner, UnifiedPlannerResult
 from forge.core.planning.models import (
-    KeyModule,
-    RelevantInterface,
     CodebaseMap,
-    ValidationIssue,
-    MinorFix,
-    ValidationResult,
-    PlanFeedback,
     CodebaseMapMeta,
+    KeyModule,
+    MinorFix,
+    PlanFeedback,
+    RelevantInterface,
+    ValidationIssue,
+    ValidationResult,
 )
+from forge.core.planning.unified_planner import UnifiedPlanner, UnifiedPlannerResult
 from forge.core.planning.validator import validate_plan
 
 __all__ = [

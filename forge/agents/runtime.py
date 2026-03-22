@@ -74,13 +74,27 @@ class AgentRuntime:
                 raise  # Must propagate to _stream_agent for lesson capture
             except Exception as e:
                 err_str = str(e).lower()
-                transient_keywords = ["rate_limit", "rate limit", "overloaded", "529", "500", "502", "503", "connection", "reset"]
+                transient_keywords = [
+                    "rate_limit",
+                    "rate limit",
+                    "overloaded",
+                    "529",
+                    "500",
+                    "502",
+                    "503",
+                    "connection",
+                    "reset",
+                ]
                 is_transient = any(kw in err_str for kw in transient_keywords)
                 if is_transient and attempt < max_retries:
-                    backoff = 5 * (2 ** attempt)
+                    backoff = 5 * (2**attempt)
                     logger.warning(
                         "Transient error for agent '%s' (attempt %d/%d): %s — retrying in %ds",
-                        agent_id, attempt + 1, max_retries + 1, e, backoff,
+                        agent_id,
+                        attempt + 1,
+                        max_retries + 1,
+                        e,
+                        backoff,
                     )
                     await asyncio.sleep(backoff)
                     continue

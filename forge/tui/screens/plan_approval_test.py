@@ -1,20 +1,18 @@
 """Tests for PlanApprovalScreen interactive editor."""
 
-
-
 from forge.tui.screens.plan_approval import (
-    PlanApprovalScreen,
-    format_plan_task,
-    format_plan_summary,
-    format_cost_estimate,
-    _format_task_line,
     _COMPLEXITY_ORDER,
+    PlanApprovalScreen,
+    _format_task_line,
+    format_cost_estimate,
+    format_plan_summary,
+    format_plan_task,
 )
-
 
 # ---------------------------------------------------------------------------
 # Sample data helpers
 # ---------------------------------------------------------------------------
+
 
 def _sample_tasks() -> list[dict]:
     return [
@@ -49,6 +47,7 @@ def _sample_tasks() -> list[dict]:
 # format_plan_task (existing formatter, unchanged)
 # ---------------------------------------------------------------------------
 
+
 def test_format_plan_task():
     task = {
         "id": "task-1",
@@ -82,6 +81,7 @@ def test_format_plan_task_with_deps():
 # format_plan_summary
 # ---------------------------------------------------------------------------
 
+
 def test_format_plan_summary():
     tasks = [
         {"id": "t1", "title": "A", "complexity": "low"},
@@ -103,6 +103,7 @@ def test_format_plan_summary_no_cost():
 # ---------------------------------------------------------------------------
 # format_cost_estimate
 # ---------------------------------------------------------------------------
+
 
 def test_format_cost_estimate_range():
     cost_estimate = {"min_usd": 3.50, "max_usd": 5.20}
@@ -147,6 +148,7 @@ def test_format_cost_estimate_amber_color_legacy():
 # ---------------------------------------------------------------------------
 # _format_task_line (interactive list formatter)
 # ---------------------------------------------------------------------------
+
 
 def test_format_task_line_selected():
     task = {"title": "Do stuff", "complexity": "low"}
@@ -204,6 +206,7 @@ def test_format_task_line_with_deps():
 # ---------------------------------------------------------------------------
 # PlanApprovalScreen — unit tests for internal state methods
 # ---------------------------------------------------------------------------
+
 
 class TestPlanApprovalScreenState:
     """Test PlanApprovalScreen state management without mounting the widget."""

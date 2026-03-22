@@ -1,7 +1,8 @@
 """Tests for ClaudePlannerLLM prompt building and conventions injection."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from forge.core.claude_planner import PLANNER_SYSTEM_PROMPT, ClaudePlannerLLM, _extract_json
 from forge.core.errors import SdkCallError

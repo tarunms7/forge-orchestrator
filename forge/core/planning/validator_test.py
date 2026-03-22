@@ -8,8 +8,23 @@ from forge.core.planning.validator import validate_plan
 def _graph(*tasks):
     return TaskGraph(tasks=list(tasks))
 
-def _task(id, files, depends_on=None, description="Detailed task description with test requirements", repo="default"):
-    return TaskDefinition(id=id, title=f"Task {id}", description=description, files=files, depends_on=depends_on or [], repo=repo)
+
+def _task(
+    id,
+    files,
+    depends_on=None,
+    description="Detailed task description with test requirements",
+    repo="default",
+):
+    return TaskDefinition(
+        id=id,
+        title=f"Task {id}",
+        description=description,
+        files=files,
+        depends_on=depends_on or [],
+        repo=repo,
+    )
+
 
 def _empty_map():
     return CodebaseMap(architecture_summary="test", key_modules=[])
@@ -19,7 +34,9 @@ class TestFileOwnership:
     def test_independent_tasks_same_file_is_major(self):
         graph = _graph(_task("t1", ["shared.py"]), _task("t2", ["shared.py"]))
         result = validate_plan(graph, _empty_map())
-        majors = [i for i in result.issues if i.severity == "major" and i.category == "file_conflict"]
+        majors = [
+            i for i in result.issues if i.severity == "major" and i.category == "file_conflict"
+        ]
         assert len(majors) == 1
         assert "shared.py" in majors[0].description
 
@@ -59,7 +76,9 @@ class TestDependencyValidity:
         assert len(majors) == 1
 
     def test_cycle_is_fatal(self):
-        graph = _graph(_task("t1", ["a.py"], depends_on=["t2"]), _task("t2", ["b.py"], depends_on=["t1"]))
+        graph = _graph(
+            _task("t1", ["a.py"], depends_on=["t2"]), _task("t2", ["b.py"], depends_on=["t1"])
+        )
         result = validate_plan(graph, _empty_map())
         fatals = [i for i in result.issues if i.severity == "fatal"]
         assert len(fatals) >= 1
@@ -128,7 +147,9 @@ class TestOverallStatus:
         assert result.status == "pass"
 
     def test_fatal_issue_fails(self):
-        graph = _graph(_task("t1", ["a.py"], depends_on=["t2"]), _task("t2", ["b.py"], depends_on=["t1"]))
+        graph = _graph(
+            _task("t1", ["a.py"], depends_on=["t2"]), _task("t2", ["b.py"], depends_on=["t1"])
+        )
         result = validate_plan(graph, _empty_map())
         assert result.status == "fail"
 

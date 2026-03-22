@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
-import tempfile
 
 import pytest
 
 from forge.config.project_config import IntegrationCheckConfig
 from forge.core.integration import (
-    IntegrationCheckResult,
     _temp_health_worktree,
     capture_baseline,
     effective_enabled,
@@ -19,7 +16,6 @@ from forge.core.integration import (
     run_health_check,
     run_post_merge_check,
 )
-
 
 # ── effective_enabled ────────────────────────────────────────────────
 
@@ -85,7 +81,9 @@ async def test_run_health_check_timeout():
 @pytest.mark.asyncio
 async def test_run_health_check_infra_error():
     result = await run_health_check(
-        "__nonexistent_binary_xyz_123__", cwd="/tmp", timeout_seconds=10,
+        "__nonexistent_binary_xyz_123__",
+        cwd="/tmp",
+        timeout_seconds=10,
     )
     # Shell will report "command not found" with exit code 127
     # This comes through as "failed" since the shell itself ran fine
@@ -122,12 +120,20 @@ async def test_run_health_check_shell_chaining():
 def git_repo(tmp_path):
     """Create a minimal git repo with a commit."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True
+    )
     # Create a file and commit
     (tmp_path / "README.md").write_text("# test")
     subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "init"], check=True, capture_output=True
+    )
     return tmp_path
 
 

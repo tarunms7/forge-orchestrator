@@ -43,10 +43,14 @@ class TuiState:
         self._pending_state_updates: dict[str, dict] = {}
 
         self.pending_questions: dict[str, dict] = {}  # task_id → question data
-        self.review_gates: dict[str, dict[str, dict]] = {}  # task_id → gate_name → {status, details}
+        self.review_gates: dict[
+            str, dict[str, dict]
+        ] = {}  # task_id → gate_name → {status, details}
         self.pr_url: str | None = None
         self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
-        self.review_output: dict[str, list[str]] = defaultdict(list)  # task_id → streaming LLM review lines
+        self.review_output: dict[str, list[str]] = defaultdict(
+            list
+        )  # task_id → streaming LLM review lines
         self.unified_log: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
         self.pipeline_branch: str = ""  # branch where task work is merged
@@ -73,10 +77,10 @@ class TuiState:
         self.task_diffs: dict[str, str] = {}  # task_id → diff text
 
         # Integration health checks
-        self.integration_baseline: dict | None = None      # {"status": ..., "exit_code": ...}
-        self.integration_degraded: bool = False             # True if user chose "ignore" on a failure
-        self.integration_checks: dict[str, dict] = {}       # task_id → check result
-        self.integration_prompt: dict | None = None         # pending user decision
+        self.integration_baseline: dict | None = None  # {"status": ..., "exit_code": ...}
+        self.integration_degraded: bool = False  # True if user chose "ignore" on a failure
+        self.integration_checks: dict[str, dict] = {}  # task_id → check result
+        self.integration_prompt: dict | None = None  # pending user decision
         self.integration_final_gate: dict | None = None
 
         # Multi-repo state
@@ -264,7 +268,9 @@ class TuiState:
             q = self.pending_questions.pop(task_id, None)
             if q:
                 history = self.question_history.setdefault(task_id, [])
-                history.append({"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"})
+                history.append(
+                    {"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"}
+                )
             self._notify("tasks")
             self.last_auto_decided = {"task_id": task_id, "reason": data.get("reason", "timeout")}
             self._notify("auto_decided")
@@ -280,20 +286,30 @@ class TuiState:
         task_id = data.get("task_id")
         gate = data.get("gate")
         if task_id and gate:
-            self.review_gates.setdefault(task_id, {})[gate] = {"status": "passed", "details": data.get("details")}
+            self.review_gates.setdefault(task_id, {})[gate] = {
+                "status": "passed",
+                "details": data.get("details"),
+            }
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
-            self.unified_log[task_id].append(("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}"))
+            self.unified_log[task_id].append(
+                ("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}")
+            )
             self._notify("tasks")
 
     def _on_review_gate_failed(self, data: dict) -> None:
         task_id = data.get("task_id")
         gate = data.get("gate")
         if task_id and gate:
-            self.review_gates.setdefault(task_id, {})[gate] = {"status": "failed", "details": data.get("details")}
+            self.review_gates.setdefault(task_id, {})[gate] = {
+                "status": "failed",
+                "details": data.get("details"),
+            }
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
-            self.unified_log[task_id].append(("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}"))
+            self.unified_log[task_id].append(
+                ("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}")
+            )
             self._notify("tasks")
 
     def _on_review_llm_output(self, data: dict) -> None:
@@ -600,13 +616,17 @@ class TuiState:
 
     @property
     def active_task_ids(self) -> list[str]:
-        return [tid for tid, t in self.tasks.items() if t["state"] in ("in_progress", "in_review", "merging")]
+        return [
+            tid
+            for tid, t in self.tasks.items()
+            if t["state"] in ("in_progress", "in_review", "merging")
+        ]
 
     @property
     def is_multi_repo(self) -> bool:
         return len(self.repos) > 1
 
-    _EVENT_MAP: dict[str, Callable[["TuiState", dict], None]] = {
+    _EVENT_MAP: dict[str, Callable[[TuiState, dict], None]] = {
         "pipeline:phase_changed": _on_phase_changed,
         "pipeline:plan_ready": _on_plan_ready,
         "pipeline:cost_update": _on_cost_update,

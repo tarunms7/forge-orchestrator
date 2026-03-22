@@ -88,7 +88,10 @@ class TestCreatePr:
             b"",
         )
 
-        with patch("forge.api.services.github_service.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch(
+            "forge.api.services.github_service.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ):
             result = await create_pr(
                 repo_path="/tmp/repo",
                 branch="feat/dark-mode",
@@ -109,7 +112,10 @@ class TestCreatePr:
             b"error: not a git repository",
         )
 
-        with patch("forge.api.services.github_service.asyncio.create_subprocess_exec", return_value=mock_proc):
+        with patch(
+            "forge.api.services.github_service.asyncio.create_subprocess_exec",
+            return_value=mock_proc,
+        ):
             with pytest.raises(RuntimeError, match="gh pr create failed"):
                 await create_pr(
                     repo_path="/tmp/repo",

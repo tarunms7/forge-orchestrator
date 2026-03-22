@@ -84,9 +84,7 @@ async def test_create_audit_log():
         session.add(log)
         await session.commit()
 
-        result = await session.execute(
-            select(AuditLogRow).where(AuditLogRow.user_id == user.id)
-        )
+        result = await session.execute(select(AuditLogRow).where(AuditLogRow.user_id == user.id))
         fetched = result.scalar_one()
 
     assert fetched.action == "login"

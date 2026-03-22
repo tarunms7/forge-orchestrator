@@ -67,7 +67,7 @@ class TestProjectConfigFromToml:
 
     def test_partial_config_fills_defaults(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text('[agents]\nmax_turns = 40\n')
+        toml_path.write_text("[agents]\nmax_turns = 40\n")
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.agents.max_turns == 40
         assert config.agents.model == "sonnet"  # default
@@ -75,13 +75,13 @@ class TestProjectConfigFromToml:
 
     def test_disable_tests(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text('[checks.tests]\nenabled = false\n')
+        toml_path.write_text("[checks.tests]\nenabled = false\n")
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.tests.enabled is False
 
     def test_disable_lint(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text('[checks.lint]\nenabled = false\n')
+        toml_path.write_text("[checks.lint]\nenabled = false\n")
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.lint.enabled is False
 
@@ -98,17 +98,13 @@ class TestProjectConfigFromToml:
 
     def test_instructions_text(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text(
-            '[instructions]\ntext = "Always use type hints."\n'
-        )
+        toml_path.write_text('[instructions]\ntext = "Always use type hints."\n')
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.instructions == "Always use type hints."
 
     def test_instructions_multiline(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text(
-            '[instructions]\ntext = """\nLine 1\nLine 2\n"""\n'
-        )
+        toml_path.write_text('[instructions]\ntext = """\nLine 1\nLine 2\n"""\n')
         config = ProjectConfig.from_toml(str(toml_path))
         assert "Line 1" in config.instructions
         assert "Line 2" in config.instructions
@@ -118,7 +114,7 @@ class TestProjectConfigLoad:
     def test_load_from_project_dir(self, tmp_path):
         forge_dir = tmp_path / ".forge"
         forge_dir.mkdir()
-        (forge_dir / "forge.toml").write_text('[agents]\nmax_turns = 50\n')
+        (forge_dir / "forge.toml").write_text("[agents]\nmax_turns = 50\n")
         config = ProjectConfig.load(str(tmp_path))
         assert config.agents.max_turns == 50
 
@@ -193,7 +189,7 @@ class TestIntegrationConfig:
     def test_integration_from_toml_defaults(self, tmp_path):
         """TOML without [integration] → both disabled."""
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text('[agents]\nmax_turns = 25\n')
+        toml_path.write_text("[agents]\nmax_turns = 25\n")
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.integration.post_merge.enabled is False
         assert config.integration.final_gate.enabled is False
@@ -202,10 +198,10 @@ class TestIntegrationConfig:
         """Only [integration.post_merge] configured."""
         toml_path = tmp_path / "forge.toml"
         toml_path.write_text(
-            '[integration.post_merge]\n'
-            'enabled = true\n'
+            "[integration.post_merge]\n"
+            "enabled = true\n"
             'cmd = "make smoke"\n'
-            'timeout_seconds = 60\n'
+            "timeout_seconds = 60\n"
             'on_failure = "stop_pipeline"\n'
         )
         config = ProjectConfig.from_toml(str(toml_path))
@@ -220,16 +216,16 @@ class TestIntegrationConfig:
         """Both sections with all fields."""
         toml_path = tmp_path / "forge.toml"
         toml_path.write_text(
-            '[integration.post_merge]\n'
-            'enabled = true\n'
+            "[integration.post_merge]\n"
+            "enabled = true\n"
             'cmd = "pytest tests/smoke/"\n'
-            'timeout_seconds = 90\n'
+            "timeout_seconds = 90\n"
             'on_failure = "ask"\n'
-            '\n'
-            '[integration.final_gate]\n'
-            'enabled = true\n'
+            "\n"
+            "[integration.final_gate]\n"
+            "enabled = true\n"
             'cmd = "pytest tests/ --tb=short"\n'
-            'timeout_seconds = 300\n'
+            "timeout_seconds = 300\n"
             'on_failure = "ignore_and_continue"\n'
         )
         config = ProjectConfig.from_toml(str(toml_path))
@@ -244,10 +240,7 @@ class TestIntegrationConfig:
     def test_integration_enabled_no_cmd(self, tmp_path):
         """enabled=true but no cmd → no error, defaults to None."""
         toml_path = tmp_path / "forge.toml"
-        toml_path.write_text(
-            '[integration.post_merge]\n'
-            'enabled = true\n'
-        )
+        toml_path.write_text("[integration.post_merge]\nenabled = true\n")
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.integration.post_merge.enabled is True
         assert config.integration.post_merge.cmd is None
@@ -381,8 +374,12 @@ def _make_git_repo(path: str, branch: str = "main") -> None:
     """Create a minimal git repo at *path* with one commit on *branch*."""
     os.makedirs(path, exist_ok=True)
     subprocess.run(["git", "init", "-b", branch], cwd=path, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"], cwd=path, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True
+    )
     # Create an initial commit so HEAD exists
     dummy = os.path.join(path, "README.md")
     with open(dummy, "w") as f:
@@ -469,9 +466,7 @@ class TestLoadWorkspaceToml:
         _make_git_repo(repo)
         forge_dir = tmp_path / ".forge"
         forge_dir.mkdir()
-        (forge_dir / "workspace.toml").write_text(
-            f'[[repos]]\nid = "backend"\npath = "{repo}"\n'
-        )
+        (forge_dir / "workspace.toml").write_text(f'[[repos]]\nid = "backend"\npath = "{repo}"\n')
         result = load_workspace_toml(str(tmp_path))
         assert result is not None
         assert len(result) == 1
@@ -501,9 +496,7 @@ class TestResolveRepos:
         # Write a workspace.toml that would normally be picked up
         forge_dir = tmp_path / ".forge"
         forge_dir.mkdir()
-        (forge_dir / "workspace.toml").write_text(
-            f'[[repos]]\nid = "toml"\npath = "{toml_repo}"\n'
-        )
+        (forge_dir / "workspace.toml").write_text(f'[[repos]]\nid = "toml"\npath = "{toml_repo}"\n')
         result = resolve_repos(("cli=" + cli_repo,), str(tmp_path))
         assert len(result) == 1
         assert result[0].id == "cli"
@@ -514,9 +507,7 @@ class TestResolveRepos:
         _make_git_repo(repo)
         forge_dir = tmp_path / ".forge"
         forge_dir.mkdir()
-        (forge_dir / "workspace.toml").write_text(
-            f'[[repos]]\nid = "backend"\npath = "{repo}"\n'
-        )
+        (forge_dir / "workspace.toml").write_text(f'[[repos]]\nid = "backend"\npath = "{repo}"\n')
         result = resolve_repos((), str(tmp_path))
         assert len(result) == 1
         assert result[0].id == "backend"
@@ -564,8 +555,7 @@ class TestValidateReposStartup:
         # Create and stage a file (but don't commit)
         with open(os.path.join(repo, "dirty.txt"), "w") as f:
             f.write("uncommitted")
-        subprocess.run(["git", "add", "dirty.txt"], cwd=repo,
-                       check=True, capture_output=True)
+        subprocess.run(["git", "add", "dirty.txt"], cwd=repo, check=True, capture_output=True)
         repos = [RepoConfig(id="myrepo", path=repo, base_branch="main")]
         with pytest.raises(click.ClickException, match="[Ss]taged"):
             validate_repos_startup(repos)

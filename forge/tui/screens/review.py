@@ -9,10 +9,10 @@ import subprocess
 import tempfile
 
 from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.widgets import Static
 from textual.binding import Binding
 from textual.message import Message
+from textual.screen import Screen
+from textual.widgets import Static
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
@@ -27,6 +27,7 @@ _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
 
 class ReviewAction(Message):
     """Message for approve/reject actions."""
+
     def __init__(self, task_id: str, action: str) -> None:
         self.task_id = task_id
         self.action = action
@@ -90,14 +91,19 @@ class ReviewScreen(Screen):
         yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
         yield DiffViewer()
         yield SearchOverlay()
-        yield Static("[a] approve  [x] reject  [e] editor  [j/k] scroll  [/] search  [1-9] jump task", id="review-status")
-        yield ShortcutBar([
-            ("a", "Approve"),
-            ("x", "Reject"),
-            ("e", "Open in Editor"),
-            ("↑↓", "Scroll"),
-            ("Esc", "Back"),
-        ])
+        yield Static(
+            "[a] approve  [x] reject  [e] editor  [j/k] scroll  [/] search  [1-9] jump task",
+            id="review-status",
+        )
+        yield ShortcutBar(
+            [
+                ("a", "Approve"),
+                ("x", "Reject"),
+                ("e", "Open in Editor"),
+                ("↑↓", "Scroll"),
+                ("Esc", "Back"),
+            ]
+        )
 
     def on_mount(self) -> None:
         self._state.on_change(self._on_state_change)
@@ -164,9 +170,9 @@ class ReviewScreen(Screen):
     def action_jump_task(self, index: int) -> None:
         """Jump to the Nth reviewable task (1-based)."""
         reviewable = [
-            tid for tid in self._state.task_order
-            if tid in self._state.tasks
-            and self._state.tasks[tid]["state"] in _REVIEWABLE_STATES
+            tid
+            for tid in self._state.task_order
+            if tid in self._state.tasks and self._state.tasks[tid]["state"] in _REVIEWABLE_STATES
         ]
         if 0 < index <= len(reviewable):
             self._state.selected_task_id = reviewable[index - 1]
@@ -188,7 +194,10 @@ class ReviewScreen(Screen):
         cwd = self._get_project_dir()
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -232,7 +241,11 @@ class ReviewScreen(Screen):
                     cwd=cwd,
                 )
                 stdout, stderr = await proc.communicate()
-                diff = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
+                diff = (
+                    stdout.decode(errors="replace")
+                    if proc.returncode == 0
+                    else f"git diff failed: {stderr.decode(errors='replace')}"
+                )
             except Exception as e:
                 diff = f"Error: {e}"
         self._diff_cache[tid] = diff
@@ -242,7 +255,9 @@ class ReviewScreen(Screen):
             return
         try:
             self.query_one(DiffViewer).update_diff(
-                tid, self._state.tasks.get(tid, {}).get("title", ""), diff,
+                tid,
+                self._state.tasks.get(tid, {}).get("title", ""),
+                diff,
             )
         except Exception:
             pass

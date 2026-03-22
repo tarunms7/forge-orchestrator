@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from forge.tui.widgets.help_overlay import (
+    GLOBAL_HELP,
+    HOME_HELP,
+    HOME_TIPS,
+    PIPELINE_HELP,
+    REVIEW_HELP,
+    SCREEN_HELP,
+    SETTINGS_HELP,
     HelpEntry,
     HelpOverlay,
     format_help_entry,
     format_help_overlay,
     get_help_for_screen,
     get_tips_for_screen,
-    GLOBAL_HELP,
-    HOME_HELP,
-    HOME_TIPS,
-    PIPELINE_HELP,
-    REVIEW_HELP,
-    SETTINGS_HELP,
-    SCREEN_HELP,
 )
 
 
@@ -173,16 +173,14 @@ class TestFormatHelpOverlay:
 
     def test_scroll_indicator_shown_when_overflow(self):
         entries = [
-            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation")
-            for i in range(40)
+            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation") for i in range(40)
         ]
         result = format_help_overlay("Test", entries, [], scroll_offset=0, max_visible=10)
         assert "more lines" in result
 
     def test_scroll_up_indicator(self):
         entries = [
-            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation")
-            for i in range(40)
+            HelpEntry(f"k{i}", f"Action{i}", f"Description {i}", "Navigation") for i in range(40)
         ]
         result = format_help_overlay("Test", entries, [], scroll_offset=5, max_visible=10)
         assert "lines above" in result

@@ -7,7 +7,6 @@ from collections import deque
 from forge.core.models import TaskGraph
 from forge.core.planning.models import CodebaseMap, MinorFix, ValidationIssue, ValidationResult
 
-
 _MAX_FILES_PER_TASK = 10
 _MIN_DESCRIPTION_LENGTH = 50
 
@@ -77,7 +76,7 @@ def _check_file_ownership(graph: TaskGraph) -> list[ValidationIssue]:
             key = (task.repo, file_path)
             file_owners.setdefault(key, []).append(task.id)
 
-    for (repo, file_path), owners in file_owners.items():
+    for (_repo, file_path), owners in file_owners.items():
         if len(owners) < 2:
             continue
         # Check each pair of owners
@@ -119,9 +118,7 @@ def _check_dependency_validity(graph: TaskGraph) -> list[ValidationIssue]:
                         severity="major",
                         category="invalid_dependency",
                         affected_tasks=[task.id],
-                        description=(
-                            f"Task '{task.id}' depends on unknown task '{dep}'."
-                        ),
+                        description=(f"Task '{task.id}' depends on unknown task '{dep}'."),
                         suggested_fix=f"Remove '{dep}' from depends_on or add a task with that ID.",
                     )
                 )

@@ -173,6 +173,7 @@ def get_all_actions() -> list[CommandPaletteAction]:
 # Fuzzy matching
 # ---------------------------------------------------------------------------
 
+
 def fuzzy_score(query: str, text: str) -> int:
     """Score how well query matches text. Higher = better. 0 = no match.
 
@@ -354,6 +355,7 @@ class CommandPalette(Widget):
 
     class Dismissed(Message):
         """Posted when the palette is dismissed."""
+
         pass
 
     def __init__(
@@ -428,8 +430,16 @@ class CommandPalette(Widget):
 
         # Let bindings handle special keys
         if event.key in (
-            "escape", "enter", "up", "down", "j", "k", "backspace",
-            "ctrl+p", "tab", "shift+tab",
+            "escape",
+            "enter",
+            "up",
+            "down",
+            "j",
+            "k",
+            "backspace",
+            "ctrl+p",
+            "tab",
+            "shift+tab",
         ):
             return
 

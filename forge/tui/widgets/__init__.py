@@ -2,7 +2,7 @@
 
 from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.chat_thread import ChatThread
-from forge.tui.widgets.command_palette import CommandPaletteAction, CommandPalette
+from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteAction
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.diff_viewer import DiffViewer

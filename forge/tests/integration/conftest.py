@@ -1,5 +1,7 @@
 """Shared pytest fixtures for integration tests."""
+
 import subprocess
+
 import pytest
 
 
@@ -14,11 +16,15 @@ def make_git_repo(tmp_path):
         subprocess.run(["git", "init"], cwd=repo_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
-            cwd=repo_path, capture_output=True, check=True,
+            cwd=repo_path,
+            capture_output=True,
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test"],
-            cwd=repo_path, capture_output=True, check=True,
+            cwd=repo_path,
+            capture_output=True,
+            check=True,
         )
 
         if files:
@@ -32,7 +38,9 @@ def make_git_repo(tmp_path):
         subprocess.run(["git", "add", "-A"], cwd=repo_path, capture_output=True, check=True)
         subprocess.run(
             ["git", "commit", "-m", "initial commit"],
-            cwd=repo_path, capture_output=True, check=True,
+            cwd=repo_path,
+            capture_output=True,
+            check=True,
         )
 
         return str(repo_path)

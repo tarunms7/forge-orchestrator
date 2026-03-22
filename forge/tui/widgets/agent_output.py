@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static
-from textual.containers import VerticalScroll
 
 from forge.tui.widgets.search_overlay import apply_highlights
 
@@ -17,17 +17,17 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 _SECTION_COLORS = {
-    "agent": "#e2e4e8",     # White-ish for agent text — primary content
-    "review": "#a371f7",    # Purple for LLM review
-    "gate": "#79c0ff",      # Light blue for gate results (lint/test/build)
-    "system": "#8b949e",    # Gray for system messages
+    "agent": "#e2e4e8",  # White-ish for agent text — primary content
+    "review": "#a371f7",  # Purple for LLM review
+    "gate": "#79c0ff",  # Light blue for gate results (lint/test/build)
+    "system": "#8b949e",  # Gray for system messages
 }
 
 _SECTION_HEADER_COLORS = {
-    "agent": "#f0883e",     # Orange header for AGENT sections
-    "review": "#a371f7",    # Purple header for REVIEW sections
-    "gate": "#79c0ff",      # Blue header for gate sections
-    "system": "#8b949e",    # Gray header for system sections
+    "agent": "#f0883e",  # Orange header for AGENT sections
+    "review": "#a371f7",  # Purple header for REVIEW sections
+    "gate": "#79c0ff",  # Blue header for gate sections
+    "system": "#8b949e",  # Gray header for system sections
 }
 
 _ERROR_TAIL_LINES = 20
@@ -48,6 +48,7 @@ def _render_markdown(line: str) -> str:
     Handles headers, bold, inline code, code fences, and bullets.
     """
     import re
+
     global _IN_CODE_BLOCK
     stripped = line.strip()
 
@@ -72,16 +73,16 @@ def _render_markdown(line: str) -> str:
     if stripped.startswith("- "):
         inner = _escape(stripped[2:])
         # Apply inline formatting to already-escaped bullet content
-        inner = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/]', inner)
-        inner = re.sub(r'`([^`]+)`', r'[#79c0ff]\1[/]', inner)
+        inner = re.sub(r"\*\*(.+?)\*\*", r"[bold]\1[/]", inner)
+        inner = re.sub(r"`([^`]+)`", r"[#79c0ff]\1[/]", inner)
         return f"  • {inner}"
 
     # Escape all text first to prevent Rich markup injection
     line = _escape(line)
     # Bold: **text**
-    line = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/]', line)
+    line = re.sub(r"\*\*(.+?)\*\*", r"[bold]\1[/]", line)
     # Inline code: `text`
-    line = re.sub(r'`([^`]+)`', r'[#79c0ff]\1[/]', line)
+    line = re.sub(r"`([^`]+)`", r"[#79c0ff]\1[/]", line)
 
     return line
 
@@ -388,9 +389,7 @@ class AgentOutput(Widget):
         self.set_streaming(False)
 
         try:
-            self.query_one("#agent-header", Static).update(
-                format_header(task_id, title, state)
-            )
+            self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             self.query_one("#agent-content", Static).update(
                 format_output(lines, self._spinner_frame)
             )
@@ -410,9 +409,7 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         try:
-            self.query_one("#agent-header", Static).update(
-                format_header(task_id, title, state)
-            )
+            self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
         except Exception:
             pass
 
@@ -452,9 +449,7 @@ class AgentOutput(Widget):
         self._lines = []  # Clear line-based data when switching to unified mode
         self.set_streaming(False)
         try:
-            self.query_one("#agent-header", Static).update(
-                format_header(task_id, title, state)
-            )
+            self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             self.query_one("#agent-content", Static).update(
                 format_unified_output(entries, self._spinner_frame)
             )
@@ -514,9 +509,7 @@ class AgentOutput(Widget):
 
     def _scroll_to_end(self) -> None:
         try:
-            self.query_one("#agent-scroll", VerticalScroll).scroll_end(
-                animate=False
-            )
+            self.query_one("#agent-scroll", VerticalScroll).scroll_end(animate=False)
         except Exception:
             pass
 

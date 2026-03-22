@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from forge.tui.widgets.search_overlay import (
+    _HIGHLIGHT_OPEN,
     SearchOverlay,
     apply_highlights,
-    _HIGHLIGHT_OPEN,
 )
-
 
 # ── apply_highlights tests ──────────────────────────────────────────────
 
@@ -174,12 +173,14 @@ def test_search_overlay_is_visible_default():
 
 def test_agent_output_set_search_highlights_default():
     from forge.tui.widgets.agent_output import AgentOutput
+
     widget = AgentOutput()
     assert widget._search_pattern is None
 
 
 def test_agent_output_set_search_highlights_stores_pattern():
     from forge.tui.widgets.agent_output import AgentOutput
+
     widget = AgentOutput()
     widget._lines = ["hello world", "hello again"]
     # Before compose, query_one will fail but pattern should still be stored
@@ -189,6 +190,7 @@ def test_agent_output_set_search_highlights_stores_pattern():
 
 def test_agent_output_set_search_highlights_clears_pattern():
     from forge.tui.widgets.agent_output import AgentOutput
+
     widget = AgentOutput()
     widget._search_pattern = "test"
     widget.set_search_highlights(None)
@@ -200,12 +202,14 @@ def test_agent_output_set_search_highlights_clears_pattern():
 
 def test_diff_viewer_set_search_highlights_default():
     from forge.tui.widgets.diff_viewer import DiffViewer
+
     widget = DiffViewer()
     assert widget._search_pattern is None
 
 
 def test_diff_viewer_set_search_highlights_stores_pattern():
     from forge.tui.widgets.diff_viewer import DiffViewer
+
     widget = DiffViewer()
     widget._diff_text = "+added line\n-removed line"
     count = widget.set_search_highlights("added")
@@ -215,6 +219,7 @@ def test_diff_viewer_set_search_highlights_stores_pattern():
 
 def test_diff_viewer_set_search_highlights_clears():
     from forge.tui.widgets.diff_viewer import DiffViewer
+
     widget = DiffViewer()
     widget._search_pattern = "test"
     count = widget.set_search_highlights(None)
@@ -224,6 +229,7 @@ def test_diff_viewer_set_search_highlights_clears():
 
 def test_diff_viewer_set_search_highlights_empty_diff():
     from forge.tui.widgets.diff_viewer import DiffViewer
+
     widget = DiffViewer()
     widget._diff_text = ""
     count = widget.set_search_highlights("test")
@@ -235,8 +241,9 @@ def test_diff_viewer_set_search_highlights_empty_diff():
 
 def test_apply_highlights_valid_rich_markup():
     """Highlighted output should be valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
 
     text = "[bold #58a6ff]task-1[/]: Creating auth module..."
     result, count = apply_highlights(text, "auth")

@@ -10,11 +10,10 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, JSON, func, or_, select, text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import JSON, DateTime, Integer, String, Text, func, or_, select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 logger = logging.getLogger(__name__)
@@ -42,10 +41,10 @@ class UserRow(Base):
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
-    settings_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    settings_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AuditLogRow(Base):
@@ -60,13 +59,13 @@ class AuditLogRow(Base):
     )
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
-    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
-    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
 
 
 # ── Pipeline models ───────────────────────────────────────────────────
@@ -82,26 +81,26 @@ class TaskRow(Base):
     depends_on: Mapped[list] = mapped_column(JSON)
     complexity: Mapped[str] = mapped_column(String)
     state: Mapped[str] = mapped_column(String, default="todo")
-    assigned_agent: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    assigned_agent: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     retry_count: Mapped[int] = mapped_column(default=0)
-    branch_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    worktree_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    pipeline_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    review_feedback: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    retry_reason: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    retry_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     cost_usd: Mapped[float] = mapped_column(default=0.0)
     agent_cost_usd: Mapped[float] = mapped_column(default=0.0)
     review_cost_usd: Mapped[float] = mapped_column(default=0.0)
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
-    approval_context: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    prior_diff: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    implementation_summary: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    session_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    approval_context: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    prior_diff: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    implementation_summary: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     questions_asked: Mapped[int] = mapped_column(default=0)
     questions_limit: Mapped[int] = mapped_column(default=3)
-    review_diff: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    repo_id: Mapped[str] = mapped_column(String, default='default')
+    review_diff: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    repo_id: Mapped[str] = mapped_column(String, default="default")
 
 
 class AgentRow(Base):
@@ -109,7 +108,7 @@ class AgentRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     state: Mapped[str] = mapped_column(String, default="idle")
-    current_task: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    current_task: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class PipelineRow(Base):
@@ -120,42 +119,42 @@ class PipelineRow(Base):
     project_dir: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="planning")
     model_strategy: Mapped[str] = mapped_column(String, default="auto")
-    task_graph_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    created_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    completed_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    pr_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    base_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    branch_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    cancelled_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    build_cmd: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    test_cmd: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    task_graph_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    created_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    base_branch: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    cancelled_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    build_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    test_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     planner_cost_usd: Mapped[float] = mapped_column(default=0.0)
     total_cost_usd: Mapped[float] = mapped_column(default=0.0)
     budget_limit_usd: Mapped[float] = mapped_column(default=0.0)
     estimated_cost_usd: Mapped[float] = mapped_column(default=0.0)
     paused: Mapped[bool] = mapped_column(default=False)
-    conventions_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    conventions_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     require_approval: Mapped[bool] = mapped_column(default=False)
-    github_issue_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    github_issue_number: Mapped[Optional[int]] = mapped_column(default=None)
-    template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    template_config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    github_issue_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    github_issue_number: Mapped[int | None] = mapped_column(default=None)
+    template_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    template_config_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # Contract Builder output (JSON blob)
-    contracts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    paused_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    contracts_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    paused_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     paused_duration: Mapped[float] = mapped_column(default=0.0)
     # Cross-project tracking
-    project_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    project_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    project_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    project_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Executor tracking for orphan detection
-    executor_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
-    executor_token: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    executor_pid: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    executor_token: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Integration health check baseline
-    baseline_exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
-    integration_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    baseline_exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    integration_status: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Multi-repo workspace support
-    repos_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    repos_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     def get_repos(self) -> list[dict]:
         """Return repo configurations. Single-repo returns synthetic default entry."""
@@ -166,9 +165,14 @@ class PipelineRow(Base):
                 f"Pipeline {self.id} has no base_branch set. "
                 "This should have been set during execute()."
             )
-        return [{"id": "default", "path": self.project_dir,
-                 "base_branch": self.base_branch,
-                 "branch_name": self.branch_name or ""}]
+        return [
+            {
+                "id": "default",
+                "path": self.project_dir,
+                "base_branch": self.base_branch,
+                "branch_name": self.branch_name or "",
+            }
+        ]
 
 
 class UserTemplateRow(Base):
@@ -186,12 +190,12 @@ class UserTemplateRow(Base):
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -201,10 +205,10 @@ class PipelineEventRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    task_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(UTC).isoformat())
 
 
 class TaskQuestionRow(Base):
@@ -213,20 +217,23 @@ class TaskQuestionRow(Base):
     __tablename__ = "task_questions"
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
     task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
-    suggestions: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    answered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    context: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    suggestions: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    answered_by: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String,
+        default=lambda: datetime.now(UTC).isoformat(),
     )
-    answered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    stage: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    answered_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    stage: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class InterjectionRow(Base):
@@ -235,16 +242,19 @@ class InterjectionRow(Base):
     __tablename__ = "task_interjections"
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
     task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     delivered: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String,
+        default=lambda: datetime.now(UTC).isoformat(),
     )
-    delivered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    delivered_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class LessonRow(Base):
@@ -253,27 +263,44 @@ class LessonRow(Base):
     __tablename__ = "lessons"
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
     )
     scope: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 'global' or 'project'
-    project_dir: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None, index=True)
-    category: Mapped[str] = mapped_column(String, nullable=False)  # 'command_failure', 'review_failure', 'code_pattern'
+    project_dir: Mapped[str | None] = mapped_column(String, nullable=True, default=None, index=True)
+    category: Mapped[str] = mapped_column(
+        String, nullable=False
+    )  # 'command_failure', 'review_failure', 'code_pattern'
     title: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     trigger: Mapped[str] = mapped_column(String, nullable=False, index=True)
     resolution: Mapped[str] = mapped_column(Text, nullable=False)
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String,
+        default=lambda: datetime.now(UTC).isoformat(),
     )
     last_hit_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String,
+        default=lambda: datetime.now(UTC).isoformat(),
     )
     confidence: Mapped[float] = mapped_column(default=0.5)
 
 
 # ── All model classes (used by _add_missing_columns) ──────────────────
-_ALL_MODELS = (UserRow, AuditLogRow, TaskRow, AgentRow, PipelineRow, UserTemplateRow, PipelineEventRow, TaskQuestionRow, InterjectionRow, LessonRow)
+_ALL_MODELS = (
+    UserRow,
+    AuditLogRow,
+    TaskRow,
+    AgentRow,
+    PipelineRow,
+    UserTemplateRow,
+    PipelineEventRow,
+    TaskQuestionRow,
+    InterjectionRow,
+    LessonRow,
+)
 
 
 class Database:
@@ -283,7 +310,7 @@ class Database:
         self._engine = create_async_engine(url)
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
-    async def __aenter__(self) -> 'Database':
+    async def __aenter__(self) -> Database:
         await self.initialize()
         return self
 
@@ -302,14 +329,15 @@ class Database:
         Raises ValueError if the name contains anything other than
         alphanumeric characters and underscores.
         """
-        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name):
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             raise ValueError(f"Invalid SQL identifier: {name!r}")
         return name
 
     @staticmethod
     def _add_missing_columns(connection) -> None:
         """Add columns that exist in the ORM model but not in the DB table."""
-        from sqlalchemy import inspect as sa_inspect, text
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy import text
 
         inspector = sa_inspect(connection)
         for table_cls in _ALL_MODELS:
@@ -329,7 +357,9 @@ class Database:
                     if attr.default is not None and attr.default.arg is not None:
                         default = f" DEFAULT {attr.default.arg!r}"
                     connection.execute(
-                        text(f"ALTER TABLE {table_name} ADD COLUMN {attr.name} {col_type} {nullable}{default}")
+                        text(
+                            f"ALTER TABLE {table_name} ADD COLUMN {attr.name} {col_type} {nullable}{default}"
+                        )
                     )
 
     async def close(self) -> None:
@@ -338,7 +368,11 @@ class Database:
     # ── Auth: Users ───────────────────────────────────────────────────
 
     async def create_user(
-        self, *, email: str, password: str, display_name: str,
+        self,
+        *,
+        email: str,
+        password: str,
+        display_name: str,
     ) -> UserRow:
         """Register a new user. Raises ValueError if email already taken."""
         try:
@@ -349,9 +383,7 @@ class Database:
                 "Install with: pip install forge-orchestrator[web]"
             )
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(UserRow).where(UserRow.email == email)
-            )
+            result = await session.execute(select(UserRow).where(UserRow.email == email))
             if result.scalar_one_or_none() is not None:
                 raise ValueError(f"Email {email} is already registered")
 
@@ -368,9 +400,7 @@ class Database:
 
     async def get_user_by_email(self, email: str) -> UserRow | None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(UserRow).where(UserRow.email == email)
-            )
+            result = await session.execute(select(UserRow).where(UserRow.email == email))
             return result.scalar_one_or_none()
 
     @staticmethod
@@ -405,8 +435,11 @@ class Database:
     # ── Auth: Audit logs ──────────────────────────────────────────────
 
     async def log_audit(
-        self, user_id: str, action: str,
-        metadata: dict | None = None, ip: str | None = None,
+        self,
+        user_id: str,
+        action: str,
+        metadata: dict | None = None,
+        ip: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = AuditLogRow(
@@ -440,12 +473,16 @@ class Database:
         depends_on: list[str],
         complexity: str,
         pipeline_id: str | None = None,
-        repo_id: str = 'default',
+        repo_id: str = "default",
     ) -> None:
         async with self._session_factory() as session:
             row = TaskRow(
-                id=id, title=title, description=description,
-                files=files, depends_on=depends_on, complexity=complexity,
+                id=id,
+                title=title,
+                description=description,
+                files=files,
+                depends_on=depends_on,
+                complexity=complexity,
                 pipeline_id=pipeline_id,
                 repo_id=repo_id,
             )
@@ -464,18 +501,23 @@ class Database:
                 try:
                     from forge.core.models import TaskState
                     from forge.core.state import TaskStateMachine
+
                     current = TaskState(task.state)
                     target = TaskState(state)
                     if not TaskStateMachine.can_transition(current, target):
                         logger.warning(
                             "Invalid state transition for task %s: %s -> %s",
-                            task_id, task.state, state,
+                            task_id,
+                            task.state,
+                            state,
                         )
                 except (ValueError, KeyError):
                     # Unknown state value — log and proceed
                     logger.warning(
                         "Could not validate state transition for task %s: %s -> %s",
-                        task_id, task.state, state,
+                        task_id,
+                        task.state,
+                        state,
                     )
                 task.state = state
                 await session.commit()
@@ -512,7 +554,11 @@ class Database:
             await session.commit()
 
     async def add_task_agent_cost(
-        self, task_id: str, cost: float, input_tokens: int, output_tokens: int,
+        self,
+        task_id: str,
+        cost: float,
+        input_tokens: int,
+        output_tokens: int,
     ) -> None:
         """Record agent execution cost and token usage for a task."""
         async with self._session_factory() as session:
@@ -547,7 +593,9 @@ class Database:
         """Add cost to the pipeline total."""
         async with self._session_factory() as session:
             await session.execute(
-                text("UPDATE pipelines SET total_cost_usd = COALESCE(total_cost_usd, 0) + :delta WHERE id = :pid"),
+                text(
+                    "UPDATE pipelines SET total_cost_usd = COALESCE(total_cost_usd, 0) + :delta WHERE id = :pid"
+                ),
                 {"delta": cost, "pid": pipeline_id},
             )
             await session.commit()
@@ -555,9 +603,7 @@ class Database:
     async def set_pipeline_planner_cost(self, pipeline_id: str, cost: float) -> None:
         """Set the planner cost for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.planner_cost_usd = cost
@@ -566,9 +612,7 @@ class Database:
     async def get_pipeline_cost(self, pipeline_id: str) -> float:
         """Return the current total cost for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 return row.total_cost_usd or 0.0
@@ -577,9 +621,7 @@ class Database:
     async def get_pipeline_budget(self, pipeline_id: str) -> float:
         """Return the budget limit for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 return row.budget_limit_usd or 0.0
@@ -664,10 +706,16 @@ class Database:
     # ── Pipelines ─────────────────────────────────────────────────────
 
     async def create_pipeline(
-        self, id: str, description: str, project_dir: str,
-        model_strategy: str = "auto", user_id: str | None = None,
-        base_branch: str | None = None, branch_name: str | None = None,
-        build_cmd: str | None = None, test_cmd: str | None = None,
+        self,
+        id: str,
+        description: str,
+        project_dir: str,
+        model_strategy: str = "auto",
+        user_id: str | None = None,
+        base_branch: str | None = None,
+        branch_name: str | None = None,
+        build_cmd: str | None = None,
+        test_cmd: str | None = None,
         budget_limit_usd: float = 0.0,
         github_issue_url: str | None = None,
         github_issue_number: int | None = None,
@@ -677,26 +725,29 @@ class Database:
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
-                id=id, description=description, project_dir=project_dir,
-                model_strategy=model_strategy, user_id=user_id,
-                base_branch=base_branch, branch_name=branch_name,
-                build_cmd=build_cmd, test_cmd=test_cmd,
+                id=id,
+                description=description,
+                project_dir=project_dir,
+                model_strategy=model_strategy,
+                user_id=user_id,
+                base_branch=base_branch,
+                branch_name=branch_name,
+                build_cmd=build_cmd,
+                test_cmd=test_cmd,
                 budget_limit_usd=budget_limit_usd,
                 github_issue_url=github_issue_url,
                 github_issue_number=github_issue_number,
                 project_path=project_path,
                 project_name=project_name,
                 repos_json=repos_json,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
             session.add(row)
             await session.commit()
 
     async def get_pipeline(self, pipeline_id: str) -> PipelineRow | None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             return result.scalar_one_or_none()
 
     async def set_executor_info(self, pipeline_id: str, pid: int, token: str) -> None:
@@ -719,21 +770,17 @@ class Database:
 
     async def update_pipeline_status(self, pipeline_id: str, status: str) -> None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.status = status
                 if status in ("complete", "error"):
-                    row.completed_at = datetime.now(timezone.utc).isoformat()
+                    row.completed_at = datetime.now(UTC).isoformat()
                 await session.commit()
 
     async def set_pipeline_plan(self, pipeline_id: str, task_graph_json: str) -> None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.task_graph_json = task_graph_json
@@ -742,9 +789,7 @@ class Database:
 
     async def set_pipeline_pr_url(self, pipeline_id: str, pr_url: str) -> None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.pr_url = pr_url
@@ -752,9 +797,7 @@ class Database:
 
     async def set_pipeline_base_branch(self, pipeline_id: str, base_branch: str) -> None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.base_branch = base_branch
@@ -763,9 +806,7 @@ class Database:
     async def set_pipeline_branch_name(self, pipeline_id: str, branch_name: str) -> None:
         """Store the computed pipeline branch name (custom or auto-generated)."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.branch_name = branch_name
@@ -774,9 +815,7 @@ class Database:
     async def set_baseline_exit_code(self, pipeline_id: str, exit_code: int | None) -> None:
         """Store the integration baseline exit code for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.baseline_exit_code = exit_code
@@ -785,9 +824,7 @@ class Database:
     async def set_integration_status(self, pipeline_id: str, status_json: str) -> None:
         """Store integration health check status JSON for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.integration_status = status_json
@@ -796,9 +833,7 @@ class Database:
     async def set_pipeline_contracts(self, pipeline_id: str, contracts_json: str) -> None:
         """Store the ContractSet JSON for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.contracts_json = contracts_json
@@ -810,7 +845,9 @@ class Database:
         return getattr(pipeline, "contracts_json", None) if pipeline else None
 
     async def list_pipelines(
-        self, user_id: str | None = None, project_path: str | None = None,
+        self,
+        user_id: str | None = None,
+        project_path: str | None = None,
     ) -> list[PipelineRow]:
         async with self._session_factory() as session:
             query = select(PipelineRow)
@@ -860,9 +897,7 @@ class Database:
 
         async with self._session_factory() as session:
             # Reset pipeline
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             pipeline = result.scalar_one_or_none()
             if pipeline is None:
                 return {"tasks_reset": 0, "events_deleted": 0}
@@ -882,9 +917,7 @@ class Database:
 
             # Delete all pipeline events
             del_result = await session.execute(
-                delete(PipelineEventRow).where(
-                    PipelineEventRow.pipeline_id == pipeline_id
-                )
+                delete(PipelineEventRow).where(PipelineEventRow.pipeline_id == pipeline_id)
             )
             events_deleted = del_result.rowcount
 
@@ -901,15 +934,13 @@ class Database:
         Returns dict with counts: {'tasks_cancelled': int}
         """
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             pipeline = result.scalar_one_or_none()
             if pipeline is None:
                 return {"tasks_cancelled": 0}
 
             pipeline.status = "cancelled"
-            pipeline.cancelled_at = datetime.now(timezone.utc).isoformat()
+            pipeline.cancelled_at = datetime.now(UTC).isoformat()
 
             # Cancel all non-terminal tasks
             task_result = await session.execute(
@@ -991,9 +1022,7 @@ class Database:
     async def update_pipeline_conventions(self, pipeline_id: str, conventions_json: str) -> None:
         """Store conventions JSON for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.conventions_json = conventions_json
@@ -1002,9 +1031,7 @@ class Database:
     async def update_pipeline_repos_json(self, pipeline_id: str, repos_json: str) -> None:
         """Update the repos_json column for a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.repos_json = repos_json
@@ -1021,9 +1048,7 @@ class Database:
     async def set_pipeline_paused(self, pipeline_id: str, paused: bool) -> None:
         """Set or clear the paused flag on a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.paused = paused
@@ -1032,9 +1057,7 @@ class Database:
     async def set_pipeline_paused_at(self, pipeline_id: str, paused_at: str | None) -> None:
         """Set or clear the paused_at timestamp on a pipeline."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.paused_at = paused_at
@@ -1043,9 +1066,7 @@ class Database:
     async def add_pipeline_paused_duration(self, pipeline_id: str, elapsed_seconds: float) -> None:
         """Add elapsed_seconds to the pipeline's paused_duration accumulator."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.paused_duration = (row.paused_duration or 0.0) + elapsed_seconds
@@ -1054,7 +1075,10 @@ class Database:
     # ── User templates ─────────────────────────────────────────────
 
     async def create_user_template(
-        self, user_id: str, name: str, config_json: str,
+        self,
+        user_id: str,
+        name: str,
+        config_json: str,
     ) -> UserTemplateRow:
         """Create a new user-owned pipeline template."""
         async with self._session_factory() as session:
@@ -1085,7 +1109,10 @@ class Database:
             return await session.get(UserTemplateRow, template_id)
 
     async def update_user_template(
-        self, template_id: str, name: str | None = None, config_json: str | None = None,
+        self,
+        template_id: str,
+        name: str | None = None,
+        config_json: str | None = None,
     ) -> UserTemplateRow | None:
         """Update a user template. Returns None if not found."""
         async with self._session_factory() as session:
@@ -1096,7 +1123,7 @@ class Database:
                 row.name = name
             if config_json is not None:
                 row.config_json = config_json
-            row.updated_at = datetime.now(timezone.utc)
+            row.updated_at = datetime.now(UTC)
             await session.commit()
             await session.refresh(row)
             return row
@@ -1112,13 +1139,14 @@ class Database:
             return True
 
     async def set_pipeline_template_config(
-        self, pipeline_id: str, template_id: str, config_json: str,
+        self,
+        pipeline_id: str,
+        template_id: str,
+        config_json: str,
     ) -> None:
         """Associate a template with a pipeline and store the resolved config."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
             row = result.scalar_one_or_none()
             if row:
                 row.template_id = template_id
@@ -1128,7 +1156,12 @@ class Database:
     # ── Pipeline events ──────────────────────────────────────────────
 
     async def log_event(
-        self, *, pipeline_id: str, task_id: str | None, event_type: str, payload: dict,
+        self,
+        *,
+        pipeline_id: str,
+        task_id: str | None,
+        event_type: str,
+        payload: dict,
     ) -> None:
         async with self._session_factory() as session:
             event = PipelineEventRow(
@@ -1141,12 +1174,18 @@ class Database:
             await session.commit()
 
     async def list_events(
-        self, pipeline_id: str, *, task_id: str | None = None, event_type: str | None = None,
+        self,
+        pipeline_id: str,
+        *,
+        task_id: str | None = None,
+        event_type: str | None = None,
     ) -> list[PipelineEventRow]:
         async with self._session_factory() as session:
-            stmt = select(PipelineEventRow).where(
-                PipelineEventRow.pipeline_id == pipeline_id
-            ).order_by(PipelineEventRow.created_at.asc())
+            stmt = (
+                select(PipelineEventRow)
+                .where(PipelineEventRow.pipeline_id == pipeline_id)
+                .order_by(PipelineEventRow.created_at.asc())
+            )
             if task_id is not None:
                 stmt = stmt.where(PipelineEventRow.task_id == task_id)
             if event_type is not None:
@@ -1181,14 +1220,17 @@ class Database:
             return row
 
     async def answer_question(
-        self, question_id: str, answer: str, answered_by: str = "human",
+        self,
+        question_id: str,
+        answer: str,
+        answered_by: str = "human",
     ) -> None:
         async with self._session_factory() as session:
             row = await session.get(TaskQuestionRow, question_id)
             if row:
                 row.answer = answer
                 row.answered_by = answered_by
-                row.answered_at = datetime.now(timezone.utc).isoformat()
+                row.answered_at = datetime.now(UTC).isoformat()
                 await session.commit()
 
     async def get_pending_questions(self, pipeline_id: str) -> list[TaskQuestionRow]:
@@ -1222,8 +1264,8 @@ class Database:
             return list(result.scalars().all())
 
     async def get_expired_questions(self, timeout_seconds: int) -> list[TaskQuestionRow]:
-        cutoff = datetime.now(timezone.utc).timestamp() - timeout_seconds
-        cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+        cutoff = datetime.now(UTC).timestamp() - timeout_seconds
+        cutoff_iso = datetime.fromtimestamp(cutoff, tz=UTC).isoformat()
         async with self._session_factory() as session:
             result = await session.execute(
                 select(TaskQuestionRow)
@@ -1235,11 +1277,17 @@ class Database:
     # ── Task interjections ─────────────────────────────────────────────
 
     async def create_interjection(
-        self, *, task_id: str, pipeline_id: str, message: str,
+        self,
+        *,
+        task_id: str,
+        pipeline_id: str,
+        message: str,
     ) -> InterjectionRow:
         async with self._session_factory() as session:
             row = InterjectionRow(
-                task_id=task_id, pipeline_id=pipeline_id, message=message,
+                task_id=task_id,
+                pipeline_id=pipeline_id,
+                message=message,
             )
             session.add(row)
             await session.commit()
@@ -1261,7 +1309,7 @@ class Database:
             row = await session.get(InterjectionRow, interjection_id)
             if row:
                 row.delivered = True
-                row.delivered_at = datetime.now(timezone.utc).isoformat()
+                row.delivered_at = datetime.now(UTC).isoformat()
                 await session.commit()
 
     # ── Lessons ────────────────────────────────────────────────────────
@@ -1269,8 +1317,15 @@ class Database:
     MAX_LESSONS = 500
 
     async def add_lesson(
-        self, *, scope: str, category: str, title: str, content: str,
-        trigger: str, resolution: str, project_dir: str | None = None,
+        self,
+        *,
+        scope: str,
+        category: str,
+        title: str,
+        content: str,
+        trigger: str,
+        resolution: str,
+        project_dir: str | None = None,
         confidence: float = 0.5,
     ) -> str:
         """Add a lesson. Returns the lesson ID.
@@ -1280,13 +1335,20 @@ class Database:
         """
         from sqlalchemy import delete as sa_delete
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         normalized_trigger = self._normalize_trigger(trigger)
         row = LessonRow(
-            scope=scope, project_dir=project_dir, category=category,
-            title=title, content=content, trigger=normalized_trigger,
-            resolution=resolution, hit_count=1,
-            created_at=now, last_hit_at=now, confidence=confidence,
+            scope=scope,
+            project_dir=project_dir,
+            category=category,
+            title=title,
+            content=content,
+            trigger=normalized_trigger,
+            resolution=resolution,
+            hit_count=1,
+            created_at=now,
+            last_hit_at=now,
+            confidence=confidence,
         )
         async with self._session_factory() as session:
             session.add(row)
@@ -1294,9 +1356,7 @@ class Database:
             lesson_id = row.id
 
             # Prune excess lessons if over the cap
-            count_result = await session.execute(
-                select(func.count()).select_from(LessonRow)
-            )
+            count_result = await session.execute(select(func.count()).select_from(LessonRow))
             total = count_result.scalar() or 0
             if total > self.MAX_LESSONS:
                 excess = total - self.MAX_LESSONS
@@ -1322,25 +1382,25 @@ class Database:
         Lowercases, strips whitespace, and collapses internal whitespace.
         """
         import re
+
         return re.sub(r"\s+", " ", trigger.strip().lower())
 
-    async def find_matching_lesson(self, trigger: str, project_dir: str | None = None) -> LessonRow | None:
+    async def find_matching_lesson(
+        self, trigger: str, project_dir: str | None = None
+    ) -> LessonRow | None:
         """Find a lesson whose trigger matches (normalized substring in either direction)."""
         normalized = self._normalize_trigger(trigger)
         async with self._session_factory() as session:
             # Use parameterized raw SQL for normalized comparison:
             # lower/trim both sides, then check substring in either direction
-            query = (
-                select(LessonRow)
-                .where(
-                    or_(
-                        text(
-                            "instr(LOWER(TRIM(trigger)), :norm_trigger) > 0"
-                        ).bindparams(norm_trigger=normalized),
-                        text(
-                            "instr(:norm_trigger2, LOWER(TRIM(trigger))) > 0"
-                        ).bindparams(norm_trigger2=normalized),
-                    )
+            query = select(LessonRow).where(
+                or_(
+                    text("instr(LOWER(TRIM(trigger)), :norm_trigger) > 0").bindparams(
+                        norm_trigger=normalized
+                    ),
+                    text("instr(:norm_trigger2, LOWER(TRIM(trigger))) > 0").bindparams(
+                        norm_trigger2=normalized
+                    ),
                 )
             )
             if project_dir:
@@ -1357,12 +1417,13 @@ class Database:
             row = await session.get(LessonRow, lesson_id)
             if row:
                 row.hit_count += 1
-                row.last_hit_at = datetime.now(timezone.utc).isoformat()
+                row.last_hit_at = datetime.now(UTC).isoformat()
                 row.confidence = min(1.0, row.confidence + min(0.1, (1.0 - row.confidence) * 0.2))
                 await session.commit()
 
     async def get_relevant_lessons(
-        self, project_dir: str | None = None,
+        self,
+        project_dir: str | None = None,
         categories: list[str] | None = None,
         max_count: int = 20,
         max_tokens: int = 2000,
@@ -1373,7 +1434,6 @@ class Database:
         Effective confidence = stored confidence - decay for staleness.
         Token budget is approximate (1 token ~ 4 chars).
         """
-        from datetime import timedelta  # noqa: F811 — local re-import is fine
         fetch_limit = max_count * 3
         async with self._session_factory() as session:
             query = select(LessonRow)
@@ -1393,7 +1453,7 @@ class Database:
             rows = list(result.scalars().all())
 
         # Rank by effective confidence (confidence - staleness decay)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         scored = []
         for row in rows:
             days = 90
@@ -1401,11 +1461,11 @@ class Database:
                 try:
                     last_hit = datetime.fromisoformat(row.last_hit_at)
                     if last_hit.tzinfo is None:
-                        last_hit = last_hit.replace(tzinfo=timezone.utc)
+                        last_hit = last_hit.replace(tzinfo=UTC)
                     days = (now - last_hit).days
                 except (ValueError, TypeError):
                     pass
-            effective = getattr(row, 'confidence', 0.5) - max(0, (days - 30)) / 300
+            effective = getattr(row, "confidence", 0.5) - max(0, (days - 30)) / 300
             if effective >= 0.1:
                 scored.append((effective, row))
         scored.sort(key=lambda x: -x[0])
@@ -1426,22 +1486,20 @@ class Database:
     async def list_all_lessons(self) -> list[LessonRow]:
         """Return all lessons."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(LessonRow).order_by(LessonRow.hit_count.desc())
-            )
+            result = await session.execute(select(LessonRow).order_by(LessonRow.hit_count.desc()))
             return list(result.scalars().all())
 
     async def prune_stale_lessons(self, max_age_days: int = 90) -> int:
         """Delete lessons not hit in max_age_days. Returns count deleted."""
         import logging as _logging
         from datetime import timedelta  # noqa: F811
+
         from sqlalchemy import delete
+
         _logger = _logging.getLogger("forge")
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         async with self._session_factory() as session:
-            result = await session.execute(
-                delete(LessonRow).where(LessonRow.last_hit_at < cutoff)
-            )
+            result = await session.execute(delete(LessonRow).where(LessonRow.last_hit_at < cutoff))
             await session.commit()
             count = result.rowcount
             if count:
@@ -1450,10 +1508,16 @@ class Database:
 
     async def clear_lessons(self, project_dir: str | None = None) -> int:
         """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
-        from sqlalchemy import delete, func as sa_func
+        from sqlalchemy import delete
+        from sqlalchemy import func as sa_func
+
         async with self._session_factory() as session:
             if project_dir:
-                count_q = select(sa_func.count()).select_from(LessonRow).where(LessonRow.project_dir == project_dir)
+                count_q = (
+                    select(sa_func.count())
+                    .select_from(LessonRow)
+                    .where(LessonRow.project_dir == project_dir)
+                )
                 del_q = delete(LessonRow).where(LessonRow.project_dir == project_dir)
             else:
                 count_q = select(sa_func.count()).select_from(LessonRow)

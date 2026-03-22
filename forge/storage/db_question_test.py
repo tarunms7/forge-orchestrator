@@ -1,4 +1,5 @@
 import pytest
+
 from forge.storage.db import Database
 
 
@@ -13,7 +14,15 @@ async def db():
 async def test_create_task_question(db):
     # Setup: create a pipeline and task first
     await db.create_pipeline(id="p1", description="test", project_dir="/tmp")
-    await db.create_task(id="t1", title="Test", description="desc", files=["a.py"], depends_on=[], complexity="low", pipeline_id="p1")
+    await db.create_task(
+        id="t1",
+        title="Test",
+        description="desc",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="p1",
+    )
 
     q = await db.create_task_question(
         task_id="t1",
@@ -29,8 +38,18 @@ async def test_create_task_question(db):
 
 async def test_answer_question(db):
     await db.create_pipeline(id="p1", description="test", project_dir="/tmp")
-    await db.create_task(id="t1", title="Test", description="desc", files=["a.py"], depends_on=[], complexity="low", pipeline_id="p1")
-    q = await db.create_task_question(task_id="t1", pipeline_id="p1", question="Which?", suggestions=["A", "B"])
+    await db.create_task(
+        id="t1",
+        title="Test",
+        description="desc",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="p1",
+    )
+    q = await db.create_task_question(
+        task_id="t1", pipeline_id="p1", question="Which?", suggestions=["A", "B"]
+    )
 
     await db.answer_question(q.id, "A", "human")
     questions = await db.get_task_questions("t1")
@@ -42,8 +61,24 @@ async def test_answer_question(db):
 
 async def test_get_pending_questions(db):
     await db.create_pipeline(id="p1", description="test", project_dir="/tmp")
-    await db.create_task(id="t1", title="T1", description="d", files=["a.py"], depends_on=[], complexity="low", pipeline_id="p1")
-    await db.create_task(id="t2", title="T2", description="d", files=["b.py"], depends_on=[], complexity="low", pipeline_id="p1")
+    await db.create_task(
+        id="t1",
+        title="T1",
+        description="d",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="p1",
+    )
+    await db.create_task(
+        id="t2",
+        title="T2",
+        description="d",
+        files=["b.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="p1",
+    )
 
     q1 = await db.create_task_question(task_id="t1", pipeline_id="p1", question="Q1")
     q2 = await db.create_task_question(task_id="t2", pipeline_id="p1", question="Q2")
@@ -58,7 +93,15 @@ async def test_expired_questions(db):
     from forge.storage.db import TaskQuestionRow
 
     await db.create_pipeline(id="p1", description="test", project_dir="/tmp")
-    await db.create_task(id="t1", title="T1", description="d", files=["a.py"], depends_on=[], complexity="low", pipeline_id="p1")
+    await db.create_task(
+        id="t1",
+        title="T1",
+        description="d",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="p1",
+    )
 
     q = await db.create_task_question(task_id="t1", pipeline_id="p1", question="Q?")
     # Override created_at to be old
@@ -74,7 +117,15 @@ async def test_expired_questions(db):
 
 async def test_task_session_id_column(db):
     await db.create_pipeline(id="p1", description="test", project_dir="/tmp")
-    await db.create_task(id="t1", title="T1", description="d", files=["a.py"], depends_on=[], complexity="low", pipeline_id="p1")
+    await db.create_task(
+        id="t1",
+        title="T1",
+        description="d",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="p1",
+    )
     task = await db.get_task("t1")
     assert task.session_id is None
     assert task.questions_asked == 0

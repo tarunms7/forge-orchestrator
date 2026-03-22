@@ -26,9 +26,7 @@ def _check_dependency_refs(graph: TaskGraph) -> None:
     for task in graph.tasks:
         for dep in task.depends_on:
             if dep not in valid_ids:
-                raise ValidationError(
-                    f"Task '{task.id}' depends on unknown task '{dep}'"
-                )
+                raise ValidationError(f"Task '{task.id}' depends on unknown task '{dep}'")
 
 
 def _check_cycles(graph: TaskGraph) -> None:

@@ -16,10 +16,10 @@ from forge.issue.github import (
     slugify_title,
 )
 
-
 # ---------------------------------------------------------------------------
 # parse_issue_ref
 # ---------------------------------------------------------------------------
+
 
 class TestParseIssueRef:
     def test_bare_number(self):
@@ -57,17 +57,21 @@ class TestParseIssueRef:
 # slugify_title
 # ---------------------------------------------------------------------------
 
+
 class TestSlugifyTitle:
     def test_normal_title(self):
-        assert slugify_title("Login Returns 500 on Expired Token") == \
-            "login-returns-500-on-expired-token"
+        assert (
+            slugify_title("Login Returns 500 on Expired Token")
+            == "login-returns-500-on-expired-token"
+        )
 
     def test_special_chars(self):
-        assert slugify_title("Fix: user's email (validation)!") == \
-            "fix-user-s-email-validation"
+        assert slugify_title("Fix: user's email (validation)!") == "fix-user-s-email-validation"
 
     def test_long_title_truncation(self):
-        slug = slugify_title("this is a very long title that should be truncated somewhere", max_len=30)
+        slug = slugify_title(
+            "this is a very long title that should be truncated somewhere", max_len=30
+        )
         assert len(slug) <= 30
         assert not slug.endswith("-")
 
@@ -89,9 +93,7 @@ class TestSlugifyTitle:
 _ISSUE_JSON = {
     "title": "Login broken",
     "body": "Steps to reproduce...",
-    "comments": [
-        {"author": {"login": "alice"}, "body": "I can repro this."}
-    ],
+    "comments": [{"author": {"login": "alice"}, "body": "I can repro this."}],
     "labels": [{"name": "bug"}],
     "assignees": [{"login": "bob"}],
     "milestone": {"title": "v1.0"},
@@ -100,14 +102,19 @@ _ISSUE_JSON = {
 
 def _ok_result(data: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
-        args=["gh"], returncode=0,
-        stdout=json.dumps(data or _ISSUE_JSON), stderr="",
+        args=["gh"],
+        returncode=0,
+        stdout=json.dumps(data or _ISSUE_JSON),
+        stderr="",
     )
 
 
 def _err_result(stderr: str = "", code: int = 1) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
-        args=["gh"], returncode=code, stdout="", stderr=stderr,
+        args=["gh"],
+        returncode=code,
+        stdout="",
+        stderr=stderr,
     )
 
 
@@ -133,33 +140,35 @@ class TestFetchIssue:
         assert "--repo" in cmd
         assert "org/repo" in cmd
 
-    @patch("forge.issue.github.subprocess.run",
-           return_value=_err_result("issue 999 not found"))
+    @patch("forge.issue.github.subprocess.run", return_value=_err_result("issue 999 not found"))
     def test_not_found(self, mock_run):
         with pytest.raises(RuntimeError, match="not found"):
             fetch_issue(999)
 
-    @patch("forge.issue.github.subprocess.run",
-           return_value=_err_result("not authenticated"))
+    @patch("forge.issue.github.subprocess.run", return_value=_err_result("not authenticated"))
     def test_not_authenticated(self, mock_run):
         with pytest.raises(RuntimeError, match="not authenticated"):
             fetch_issue(1)
 
-    @patch("forge.issue.github.subprocess.run",
-           side_effect=FileNotFoundError)
+    @patch("forge.issue.github.subprocess.run", side_effect=FileNotFoundError)
     def test_gh_not_installed(self, mock_run):
         with pytest.raises(FileNotFoundError):
             fetch_issue(1)
 
-    @patch("forge.issue.github.subprocess.run",
-           side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=30))
+    @patch(
+        "forge.issue.github.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=30),
+    )
     def test_timeout(self, mock_run):
         with pytest.raises(subprocess.TimeoutExpired):
             fetch_issue(1)
 
-    @patch("forge.issue.github.subprocess.run",
-           return_value=subprocess.CompletedProcess(
-               args=["gh"], returncode=0, stdout="NOT JSON", stderr=""))
+    @patch(
+        "forge.issue.github.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["gh"], returncode=0, stdout="NOT JSON", stderr=""
+        ),
+    )
     def test_bad_json(self, mock_run):
         with pytest.raises(ValueError, match="parse"):
             fetch_issue(1)
@@ -169,21 +178,23 @@ class TestFetchIssue:
 # check_gh_auth (mocked subprocess)
 # ---------------------------------------------------------------------------
 
+
 class TestCheckGhAuth:
-    @patch("forge.issue.github.subprocess.run",
-           return_value=subprocess.CompletedProcess(
-               args=["gh"], returncode=0, stdout="", stderr=""))
+    @patch(
+        "forge.issue.github.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="", stderr=""),
+    )
     def test_authenticated(self, mock_run):
         assert check_gh_auth() is True
 
-    @patch("forge.issue.github.subprocess.run",
-           return_value=subprocess.CompletedProcess(
-               args=["gh"], returncode=1, stdout="", stderr=""))
+    @patch(
+        "forge.issue.github.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=["gh"], returncode=1, stdout="", stderr=""),
+    )
     def test_not_authenticated(self, mock_run):
         assert check_gh_auth() is False
 
-    @patch("forge.issue.github.subprocess.run",
-           side_effect=FileNotFoundError)
+    @patch("forge.issue.github.subprocess.run", side_effect=FileNotFoundError)
     def test_gh_not_installed(self, mock_run):
         with pytest.raises(FileNotFoundError):
             check_gh_auth()
@@ -193,21 +204,26 @@ class TestCheckGhAuth:
 # get_current_repo (mocked subprocess)
 # ---------------------------------------------------------------------------
 
+
 class TestGetCurrentRepo:
-    @patch("forge.issue.github.subprocess.run",
-           return_value=subprocess.CompletedProcess(
-               args=["gh"], returncode=0,
-               stdout=json.dumps({"nameWithOwner": "org/repo"}), stderr=""))
+    @patch(
+        "forge.issue.github.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["gh"], returncode=0, stdout=json.dumps({"nameWithOwner": "org/repo"}), stderr=""
+        ),
+    )
     def test_success(self, mock_run):
         assert get_current_repo() == "org/repo"
 
-    @patch("forge.issue.github.subprocess.run",
-           return_value=subprocess.CompletedProcess(
-               args=["gh"], returncode=1, stdout="", stderr="not a repo"))
+    @patch(
+        "forge.issue.github.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=["gh"], returncode=1, stdout="", stderr="not a repo"
+        ),
+    )
     def test_not_in_repo(self, mock_run):
         assert get_current_repo() is None
 
-    @patch("forge.issue.github.subprocess.run",
-           side_effect=FileNotFoundError)
+    @patch("forge.issue.github.subprocess.run", side_effect=FileNotFoundError)
     def test_gh_not_installed(self, mock_run):
         assert get_current_repo() is None

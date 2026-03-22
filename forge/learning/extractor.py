@@ -6,28 +6,52 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
 
 from forge.learning.store import Lesson
 
 logger = logging.getLogger("forge.learning")
 
 _INFRA_NOISE_PATTERNS = [
-    "timeout", "timed out", "etimedout",
-    "connection refused", "econnrefused", "econnreset",
-    "server down", "server unavailable", "service unavailable",
-    "503", "502", "504",
-    "database is locked", "db lock",
-    "oom", "out of memory", "killed",
-    "disk full", "no space left",
-    "sigkill", "sigterm",
+    "timeout",
+    "timed out",
+    "etimedout",
+    "connection refused",
+    "econnrefused",
+    "econnreset",
+    "server down",
+    "server unavailable",
+    "service unavailable",
+    "503",
+    "502",
+    "504",
+    "database is locked",
+    "db lock",
+    "oom",
+    "out of memory",
+    "killed",
+    "disk full",
+    "no space left",
+    "sigkill",
+    "sigterm",
     "[infrastructure crash]",
 ]
 
 _ACTION_VERBS = {
-    "changed", "replaced", "removed", "added", "fixed", "updated",
-    "switched", "moved", "renamed", "set", "used", "imported",
-    "configured", "wrapped", "converted",
+    "changed",
+    "replaced",
+    "removed",
+    "added",
+    "fixed",
+    "updated",
+    "switched",
+    "moved",
+    "renamed",
+    "set",
+    "used",
+    "imported",
+    "configured",
+    "wrapped",
+    "converted",
 }
 
 
@@ -110,8 +134,6 @@ def extract_from_command_failures(
 
     # Use the first failure as the representative
     first = failures[0]
-    last = failures[-1]
-
     # Build title from the command and error
     cmd_short = _shorten_command(first.command)
     title = f"{cmd_short} fails with {first.error_class}"
@@ -218,11 +240,11 @@ def classify_scope(
             return "project"
 
     # Venv references are project-scoped (each project has its own venv)
-    if '.venv/' in text or 'venv/' in text:
+    if ".venv/" in text or "venv/" in text:
         return "project"
 
     # Project-specific config patterns
-    project_configs = ['.forge/', 'pyproject.toml', 'package.json', 'tsconfig']
+    project_configs = [".forge/", "pyproject.toml", "package.json", "tsconfig"]
     if any(cfg in text for cfg in project_configs):
         return "project"
 
@@ -258,35 +280,37 @@ def _resolution_for_error(error_class: str, command: str, stderr: str) -> str:
     """Generate a resolution suggestion based on error class."""
     resolutions = {
         "module_not_found": "Check what's actually installed (`pip list` or `pip show`). "
-                           "Use `python -m` prefix or install the missing module. "
-                           "Don't retry the same import path.",
+        "Use `python -m` prefix or install the missing module. "
+        "Don't retry the same import path.",
         "command_not_found": "Verify the tool exists (`which <tool>`). "
-                            "Use an alternative tool or install the missing one. "
-                            "Check if the tool is available under a different name.",
+        "Use an alternative tool or install the missing one. "
+        "Check if the tool is available under a different name.",
         "permission_denied": "Check file permissions first (`ls -la`). "
-                            "Don't retry with sudo unless explicitly authorized.",
+        "Don't retry with sudo unless explicitly authorized.",
         "syntax_error": "Read the error location carefully. Fix the syntax issue "
-                       "at the reported line before re-running.",
+        "at the reported line before re-running.",
         "import_error": "Check the actual module structure. Verify the import path "
-                       "matches the installed package layout.",
+        "matches the installed package layout.",
         "file_not_found": "Verify the file path exists before using it. "
-                         "Use `ls` or `find` to locate the correct path.",
+        "Use `ls` or `find` to locate the correct path.",
         "timeout": "The operation took too long. Try a smaller scope, "
-                  "add a timeout flag, or use a different approach entirely.",
+        "add a timeout flag, or use a different approach entirely.",
         "test_failure": "Read the test output carefully. Fix the failing assertion "
-                       "rather than re-running and hoping for a different result.",
+        "rather than re-running and hoping for a different result.",
         "connection_error": "Verify the service is running and accessible. "
-                           "Check the port and host. Don't retry immediately.",
+        "Check the port and host. Don't retry immediately.",
     }
-    base = resolutions.get(error_class, "Diagnose the root cause before retrying. "
-                                         "Try a fundamentally different approach.")
+    base = resolutions.get(
+        error_class,
+        "Diagnose the root cause before retrying. Try a fundamentally different approach.",
+    )
     return base
 
 
 def _summarize_feedback(feedback: str) -> str:
     """Create a short title from review feedback."""
     # Take first sentence or first 60 chars
-    first_line = feedback.split('\n')[0].split('. ')[0]
+    first_line = feedback.split("\n")[0].split(". ")[0]
     if len(first_line) > 60:
         return first_line[:57] + "..."
     return first_line
@@ -297,11 +321,11 @@ def _extract_feedback_theme(feedback: str) -> str:
     # Lowercase and strip specifics
     theme = feedback.lower()
     # Remove file paths
-    theme = re.sub(r'[/\\][\w./\\-]+\.\w+', '', theme)
+    theme = re.sub(r"[/\\][\w./\\-]+\.\w+", "", theme)
     # Remove line numbers
-    theme = re.sub(r'line\s+\d+', '', theme)
+    theme = re.sub(r"line\s+\d+", "", theme)
     # Remove backtick code
-    theme = re.sub(r'`[^`]+`', '', theme)
+    theme = re.sub(r"`[^`]+`", "", theme)
     # Take first 100 chars of what's left
-    theme = ' '.join(theme.split())[:100]
+    theme = " ".join(theme.split())[:100]
     return theme

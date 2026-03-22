@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from forge.tui.widgets.copy_overlay import CopyOverlay, copy_to_clipboard
 
@@ -17,7 +17,9 @@ class TestCopyToClipboard:
         mock_proc.communicate.return_value = (b"", b"")
         with patch("forge.tui.widgets.copy_overlay.platform") as mock_platform:
             mock_platform.system.return_value = "Darwin"
-            with patch("forge.tui.widgets.copy_overlay.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            with patch(
+                "forge.tui.widgets.copy_overlay.subprocess.Popen", return_value=mock_proc
+            ) as mock_popen:
                 result = copy_to_clipboard("hello")
                 assert result is True
                 mock_popen.assert_called_once()

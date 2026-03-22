@@ -262,6 +262,8 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   // Lock body scroll while dialog is open
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -278,6 +280,35 @@ function ConfirmDialog({
     return () => window.removeEventListener("keydown", handler);
   }, [onCancel]);
 
+  // Focus trap: focus first element on mount and trap Tab within dialog
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    const focusable = el.querySelectorAll<HTMLElement>("button, [tabindex]");
+    if (focusable.length > 0) focusable[0].focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const items = el.querySelectorAll<HTMLElement>("button, [tabindex]");
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    el.addEventListener("keydown", handleKeyDown);
+    return () => el.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return createPortal(
     <div
       className="log-modal-overlay"
@@ -285,6 +316,7 @@ function ConfirmDialog({
       style={{ zIndex: 9999 }}
     >
       <div
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-surface-2)",
@@ -481,13 +513,7 @@ function TaskExecutionPageInner() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [restartLoading, setRestartLoading] = useState(false);
   const hydrated = useRef(false);
-
-  // Request browser notification permission on mount
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }, []);
+  const [notifDismissed, setNotifDismissed] = useState(false);
 
   // Reset store when navigating to a different pipeline
   useEffect(() => {
@@ -664,6 +690,32 @@ function TaskExecutionPageInner() {
               </div>
             )}
           </div>
+          {/* Notification opt-in — only shown when permission is 'default' */}
+          {!notifDismissed && typeof window !== "undefined" && "Notification" in window && Notification.permission === "default" && (
+            <button
+              type="button"
+              onClick={() => {
+                Notification.requestPermission().then(() => {
+                  // Force re-render so button disappears after grant/deny
+                  setNotifDismissed(true);
+                });
+              }}
+              className="btn btn-sm"
+              style={{
+                marginLeft: "auto",
+                flexShrink: 0,
+                background: "var(--accent-glow)",
+                border: "1px solid rgba(59,130,246,0.3)",
+                color: "var(--accent)",
+                fontSize: 12,
+                padding: "4px 12px",
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+              }}
+            >
+              Enable notifications
+            </button>
+          )}
         </div>
         {/* Progress track inside header */}
         <PipelineProgress phase={phase} />
@@ -778,7 +830,7 @@ function TaskExecutionPageInner() {
       {showAgentCards ? (
         <div className={`task-grid ${isCancelled ? "opacity-50" : ""}`} style={isCancelled ? { pointerEvents: "none" } : {}}>
           {taskList.map((task) => (
-            <AgentCard key={task.id} task={task} onClick={isCancelled ? undefined : () => setSelectedTaskId(task.id)} />
+            <AgentCard key={task.id} taskId={task.id} onClick={isCancelled ? undefined : () => setSelectedTaskId(task.id)} />
           ))}
         </div>
       ) : (

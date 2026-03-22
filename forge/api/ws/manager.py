@@ -42,7 +42,9 @@ class ConnectionManager:
             await websocket.close(code=4002, reason="Too many connections")
             logger.warning(
                 "WS rejected: user=%s pipeline=%s (limit=%d)",
-                user_id, pipeline_id, MAX_CONNECTIONS_PER_USER,
+                user_id,
+                pipeline_id,
+                MAX_CONNECTIONS_PER_USER,
             )
             return False
         await websocket.accept()

@@ -4,10 +4,13 @@ from forge.tui.state import TuiState
 def test_task_question_updates_state():
     state = TuiState()
     state.tasks = {"t1": {"id": "t1", "state": "in_progress", "title": "Test"}}
-    state.apply_event("task:question", {
-        "task_id": "t1",
-        "question": {"id": "q1", "question": "Which?", "suggestions": ["A", "B"]},
-    })
+    state.apply_event(
+        "task:question",
+        {
+            "task_id": "t1",
+            "question": {"id": "q1", "question": "Which?", "suggestions": ["A", "B"]},
+        },
+    )
     assert state.tasks["t1"]["state"] == "awaiting_input"
     assert state.pending_questions["t1"] is not None
 
@@ -38,7 +41,9 @@ def test_review_gate_passed():
     state = TuiState()
     state.tasks = {"t1": {"id": "t1", "state": "in_review", "title": "Test"}}
     state.review_gates = {"t1": {"gate0_build": {"status": "running"}}}
-    state.apply_event("review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "OK"})
+    state.apply_event(
+        "review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "OK"}
+    )
     assert state.review_gates["t1"]["gate0_build"]["status"] == "passed"
 
 
@@ -56,13 +61,17 @@ def test_pipeline_pr_created():
 
 # --- planning:question / planning:answer ---
 
+
 def test_planning_question_added_to_pending():
     """planning:question should add __planning__ to pending_questions."""
     state = TuiState()
-    state.apply_event("planning:question", {
-        "question_id": "q1",
-        "question": {"question": "JWT or session?", "suggestions": ["JWT", "session"]},
-    })
+    state.apply_event(
+        "planning:question",
+        {
+            "question_id": "q1",
+            "question": {"question": "JWT or session?", "suggestions": ["JWT", "session"]},
+        },
+    )
     assert "__planning__" in state.pending_questions
     assert state.pending_questions["__planning__"]["question"] == "JWT or session?"
 
@@ -80,9 +89,12 @@ def test_planning_question_notifies():
     state = TuiState()
     changes = []
     state.on_change(lambda f: changes.append(f))
-    state.apply_event("planning:question", {
-        "question": {"question": "Which DB?"},
-    })
+    state.apply_event(
+        "planning:question",
+        {
+            "question": {"question": "Which DB?"},
+        },
+    )
     assert "planning" in changes
 
 

@@ -19,7 +19,6 @@ from forge.core.daemon import ForgeDaemon
 from forge.core.events import EventEmitter
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 
-
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
@@ -85,10 +84,9 @@ def daemon(event_emitter):
 # Bug 1: plan() must emit pipeline:phase_changed with phase='planned'
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_plan_emits_phase_changed_planned_after_plan_ready(
-    daemon, mock_db, captured_events
-):
+async def test_plan_emits_phase_changed_planned_after_plan_ready(daemon, mock_db, captured_events):
     """daemon.plan() must emit pipeline:phase_changed with phase='planned'
     AFTER emitting pipeline:plan_ready.
 
@@ -108,7 +106,9 @@ async def test_plan_emits_phase_changed_planned_after_plan_ready(
         patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"),
         patch("forge.core.daemon.gather_project_snapshot", return_value=mock_snapshot),
         patch("forge.core.daemon.Planner") as MockPlanner,
-        patch("forge.core.daemon.estimate_pipeline_cost", new_callable=AsyncMock, return_value=0.05),
+        patch(
+            "forge.core.daemon.estimate_pipeline_cost", new_callable=AsyncMock, return_value=0.05
+        ),
     ):
         mock_planner_instance = AsyncMock()
         mock_planner_instance.plan.return_value = VALID_TASK_GRAPH
@@ -118,8 +118,7 @@ async def test_plan_emits_phase_changed_planned_after_plan_ready(
 
     # Collect all phase_changed events
     phase_changed_events = [
-        (evt, data) for evt, data in captured_events
-        if evt == "pipeline:phase_changed"
+        (evt, data) for evt, data in captured_events if evt == "pipeline:phase_changed"
     ]
 
     # Must have at least two phase_changed events: 'planning' and 'planned'
@@ -134,18 +133,15 @@ async def test_plan_emits_phase_changed_planned_after_plan_ready(
     all_event_names = [evt for evt, _ in captured_events]
     plan_ready_idx = all_event_names.index("pipeline:plan_ready")
     planned_idx = next(
-        i for i, (evt, data) in enumerate(captured_events)
+        i
+        for i, (evt, data) in enumerate(captured_events)
         if evt == "pipeline:phase_changed" and data.get("phase") == "planned"
     )
-    assert planned_idx > plan_ready_idx, (
-        "phase_changed:'planned' must be emitted AFTER plan_ready"
-    )
+    assert planned_idx > plan_ready_idx, "phase_changed:'planned' must be emitted AFTER plan_ready"
 
 
 @pytest.mark.asyncio
-async def test_plan_emits_phase_changed_planned_without_pipeline_id(
-    daemon, captured_events
-):
+async def test_plan_emits_phase_changed_planned_without_pipeline_id(daemon, captured_events):
     """Even without a pipeline_id, plan() must emit phase_changed:'planned'
     on the EventEmitter after plan_ready.
 
@@ -172,8 +168,7 @@ async def test_plan_emits_phase_changed_planned_without_pipeline_id(
         await daemon.plan("Build something", AsyncMock())
 
     phase_changed_events = [
-        (evt, data) for evt, data in captured_events
-        if evt == "pipeline:phase_changed"
+        (evt, data) for evt, data in captured_events if evt == "pipeline:phase_changed"
     ]
     phases = [data["phase"] for _, data in phase_changed_events]
     assert "planned" in phases, (
@@ -186,12 +181,11 @@ async def test_plan_emits_phase_changed_planned_without_pipeline_id(
 # Bug 2: max_retries should default to 5, not 3
 # ---------------------------------------------------------------------------
 
+
 def test_max_retries_default_is_five():
     """ForgeSettings().max_retries must default to 5.
 
     Regression: the previous default was 3, too low for flaky LLM calls.
     """
     s = ForgeSettings()
-    assert s.max_retries == 5, (
-        f"Expected max_retries default to be 5, got {s.max_retries}"
-    )
+    assert s.max_retries == 5, f"Expected max_retries default to be 5, got {s.max_retries}"

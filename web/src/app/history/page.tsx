@@ -160,6 +160,7 @@ export default function HistoryPage() {
       </div>
 
       {/* Table */}
+      <div style={{ overflowX: 'auto' }}>
       <table className="history-table">
         <thead>
           <tr>
@@ -178,7 +179,7 @@ export default function HistoryPage() {
             </td></tr>
           ) : (
             paginatedHistory.map((item) => (
-              <tr key={item.pipeline_id} onClick={() => router.push(`/tasks/view?id=${item.pipeline_id}`)}>
+              <tr key={item.pipeline_id} onClick={() => router.push(`/tasks/view?id=${item.pipeline_id}`)} onKeyDown={(e) => e.key === "Enter" && router.push(`/tasks/view?id=${item.pipeline_id}`)} tabIndex={0} role="link">
                 <td><StatusPill status={item.phase} /></td>
                 <td>
                   <div className="history-pipeline-cell">
@@ -215,6 +216,7 @@ export default function HistoryPage() {
           )}
         </tbody>
       </table>
+      </div>
 
       {/* Pagination */}
       {filteredHistory.length > 0 && (
@@ -223,11 +225,11 @@ export default function HistoryPage() {
             Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredHistory.length)} of {filteredHistory.length} pipelines
           </span>
           <div className="pagination-controls">
-            <button className="page-btn" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>&#8249;</button>
+            <button className="page-btn" disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} aria-label="Previous page">&#8249;</button>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-              <button key={p} className={`page-btn${p === currentPage ? " active" : ""}`} onClick={() => setCurrentPage(p)}>{p}</button>
+              <button key={p} className={`page-btn${p === currentPage ? " active" : ""}`} onClick={() => setCurrentPage(p)} aria-label={`Page ${p}`} aria-current={p === currentPage ? "page" : undefined}>{p}</button>
             ))}
-            <button className="page-btn" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>&#8250;</button>
+            <button className="page-btn" disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} aria-label="Next page">&#8250;</button>
           </div>
         </div>
       )}

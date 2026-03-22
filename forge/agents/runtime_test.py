@@ -1,6 +1,7 @@
 import json
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from forge.agents.adapter import AgentResult
 from forge.agents.runtime import AgentRuntime
@@ -79,7 +80,9 @@ async def test_runtime_passes_on_message_to_adapter():
     """AgentRuntime.run_task() should forward on_message to adapter.run()."""
     mock_adapter = AsyncMock()
     mock_adapter.run.return_value = AgentResult(
-        success=True, files_changed=["a.py"], summary="Done",
+        success=True,
+        files_changed=["a.py"],
+        summary="Done",
     )
     callback = AsyncMock()
 
@@ -102,7 +105,9 @@ async def test_runtime_passes_conventions_to_adapter():
     """AgentRuntime.run_task() should forward conventions params to adapter.run()."""
     mock_adapter = AsyncMock()
     mock_adapter.run.return_value = AgentResult(
-        success=True, files_changed=[], summary="Done",
+        success=True,
+        files_changed=[],
+        summary="Done",
     )
     conventions_md = "## Style\n\nUse black."
     conventions_json = json.dumps({"Testing": "pytest"})
@@ -126,7 +131,9 @@ async def test_runtime_passes_completed_deps_to_adapter():
     """AgentRuntime.run_task() should forward completed_deps to adapter.run()."""
     mock_adapter = AsyncMock()
     mock_adapter.run.return_value = AgentResult(
-        success=True, files_changed=[], summary="Done",
+        success=True,
+        files_changed=[],
+        summary="Done",
     )
     deps = [
         {
@@ -154,11 +161,15 @@ async def test_runtime_passes_all_new_params_together():
     """All three new params should be forwarded correctly when used together."""
     mock_adapter = AsyncMock()
     mock_adapter.run.return_value = AgentResult(
-        success=True, files_changed=[], summary="Done",
+        success=True,
+        files_changed=[],
+        summary="Done",
     )
     conventions_md = "## Lint\nUse ruff."
     conventions_json = json.dumps({"Naming": "snake_case"})
-    deps = [{"task_id": "t1", "title": "Setup", "implementation_summary": "Init", "files_changed": []}]
+    deps = [
+        {"task_id": "t1", "title": "Setup", "implementation_summary": "Init", "files_changed": []}
+    ]
 
     runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
     await runtime.run_task(
@@ -197,7 +208,9 @@ async def test_runtime_passes_autonomy_settings_to_adapter():
     """AgentRuntime.run_task() should forward autonomy and questions_remaining to adapter."""
     mock_adapter = AsyncMock()
     mock_adapter.run.return_value = AgentResult(
-        success=True, files_changed=[], summary="Done",
+        success=True,
+        files_changed=[],
+        summary="Done",
     )
 
     runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)

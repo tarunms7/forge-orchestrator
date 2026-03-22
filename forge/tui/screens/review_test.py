@@ -15,7 +15,7 @@ class ReviewTestApp(App):
 @pytest.mark.asyncio
 async def test_review_screen_mounts():
     app = ReviewTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         assert app.query_one("DiffViewer") is not None
 
 
@@ -23,7 +23,7 @@ async def test_review_screen_mounts():
 async def test_review_screen_no_task_list():
     """ReviewScreen should NOT contain a TaskList (sidebar removed)."""
     app = ReviewTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         assert len(app.query("TaskList")) == 0
 
 
@@ -31,7 +31,7 @@ async def test_review_screen_no_task_list():
 async def test_review_screen_status_bar_text():
     """Status bar should show scroll/jump-task instructions, not navigate."""
     app = ReviewTestApp()
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         # Find the status bar
         status = app.query_one("#review-status")
         rendered = str(status.render())
@@ -43,9 +43,21 @@ async def test_review_screen_status_bar_text():
 async def test_review_screen_j_k_scrolls_diff_viewer():
     """j/k keys should call scroll_relative on DiffViewer without error."""
     state = TuiState()
-    state.apply_event("pipeline:plan_ready", {
-        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
-    })
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Test",
+                    "description": "",
+                    "files": ["f"],
+                    "depends_on": [],
+                    "complexity": "low",
+                }
+            ]
+        },
+    )
     state.selected_task_id = "t1"
 
     class ReviewTestAppWithState(App):

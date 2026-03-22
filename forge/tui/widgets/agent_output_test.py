@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-
 from forge.tui.widgets.agent_output import (
-    AgentOutput,
     _TYPING_FRAMES,
+    AgentOutput,
     format_error_detail,
     format_header,
     format_output,
     format_unified_output,
 )
-
 
 # ── format_header tests ──────────────────────────────────────────────────
 
@@ -38,6 +36,7 @@ def test_format_header_planner():
 
 def test_format_output_empty():
     from forge.tui.widgets.agent_output import _SPINNER_FRAMES
+
     result = format_output([])
     assert "Waiting" in result
     assert _SPINNER_FRAMES[0] in result
@@ -45,6 +44,7 @@ def test_format_output_empty():
 
 def test_format_output_spinner_frames():
     from forge.tui.widgets.agent_output import _SPINNER_FRAMES
+
     result_0 = format_output([], spinner_frame=0)
     result_1 = format_output([], spinner_frame=1)
     assert _SPINNER_FRAMES[0] in result_0
@@ -252,8 +252,9 @@ def test_format_error_detail_default_error_message():
 
 def test_format_error_detail_valid_rich_markup():
     """Error detail output should be valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
 
     task = {"title": "Auth", "error": "Failed", "files_changed": ["a.py"]}
     result = format_error_detail("t1", task, ["line1"])
@@ -377,8 +378,10 @@ def test_format_unified_output_no_streaming_indicator_by_default():
 
 def test_format_unified_output_valid_rich_markup():
     """Output should be valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
+
     entries = [
         ("agent", "line 1"),
         ("gate", "🔨 Build: ✓ ok"),
@@ -438,8 +441,9 @@ def test_update_unified_before_compose():
 
 def test_render_markdown_escapes_rich_markup_in_plain_text():
     """Square brackets in plain text should be escaped to prevent Rich markup injection."""
-    from forge.tui.widgets.agent_output import _render_markdown
     import forge.tui.widgets.agent_output as ao
+    from forge.tui.widgets.agent_output import _render_markdown
+
     ao._IN_CODE_BLOCK = False
 
     result = _render_markdown("Use [bold]this[/bold] to inject")
@@ -450,8 +454,9 @@ def test_render_markdown_escapes_rich_markup_in_plain_text():
 
 def test_render_markdown_preserves_bold_and_code():
     """Markdown bold and inline code should still render as Rich markup."""
-    from forge.tui.widgets.agent_output import _render_markdown
     import forge.tui.widgets.agent_output as ao
+    from forge.tui.widgets.agent_output import _render_markdown
+
     ao._IN_CODE_BLOCK = False
 
     result = _render_markdown("This is **bold** and `code`")
@@ -461,8 +466,9 @@ def test_render_markdown_preserves_bold_and_code():
 
 def test_render_markdown_escapes_brackets_in_bold():
     """Brackets inside **bold** should be escaped."""
-    from forge.tui.widgets.agent_output import _render_markdown
     import forge.tui.widgets.agent_output as ao
+    from forge.tui.widgets.agent_output import _render_markdown
+
     ao._IN_CODE_BLOCK = False
 
     result = _render_markdown("**array[0]** value")
@@ -471,8 +477,9 @@ def test_render_markdown_escapes_brackets_in_bold():
 
 def test_format_output_with_brackets_is_valid_rich():
     """Output containing square brackets should be valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
 
     lines = ["Use [red]color[/red] to inject", "Normal **bold** text"]
     result = format_output(lines)

@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from forge.cli.main import cli
 import forge.cli.main as _main_module
+from forge.cli.main import cli
 
 
 def test_cli_version():
@@ -108,18 +108,26 @@ def test_run_passes_spec_and_deep_plan(tmp_path):
     mock_daemon = MagicMock()
     mock_daemon.run = MagicMock(return_value=None)
 
-    with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
-         patch("forge.cli.main.asyncio") as mock_asyncio, \
-         patch("forge.config.project_config.resolve_repos", return_value=[]), \
-         patch("forge.config.project_config.validate_repos_startup"):
+    with (
+        patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+        patch("forge.cli.main.asyncio") as mock_asyncio,
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+    ):
         mock_asyncio.run = MagicMock(return_value=None)
         runner = CliRunner()
-        runner.invoke(cli, [
-            "run", "Build it",
-            "--spec", str(spec_file),
-            "--deep-plan",
-            "--project-dir", str(tmp_path),
-        ])
+        runner.invoke(
+            cli,
+            [
+                "run",
+                "Build it",
+                "--spec",
+                str(spec_file),
+                "--deep-plan",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
         # asyncio.run should have been called with daemon.run(...)
         mock_daemon.run.assert_called_once_with(
             "Build it", spec_path=str(spec_file), deep_plan=True
@@ -150,13 +158,20 @@ def test_run_exception_shows_traceback_hint_without_verbose(tmp_path):
     mock_daemon.run = MagicMock(side_effect=RuntimeError("boom"))
 
     runner = CliRunner()
-    with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
-         patch("forge.config.project_config.resolve_repos", return_value=[]), \
-         patch("forge.config.project_config.validate_repos_startup"):
-        result = runner.invoke(cli, [
-            "run", "Build it",
-            "--project-dir", str(tmp_path),
-        ])
+    with (
+        patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "run",
+                "Build it",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
     assert result.exit_code == 1
     assert "Forge failed: boom" in result.output
     assert "Run with --verbose for full traceback" in result.output
@@ -170,13 +185,21 @@ def test_run_exception_shows_traceback_with_verbose(tmp_path):
     mock_daemon.run = MagicMock(side_effect=RuntimeError("boom"))
 
     runner = CliRunner()
-    with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
-         patch("forge.config.project_config.resolve_repos", return_value=[]), \
-         patch("forge.config.project_config.validate_repos_startup"):
-        result = runner.invoke(cli, [
-            "--verbose", "run", "Build it",
-            "--project-dir", str(tmp_path),
-        ])
+    with (
+        patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "--verbose",
+                "run",
+                "Build it",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
     assert result.exit_code == 1
     assert "Forge failed: boom" in result.output
     assert "Traceback" in result.output
@@ -187,9 +210,13 @@ def test_serve_uses_central_db_url_by_default():
     """serve() should use forge_db_url() when no --db-url is provided."""
     from unittest.mock import MagicMock
 
-    with patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db") as mock_url, \
-         patch("forge.cli.main.create_app", create=True) as mock_create_app, \
-         patch("uvicorn.run"):
+    with (
+        patch(
+            "forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db"
+        ) as mock_url,
+        patch("forge.cli.main.create_app", create=True) as mock_create_app,
+        patch("uvicorn.run"),
+    ):
         # We need to handle the lazy import of uvicorn and create_app
         # The serve command tries to import uvicorn and create_app
 
@@ -202,6 +229,7 @@ def test_serve_uses_central_db_url_by_default():
             with patch("forge.api.app.create_app", return_value=MagicMock()):
                 # Patch uvicorn at module level since it's imported inside serve()
                 import sys
+
                 mock_uv = MagicMock()
                 sys.modules["uvicorn"] = mock_uv
                 try:
