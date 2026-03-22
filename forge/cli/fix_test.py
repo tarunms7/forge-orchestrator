@@ -246,6 +246,24 @@ def test_dry_run_calls_plan_not_execute(runner):
     daemon.run.assert_not_called()
 
 
+# ── Pipeline failure shows orphan branch note ────────────────────────
+
+
+def test_pipeline_failure_shows_orphan_branch_note(runner):
+    """When daemon.run() fails, user sees note about orphan branch."""
+    daemon = _make_daemon()
+    daemon.run = AsyncMock(side_effect=RuntimeError("agent crashed"))
+
+    patches = _full_flow_patches(daemon)
+    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        result = runner.invoke(fix, ["42", "--yes"])
+
+    assert result.exit_code == 1
+    assert "Forge failed: agent crashed" in result.output
+    assert "orphan branch" in result.output
+    assert "git checkout" in result.output
+
+
 # ── --yes skips confirmation ─────────────────────────────────────────
 
 
