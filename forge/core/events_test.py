@@ -88,6 +88,91 @@ class TestEventEmitter:
 
         assert handler.await_count == 2
 
+    async def test_off_removes_handler(self):
+        """off() removes handler so subsequent emit doesn't call it."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        handler = AsyncMock()
+        emitter.on("task:answer", handler)
+        emitter.off("task:answer", handler)
+
+        await emitter.emit("task:answer", {"answer": "yes"})
+
+        handler.assert_not_awaited()
+
+    async def test_off_nonexistent_handler_no_error(self):
+        """off() with a handler that was never registered does not raise."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        handler = AsyncMock()
+        # Should not raise
+        emitter.off("task:answer", handler)
+
+    async def test_off_nonexistent_event_no_error(self):
+        """off() for an event that has no handlers does not raise."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        handler = AsyncMock()
+        emitter.off("never:registered", handler)
+
+    async def test_off_only_removes_one_registration(self):
+        """off() removes only one instance when handler registered twice."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        handler = AsyncMock()
+        emitter.on("event", handler)
+        emitter.on("event", handler)
+        emitter.off("event", handler)
+
+        await emitter.emit("event", "data")
+
+        assert handler.await_count == 1
+
+    async def test_clear_removes_all_handlers(self):
+        """clear() with no argument removes all handlers for all events."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        h1 = AsyncMock()
+        h2 = AsyncMock()
+        emitter.on("event_a", h1)
+        emitter.on("event_b", h2)
+        emitter.clear()
+
+        await emitter.emit("event_a", {})
+        await emitter.emit("event_b", {})
+
+        h1.assert_not_awaited()
+        h2.assert_not_awaited()
+
+    async def test_clear_event_removes_specific_event_handlers(self):
+        """clear(event) removes handlers only for that event."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        h1 = AsyncMock()
+        h2 = AsyncMock()
+        emitter.on("event_a", h1)
+        emitter.on("event_b", h2)
+        emitter.clear("event_a")
+
+        await emitter.emit("event_a", {})
+        await emitter.emit("event_b", {})
+
+        h1.assert_not_awaited()
+        h2.assert_awaited_once_with({})
+
+    async def test_clear_nonexistent_event_no_error(self):
+        """clear(event) for an event with no handlers does not raise."""
+        from forge.core.events import EventEmitter
+
+        emitter = EventEmitter()
+        emitter.clear("never:registered")
+
 
 @pytest.mark.asyncio
 async def test_failed_count_increments_on_handler_error():

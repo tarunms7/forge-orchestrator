@@ -1483,9 +1483,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """Remove the task:answer listener to prevent accumulation on re-entry."""
         handler = getattr(self, "_current_answer_handler", None)
         if handler:
-            handlers = self._events._handlers.get("task:answer", [])
-            if handler in handlers:
-                handlers.remove(handler)
+            self._events.off("task:answer", handler)
             self._current_answer_handler = None
 
     async def _execution_loop_inner(
