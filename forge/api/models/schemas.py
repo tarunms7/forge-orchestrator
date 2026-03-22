@@ -8,6 +8,14 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class RepoEntry(BaseModel):
+    """A repository entry in a multi-repo workspace."""
+
+    id: str
+    path: str
+    base_branch: str | None = None
+
+
 class CreateTaskRequest(BaseModel):
     """Request body for creating a new pipeline task."""
 
@@ -23,6 +31,7 @@ class CreateTaskRequest(BaseModel):
     require_approval: bool | None = None
     template_id: str | None = Field(default=None, description="Pipeline template ID (built-in or user-created)")
     quality_preset: str | None = Field(default=None, description="Quality preset: fast, balanced, or thorough")
+    repos: list[RepoEntry] | None = Field(default=None, description="List of repositories for multi-repo workspaces. None for single-repo backward compat.")
 
 
 class RestartPipelineRequest(BaseModel):
@@ -58,6 +67,7 @@ class PipelineResponse(BaseModel):
     """Response returned when a pipeline is created."""
 
     pipeline_id: str
+    repos: list[dict] | None = Field(default=None, description="List of repo dicts included in this pipeline. None for single-repo pipelines.")
 
 
 class TaskStatusResponse(BaseModel):
@@ -75,6 +85,7 @@ class TaskStatusResponse(BaseModel):
     estimated_cost_usd: float = 0.0
     github_issue_url: str | None = None
     github_issue_number: int | None = None
+    repo_id: str = Field(default="default", description="Repository identifier for this status context.")
 
 
 class TaskListItem(BaseModel):
@@ -84,6 +95,7 @@ class TaskListItem(BaseModel):
     description: str
     project_path: str
     phase: str
+    repo_id: str = Field(default="default", description="Repository identifier. 'default' for single-repo pipelines.")
 
 
 # ── Template schemas ──────────────────────────────────────────────────
