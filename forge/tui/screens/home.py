@@ -130,6 +130,12 @@ class HomeScreen(Screen):
         color: #8b949e;
         height: 1;
     }
+    #workspace-info {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        margin: 0 0 0 0;
+    }
     #recent-label {
         width: 100%;
         margin: 1 0 0 0;
@@ -154,9 +160,13 @@ class HomeScreen(Screen):
             self.branch_name = branch_name
             super().__init__()
 
-    def __init__(self, recent_pipelines: list[dict] | None = None) -> None:
+    def __init__(self, recent_pipelines: list[dict] | None = None, repos: list | None = None) -> None:
         super().__init__()
         self._recent_pipelines = recent_pipelines or []
+        self._repos = repos or []
+        self._is_workspace = len(self._repos) > 1 or (
+            len(self._repos) == 1 and self._repos[0].id != "default"
+        )
 
     def compose(self) -> ComposeResult:
         shortcuts_text = (
@@ -174,13 +184,25 @@ class HomeScreen(Screen):
             with Horizontal(id="input-row"):
                 yield PromptTextArea(id="prompt-input")
                 yield Static(shortcuts_text, id="shortcuts-panel")
-            with Horizontal(id="branch-row"):
-                with Vertical(classes="branch-field"):
-                    yield Static("[#8b949e]Base branch[/]", classes="branch-label")
-                    yield Input(value="main", id="base-branch-input")
-                with Vertical(classes="branch-field"):
-                    yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
-                    yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
+            if self._is_workspace:
+                # Workspace mode: show repos as read-only info
+                repo_lines = "  ".join(
+                    f"[#58a6ff]{r.id}[/] [#8b949e]({r.base_branch})[/]"
+                    for r in self._repos
+                )
+                yield Static(
+                    f"[#8b949e]Workspace repos:[/]  {repo_lines}\n"
+                    f"[#6e7681 italic]Edit .forge/workspace.toml to change base branches[/]",
+                    id="workspace-info",
+                )
+            else:
+                with Horizontal(id="branch-row"):
+                    with Vertical(classes="branch-field"):
+                        yield Static("[#8b949e]Base branch[/]", classes="branch-label")
+                        yield Input(value="main", id="base-branch-input")
+                    with Vertical(classes="branch-field"):
+                        yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
+                        yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
             yield Static("Recent pipelines", id="recent-label")
             yield PipelineList()
         yield ShortcutBar([
@@ -197,8 +219,14 @@ class HomeScreen(Screen):
     def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
         """Ctrl+Enter: submit the task prompt."""
         if event.text:
-            base_branch = self.query_one("#base-branch-input", Input).value.strip() or "main"
-            branch_name = self.query_one("#branch-name-input", Input).value.strip()
+            if self._is_workspace:
+                # Workspace mode: base branch comes from workspace.toml per-repo,
+                # use the first repo's base branch as the pipeline-level default
+                base_branch = self._repos[0].base_branch if self._repos else "main"
+                branch_name = ""
+            else:
+                base_branch = self.query_one("#base-branch-input", Input).value.strip() or "main"
+                branch_name = self.query_one("#branch-name-input", Input).value.strip()
             self.post_message(self.TaskSubmitted(event.text, base_branch=base_branch, branch_name=branch_name))
 
     def on_click(self, event) -> None:
