@@ -145,3 +145,63 @@ def test_format_task_line_selected_with_files_valid_markup():
     line = format_task_line(task, selected=True)
     console = Console(file=StringIO(), force_terminal=True)
     console.print(line)  # Will raise MarkupError if broken
+
+
+# ── Multi-repo display tests ─────────────────────────────────────────────
+
+
+class TestFormatTaskLineMultiRepo:
+    """Tests for multi-repo prefix in format_task_line."""
+
+    def test_format_task_line_multi_repo(self):
+        """When multi_repo=True and task has repo, prepend [repo] prefix."""
+        task = {"id": "t1", "title": "Add auth endpoint", "state": "in_progress", "repo": "backend"}
+        line = format_task_line(task, selected=False, multi_repo=True)
+        assert "backend" in line
+        assert "#79c0ff" in line  # repo prefix color
+        assert "Add auth endpoint" in line
+
+    def test_format_task_line_single_repo(self):
+        """When multi_repo=False, no repo prefix even if task has repo field."""
+        task = {"id": "t1", "title": "Add auth endpoint", "state": "in_progress", "repo": "backend"}
+        line = format_task_line(task, selected=False, multi_repo=False)
+        assert "backend" not in line
+        assert "Add auth endpoint" in line
+
+    def test_format_task_line_no_repo_field(self):
+        """When multi_repo=True but task has no repo field, no prefix."""
+        task = {"id": "t1", "title": "Add auth endpoint", "state": "in_progress"}
+        line = format_task_line(task, selected=False, multi_repo=True)
+        assert "#79c0ff" not in line or "79c0ff" not in line.split("\\[")[0] if "\\[" in line else "#79c0ff" not in line
+        assert "Add auth endpoint" in line
+
+    def test_format_task_line_multi_repo_selected(self):
+        """Selected task with multi_repo should include repo prefix and valid markup."""
+        from rich.console import Console
+        from io import StringIO
+
+        task = {"id": "t1", "title": "Add auth endpoint", "state": "in_progress", "repo": "backend"}
+        line = format_task_line(task, selected=True, multi_repo=True)
+        assert "backend" in line
+        assert "#79c0ff" in line
+        # Verify valid Rich markup
+        console = Console(file=StringIO(), force_terminal=True)
+        console.print(line)  # Will raise MarkupError if broken
+
+    def test_format_task_line_multi_repo_truncation(self):
+        """Repo prefix should reduce available title width, causing earlier truncation."""
+        long_title = "A" * 50
+        task_no_repo = {"id": "t1", "title": long_title, "state": "todo"}
+        task_with_repo = {"id": "t1", "title": long_title, "state": "todo", "repo": "backend"}
+
+        line_no_repo = format_task_line(task_no_repo, selected=False, multi_repo=False)
+        line_with_repo = format_task_line(task_with_repo, selected=True, multi_repo=True)
+
+        # Both should truncate
+        assert "…" in line_no_repo
+        assert "…" in line_with_repo
+        # With repo prefix, fewer title chars visible (more truncated)
+        # Count A's in each line
+        no_repo_as = line_no_repo.count("A")
+        with_repo_as = line_with_repo.count("A")
+        assert with_repo_as < no_repo_as, f"Expected fewer As with repo prefix: {with_repo_as} vs {no_repo_as}"
