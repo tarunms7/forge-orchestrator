@@ -59,13 +59,82 @@ def create_app(
 
     db = Database(db_url) if db_url is not None else None
 
+    async def _cleanup_stale_stores(app: FastAPI) -> None:
+        """Periodically prune stale entries from in-memory stores.
+
+        Runs every 30 minutes and removes entries older than 2 hours from:
+        - followup_store
+        - pipeline_images
+        - pending_graphs
+        """
+        import time
+
+        ttl_seconds = 2 * 60 * 60  # 2 hours
+        interval_seconds = 30 * 60  # 30 minutes
+
+        while True:
+            await asyncio.sleep(interval_seconds)
+            now = time.monotonic()
+            cutoff = now - ttl_seconds
+
+            # Prune followup_store
+            followup_store: dict = getattr(app.state, "followup_store", {})
+            stale_keys = [
+                k for k, v in followup_store.items()
+                if getattr(v, "_created_mono", getattr(v, "_store_ts", 0.0)) < cutoff
+            ]
+            for k in stale_keys:
+                followup_store.pop(k, None)
+            if stale_keys:
+                logger.info("Pruned %d stale followup_store entries", len(stale_keys))
+
+            # Prune pipeline_images (stored as (images, timestamp) tuples)
+            pipeline_images: dict = getattr(app.state, "pipeline_images", {})
+            stale_keys = [
+                k for k, v in pipeline_images.items()
+                if (isinstance(v, tuple) and len(v) == 2 and v[1] < cutoff)
+            ]
+            for k in stale_keys:
+                pipeline_images.pop(k, None)
+            if stale_keys:
+                logger.info("Pruned %d stale pipeline_images entries", len(stale_keys))
+
+            # Prune pending_graphs (stored as (graph, daemon, timestamp) tuples)
+            pending_graphs: dict = getattr(app.state, "pending_graphs", {})
+            lock = getattr(app.state, "pending_graphs_lock", None)
+            if lock:
+                async with lock:
+                    stale_keys = [
+                        k for k, v in pending_graphs.items()
+                        if (isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff)
+                    ]
+                    for k in stale_keys:
+                        pending_graphs.pop(k, None)
+            else:
+                stale_keys = [
+                    k for k, v in pending_graphs.items()
+                    if (isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff)
+                ]
+                for k in stale_keys:
+                    pending_graphs.pop(k, None)
+            if stale_keys:
+                logger.info("Pruned %d stale pending_graphs entries", len(stale_keys))
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if db is not None:
             await db.initialize()
-        yield
-        if db is not None:
-            await db.close()
+        cleanup_task = asyncio.create_task(_cleanup_stale_stores(app))
+        try:
+            yield
+        finally:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+            if db is not None:
+                await db.close()
 
     app = FastAPI(title="Forge", version="0.1.0", lifespan=lifespan)
 

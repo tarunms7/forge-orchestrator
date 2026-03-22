@@ -104,15 +104,33 @@ def _build_task_description(payload: dict, extra_instruction: str) -> str:
 
 _webhook_rate_limit: dict[str, float] = {}
 WEBHOOK_RATE_LIMIT_SECONDS = 300  # 5 minutes
+_RATE_LIMIT_MAX_ENTRIES = 10_000
 
 
 def _check_rate_limit(repo: str, issue_number: int) -> bool:
     """Return True if a pipeline can be triggered for this issue.
 
     False if rate-limited (< 5 min since last trigger for the same issue).
+    Also enforces a max-entries cap to prevent unbounded memory growth:
+    when the dict exceeds ``_RATE_LIMIT_MAX_ENTRIES``, the oldest entries
+    are evicted.
     """
     key = f"{repo}#{issue_number}"
     now = datetime.now(timezone.utc).timestamp()
+
+    # Evict expired entries first
+    expired_cutoff = now - WEBHOOK_RATE_LIMIT_SECONDS
+    expired_keys = [k for k, v in _webhook_rate_limit.items() if v < expired_cutoff]
+    for k in expired_keys:
+        del _webhook_rate_limit[k]
+
+    # If still over capacity, evict oldest entries
+    if len(_webhook_rate_limit) >= _RATE_LIMIT_MAX_ENTRIES:
+        sorted_keys = sorted(_webhook_rate_limit, key=_webhook_rate_limit.get)  # type: ignore[arg-type]
+        excess = len(_webhook_rate_limit) - _RATE_LIMIT_MAX_ENTRIES + 1
+        for k in sorted_keys[:excess]:
+            del _webhook_rate_limit[k]
+
     last = _webhook_rate_limit.get(key, 0)
     if now - last < WEBHOOK_RATE_LIMIT_SECONDS:
         return False

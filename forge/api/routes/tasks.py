@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 import uuid
 from datetime import datetime
 
@@ -35,6 +36,41 @@ from forge.storage.db import Database
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tasks"])
+
+# ---------------------------------------------------------------------------
+# TTL cleanup for in-memory stores (2-hour expiry)
+# ---------------------------------------------------------------------------
+
+_STORE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
+
+
+def _prune_stale_pipeline_images(app_state: object) -> None:
+    """Remove pipeline_images entries older than TTL on access."""
+    images: dict = getattr(app_state, "pipeline_images", {})
+    if not images:
+        return
+    cutoff = time.monotonic() - _STORE_TTL_SECONDS
+    stale = [k for k, v in images.items() if isinstance(v, tuple) and len(v) == 2 and v[1] < cutoff]
+    for k in stale:
+        images.pop(k, None)
+
+
+async def _prune_stale_pending_graphs(app_state: object) -> None:
+    """Remove pending_graphs entries older than TTL on access."""
+    pending: dict = getattr(app_state, "pending_graphs", {})
+    if not pending:
+        return
+    cutoff = time.monotonic() - _STORE_TTL_SECONDS
+    lock = getattr(app_state, "pending_graphs_lock", None)
+    if lock:
+        async with lock:
+            stale = [k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff]
+            for k in stale:
+                pending.pop(k, None)
+    else:
+        stale = [k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff]
+        for k in stale:
+            pending.pop(k, None)
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +372,7 @@ async def create_task(
         # Store data URIs in app state for downstream consumers.
         if not hasattr(request.app.state, "pipeline_images"):
             request.app.state.pipeline_images = {}
-        request.app.state.pipeline_images[pipeline_id] = list(body.images)
+        request.app.state.pipeline_images[pipeline_id] = (list(body.images), time.monotonic())
 
         # Append image note to description.
         description += f"\n\n[{len(body.images)} image(s) attached]"
@@ -484,9 +520,9 @@ async def create_task(
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
                     if lock:
                         async with lock:
-                            request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                            request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
                     else:
-                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
                 except Exception:
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
@@ -586,6 +622,10 @@ async def execute_pipeline(
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    # Prune stale entries on access
+    _prune_stale_pipeline_images(request.app.state)
+    await _prune_stale_pending_graphs(request.app.state)
+
     lock = getattr(request.app.state, "pending_graphs_lock", None)
     pending_graphs = getattr(request.app.state, "pending_graphs", {})
 
@@ -598,7 +638,11 @@ async def execute_pipeline(
     if entry is None:
         raise HTTPException(status_code=404, detail="No pending plan found for this pipeline")
 
-    graph, daemon = entry
+    # Unpack with optional timestamp (backward compat with 2-tuple)
+    if len(entry) == 3:
+        graph, daemon, _ts = entry
+    else:
+        graph, daemon = entry
 
     # If user submitted an edited task graph, validate and replace
     if body is not None and body.tasks is not None:
@@ -621,9 +665,9 @@ async def execute_pipeline(
         # Replace the pending graph (keep the daemon)
         if lock:
             async with lock:
-                request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
         else:
-            request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+            request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
 
         # Update stored plan in DB
         await forge_db.set_pipeline_plan(pipeline_id, json.dumps({
@@ -1394,9 +1438,9 @@ async def restart_pipeline(
                 graph_lock = getattr(request.app.state, "pending_graphs_lock", None)
                 if graph_lock:
                     async with graph_lock:
-                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
                 else:
-                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
             except Exception:
                 logger.exception("Restart planning failed for pipeline %s", pipeline_id)
                 await forge_db.update_pipeline_status(pipeline_id, "error")

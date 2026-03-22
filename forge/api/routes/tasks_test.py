@@ -574,9 +574,12 @@ class TestCreateTaskWithImages:
         pipeline = await db.get_pipeline(pipeline_id)
         assert "[2 image(s) attached]" in pipeline.description
 
-        # Verify images stored in app.state.
+        # Verify images stored in app.state (tuple of (images_list, timestamp)).
         assert pipeline_id in app.state.pipeline_images
-        assert len(app.state.pipeline_images[pipeline_id]) == 2
+        images_entry = app.state.pipeline_images[pipeline_id]
+        assert isinstance(images_entry, tuple) and len(images_entry) == 2
+        images_list, ts = images_entry
+        assert len(images_list) == 2
 
     async def test_create_task_without_images_no_note(self, client_with_app):
         """Without images, description should remain unchanged."""
@@ -943,7 +946,8 @@ class TestExecuteWithEditedGraph:
         original_graph = TaskGraph(tasks=[
             TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
         ])
-        app.state.pending_graphs[pid] = (original_graph, mock_daemon)
+        import time as _time
+        app.state.pending_graphs[pid] = (original_graph, mock_daemon, _time.monotonic())
 
         # Submit edited graph with cyclic dependencies
         resp = await client.post(
@@ -991,7 +995,8 @@ class TestExecuteWithEditedGraph:
         original_graph = TaskGraph(tasks=[
             TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
         ])
-        app.state.pending_graphs[pid] = (original_graph, mock_daemon)
+        import time as _time
+        app.state.pending_graphs[pid] = (original_graph, mock_daemon, _time.monotonic())
 
         resp = await client.post(
             f"/api/tasks/{pid}/execute",
@@ -1039,7 +1044,8 @@ class TestExecuteWithEditedGraph:
         original_graph = TaskGraph(tasks=[
             TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
         ])
-        app.state.pending_graphs[pid] = (original_graph, mock_daemon)
+        import time as _time
+        app.state.pending_graphs[pid] = (original_graph, mock_daemon, _time.monotonic())
 
         resp = await client.post(
             f"/api/tasks/{pid}/execute",
