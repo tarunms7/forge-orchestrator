@@ -16,6 +16,7 @@ from forge.core.daemon_helpers import (
     _get_diff_vs_main,
     _is_pytest_cmd,
     _load_conventions_md,
+    _parse_forge_learning,
     _parse_forge_question,
     _run_git,
     async_subprocess,
@@ -827,3 +828,52 @@ class TestComputeWorktreePath:
         """Default repo_count value of 1 with 'default' repo_id returns flat path."""
         result = compute_worktree_path("/workspace", "default", "6c42538b-task-1")
         assert result == "/workspace/.forge/worktrees/6c42538b-task-1"
+
+
+class TestParseForgeLearning:
+    """Tests for _parse_forge_learning parser."""
+
+    def test_valid_json(self):
+        text = 'Some output\nFORGE_LEARNING:\n{"trigger": "bad import", "resolution": "fixed import path", "files": ["a.py"]}'
+        result = _parse_forge_learning(text)
+        assert result is not None
+        assert result["trigger"] == "bad import"
+
+    def test_no_marker(self):
+        assert _parse_forge_learning("just normal output") is None
+
+    def test_none_input(self):
+        assert _parse_forge_learning(None) is None
+
+    def test_malformed_json(self):
+        text = "FORGE_LEARNING:\n{not valid json}"
+        assert _parse_forge_learning(text) is None
+
+    def test_missing_required_field(self):
+        text = 'FORGE_LEARNING:\n{"trigger": "something"}'
+        assert _parse_forge_learning(text) is None
+
+    def test_missing_files(self):
+        text = 'FORGE_LEARNING:\n{"trigger": "bad import", "resolution": "fixed it"}'
+        assert _parse_forge_learning(text) is None
+
+    def test_empty_files_list(self):
+        text = 'FORGE_LEARNING:\n{"trigger": "bad import", "resolution": "fixed it", "files": []}'
+        assert _parse_forge_learning(text) is None
+
+    def test_with_trailing_text(self):
+        """Agent text after the learning block should not prevent parsing."""
+        text = (
+            'Some output\nFORGE_LEARNING:\n'
+            '{"trigger": "bad import", "resolution": "fixed import path", "files": ["a.py"]}\n'
+            'And then the agent kept talking about other stuff here.'
+        )
+        result = _parse_forge_learning(text)
+        assert result is not None
+        assert result["trigger"] == "bad import"
+
+    def test_with_markdown_fences(self):
+        text = 'FORGE_LEARNING:\n```json\n{"trigger": "bad import", "resolution": "fixed it", "files": ["a.py"]}\n```'
+        result = _parse_forge_learning(text)
+        assert result is not None
+        assert result["trigger"] == "bad import"

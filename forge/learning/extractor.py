@@ -12,6 +12,89 @@ from forge.learning.store import Lesson
 
 logger = logging.getLogger("forge.learning")
 
+_INFRA_NOISE_PATTERNS = [
+    "timeout", "timed out", "etimedout",
+    "connection refused", "econnrefused", "econnreset",
+    "server down", "server unavailable", "service unavailable",
+    "503", "502", "504",
+    "database is locked", "db lock",
+    "oom", "out of memory", "killed",
+    "disk full", "no space left",
+    "sigkill", "sigterm",
+    "[infrastructure crash]",
+]
+
+_ACTION_VERBS = {
+    "changed", "replaced", "removed", "added", "fixed", "updated",
+    "switched", "moved", "renamed", "set", "used", "imported",
+    "configured", "wrapped", "converted",
+}
+
+
+def is_infra_noise(text: str) -> bool:
+    """Check if text describes infrastructure noise, not a real learning."""
+    lower = text.lower()
+    return any(pattern in lower for pattern in _INFRA_NOISE_PATTERNS)
+
+
+def extract_from_agent_learning(
+    data: dict,
+    task_title: str = "",
+    project_dir: str | None = None,
+) -> Lesson | None:
+    """Extract a validated lesson from an agent's FORGE_LEARNING self-report.
+
+    Returns None if the data fails validation (missing fields, infra noise,
+    no action verb, etc.).
+    """
+    trigger = data.get("trigger")
+    resolution = data.get("resolution")
+    files = data.get("files")
+
+    # Validate required fields exist and are long enough
+    if not isinstance(trigger, str) or len(trigger) <= 10:
+        logger.debug("Learning rejected: trigger missing or too short")
+        return None
+    if not isinstance(resolution, str) or len(resolution) <= 10:
+        logger.debug("Learning rejected: resolution missing or too short")
+        return None
+    if not isinstance(files, list) or not files:
+        logger.debug("Learning rejected: files missing or empty")
+        return None
+
+    # Reject infrastructure noise
+    if is_infra_noise(trigger) or is_infra_noise(resolution):
+        logger.debug("Learning rejected: infrastructure noise detected")
+        return None
+
+    # Validate resolution contains an action verb
+    words = set(resolution.lower().split())
+    if not words & _ACTION_VERBS:
+        logger.debug("Learning rejected: no action verb in resolution")
+        return None
+
+    # Build title from trigger
+    title = trigger[:60] + ("..." if len(trigger) > 60 else "")
+    if task_title:
+        title = f"[{task_title[:30]}] {title}"
+
+    scope = classify_scope(
+        command="",
+        error_output=f"{trigger} {resolution}",
+        project_dir=project_dir,
+    )
+
+    return Lesson(
+        id=str(uuid.uuid4()),
+        scope=scope,
+        category=data.get("category", "code_pattern"),
+        title=title,
+        content=f"Agent learning: {trigger}\nFiles: {', '.join(files)}",
+        trigger=trigger,
+        resolution=resolution,
+        confidence=0.5,
+    )
+
 
 def extract_from_command_failures(
     failures: list,  # list[FailureRecord] but avoiding circular import

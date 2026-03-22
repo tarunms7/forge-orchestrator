@@ -21,6 +21,7 @@ logger = logging.getLogger("forge")
 console = make_console()
 
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
+_FORGE_LEARNING_MARKER = "FORGE_LEARNING:"
 
 
 async def async_subprocess(
@@ -113,6 +114,63 @@ def _parse_forge_question(text: str | None) -> dict | None:
     if not isinstance(data, dict):
         return None
     if "question" not in data or not isinstance(data["question"], str):
+        return None
+
+    return data
+
+
+def _parse_forge_learning(text: str | None) -> dict | None:
+    """Parse a FORGE_LEARNING block from agent output.
+
+    Returns dict with 'trigger', 'resolution', and 'files' keys, or None.
+    Unlike _parse_forge_question, does NOT require the marker to be at the end
+    (the agent may add text after the learning report).
+    """
+    if not text:
+        return None
+
+    marker_idx = text.rfind(_FORGE_LEARNING_MARKER)
+    if marker_idx == -1:
+        return None
+
+    after_marker = text[marker_idx + len(_FORGE_LEARNING_MARKER):].strip()
+
+    # Extract JSON: find matching braces
+    json_text = after_marker
+    # Strip markdown fences if present
+    fence_match = re.match(r"```(?:json)?\s*\n?(.*?)\n?\s*```", json_text, re.DOTALL)
+    if fence_match:
+        json_text = fence_match.group(1).strip()
+    else:
+        # Find the closing brace
+        brace_depth = 0
+        json_end = -1
+        for i, ch in enumerate(json_text):
+            if ch == "{":
+                brace_depth += 1
+            elif ch == "}":
+                brace_depth -= 1
+                if brace_depth == 0:
+                    json_end = i + 1
+                    break
+        if json_end == -1:
+            return None
+        json_text = json_text[:json_end]
+
+    try:
+        data = _json.loads(json_text)
+    except (_json.JSONDecodeError, ValueError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Validate required fields
+    if not isinstance(data.get("trigger"), str) or not data["trigger"]:
+        return None
+    if not isinstance(data.get("resolution"), str) or not data["resolution"]:
+        return None
+    if not isinstance(data.get("files"), list) or not data["files"]:
         return None
 
     return data
@@ -311,6 +369,20 @@ def _build_retry_prompt(
         f"4. If the reviewer says something is 'missing' or 'not wired', check if it's in YOUR task scope.\n"
         f"   If it belongs to a sibling task, note that in your commit message and move on.\n"
         f"5. Run linting before committing: `ruff check <files>`\n"
+    )
+    prompt += (
+        "\n\n## Self-Report Learning\n\n"
+        "If you fix the issues and your changes work, report what you learned "
+        "at the END of your response using this EXACT format:\n\n"
+        "FORGE_LEARNING:\n"
+        '{"trigger": "brief description of what was wrong", '
+        '"resolution": "what you changed and why \u2014 reference specific files and code", '
+        '"files": ["file1.py", "file2.py"]}\n\n'
+        "Rules:\n"
+        "- ONLY include if you made a REAL code change that fixed the issue\n"
+        "- Do NOT include if you just retried the same approach and it worked\n"
+        "- Do NOT report infrastructure issues (timeouts, connection errors)\n"
+        "- Reference specific files and describe concrete changes\n"
     )
     if agent_prompt_modifier:
         prompt += "\n" + agent_prompt_modifier

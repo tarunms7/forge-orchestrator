@@ -166,6 +166,7 @@ class ExecutorMixin:
             db, merge_worker, worktree_mgr, task, task_id, worktree_path,
             agent_model, pid, pipeline_branch=pipeline_branch,
             pre_retry_ref=pre_retry_ref,
+            agent_summary=agent_result.summary if agent_result else "",
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
@@ -669,6 +670,7 @@ class ExecutorMixin:
         await self._attempt_merge(
             db, merge_worker, worktree_mgr, task, task_id, worktree_path,
             agent_model, pid, pipeline_branch=pipeline_branch,
+            agent_summary=agent_result.summary if agent_result else "",
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
@@ -856,6 +858,7 @@ class ExecutorMixin:
         task_id: str, worktree_path: str, agent_model: str, pid: str,
         *, pipeline_branch: str | None = None,
         pre_retry_ref: str | None = None,
+        agent_summary: str = "",
     ) -> None:
         """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
         diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
@@ -952,6 +955,38 @@ class ExecutorMixin:
                 await db.set_task_prior_diff(task_id, diff[:10000])
                 await self._handle_retry(db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid)
                 return
+
+        # ── Capture agent self-reported learning (success after prior failure) ──
+        if task.retry_count > 0 and agent_summary:
+            try:
+                from forge.core.daemon_helpers import _parse_forge_learning
+                from forge.learning.extractor import extract_from_agent_learning
+                learning_data = _parse_forge_learning(agent_summary)
+                if learning_data:
+                    lesson = extract_from_agent_learning(
+                        learning_data,
+                        task_title=getattr(task, "title", ""),
+                        project_dir=getattr(self, "_project_dir", None),
+                    )
+                    if lesson:
+                        existing = await db.find_matching_lesson(
+                            lesson.trigger,
+                            project_dir=getattr(self, "_project_dir", None),
+                        )
+                        if existing:
+                            await db.bump_lesson_hit(existing.id)
+                            logger.info("Bumped existing learning: %s", existing.title)
+                        else:
+                            await db.add_lesson(
+                                scope=lesson.scope, category=lesson.category,
+                                title=lesson.title, content=lesson.content,
+                                trigger=lesson.trigger, resolution=lesson.resolution,
+                                confidence=lesson.confidence,
+                                project_dir=getattr(self, "_project_dir", None) if lesson.scope == "project" else None,
+                            )
+                            logger.info("Agent learning captured: %s", lesson.title)
+            except Exception:
+                logger.debug("Failed to capture agent learning (non-fatal)", exc_info=True)
 
         # ── Approval gate ─────────────────────────────────────────────
         require_approval = (
@@ -1202,6 +1237,7 @@ class ExecutorMixin:
                         title=lesson.title, content=lesson.content,
                         trigger=lesson.trigger, resolution=lesson.resolution,
                         project_dir=self._project_dir if lesson.scope == "project" else None,
+                        confidence=0.7,
                     )
                 logger.info("Lesson captured: %s", lesson.title)
             except Exception as le:

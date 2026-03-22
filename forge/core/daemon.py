@@ -1220,6 +1220,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         db = Database(forge_db_url())
         await db.initialize()
         try:
+            pruned = await db.prune_stale_lessons()
+            if pruned:
+                logger.info("Pruned %d stale lessons at startup", pruned)
+        except Exception:
+            logger.debug("Failed to prune stale lessons (non-fatal)", exc_info=True)
+        try:
             self._pipeline_id = str(uuid.uuid4())
             await db.create_pipeline(
                 id=self._pipeline_id, description=user_input,

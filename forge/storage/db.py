@@ -266,6 +266,7 @@ class LessonRow(Base):
     last_hit_at: Mapped[str] = mapped_column(
         String, default=lambda: datetime.now(timezone.utc).isoformat(),
     )
+    confidence: Mapped[float] = mapped_column(default=0.5)
 
 
 # ── All model classes (used by _add_missing_columns) ──────────────────
@@ -1248,6 +1249,7 @@ class Database:
     async def add_lesson(
         self, *, scope: str, category: str, title: str, content: str,
         trigger: str, resolution: str, project_dir: str | None = None,
+        confidence: float = 0.5,
     ) -> str:
         """Add a lesson. Returns the lesson ID."""
         now = datetime.now(timezone.utc).isoformat()
@@ -1255,7 +1257,7 @@ class Database:
             scope=scope, project_dir=project_dir, category=category,
             title=title, content=content, trigger=trigger,
             resolution=resolution, hit_count=1,
-            created_at=now, last_hit_at=now,
+            created_at=now, last_hit_at=now, confidence=confidence,
         )
         async with self._session_factory() as session:
             session.add(row)
@@ -1291,6 +1293,7 @@ class Database:
             if row:
                 row.hit_count += 1
                 row.last_hit_at = datetime.now(timezone.utc).isoformat()
+                row.confidence = min(1.0, row.confidence + min(0.1, (1.0 - row.confidence) * 0.2))
                 await session.commit()
 
     async def get_relevant_lessons(
@@ -1299,11 +1302,14 @@ class Database:
         max_count: int = 20,
         max_tokens: int = 2000,
     ) -> list[LessonRow]:
-        """Get lessons ranked by hit count, capped at token budget.
+        """Get lessons ranked by effective confidence, capped at token budget.
 
         Returns both global and project-scoped lessons for the given project_dir.
+        Effective confidence = stored confidence - decay for staleness.
         Token budget is approximate (1 token ~ 4 chars).
         """
+        from datetime import timedelta  # noqa: F811 — local re-import is fine
+        fetch_limit = max_count * 3
         async with self._session_factory() as session:
             query = select(LessonRow)
             conditions = []
@@ -1317,15 +1323,34 @@ class Database:
                 conditions.append(LessonRow.category.in_(categories))
             if conditions:
                 query = query.where(*conditions)
-            query = query.order_by(LessonRow.hit_count.desc()).limit(max_count)
+            query = query.order_by(LessonRow.hit_count.desc()).limit(fetch_limit)
             result = await session.execute(query)
             rows = list(result.scalars().all())
+
+        # Rank by effective confidence (confidence - staleness decay)
+        now = datetime.now(timezone.utc)
+        scored = []
+        for row in rows:
+            days = 90
+            if row.last_hit_at:
+                try:
+                    last_hit = datetime.fromisoformat(row.last_hit_at)
+                    if last_hit.tzinfo is None:
+                        last_hit = last_hit.replace(tzinfo=timezone.utc)
+                    days = (now - last_hit).days
+                except (ValueError, TypeError):
+                    pass
+            effective = getattr(row, 'confidence', 0.5) - max(0, (days - 30)) / 300
+            if effective >= 0.1:
+                scored.append((effective, row))
+        scored.sort(key=lambda x: -x[0])
+        ranked = [r for _, r in scored[:max_count]]
 
         # Apply token budget
         char_budget = max_tokens * 4
         total_chars = 0
         filtered = []
-        for row in rows:
+        for row in ranked:
             row_chars = len(row.title) + len(row.content) + len(row.resolution)
             if total_chars + row_chars > char_budget:
                 break
@@ -1340,6 +1365,23 @@ class Database:
                 select(LessonRow).order_by(LessonRow.hit_count.desc())
             )
             return list(result.scalars().all())
+
+    async def prune_stale_lessons(self, max_age_days: int = 90) -> int:
+        """Delete lessons not hit in max_age_days. Returns count deleted."""
+        import logging as _logging
+        from datetime import timedelta  # noqa: F811
+        from sqlalchemy import delete
+        _logger = _logging.getLogger("forge")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        async with self._session_factory() as session:
+            result = await session.execute(
+                delete(LessonRow).where(LessonRow.last_hit_at < cutoff)
+            )
+            await session.commit()
+            count = result.rowcount
+            if count:
+                _logger.info("Pruned %d stale lessons (older than %d days)", count, max_age_days)
+            return count
 
     async def clear_lessons(self, project_dir: str | None = None) -> int:
         """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
