@@ -344,7 +344,7 @@ class FinalApprovalScreen(Screen):
                     yield Static("\n[bold]Tasks:[/]", id="tasks-header")
                     yield Static(format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table")
                     yield Static(
-                        f"\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
+                        "\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
                         "f: follow up  n: new task  Esc: cancel[/]"
                     )
                     yield FollowUpInput(
