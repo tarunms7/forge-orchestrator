@@ -500,16 +500,18 @@ class TestValidateReposStartup:
         with pytest.raises(click.ClickException, match="nonexistent"):
             validate_repos_startup(repos)
 
-    def test_dirty_tree_raises(self, tmp_path, monkeypatch):
-        """Dirty working tree is rejected for non-default repos."""
+    def test_staged_changes_raises(self, tmp_path, monkeypatch):
+        """Staged changes are rejected for non-default repos."""
         monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/gh")
         repo = str(tmp_path / "repo")
         _make_git_repo(repo)
-        # Make the tree dirty
+        # Create and stage a file (but don't commit)
         with open(os.path.join(repo, "dirty.txt"), "w") as f:
             f.write("uncommitted")
+        subprocess.run(["git", "add", "dirty.txt"], cwd=repo,
+                       check=True, capture_output=True)
         repos = [RepoConfig(id="myrepo", path=repo, base_branch="main")]
-        with pytest.raises(click.ClickException, match="[Dd]irty"):
+        with pytest.raises(click.ClickException, match="[Ss]taged"):
             validate_repos_startup(repos)
 
 
