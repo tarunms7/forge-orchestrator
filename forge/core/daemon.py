@@ -867,10 +867,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 ]}, db=db, pipeline_id=pid)
 
             for task_def in graph.tasks:
+                task_repo = getattr(task_def, "repo", None) or "default"
                 await db.create_task(
                     id=task_def.id, title=task_def.title, description=task_def.description,
                     files=task_def.files, depends_on=task_def.depends_on,
                     complexity=task_def.complexity.value if hasattr(task_def.complexity, 'value') else task_def.complexity, pipeline_id=pid,
+                    repo_id=task_repo,
                 )
             # Auto-scale agent pool: create enough agents to saturate
             # parallelism.  The max width of the DAG (tasks with no deps
@@ -1616,6 +1618,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 # Route to the correct repo's infrastructure
                 task_row = await db.get_task(task_id)
                 repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
+
+                # Fallback: if repo_id is "default" but we're in workspace mode,
+                # use the first non-excluded repo as the target
+                if repo_id == "default" and len(self._repos) > 1 and "default" not in self._repos:
+                    repo_id = next(iter(self._repos.keys()))
+                    logger.warning("Task %s has repo_id='default' in workspace mode, falling back to '%s'", task_id, repo_id)
+
                 try:
                     wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
                 except ForgeError:
