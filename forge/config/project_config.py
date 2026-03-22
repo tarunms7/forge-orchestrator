@@ -517,6 +517,53 @@ def load_workspace_toml(workspace_dir: str) -> list | None:
     return repos
 
 
+def _auto_detect_repos(project_dir: str) -> list | None:
+    """Auto-detect git repos in subdirectories.
+
+    If the CWD is NOT itself a git repo but contains 2+ subdirectories
+    that ARE git repos, treat it as a multi-repo workspace. Each subdirectory
+    name becomes the repo id.
+
+    Returns a list of RepoConfig or None if auto-detection doesn't apply.
+    """
+    from forge.core.models import RepoConfig
+
+    # If CWD is itself a git repo, this is a normal single-repo — skip
+    if os.path.isdir(os.path.join(project_dir, ".git")):
+        return None
+
+    repos = []
+    try:
+        entries = sorted(os.listdir(project_dir))
+    except OSError:
+        return None
+
+    for name in entries:
+        if name.startswith("."):
+            continue
+        subdir = os.path.join(project_dir, name)
+        if not os.path.isdir(subdir):
+            continue
+        if not os.path.isdir(os.path.join(subdir, ".git")):
+            continue
+        # This subdirectory is a git repo
+        repo_id = name.lower().replace(" ", "-")
+        if not _REPO_ID_RE.match(repo_id):
+            continue
+        base_branch = auto_detect_base_branch(subdir)
+        repos.append(RepoConfig(id=repo_id, path=os.path.realpath(subdir), base_branch=base_branch))
+
+    if len(repos) < 2:
+        return None  # Need at least 2 repos for multi-repo workspace
+
+    logger.info(
+        "Auto-detected %d repos in workspace: %s",
+        len(repos),
+        ", ".join(r.id for r in repos),
+    )
+    return repos
+
+
 def resolve_repos(
     repo_flags: tuple[str, ...], project_dir: str
 ) -> list:
@@ -537,7 +584,13 @@ def resolve_repos(
         _validate_repo_list(toml_repos)
         return toml_repos
 
-    # 3. Single-repo CWD default
+    # 3. Auto-detect: scan subdirectories for git repos
+    auto_repos = _auto_detect_repos(project_dir)
+    if auto_repos:
+        _validate_repo_list(auto_repos)
+        return auto_repos
+
+    # 4. Single-repo CWD default
     base_branch = auto_detect_base_branch(project_dir) if os.path.isdir(
         os.path.join(project_dir, ".git")
     ) else "main"
