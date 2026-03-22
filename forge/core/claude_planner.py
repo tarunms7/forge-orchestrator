@@ -180,7 +180,7 @@ class ClaudePlannerLLM(PlannerLLM):
         conventions_path = os.path.join(self._cwd or ".", ".forge", "conventions.md")
         try:
             if os.path.isfile(conventions_path):
-                with open(conventions_path) as f:
+                with open(conventions_path, encoding="utf-8") as f:
                     content = f.read().strip()
                 if content:
                     parts.append(
@@ -202,7 +202,35 @@ def _extract_json(text: str) -> str:
     if match:
         return match.group(1)
     start = text.find("{")
+    if start == -1:
+        return text
+    # Use string-aware brace counter to find the matching closing brace.
+    # This avoids the greedy rfind("}") which can include trailing garbage
+    # when the response contains text after the JSON object.
+    brace_depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                return text[start : i + 1]
+    # Fallback: no balanced closing brace found — use rfind
     end = text.rfind("}")
-    if start != -1 and end != -1:
+    if end != -1:
         return text[start : end + 1]
     return text

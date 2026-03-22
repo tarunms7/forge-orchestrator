@@ -144,7 +144,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
 def _detect_makefile_target(makefile_path: str, target: str) -> bool:
     """Check if a Makefile contains a given target (e.g. 'lint:')."""
     try:
-        with open(makefile_path) as f:
+        with open(makefile_path, encoding="utf-8") as f:
             for line in f:
                 if line.startswith(f"{target}:"):
                     return True
@@ -199,7 +199,7 @@ def detect_lint_strategy(
     pkg_json_path = os.path.join(worktree_path, "package.json")
     if os.path.isfile(pkg_json_path) and shutil.which("npm"):
         try:
-            with open(pkg_json_path) as f:
+            with open(pkg_json_path, encoding="utf-8") as f:
                 pkg = json.load(f)
             scripts = pkg.get("scripts", {})
             if "lint" in scripts:

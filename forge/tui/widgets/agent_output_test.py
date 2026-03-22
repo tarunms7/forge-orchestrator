@@ -436,6 +436,50 @@ def test_update_unified_before_compose():
     assert widget._unified_entries == [("agent", "line")]
 
 
+def test_render_markdown_escapes_rich_markup_in_plain_text():
+    """Square brackets in plain text should be escaped to prevent Rich markup injection."""
+    from forge.tui.widgets.agent_output import _render_markdown
+    import forge.tui.widgets.agent_output as ao
+    ao._IN_CODE_BLOCK = False
+
+    result = _render_markdown("Use [bold]this[/bold] to inject")
+    # The brackets should be escaped (both [ and ] are escaped)
+    assert "\\[bold\\]" in result
+    assert "\\[/bold\\]" in result
+
+
+def test_render_markdown_preserves_bold_and_code():
+    """Markdown bold and inline code should still render as Rich markup."""
+    from forge.tui.widgets.agent_output import _render_markdown
+    import forge.tui.widgets.agent_output as ao
+    ao._IN_CODE_BLOCK = False
+
+    result = _render_markdown("This is **bold** and `code`")
+    assert "[bold]" in result
+    assert "[#79c0ff]" in result
+
+
+def test_render_markdown_escapes_brackets_in_bold():
+    """Brackets inside **bold** should be escaped."""
+    from forge.tui.widgets.agent_output import _render_markdown
+    import forge.tui.widgets.agent_output as ao
+    ao._IN_CODE_BLOCK = False
+
+    result = _render_markdown("**array[0]** value")
+    assert "\\[0]" in result or "\\[0\\]" in result
+
+
+def test_format_output_with_brackets_is_valid_rich():
+    """Output containing square brackets should be valid Rich markup."""
+    from rich.console import Console
+    from io import StringIO
+
+    lines = ["Use [red]color[/red] to inject", "Normal **bold** text"]
+    result = format_output(lines)
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(result)  # Raises MarkupError if broken
+
+
 def test_tick_spinner_skipped_when_unified_entries_present():
     """_tick_spinner should not overwrite content when unified entries exist."""
     widget = AgentOutput()

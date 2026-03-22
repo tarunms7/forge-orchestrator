@@ -612,6 +612,27 @@ class TestParseForgeQuestion:
         result = _parse_forge_question(None)
         assert result is None
 
+    def test_braces_inside_json_strings_ignored(self):
+        """Braces inside JSON string values should not confuse the brace counter."""
+        text = (
+            'Some output.\n\nFORGE_QUESTION:\n'
+            '{"question": "How to handle {braces} in strings?", '
+            '"suggestions": ["Option {A}", "Option {B}"], "impact": "high"}'
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "How to handle {braces} in strings?"
+
+    def test_escaped_quotes_in_json_strings(self):
+        """Escaped quotes inside JSON strings should not break parsing."""
+        text = (
+            'FORGE_QUESTION:\n'
+            '{"question": "Use \\"quoted\\" pattern?", "suggestions": ["A"]}'
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert "quoted" in result["question"]
+
 
 class TestRunGit:
     """_run_git() wraps async_subprocess with logging and error handling."""

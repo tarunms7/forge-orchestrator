@@ -30,6 +30,27 @@ class EventEmitter:
         """Register an async handler for *event*."""
         self._handlers[event].append(handler)
 
+    def off(self, event: str, handler: Callable) -> None:
+        """Remove a previously registered handler for *event*.
+
+        Safe to call with a handler that was never registered (no-op).
+        """
+        try:
+            self._handlers[event].remove(handler)
+        except (ValueError, KeyError):
+            pass
+
+    def clear(self, event: str | None = None) -> None:
+        """Clear registered handlers.
+
+        If *event* is provided, clears only handlers for that event.
+        If *event* is None, clears all handlers for all events.
+        """
+        if event is None:
+            self._handlers.clear()
+        else:
+            self._handlers.pop(event, None)
+
     async def emit(self, event: str, data: Any = None) -> None:
         """Invoke all handlers registered for *event* with *data*."""
         for handler in self._handlers.get(event, []):

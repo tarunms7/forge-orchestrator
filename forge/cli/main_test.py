@@ -142,6 +142,47 @@ def test_tui_help_shows_repo_option():
     assert "--repo" in result.output
 
 
+def test_run_exception_shows_traceback_hint_without_verbose(tmp_path):
+    """When run fails without --verbose, show hint about --verbose flag."""
+    from unittest.mock import MagicMock
+
+    mock_daemon = MagicMock()
+    mock_daemon.run = MagicMock(side_effect=RuntimeError("boom"))
+
+    runner = CliRunner()
+    with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
+         patch("forge.config.project_config.resolve_repos", return_value=[]), \
+         patch("forge.config.project_config.validate_repos_startup"):
+        result = runner.invoke(cli, [
+            "run", "Build it",
+            "--project-dir", str(tmp_path),
+        ])
+    assert result.exit_code == 1
+    assert "Forge failed: boom" in result.output
+    assert "Run with --verbose for full traceback" in result.output
+
+
+def test_run_exception_shows_traceback_with_verbose(tmp_path):
+    """When run fails with --verbose, print the full traceback."""
+    from unittest.mock import MagicMock
+
+    mock_daemon = MagicMock()
+    mock_daemon.run = MagicMock(side_effect=RuntimeError("boom"))
+
+    runner = CliRunner()
+    with patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon), \
+         patch("forge.config.project_config.resolve_repos", return_value=[]), \
+         patch("forge.config.project_config.validate_repos_startup"):
+        result = runner.invoke(cli, [
+            "--verbose", "run", "Build it",
+            "--project-dir", str(tmp_path),
+        ])
+    assert result.exit_code == 1
+    assert "Forge failed: boom" in result.output
+    assert "Traceback" in result.output
+    assert "RuntimeError" in result.output
+
+
 def test_serve_uses_central_db_url_by_default():
     """serve() should use forge_db_url() when no --db-url is provided."""
     from unittest.mock import MagicMock

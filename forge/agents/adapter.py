@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -144,7 +143,7 @@ def _load_claude_md(project_dir: str) -> str | None:
         full_path = os.path.join(project_dir, rel_path)
         if os.path.isfile(full_path):
             try:
-                with open(full_path, "r") as f:
+                with open(full_path, "r", encoding="utf-8") as f:
                     return f.read()
             except OSError:
                 continue
@@ -153,6 +152,7 @@ def _load_claude_md(project_dir: str) -> str | None:
 
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
     """Build the human interaction protocol section for agent system prompts."""
+    remaining = max(0, remaining)  # Prevent negative remaining count
     if autonomy == "full":
         when_to_ask = "NEVER ask questions. Make your best judgment on all decisions."
     elif autonomy == "supervised":
@@ -526,14 +526,11 @@ class ClaudeAdapter(AgentAdapter):
             )
         except asyncio.TimeoutError:
             logger.warning("Agent timed out after %ds for worktree %s", timeout_seconds, worktree_path)
-            files_changed = _get_changed_files(worktree_path)
-            return AgentResult(
-                success=False,
-                files_changed=files_changed,
-                summary=f"Agent timed out after {timeout_seconds}s",
-                error=f"Timeout after {timeout_seconds}s",
-            )
-        files_changed = _get_changed_files(worktree_path)
+            # Re-raise so the caller's finally block can clean up the
+            # worktree via worktree_mgr.remove(task_id).  Swallowing the
+            # timeout here previously left zombie worktrees on disk.
+            raise
+        files_changed = await _get_changed_files(worktree_path)
 
         if result is None:
             return AgentResult(
@@ -571,7 +568,7 @@ class ClaudeAdapter(AgentAdapter):
         )
 
 
-def _get_changed_files(worktree_path: str) -> list[str]:
+async def _get_changed_files(worktree_path: str) -> list[str]:
     """Get list of files changed in the worktree vs its base.
 
     Detects both uncommitted changes (working tree / staged) AND committed
@@ -581,17 +578,21 @@ def _get_changed_files(worktree_path: str) -> list[str]:
     """
     files: set[str] = set()
 
+    async def _run_git(*args: str) -> tuple[int, str]:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            cwd=worktree_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return proc.returncode or 0, stdout.decode()
+
     # 1. Uncommitted changes (working tree vs HEAD)
-    unstaged = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],
-        cwd=worktree_path, capture_output=True, text=True,
-    )
+    _, unstaged_out = await _run_git("diff", "--name-only", "HEAD")
     # 2. Staged but uncommitted changes (index vs HEAD)
-    staged = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        cwd=worktree_path, capture_output=True, text=True,
-    )
-    for output in (unstaged.stdout, staged.stdout):
+    _, staged_out = await _run_git("diff", "--cached", "--name-only")
+    for output in (unstaged_out, staged_out):
         for line in output.strip().split("\n"):
             if line.strip():
                 files.add(line.strip())
@@ -600,26 +601,17 @@ def _get_changed_files(worktree_path: str) -> list[str]:
     #    Use the same rev-list heuristic as _get_diff_stats: count how many
     #    commits exist locally that aren't on any remote, then diff against
     #    HEAD~N to capture the agent's own files.
-    count_result = subprocess.run(
-        ["git", "rev-list", "--count", "HEAD", "--not", "--remotes"],
-        cwd=worktree_path, capture_output=True, text=True,
-    )
+    _, count_out = await _run_git("rev-list", "--count", "HEAD", "--not", "--remotes")
     try:
-        commit_count = max(int(count_result.stdout.strip()), 1)
+        commit_count = max(int(count_out.strip()), 1)
     except (ValueError, AttributeError):
         commit_count = 1
 
     base_ref = f"HEAD~{commit_count}"
-    verify = subprocess.run(
-        ["git", "rev-parse", "--verify", base_ref],
-        cwd=worktree_path, capture_output=True, text=True,
-    )
-    if verify.returncode == 0:
-        committed = subprocess.run(
-            ["git", "diff", "--name-only", base_ref, "HEAD"],
-            cwd=worktree_path, capture_output=True, text=True,
-        )
-        for line in committed.stdout.strip().split("\n"):
+    rc, _ = await _run_git("rev-parse", "--verify", base_ref)
+    if rc == 0:
+        _, committed_out = await _run_git("diff", "--name-only", base_ref, "HEAD")
+        for line in committed_out.strip().split("\n"):
             if line.strip():
                 files.add(line.strip())
 

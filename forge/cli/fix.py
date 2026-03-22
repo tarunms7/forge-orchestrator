@@ -177,9 +177,15 @@ def fix(
         asyncio.run(daemon.run(prompt))
     except KeyboardInterrupt:
         click.echo("\nForge interrupted by user.")
+        click.echo(f"\nNote: you are now on orphan branch '{branch_name}'.")
+        click.echo("To return to your original branch, run:")
+        click.echo("  git checkout <original-branch>")
         raise SystemExit(1)
     except Exception as exc:
         click.echo(f"Forge failed: {exc}")
+        click.echo(f"\nNote: you are now on orphan branch '{branch_name}'.")
+        click.echo("To return to your original branch, run:")
+        click.echo("  git checkout <original-branch>")
         raise SystemExit(1)
 
     # ── 11. Create PR ────────────────────────────────────────────────

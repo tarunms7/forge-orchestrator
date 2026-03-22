@@ -78,6 +78,9 @@ def update_conventions_file(
         heading = _KEY_HEADINGS.get(key, key.replace("_", " ").title())
         if heading.lower() in existing_headings:
             continue
+        # Check if this exact content already exists (avoid duplicate appends)
+        if f"## {heading}" in existing_content:
+            continue
         new_sections.append(f"## {heading}\n\n{value}")
 
     if not new_sections:

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.config.settings import ForgeSettings
-from forge.core.daemon import ForgeDaemon, _classify_pipeline_result
+from forge.core.daemon import ForgeDaemon, _classify_pipeline_result, _detect_excluded_repos
 from forge.core.errors import ForgeError
 from forge.core.models import RepoConfig, TaskState
 
@@ -652,6 +652,46 @@ class TestRetryTask:
         db.update_task_state.assert_called_once_with("task-1", "todo")
         daemon._emit.assert_called_once()
 
+    async def test_retry_task_rejects_non_retryable_state(self, tmp_path):
+        """retry_task should return early if task is not in error/cancelled state."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("in_progress", "task-1"))
+        db.log_event = AsyncMock()
+
+        daemon._emit = AsyncMock()
+
+        await daemon.retry_task("task-1", db, "pipe-abc")
+
+        # Should NOT have updated state or emitted events
+        db.update_task_state.assert_not_called()
+        daemon._emit.assert_not_called()
+
+    async def test_retry_task_allows_cancelled_state(self, tmp_path):
+        """retry_task should proceed for cancelled tasks."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("cancelled", "task-1"))
+        db.log_event = AsyncMock()
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        with patch("forge.core.daemon.WorktreeManager") as MockWM:
+            MockWM.return_value.remove = MagicMock()
+            await daemon.retry_task("task-1", db, "pipe-abc")
+
+        db.update_task_state.assert_called_once_with("task-1", "todo")
+        assert any(ev[0] == "task:state_changed" for ev in emitted)
+
 
 # ---------------------------------------------------------------------------
 # Tests for run() using central DB path
@@ -729,6 +769,47 @@ class TestClassifyPipelineResult:
     def test_classify_all_cancelled(self):
         states = ["cancelled", "cancelled"]
         assert _classify_pipeline_result(states) == "complete"
+
+    def test_classify_all_blocked(self):
+        """All tasks blocked with none done → error."""
+        states = ["blocked", "blocked"]
+        assert _classify_pipeline_result(states) == "error"
+
+    def test_classify_blocked_and_done(self):
+        """Mix of blocked and done → partial_success."""
+        states = ["done", "done", "blocked"]
+        assert _classify_pipeline_result(states) == "partial_success"
+
+    def test_classify_blocked_done_cancelled(self):
+        """Cancelled excluded; remaining blocked+done → partial_success."""
+        states = ["done", "blocked", "cancelled"]
+        assert _classify_pipeline_result(states) == "partial_success"
+
+
+class TestDetectExcludedRepos:
+    """Tests for _detect_excluded_repos word-boundary matching."""
+
+    def test_exact_match(self):
+        result = _detect_excluded_repos("skip web", {"web"})
+        assert result == {"web"}
+
+    def test_no_substring_match(self):
+        """'web' should NOT match 'webutils' (word boundary)."""
+        result = _detect_excluded_repos("skip webutils", {"web"})
+        assert result == set()
+
+    def test_substring_repo_not_falsely_excluded(self):
+        """Repo 'web' should NOT match inside 'webutils' (no word boundary)."""
+        result = _detect_excluded_repos("ignore webutils", {"web"})
+        assert result == set()
+
+    def test_multiple_repos(self):
+        result = _detect_excluded_repos("ignore web, skip api", {"web", "api", "core"})
+        assert result == {"web", "api"}
+
+    def test_no_exclude_keyword(self):
+        result = _detect_excluded_repos("work on web", {"web"})
+        assert result == set()
 
 
 # ---------------------------------------------------------------------------

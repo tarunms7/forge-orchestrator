@@ -38,9 +38,9 @@ class TestInvalidTransitions:
         with pytest.raises(ForgeError, match="Invalid transition"):
             TaskStateMachine.transition(TaskState.DONE, TaskState.TODO)
 
-    def test_cancelled_to_anything_rejected(self):
+    def test_cancelled_to_in_progress_rejected(self):
         with pytest.raises(ForgeError, match="Invalid transition"):
-            TaskStateMachine.transition(TaskState.CANCELLED, TaskState.TODO)
+            TaskStateMachine.transition(TaskState.CANCELLED, TaskState.IN_PROGRESS)
 
     def test_todo_to_done_rejected(self):
         with pytest.raises(ForgeError, match="Invalid transition"):
@@ -119,14 +119,16 @@ class TestTerminalStatesNoTransitions:
             if state != TaskState.DONE:
                 assert TaskStateMachine.can_transition(TaskState.DONE, state) is False
 
-    def test_cancelled_has_no_outbound_transitions(self):
+    def test_cancelled_can_only_go_to_todo(self):
+        assert TaskStateMachine.can_transition(TaskState.CANCELLED, TaskState.TODO) is True
         for state in TaskState:
-            if state != TaskState.CANCELLED:
+            if state not in (TaskState.CANCELLED, TaskState.TODO):
                 assert TaskStateMachine.can_transition(TaskState.CANCELLED, state) is False
 
-    def test_error_has_no_outbound_transitions(self):
+    def test_error_can_only_go_to_todo(self):
+        assert TaskStateMachine.can_transition(TaskState.ERROR, TaskState.TODO) is True
         for state in TaskState:
-            if state != TaskState.ERROR:
+            if state not in (TaskState.ERROR, TaskState.TODO):
                 assert TaskStateMachine.can_transition(TaskState.ERROR, state) is False
 
 

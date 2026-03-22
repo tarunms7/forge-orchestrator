@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from forge.api.routes.tasks import get_current_user
+from forge.api.security.dependencies import get_current_user
 from forge.api.services.github_service import build_pr_description, create_pr
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/github", tags=["github"])
 
@@ -45,6 +49,7 @@ async def create_pull_request(
             body=pr_body,
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("GitHub PR creation failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="GitHub operation failed")
 
     return result

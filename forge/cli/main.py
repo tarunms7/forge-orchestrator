@@ -79,7 +79,8 @@ def init(project_dir: str) -> None:
     multiple=True,
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
 )
-def run(task: str, project_dir: str, strategy: str | None, spec: str | None, deep_plan: bool, repo: tuple[str, ...]) -> None:
+@click.pass_context
+def run(ctx: click.Context, task: str, project_dir: str, strategy: str | None, spec: str | None, deep_plan: bool, repo: tuple[str, ...]) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
@@ -119,6 +120,11 @@ def run(task: str, project_dir: str, strategy: str | None, spec: str | None, dee
         click.echo("\nForge interrupted by user.")
     except Exception as e:
         click.echo(f"Forge failed: {e}")
+        if ctx.obj.get("verbose"):
+            import traceback
+            traceback.print_exc()
+        else:
+            click.echo("Run with --verbose for full traceback.")
         raise SystemExit(1)
 
 
@@ -228,12 +234,17 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
 
     click.echo(f"Forge UI at http://localhost:3000 (API at http://localhost:{port})")
 
-    # Handle Ctrl+C: kill frontend, then exit cleanly
+    # Handle Ctrl+C / SIGTERM: kill frontend, then exit cleanly
     def _shutdown(signum, frame):
-        frontend_proc.kill()
+        frontend_proc.terminate()
+        try:
+            frontend_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            frontend_proc.kill()
         raise SystemExit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
 
     frontend_proc.wait()
 
@@ -307,7 +318,7 @@ def upgrade() -> None:
 
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
 
@@ -315,12 +326,12 @@ def _ensure_gitignore_entries(gitignore_path: str, entries: list[str]) -> None:
     """Ensure specific entries exist in a .gitignore file."""
     existing = set()
     if os.path.exists(gitignore_path):
-        with open(gitignore_path, "r") as f:
+        with open(gitignore_path, "r", encoding="utf-8") as f:
             existing = {line.strip() for line in f if line.strip() and not line.startswith("#")}
 
     new_entries = [e for e in entries if e not in existing]
     if new_entries:
-        with open(gitignore_path, "a") as f:
+        with open(gitignore_path, "a", encoding="utf-8") as f:
             if existing:  # Add newline separator if file already had content
                 f.write("\n")
             for entry in new_entries:

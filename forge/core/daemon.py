@@ -17,6 +17,7 @@ from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.cost_estimator import estimate_pipeline_cost
 from forge.core.errors import ForgeError
+from forge.core.sanitize import validate_task_id
 from forge.core.models import RepoConfig, row_to_record
 from forge.core.events import EventEmitter
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
@@ -75,14 +76,20 @@ def _detect_excluded_repos(user_input: str, repo_ids: set[str]) -> set[str]:
     a repo name, that repo is excluded.
     """
     excluded = set()
+    # Pre-compile word-boundary patterns for each repo id to avoid
+    # substring false positives (e.g. "web" matching "webutils").
+    repo_patterns = {
+        repo_id: re.compile(r"\b" + re.escape(repo_id.lower()) + r"\b")
+        for repo_id in repo_ids
+    }
     # Split by sentence boundaries (., !, newlines, commas with spaces)
     sentences = re.split(r"[.!\n]+|,\s+", user_input)
     for sentence in sentences:
         if not _EXCLUDE_KEYWORDS.search(sentence):
             continue
         sentence_lower = sentence.lower()
-        for repo_id in repo_ids:
-            if repo_id.lower() in sentence_lower:
+        for repo_id, pattern in repo_patterns.items():
+            if pattern.search(sentence_lower):
                 excluded.add(repo_id)
     return excluded
 
@@ -93,8 +100,13 @@ def _classify_pipeline_result(task_states: list[str]) -> str:
     if not active_states:
         return "complete"
     done_count = sum(1 for s in active_states if s == "done")
+    blocked_count = sum(1 for s in active_states if s == "blocked")
     if done_count == len(active_states):
         return "complete"
+    # All remaining tasks are either done or blocked — partial success if
+    # at least one task completed.
+    if done_count + blocked_count == len(active_states) and done_count > 0:
+        return "partial_success"
     if done_count == 0:
         return "error"
     return "partial_success"
@@ -215,6 +227,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Limit concurrent subprocess-heavy gates (lint, build, test) to prevent
         # CPU saturation when multiple agents run ESLint/tsc/pytest simultaneously.
         self._gate_semaphore = asyncio.Semaphore(2)
+        self._active_tasks: dict[str, asyncio.Task] = {}
+        self._active_tasks_lock = asyncio.Lock()
+        self._effective_max_agents: int = self._settings.max_agents
         self._project_config = ProjectConfig.load(project_dir)
 
         # Multi-repo support: build repos dict
@@ -330,9 +345,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """
         if len(self._repos) > 1:
             rc = self._repos.get(repo_id)
-            repo_path = rc.path if rc else self._workspace_dir
-            return os.path.join(repo_path, ".forge", "worktrees", task_id)
-        return os.path.join(self._workspace_dir, ".forge", "worktrees", task_id)
+            if rc is None:
+                logger.error(
+                    "repo_id '%s' not found in configured repos: %s",
+                    repo_id, sorted(self._repos.keys()),
+                )
+                raise ValueError(
+                    f"repo_id '{repo_id}' not found in configured repos: "
+                    f"{sorted(self._repos.keys())}"
+                )
+            return os.path.join(rc.path, ".forge", "worktrees", validate_task_id(task_id))
+        return os.path.join(self._workspace_dir, ".forge", "worktrees", validate_task_id(task_id))
 
     def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:
         """Return the per-repo infrastructure tuple for *repo_id*.
@@ -381,6 +404,40 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             })
         return json.dumps(data)
 
+    async def _cleanup_pipeline_branches(self) -> None:
+        """Delete pipeline branches from all repos on pipeline error.
+
+        Best-effort: logs failures instead of raising so the original
+        exception is never masked.
+        """
+        branches = getattr(self, "_pipeline_branches", {})
+        if not branches:
+            return
+        for repo_id, branch_name in branches.items():
+            rc = self._repos.get(repo_id)
+            if not rc:
+                continue
+            try:
+                result = await async_subprocess(
+                    ["git", "branch", "-D", branch_name],
+                    cwd=rc.path,
+                )
+                if result.returncode == 0:
+                    logger.info(
+                        "Cleaned up pipeline branch '%s' in repo '%s'",
+                        branch_name, repo_id,
+                    )
+                else:
+                    logger.debug(
+                        "Pipeline branch '%s' already removed or doesn't exist in '%s'",
+                        branch_name, repo_id,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clean up pipeline branch '%s' in repo '%s': %s",
+                    branch_name, repo_id, exc,
+                )
+
     def _auto_detect_commands(self, project_dir: str) -> None:
         """Auto-detect build_cmd and test_cmd from project config files.
 
@@ -398,7 +455,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         self._settings.build_cmd = "npm run build"
                         logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
                 except (json.JSONDecodeError, OSError):
-                    pass
+                    logger.debug("Failed to read package.json for build_cmd auto-detection")
 
         # --- test_cmd ---
         if self._settings.test_cmd is None:
@@ -411,7 +468,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         self._settings.test_cmd = "python -m pytest"
                         logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
                 except OSError:
-                    pass
+                    logger.debug("Failed to read pyproject.toml for test_cmd auto-detection")
 
         if self._settings.test_cmd is None:
             makefile = os.path.join(project_dir, "Makefile")
@@ -423,7 +480,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         self._settings.test_cmd = "make test"
                         logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
                 except OSError:
-                    pass
+                    logger.debug("Failed to read Makefile for test_cmd auto-detection")
 
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
@@ -535,11 +592,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Filter out repos the user asked to exclude — before gathering
         # snapshots so the planner never sees them at all.
         planning_repos = self._repos
+        excluded_repos: set[str] = set()
         if len(self._repos) > 1:
-            pre_excluded = _detect_excluded_repos(user_input, set(self._repos.keys()))
-            if pre_excluded:
-                planning_repos = {k: v for k, v in self._repos.items() if k not in pre_excluded}
-                logger.info("Excluding repos from planning: %s", ", ".join(sorted(pre_excluded)))
+            excluded_repos = _detect_excluded_repos(user_input, set(self._repos.keys()))
+            if excluded_repos:
+                planning_repos = {k: v for k, v in self._repos.items() if k not in excluded_repos}
+                logger.info("Excluding repos from planning: %s", ", ".join(sorted(excluded_repos)))
 
         # Run snapshot gathering in a thread to avoid blocking the event loop
         if len(planning_repos) == 1:
@@ -559,7 +617,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Decide planning mode
         spec_text = ""
         if spec_path:
-            with open(spec_path, "r") as f:
+            with open(spec_path, "r", encoding="utf-8") as f:
                 spec_text = f.read()
 
         use_deep = deep_plan or _should_use_deep_planning(
@@ -680,20 +738,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Safety net: drop tasks for excluded repos even if the planner
             # ignored the instruction. This is a hard programmatic filter.
-            if len(self._repos) > 1:
-                excluded = _detect_excluded_repos(user_input, set(self._repos.keys()))
-                if excluded:
-                    before = len(graph.tasks)
-                    graph.tasks = [
-                        t for t in graph.tasks
-                        if getattr(t, "repo", None) not in excluded
-                    ]
-                    dropped = before - len(graph.tasks)
-                    if dropped:
-                        logger.info(
-                            "Dropped %d tasks for excluded repos: %s",
-                            dropped, ", ".join(sorted(excluded)),
-                        )
+            if len(self._repos) > 1 and excluded_repos:
+                before = len(graph.tasks)
+                graph.tasks = [
+                    t for t in graph.tasks
+                    if getattr(t, "repo", None) not in excluded_repos
+                ]
+                dropped = before - len(graph.tasks)
+                if dropped:
+                    logger.info(
+                        "Dropped %d tasks for excluded repos: %s",
+                        dropped, ", ".join(sorted(excluded_repos)),
+                    )
 
             # Track costs
             if pipeline_id and planning_result.total_cost_usd > 0:
@@ -1110,6 +1166,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         Clears the worktree if one exists, resets the task state in DB,
         and emits a task:state_changed event so the TUI/subscribers update.
         """
+        # Guard: only retry tasks in ERROR or CANCELLED state
+        task_row = await db.get_task(task_id)
+        if task_row and task_row.state not in ("error", "cancelled"):
+            logger.warning(
+                "Cannot retry task %s: current state '%s' is not error or cancelled",
+                task_id, task_row.state,
+            )
+            return
+
         # Reset state in DB
         await db.update_task_state(task_id, "todo")
 
@@ -1247,6 +1312,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await db.update_pipeline_status(self._pipeline_id, "error")
                 raise
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
+        except Exception:
+            # Clean up pipeline branches on error to avoid orphaned branches
+            await self._cleanup_pipeline_branches()
+            raise
         finally:
             await db.close()
 
@@ -1329,8 +1398,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
         except asyncio.CancelledError:
             logger.info("Task %s was cancelled (shutdown)", task_id)
-            raise
-        except Exception:
             raise
         finally:
             released = False
@@ -1462,9 +1529,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """Remove the task:answer listener to prevent accumulation on re-entry."""
         handler = getattr(self, "_current_answer_handler", None)
         if handler:
-            handlers = self._events._handlers.get("task:answer", [])
-            if handler in handlers:
-                handlers.remove(handler)
+            self._events.off("task:answer", handler)
             self._current_answer_handler = None
 
     async def _execution_loop_inner(
@@ -1480,8 +1545,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         _all_paused_since: float | None = None
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
-        self._active_tasks: dict[str, asyncio.Task] = {}
-        self._effective_max_agents = self._settings.max_agents
+        self._active_tasks.clear()
+        # _effective_max_agents is set in __init__ (default) and recalculated
+        # in execute() based on DAG width — do NOT overwrite here on loop re-entry.
         self._executor_token = str(_uuid_mod.uuid4())
 
         # Store dependencies for event-driven resume
@@ -1506,7 +1572,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Reap completed tasks from the pool
             done_ids = [tid for tid, atask in list(self._active_tasks.items()) if atask.done()]
             for tid in done_ids:
-                atask = self._active_tasks.pop(tid, None)
+                async with self._active_tasks_lock:
+                    atask = self._active_tasks.pop(tid, None)
                 if atask is None:
                     continue  # Already removed by concurrent event handler
                 exc = atask.exception() if not atask.cancelled() else None
@@ -1696,7 +1763,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                                             repo_id=repo_id),
                     name=f"forge-task-{task_id}",
                 )
-                self._active_tasks[task_id] = atask
+                async with self._active_tasks_lock:
+                    self._active_tasks[task_id] = atask
 
             # Wait efficiently
             if self._active_tasks:

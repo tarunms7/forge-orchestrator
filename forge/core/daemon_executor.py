@@ -8,6 +8,7 @@ import os
 import time
 
 from forge.core.budget import check_budget
+from forge.core.sanitize import validate_task_id
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
@@ -189,7 +190,7 @@ class ExecutorMixin:
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
-        branch = f"forge/{task_id}"
+        branch = f"forge/{validate_task_id(task_id)}"
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
         await self._ensure_clean_for_rebase(worktree_path, task_id)
@@ -695,9 +696,10 @@ class ExecutorMixin:
             return
 
         # Skip if task is already being resumed (in active pool)
-        if task_id in getattr(self, "_active_tasks", {}):
-            logger.debug("_on_task_answered: task %s already active, skipping", task_id)
-            return
+        async with self._active_tasks_lock:
+            if task_id in self._active_tasks:
+                logger.debug("_on_task_answered: task %s already active, skipping", task_id)
+                return
 
         # Acquire an agent slot via Scheduler
         from forge.core.scheduler import Scheduler
@@ -737,7 +739,8 @@ class ExecutorMixin:
             ),
             name=f"forge-resume-{task_id}",
         )
-        self._active_tasks[task_id] = atask
+        async with self._active_tasks_lock:
+            self._active_tasks[task_id] = atask
 
     async def _safe_execute_resume(
         self, db, runtime, worktree_mgr, merge_worker,
@@ -763,7 +766,8 @@ class ExecutorMixin:
             except Exception:
                 logger.exception("Failed to clean up after resume crash for %s", task_id)
         finally:
-            self._active_tasks.pop(task_id, None)
+            async with self._active_tasks_lock:
+                self._active_tasks.pop(task_id, None)
 
     # -- file scope enforcement -------------------------------------------
 
@@ -1017,7 +1021,7 @@ class ExecutorMixin:
 
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
-        branch = f"forge/{task_id}"
+        branch = f"forge/{validate_task_id(task_id)}"
 
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
@@ -1025,16 +1029,20 @@ class ExecutorMixin:
 
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
+        # Hold the lock for the entire first-attempt + retry sequence so no
+        # other task's merge can interleave between the two attempts.
         async with self._merge_lock:
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
+            if not merge_result.success:
+                console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
+                await self._emit_merge_failure(db, task_id, merge_result.error, pid)
+                await self._ensure_clean_for_rebase(worktree_path, task_id)  # clean before retry
+                retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
+            else:
+                retry_result = None
         if merge_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
             return
-        console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
-        await self._emit_merge_failure(db, task_id, merge_result.error, pid)
-        await self._ensure_clean_for_rebase(worktree_path, task_id)  # clean before retry
-        async with self._merge_lock:
-            retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref)
             return

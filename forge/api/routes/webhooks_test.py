@@ -487,7 +487,8 @@ class TestRunWebhookPipeline:
             assert mock_comment.call_count == 2
             error_comment = mock_comment.call_args_list[1][0][2]
             assert "Pipeline failed" in error_comment
-            assert "SDK error" in error_comment
+            assert "RuntimeError" in error_comment
+            assert "SDK error" not in error_comment
 
             # DB should be marked as error
             mock_db.update_pipeline_status.assert_called_with("fail-pipeline-id", "error")

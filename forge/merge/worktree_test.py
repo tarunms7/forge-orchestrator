@@ -60,9 +60,9 @@ def test_create_duplicate_raises(manager):
         manager.create("task-dup")
 
 
-def test_remove_nonexistent_raises(manager):
-    with pytest.raises(ValueError, match="does not exist"):
-        manager.remove("ghost")
+def test_remove_nonexistent_is_noop(manager):
+    """Removing an already-removed worktree should be a no-op, not raise."""
+    manager.remove("ghost")  # Should not raise
 
 
 def test_create_cleans_up_directory_on_failure(manager, git_repo):

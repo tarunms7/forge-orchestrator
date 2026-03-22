@@ -16,6 +16,7 @@ import subprocess
 from rich.table import Table
 
 from forge.core.logging_config import make_console
+from forge.core.sanitize import validate_repo_id, validate_task_id
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -88,10 +89,24 @@ def _parse_forge_question(text: str | None) -> dict | None:
         json_text = fence_match.group(1).strip()
     else:
         # Check if there's significant text after the JSON block
-        # Find the closing brace
+        # Find the closing brace using string-aware matching
+        # (ignore braces inside JSON string values)
         brace_depth = 0
         json_end = -1
+        in_string = False
+        escape_next = False
         for i, ch in enumerate(json_text):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_string:
+                escape_next = True
+                continue
+            if ch == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
             if ch == "{":
                 brace_depth += 1
             elif ch == "}":
@@ -838,8 +853,10 @@ def compute_worktree_path(
     Single-repo (repo_count=1, repo_id='default'): <workspace_dir>/.forge/worktrees/<task_id>
     Multi-repo (repo_count > 1): <workspace_dir>/.forge/worktrees/<repo_id>/<task_id>
     """
+    validate_task_id(task_id)
     if repo_count <= 1 and repo_id == "default":
         return os.path.join(workspace_dir, ".forge", "worktrees", task_id)
+    validate_repo_id(repo_id)
     return os.path.join(workspace_dir, ".forge", "worktrees", repo_id, task_id)
 
 

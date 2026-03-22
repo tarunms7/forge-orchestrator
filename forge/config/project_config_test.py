@@ -15,6 +15,7 @@ from forge.config.project_config import (
     CheckConfig,
     IntegrationCheckConfig,
     ProjectConfig,
+    ReviewConfig,
     apply_project_config,
     auto_detect_base_branch,
     load_repo_configs,
@@ -302,9 +303,56 @@ class TestAgentConfigValidation:
             a = AgentConfig(autonomy=autonomy)
             assert a.autonomy == autonomy
 
-    def test_invalid_autonomy_raises(self):
-        with pytest.raises(ValueError, match="autonomy must be"):
-            AgentConfig(autonomy="yolo")
+    def test_invalid_autonomy_defaults_to_full(self):
+        """Invalid autonomy value is silently corrected to 'full' instead of raising."""
+        a = AgentConfig(autonomy="yolo")
+        assert a.autonomy == "full"
+
+    def test_invalid_autonomy_ask_defaults_to_full(self):
+        a = AgentConfig(autonomy="ask")
+        assert a.autonomy == "full"
+
+    # ── Numeric clamping ──────────────────────────────────────────────
+
+    def test_max_parallel_clamped_to_one(self):
+        """max_parallel < 1 is clamped to 1."""
+        assert AgentConfig(max_parallel=0).max_parallel == 1
+        assert AgentConfig(max_parallel=-5).max_parallel == 1
+
+    def test_max_parallel_valid_unchanged(self):
+        assert AgentConfig(max_parallel=4).max_parallel == 4
+
+    def test_max_turns_clamped_to_one(self):
+        """max_turns < 1 is clamped to 1."""
+        assert AgentConfig(max_turns=0).max_turns == 1
+        assert AgentConfig(max_turns=-10).max_turns == 1
+
+    def test_max_turns_valid_unchanged(self):
+        assert AgentConfig(max_turns=50).max_turns == 50
+
+    def test_timeout_seconds_clamped_to_thirty(self):
+        """timeout_seconds < 30 is clamped to 30."""
+        assert AgentConfig(timeout_seconds=0).timeout_seconds == 30
+        assert AgentConfig(timeout_seconds=10).timeout_seconds == 30
+        assert AgentConfig(timeout_seconds=29).timeout_seconds == 30
+
+    def test_timeout_seconds_at_boundary(self):
+        """timeout_seconds == 30 is accepted unchanged."""
+        assert AgentConfig(timeout_seconds=30).timeout_seconds == 30
+
+    def test_timeout_seconds_valid_unchanged(self):
+        assert AgentConfig(timeout_seconds=600).timeout_seconds == 600
+
+
+class TestReviewConfigValidation:
+    def test_valid_max_retries_unchanged(self):
+        assert ReviewConfig(max_retries=3).max_retries == 3
+        assert ReviewConfig(max_retries=0).max_retries == 0
+
+    def test_negative_max_retries_clamped_to_zero(self):
+        """max_retries < 0 is clamped to 0."""
+        assert ReviewConfig(max_retries=-1).max_retries == 0
+        assert ReviewConfig(max_retries=-99).max_retries == 0
 
 
 class TestIntegrationCheckConfigValidation:
@@ -316,6 +364,14 @@ class TestIntegrationCheckConfigValidation:
     def test_invalid_on_failure_raises(self):
         with pytest.raises(ValueError, match="on_failure must be"):
             IntegrationCheckConfig(on_failure="crash")
+
+    def test_timeout_seconds_clamped_to_one(self):
+        """timeout_seconds < 1 is clamped to 1."""
+        assert IntegrationCheckConfig(timeout_seconds=0).timeout_seconds == 1
+        assert IntegrationCheckConfig(timeout_seconds=-5).timeout_seconds == 1
+
+    def test_timeout_seconds_valid_unchanged(self):
+        assert IntegrationCheckConfig(timeout_seconds=120).timeout_seconds == 120
 
 
 # ── Helpers for git-based tests ──────────────────────────────────────

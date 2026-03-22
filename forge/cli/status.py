@@ -90,12 +90,14 @@ def status(project_dir: str, show_all: bool) -> None:
 
     for p in pipelines:
         color = _STATUS_COLORS.get(p["status"], "white")
+        status_text = p["status"].replace("[", "\\[")
+        description_text = p["description"].replace("[", "\\[")
         row = [p["id"]]
         if show_all:
             row.append(p["project_name"])
         row.extend([
-            p["description"],
-            f"[{color}]{p['status']}[/{color}]",
+            description_text,
+            f"[{color}]{status_text}[/{color}]",
             str(p["task_count"]),
             p["created_at"],
         ])

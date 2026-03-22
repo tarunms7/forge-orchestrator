@@ -7,6 +7,7 @@ pipelines, tasks, and agents.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from typing import Optional
 from sqlalchemy import DateTime, Integer, String, Text, JSON, func, or_, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -457,6 +460,23 @@ class Database:
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
             if task:
+                # Guard: validate state transition via TaskStateMachine
+                try:
+                    from forge.core.models import TaskState
+                    from forge.core.state import TaskStateMachine
+                    current = TaskState(task.state)
+                    target = TaskState(state)
+                    if not TaskStateMachine.can_transition(current, target):
+                        logger.warning(
+                            "Invalid state transition for task %s: %s -> %s",
+                            task_id, task.state, state,
+                        )
+                except (ValueError, KeyError):
+                    # Unknown state value — log and proceed
+                    logger.warning(
+                        "Could not validate state transition for task %s: %s -> %s",
+                        task_id, task.state, state,
+                    )
                 task.state = state
                 await session.commit()
 
@@ -1246,35 +1266,80 @@ class Database:
 
     # ── Lessons ────────────────────────────────────────────────────────
 
+    MAX_LESSONS = 500
+
     async def add_lesson(
         self, *, scope: str, category: str, title: str, content: str,
         trigger: str, resolution: str, project_dir: str | None = None,
         confidence: float = 0.5,
     ) -> str:
-        """Add a lesson. Returns the lesson ID."""
+        """Add a lesson. Returns the lesson ID.
+
+        After inserting, prunes excess lessons if total count exceeds
+        MAX_LESSONS, removing lowest-value rows (lowest hit_count, oldest first).
+        """
+        from sqlalchemy import delete as sa_delete
+
         now = datetime.now(timezone.utc).isoformat()
+        normalized_trigger = self._normalize_trigger(trigger)
         row = LessonRow(
             scope=scope, project_dir=project_dir, category=category,
-            title=title, content=content, trigger=trigger,
+            title=title, content=content, trigger=normalized_trigger,
             resolution=resolution, hit_count=1,
             created_at=now, last_hit_at=now, confidence=confidence,
         )
         async with self._session_factory() as session:
             session.add(row)
+            await session.flush()
+            lesson_id = row.id
+
+            # Prune excess lessons if over the cap
+            count_result = await session.execute(
+                select(func.count()).select_from(LessonRow)
+            )
+            total = count_result.scalar() or 0
+            if total > self.MAX_LESSONS:
+                excess = total - self.MAX_LESSONS
+                # Find IDs of the least valuable lessons to delete
+                keep_boundary = await session.execute(
+                    select(LessonRow.id)
+                    .order_by(LessonRow.hit_count.asc(), LessonRow.created_at.asc())
+                    .limit(excess)
+                )
+                ids_to_delete = [r[0] for r in keep_boundary.fetchall()]
+                if ids_to_delete:
+                    await session.execute(
+                        sa_delete(LessonRow).where(LessonRow.id.in_(ids_to_delete))
+                    )
+
             await session.commit()
-            return row.id
+            return lesson_id
+
+    @staticmethod
+    def _normalize_trigger(trigger: str) -> str:
+        """Normalize a trigger string for dedup comparison.
+
+        Lowercases, strips whitespace, and collapses internal whitespace.
+        """
+        import re
+        return re.sub(r"\s+", " ", trigger.strip().lower())
 
     async def find_matching_lesson(self, trigger: str, project_dir: str | None = None) -> LessonRow | None:
-        """Find a lesson whose trigger matches (substring in either direction)."""
+        """Find a lesson whose trigger matches (normalized substring in either direction)."""
+        normalized = self._normalize_trigger(trigger)
         async with self._session_factory() as session:
-            # Use parameterized raw SQL for the reverse-contains check
-            # (trigger param contains stored trigger value)
+            # Use parameterized raw SQL for normalized comparison:
+            # lower/trim both sides, then check substring in either direction
             query = (
                 select(LessonRow)
                 .where(
                     or_(
-                        LessonRow.trigger.contains(trigger),
-                        text("instr(:trigger_param, trigger) > 0").bindparams(trigger_param=trigger),
+                        text(
+                            "instr(LOWER(TRIM(trigger)), :norm_trigger) > 0"
+                        ).bindparams(norm_trigger=normalized),
+                        text(
+                            "instr(:norm_trigger2, LOWER(TRIM(trigger))) > 0"
+                        ).bindparams(norm_trigger2=normalized),
                     )
                 )
             )

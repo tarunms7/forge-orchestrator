@@ -9,11 +9,11 @@ import logging
 import os
 import re
 import subprocess
+import time
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from forge.api.models.schemas import (
     ContractSetResponse,
@@ -25,7 +25,7 @@ from forge.api.models.schemas import (
     TaskListItem,
     TaskStatusResponse,
 )
-from forge.api.security.jwt import decode_token
+from forge.api.security.dependencies import get_current_user
 from forge.core.async_utils import safe_create_task
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
@@ -37,7 +37,55 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tasks"])
 
-security = HTTPBearer(auto_error=False)
+# ---------------------------------------------------------------------------
+# TTL cleanup for in-memory stores (2-hour expiry)
+# ---------------------------------------------------------------------------
+
+_STORE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
+
+
+def _prune_stale_pipeline_images(app_state: object) -> None:
+    """Remove pipeline_images entries older than TTL on access."""
+    images: dict = getattr(app_state, "pipeline_images", {})
+    if not images:
+        return
+    cutoff = time.monotonic() - _STORE_TTL_SECONDS
+    stale = [k for k, v in images.items() if isinstance(v, tuple) and len(v) == 2 and v[1] < cutoff]
+    for k in stale:
+        images.pop(k, None)
+
+
+async def _prune_stale_pending_graphs(app_state: object) -> None:
+    """Remove pending_graphs entries older than TTL on access."""
+    pending: dict = getattr(app_state, "pending_graphs", {})
+    if not pending:
+        return
+    cutoff = time.monotonic() - _STORE_TTL_SECONDS
+    lock = getattr(app_state, "pending_graphs_lock", None)
+    if lock:
+        async with lock:
+            stale = [k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff]
+            for k in stale:
+                pending.pop(k, None)
+    else:
+        stale = [k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff]
+        for k in stale:
+            pending.pop(k, None)
+
+
+# ---------------------------------------------------------------------------
+# Error helpers — never leak internal details to clients
+# ---------------------------------------------------------------------------
+
+def _safe_error(exc: BaseException, prefix: str) -> str:
+    """Log the full exception with traceback, return only the safe prefix to callers.
+
+    Use this wherever an exception message would otherwise be forwarded to
+    the HTTP response body, preventing internal paths/stack traces from being
+    sent to clients.
+    """
+    logger.error("%s: %s", prefix, exc, exc_info=True)
+    return prefix
 
 
 # ---------------------------------------------------------------------------
@@ -70,34 +118,13 @@ async def _cleanup_all_pipeline_worktrees(
         if _cleanup_worktree(project_dir, task.id, repo_id=getattr(task, "repo_id", "default")):
             cleaned += 1
     # Prune stale git worktree admin files
-    subprocess.run(
+    await asyncio.to_thread(
+        subprocess.run,
         ["git", "worktree", "prune"],
-        cwd=project_dir, capture_output=True,
+        cwd=project_dir, capture_output=True, timeout=30,
     )
     return cleaned
 
-
-async def get_current_user(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-) -> str:
-    """Extract and verify the JWT token from the Authorization header.
-
-    Returns the ``user_id`` (``sub`` claim) from the decoded token.
-
-    Raises:
-        HTTPException: 401 if the token is missing or invalid.
-    """
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
-
-    try:
-        payload = decode_token(credentials.credentials, secret=request.app.state.jwt_secret)
-        user_id: str = payload["sub"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    return user_id
 
 
 def _get_forge_db(request: Request):
@@ -345,7 +372,7 @@ async def create_task(
         # Store data URIs in app state for downstream consumers.
         if not hasattr(request.app.state, "pipeline_images"):
             request.app.state.pipeline_images = {}
-        request.app.state.pipeline_images[pipeline_id] = list(body.images)
+        request.app.state.pipeline_images[pipeline_id] = (list(body.images), time.monotonic())
 
         # Append image note to description.
         description += f"\n\n[{len(body.images)} image(s) attached]"
@@ -493,14 +520,14 @@ async def create_task(
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
                     if lock:
                         async with lock:
-                            request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                            request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
                     else:
-                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
-                except Exception as exc:
+                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+                except Exception:
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
                     await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:error", "error": str(exc),
+                        "type": "pipeline:error", "error": "Task execution failed",
                     })
 
             safe_create_task(_run_plan(), logger=logger, name="plan-pipeline")
@@ -595,6 +622,10 @@ async def execute_pipeline(
     if pipeline is None or pipeline.user_id != user_id:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
+    # Prune stale entries on access
+    _prune_stale_pipeline_images(request.app.state)
+    await _prune_stale_pending_graphs(request.app.state)
+
     lock = getattr(request.app.state, "pending_graphs_lock", None)
     pending_graphs = getattr(request.app.state, "pending_graphs", {})
 
@@ -607,7 +638,11 @@ async def execute_pipeline(
     if entry is None:
         raise HTTPException(status_code=404, detail="No pending plan found for this pipeline")
 
-    graph, daemon = entry
+    # Unpack with optional timestamp (backward compat with 2-tuple)
+    if len(entry) == 3:
+        graph, daemon, _ts = entry
+    else:
+        graph, daemon = entry
 
     # If user submitted an edited task graph, validate and replace
     if body is not None and body.tasks is not None:
@@ -630,9 +665,9 @@ async def execute_pipeline(
         # Replace the pending graph (keep the daemon)
         if lock:
             async with lock:
-                request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
         else:
-            request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+            request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
 
         # Update stored plan in DB
         await forge_db.set_pipeline_plan(pipeline_id, json.dumps({
@@ -673,13 +708,13 @@ async def execute_pipeline(
                 except Exception as pr_exc:
                     logger.warning("Auto-PR failed for %s: %s", pipeline_id, pr_exc)
                     await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:pr_failed", "error": str(pr_exc),
+                        "type": "pipeline:pr_failed", "error": "PR creation failed",
                     })
-        except Exception as exc:
+        except Exception:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
             await ws_manager.broadcast(pipeline_id, {
-                "type": "pipeline:error", "error": str(exc),
+                "type": "pipeline:error", "error": "Execution error",
             })
 
     safe_create_task(_run_execute(), logger=logger, name="execute-pipeline")
@@ -730,9 +765,10 @@ async def create_pr(
 
     try:
         # Verify gh CLI is authenticated
-        gh_check = subprocess.run(
+        gh_check = await asyncio.to_thread(
+            subprocess.run,
             ["gh", "auth", "status"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         if gh_check.returncode != 0:
             raise HTTPException(
@@ -741,9 +777,10 @@ async def create_pr(
             )
 
         # Detect remote name — fail early if no remote configured
-        remote_result = subprocess.run(
+        remote_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "remote"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         remotes = remote_result.stdout.strip()
         if not remotes:
@@ -755,9 +792,10 @@ async def create_pr(
 
         # Push the pipeline branch directly — NO checkout needed.
         # The branch was created by the daemon and advanced via update-ref.
-        push_result = subprocess.run(
+        push_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         if push_result.returncode != 0:
             error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
@@ -767,9 +805,10 @@ async def create_pr(
             )
 
         # Check if a PR already exists for this branch
-        existing_pr = subprocess.run(
+        existing_pr = await asyncio.to_thread(
+            subprocess.run,
             ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         if existing_pr.returncode == 0 and existing_pr.stdout.strip():
             pr_url = existing_pr.stdout.strip()
@@ -796,19 +835,26 @@ async def create_pr(
         pr_title = f"forge: {pr_title_body}"
 
         # Create PR — base_branch from DB, head is the pipeline branch
-        pr_result = subprocess.run(
+        pr_result = await asyncio.to_thread(
+            subprocess.run,
             ["gh", "pr", "create",
              "--base", base_branch,
              "--head", branch_name,
              "--title", pr_title,
              "--body", pr_body],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
 
         if pr_result.returncode != 0:
+            logger.error(
+                "gh pr create failed (pipeline=%s): stderr=%r stdout=%r",
+                pipeline_id,
+                pr_result.stderr,
+                pr_result.stdout,
+            )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to create PR: {pr_result.stderr or pr_result.stdout}",
+                detail="Failed to create PR. Check server logs for details.",
             )
 
         pr_url = pr_result.stdout.strip()
@@ -1059,9 +1105,10 @@ async def cleanup_pipeline_worktrees(
     branches_deleted = 0
     for tid in task_ids:
         branch = f"forge/{tid}"
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "branch", "-D", branch],
-            cwd=project_dir, capture_output=True,
+            cwd=project_dir, capture_output=True, timeout=30,
         )
         if result.returncode == 0:
             branches_deleted += 1
@@ -1391,15 +1438,15 @@ async def restart_pipeline(
                 graph_lock = getattr(request.app.state, "pending_graphs_lock", None)
                 if graph_lock:
                     async with graph_lock:
-                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
+                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
                 else:
-                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
-            except Exception as exc:
+                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+            except Exception:
                 logger.exception("Restart planning failed for pipeline %s", pipeline_id)
                 await forge_db.update_pipeline_status(pipeline_id, "error")
                 if ws_manager:
                     await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:error", "error": str(exc),
+                        "type": "pipeline:error", "error": "Task execution failed",
                     })
 
         safe_create_task(_run_restart_plan(), logger=logger, name="restart-pipeline")
@@ -1689,9 +1736,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         logger.warning("Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name)
 
     # Detect remote name — fail early if no remote configured
-    remote_result = subprocess.run(
+    remote_result = await asyncio.to_thread(
+        subprocess.run,
         ["git", "remote"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     remotes = remote_result.stdout.strip()
     if not remotes:
@@ -1702,9 +1750,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     remote_name = remotes.split("\n")[0]
 
     # Check if gh CLI is available and authenticated
-    gh_check = subprocess.run(
+    gh_check = await asyncio.to_thread(
+        subprocess.run,
         ["gh", "auth", "status"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     if gh_check.returncode != 0:
         raise RuntimeError(
@@ -1715,16 +1764,19 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     # Falls back to detecting current branch for backward compatibility.
     base_branch = getattr(pipeline, "base_branch", None)
     if not base_branch:
-        base_branch = subprocess.run(
+        base_branch_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_dir, capture_output=True, text=True,
-        ).stdout.strip() or "main"
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
+        )
+        base_branch = base_branch_result.stdout.strip() or "main"
 
     # Pipeline branch already exists (created by daemon at start) with all
     # merged task code.  Just push it — no checkout needed.
-    push_result = subprocess.run(
+    push_result = await asyncio.to_thread(
+        subprocess.run,
         ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     if push_result.returncode != 0:
         error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
@@ -1734,9 +1786,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         )
 
     # Check if a PR already exists for this branch
-    existing_pr = subprocess.run(
+    existing_pr = await asyncio.to_thread(
+        subprocess.run,
         ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     if existing_pr.returncode == 0 and existing_pr.stdout.strip():
         pr_url = existing_pr.stdout.strip()
@@ -1764,17 +1817,24 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
     pr_title = f"forge: {pr_title_body}"
 
-    pr_result = subprocess.run(
+    pr_result = await asyncio.to_thread(
+        subprocess.run,
         ["gh", "pr", "create",
          "--base", base_branch,
          "--head", branch_name,
          "--title", pr_title,
          "--body", pr_body],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
 
     if pr_result.returncode != 0:
-        raise RuntimeError(f"Failed to create PR: {pr_result.stderr or pr_result.stdout}")
+        logger.error(
+            "gh pr create failed (pipeline=%s): stderr=%r stdout=%r",
+            pipeline_id,
+            pr_result.stderr,
+            pr_result.stdout,
+        )
+        raise RuntimeError("Failed to create PR. Check server logs for details.")
 
     pr_url = pr_result.stdout.strip()
     await forge_db.set_pipeline_pr_url(pipeline_id, pr_url)

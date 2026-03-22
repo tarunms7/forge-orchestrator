@@ -6,6 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
+from forge.merge.worker import MergeResult
 
 
 def _make_proc(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
@@ -409,3 +410,157 @@ class TestWorktreePathThreading:
 
         # Default repo_id is 'default'
         mixin._worktree_path.assert_called_once_with("default", "task-1")
+
+
+@pytest.mark.asyncio
+class TestAttemptMergeLockBehavior:
+    """_attempt_merge holds _merge_lock for the full first-attempt + retry sequence."""
+
+    def _make_mixin(self):
+        mixin = ExecutorMixin()
+        mixin._project_dir = "/fake/project"
+        mixin._strategy = "auto"
+        mixin._snapshot = None
+        mixin._settings = MagicMock(allowed_dirs=[], require_approval=False, budget_limit_usd=0.0)
+        mixin._template_config = None
+        mixin._contracts = None
+        mixin._merge_lock = MagicMock()
+        mixin._merge_lock.__aenter__ = AsyncMock(return_value=None)
+        mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
+        mixin._worktree_path = MagicMock(
+            side_effect=lambda repo_id, task_id: f"/fake/project/.forge/worktrees/{repo_id}/{task_id}",
+        )
+        return mixin
+
+    async def test_lock_acquired_once_on_first_merge_success(self):
+        """When the first merge attempt succeeds, _merge_lock is entered exactly once."""
+        mixin = self._make_mixin()
+        mixin._emit = AsyncMock()
+        mixin._run_review = AsyncMock(return_value=(True, None))
+        mixin._ensure_clean_for_rebase = AsyncMock()
+        mixin._emit_merge_success = AsyncMock()
+        mixin._emit_merge_failure = AsyncMock()
+
+        task = MagicMock()
+        task.retry_count = 0
+        task.complexity = "medium"
+
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+        db.set_task_review_diff = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(
+            require_approval=False, build_cmd=None, test_cmd=None,
+        ))
+
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+        merge_worker.merge = AsyncMock(return_value=MergeResult(success=True))
+        merge_worker.retry_merge = AsyncMock()
+
+        worktree_mgr = MagicMock()
+
+        with patch("forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")):
+            with patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")):
+                await mixin._attempt_merge(
+                    db, merge_worker, worktree_mgr, task,
+                    "task-1", "/wt/task-1", "claude-3-5-sonnet-20241022", "pipe-1",
+                )
+
+        # Lock entered exactly once
+        assert mixin._merge_lock.__aenter__.call_count == 1
+        # retry_merge never called because first attempt succeeded
+        merge_worker.retry_merge.assert_not_called()
+        mixin._emit_merge_success.assert_called_once()
+
+    async def test_lock_acquired_once_when_first_merge_fails_and_retry_succeeds(self):
+        """When the first merge fails and retry succeeds, _merge_lock is still entered only once."""
+        mixin = self._make_mixin()
+        mixin._emit = AsyncMock()
+        mixin._run_review = AsyncMock(return_value=(True, None))
+        mixin._ensure_clean_for_rebase = AsyncMock()
+        mixin._emit_merge_success = AsyncMock()
+        mixin._emit_merge_failure = AsyncMock()
+
+        task = MagicMock()
+        task.retry_count = 0
+        task.complexity = "medium"
+
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+        db.set_task_review_diff = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(
+            require_approval=False, build_cmd=None, test_cmd=None,
+        ))
+
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+        # First attempt fails
+        merge_worker.merge = AsyncMock(return_value=MergeResult(
+            success=False, error="rebase conflict",
+        ))
+        # Retry succeeds
+        merge_worker.retry_merge = AsyncMock(return_value=MergeResult(success=True))
+
+        worktree_mgr = MagicMock()
+
+        with patch("forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")):
+            with patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")):
+                await mixin._attempt_merge(
+                    db, merge_worker, worktree_mgr, task,
+                    "task-1", "/wt/task-1", "claude-3-5-sonnet-20241022", "pipe-1",
+                )
+
+        # Lock entered exactly ONCE even though merge failed and retry was needed
+        assert mixin._merge_lock.__aenter__.call_count == 1
+        # Both merge and retry_merge were called
+        merge_worker.merge.assert_called_once()
+        merge_worker.retry_merge.assert_called_once()
+        # Success emitted for the retry
+        mixin._emit_merge_success.assert_called_once()
+        # Failure was also emitted (for the first failed attempt)
+        mixin._emit_merge_failure.assert_called_once()
+
+    async def test_lock_acquired_once_when_both_attempts_fail(self):
+        """When both merge attempts fail, _merge_lock is still entered only once."""
+        mixin = self._make_mixin()
+        mixin._emit = AsyncMock()
+        mixin._run_review = AsyncMock(return_value=(True, None))
+        mixin._ensure_clean_for_rebase = AsyncMock()
+        mixin._emit_merge_success = AsyncMock()
+        mixin._emit_merge_failure = AsyncMock()
+        mixin._attempt_tier2_resolution = AsyncMock()
+
+        task = MagicMock()
+        task.retry_count = 0
+        task.complexity = "medium"
+
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+        db.set_task_review_diff = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(
+            require_approval=False, build_cmd=None, test_cmd=None,
+        ))
+
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+        merge_worker.merge = AsyncMock(return_value=MergeResult(
+            success=False, error="rebase conflict",
+        ))
+        merge_worker.retry_merge = AsyncMock(return_value=MergeResult(
+            success=False, error="still conflicting",
+        ))
+
+        worktree_mgr = MagicMock()
+
+        with patch("forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")):
+            with patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")):
+                await mixin._attempt_merge(
+                    db, merge_worker, worktree_mgr, task,
+                    "task-1", "/wt/task-1", "claude-3-5-sonnet-20241022", "pipe-1",
+                )
+
+        # Lock still entered exactly once
+        assert mixin._merge_lock.__aenter__.call_count == 1
+        # Tier 2 resolution was triggered
+        mixin._attempt_tier2_resolution.assert_called_once()
+        mixin._emit_merge_success.assert_not_called()

@@ -70,16 +70,18 @@ def _render_markdown(line: str) -> str:
 
     # Bullets
     if stripped.startswith("- "):
-        inner = stripped[2:]
-        # Apply inline formatting to bullet content
-        inner = re.sub(r'\*\*(.+?)\*\*', lambda m: f"[bold]{_escape(m.group(1))}[/]", inner)
-        inner = re.sub(r'`([^`]+)`', lambda m: f"[#79c0ff]{_escape(m.group(1))}[/]", inner)
+        inner = _escape(stripped[2:])
+        # Apply inline formatting to already-escaped bullet content
+        inner = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/]', inner)
+        inner = re.sub(r'`([^`]+)`', r'[#79c0ff]\1[/]', inner)
         return f"  • {inner}"
 
+    # Escape all text first to prevent Rich markup injection
+    line = _escape(line)
     # Bold: **text**
-    line = re.sub(r'\*\*(.+?)\*\*', lambda m: f"[bold]{_escape(m.group(1))}[/]", line)
+    line = re.sub(r'\*\*(.+?)\*\*', r'[bold]\1[/]', line)
     # Inline code: `text`
-    line = re.sub(r'`([^`]+)`', lambda m: f"[#79c0ff]{_escape(m.group(1))}[/]", line)
+    line = re.sub(r'`([^`]+)`', r'[#79c0ff]\1[/]', line)
 
     return line
 

@@ -104,15 +104,33 @@ def _build_task_description(payload: dict, extra_instruction: str) -> str:
 
 _webhook_rate_limit: dict[str, float] = {}
 WEBHOOK_RATE_LIMIT_SECONDS = 300  # 5 minutes
+_RATE_LIMIT_MAX_ENTRIES = 10_000
 
 
 def _check_rate_limit(repo: str, issue_number: int) -> bool:
     """Return True if a pipeline can be triggered for this issue.
 
     False if rate-limited (< 5 min since last trigger for the same issue).
+    Also enforces a max-entries cap to prevent unbounded memory growth:
+    when the dict exceeds ``_RATE_LIMIT_MAX_ENTRIES``, the oldest entries
+    are evicted.
     """
     key = f"{repo}#{issue_number}"
     now = datetime.now(timezone.utc).timestamp()
+
+    # Evict expired entries first
+    expired_cutoff = now - WEBHOOK_RATE_LIMIT_SECONDS
+    expired_keys = [k for k, v in _webhook_rate_limit.items() if v < expired_cutoff]
+    for k in expired_keys:
+        del _webhook_rate_limit[k]
+
+    # If still over capacity, evict oldest entries
+    if len(_webhook_rate_limit) >= _RATE_LIMIT_MAX_ENTRIES:
+        sorted_keys = sorted(_webhook_rate_limit, key=_webhook_rate_limit.get)  # type: ignore[arg-type]
+        excess = len(_webhook_rate_limit) - _RATE_LIMIT_MAX_ENTRIES + 1
+        for k in sorted_keys[:excess]:
+            del _webhook_rate_limit[k]
+
     last = _webhook_rate_limit.get(key, 0)
     if now - last < WEBHOOK_RATE_LIMIT_SECONDS:
         return False
@@ -332,7 +350,7 @@ async def _run_webhook_pipeline(
             logger.warning("Auto-PR failed for webhook pipeline %s: %s", pipeline_id, pr_exc)
             await _post_issue_comment(
                 repo_full_name, issue_number,
-                f"✅ **Pipeline complete!** (PR creation failed: {pr_exc})",
+                "✅ **Pipeline complete!** (PR creation failed. Check server logs for details.)",
                 project_dir,
             )
 
@@ -344,6 +362,6 @@ async def _run_webhook_pipeline(
             pass
         await _post_issue_comment(
             repo_full_name, issue_number,
-            f"❌ **Pipeline failed**\n\n```\n{str(exc)[:500]}\n```",
+            f"❌ **Pipeline failed** (`{type(exc).__name__}`). Check server logs for details.",
             project_dir,
         )

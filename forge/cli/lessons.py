@@ -91,6 +91,32 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
     project_dir = os.path.abspath(project_dir)
     scope = "global" if is_global else "project"
 
+    effective_trigger = trigger or title
+    effective_project_dir = None if is_global else project_dir
+
+    async def _check_dup():
+        db = _get_db()
+        await db.initialize()
+        try:
+            return await db.find_matching_lesson(
+                effective_trigger, project_dir=effective_project_dir,
+            )
+        finally:
+            await db.close()
+
+    # Check for similar existing lesson before inserting
+    try:
+        existing = asyncio.run(_check_dup())
+    except Exception:
+        existing = None
+
+    if existing:
+        if not click.confirm(
+            f"Similar lesson exists: {existing.title}. Add anyway?",
+        ):
+            click.echo("Aborted.")
+            return
+
     async def _run():
         db = _get_db()
         await db.initialize()
@@ -98,8 +124,8 @@ def lessons_add(project_dir: str, is_global: bool, category: str, title: str, re
             return await db.add_lesson(
                 scope=scope, category=category,
                 title=title, content=title,
-                trigger=trigger or title, resolution=resolution,
-                project_dir=None if is_global else project_dir,
+                trigger=effective_trigger, resolution=resolution,
+                project_dir=effective_project_dir,
             )
         finally:
             await db.close()

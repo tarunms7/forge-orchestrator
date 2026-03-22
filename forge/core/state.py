@@ -12,8 +12,8 @@ _TRANSITIONS: dict[TaskState, set[TaskState]] = {
     TaskState.BLOCKED: {TaskState.TODO, TaskState.CANCELLED, TaskState.ERROR},
     TaskState.MERGING: {TaskState.DONE, TaskState.IN_PROGRESS, TaskState.ERROR},
     TaskState.DONE: set(),
-    TaskState.CANCELLED: set(),
-    TaskState.ERROR: set(),
+    TaskState.CANCELLED: {TaskState.TODO},
+    TaskState.ERROR: {TaskState.TODO},
 }
 
 
