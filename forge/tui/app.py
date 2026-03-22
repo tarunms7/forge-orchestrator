@@ -392,6 +392,7 @@ class ForgeApp(App):
     async def on_final_approval_screen_create_pr(self, event) -> None:
         """User confirmed PR creation from FinalApprovalScreen."""
         from forge.tui.pr_creator import (
+            auto_format_branch,
             create_pr,
             create_prs_multi_repo,
             generate_pr_body,
@@ -527,6 +528,9 @@ class ForgeApp(App):
 
         # ── Single-repo PR creation (existing path) ────────────────────
         try:
+            # Auto-format the branch before pushing (non-fatal if it fails)
+            await auto_format_branch(project_dir, branch)
+
             pushed = await push_branch(project_dir, branch)
             if not pushed:
                 self._state.apply_event("pipeline:pr_failed", {"error": "git push failed"})

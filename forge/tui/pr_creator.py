@@ -4,9 +4,197 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("forge.tui.pr_creator")
+
+
+# Formatters to try, in order.  Each entry: (tool_name, check_binary, cmd, cwd_subdir, success_indicator)
+# cwd_subdir: if set, run from that subdirectory (e.g. "web" for prettier).
+# success_indicator: bytes to look for in stdout to know if anything was formatted.
+_FORMATTERS: list[tuple[str, str, list[str], str | None, bytes]] = [
+    ("ruff", "ruff", ["ruff", "format", "."], None, b"reformatted"),
+    ("gofmt", "gofmt", ["gofmt", "-w", "."], None, b""),  # gofmt has no output on success
+    ("cargo fmt", "cargo", ["cargo", "fmt"], None, b""),
+]
+
+
+def _detect_formatters(worktree_path: str) -> list[tuple[str, list[str], str]]:
+    """Detect which formatters are available and relevant for this project.
+
+    Returns list of (name, command, cwd) tuples.
+    """
+    import os
+
+    result = []
+
+    for name, binary, cmd, subdir, _ in _FORMATTERS:
+        if not shutil.which(binary):
+            continue
+        cwd = os.path.join(worktree_path, subdir) if subdir else worktree_path
+        # Check if there are relevant files
+        if name == "ruff" and not any(
+            f.endswith(".py")
+            for f in os.listdir(worktree_path)
+            if os.path.isfile(os.path.join(worktree_path, f))
+        ):
+            # Check deeper — maybe Python files are in subdirs
+            has_py = os.path.isfile(
+                os.path.join(worktree_path, "pyproject.toml")
+            ) or os.path.isfile(os.path.join(worktree_path, "setup.py"))
+            if not has_py:
+                continue
+        if name == "cargo fmt" and not os.path.isfile(os.path.join(worktree_path, "Cargo.toml")):
+            continue
+        if name == "gofmt" and not os.path.isfile(os.path.join(worktree_path, "go.mod")):
+            continue
+        result.append((name, cmd, cwd))
+
+    # Prettier: check in root and common frontend subdirs
+    if shutil.which("npx"):
+        for subdir in [None, "web", "frontend", "client"]:
+            check_dir = os.path.join(worktree_path, subdir) if subdir else worktree_path
+            if os.path.isfile(os.path.join(check_dir, "package.json")):
+                # Check if prettier is a dependency
+                try:
+                    import json
+
+                    with open(os.path.join(check_dir, "package.json"), encoding="utf-8") as f:
+                        pkg = json.load(f)
+                    all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                    if "prettier" in all_deps:
+                        result.append(("prettier", ["npx", "prettier", "--write", "."], check_dir))
+                except Exception:
+                    pass
+
+    return result
+
+
+async def auto_format_branch(project_dir: str, branch: str) -> bool:
+    """Run code formatters on the pipeline branch before push.
+
+    Creates a temporary worktree, detects project languages, runs the
+    appropriate formatters (ruff for Python, gofmt for Go, cargo fmt for
+    Rust, prettier for JS/TS), commits changes if any, then cleans up.
+
+    Returns True if formatting was applied, False otherwise.
+    Completely non-fatal — if anything fails, PR creation proceeds.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="forge-format-")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "worktree",
+            "add",
+            tmp_dir,
+            branch,
+            cwd=project_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning("Could not create format worktree: %s", stderr.decode())
+            return False
+
+        # Detect and run formatters
+        formatters = _detect_formatters(tmp_dir)
+        if not formatters:
+            logger.debug("No formatters detected for this project")
+            return False
+
+        for name, cmd, cwd in formatters:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, fmt_stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+                if proc.returncode == 0:
+                    logger.info("Formatter %s completed: %s", name, stdout.decode().strip()[:200])
+                    pass  # Success — we'll check for actual changes via git diff below
+                else:
+                    logger.warning(
+                        "Formatter %s failed (exit %d): %s",
+                        name,
+                        proc.returncode,
+                        fmt_stderr.decode()[:200],
+                    )
+            except TimeoutError:
+                logger.warning("Formatter %s timed out after 120s", name)
+            except Exception as e:
+                logger.warning("Formatter %s error: %s", name, e)
+
+        # Check if any files actually changed
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "diff",
+            "--quiet",
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode == 0:
+            # No changes — formatters ran but nothing to commit
+            return False
+
+        # Stage and commit
+        await asyncio.create_subprocess_exec(
+            "git",
+            "add",
+            "-A",
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "diff",
+            "--cached",
+            "--quiet",
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode != 0:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "commit",
+                "-m",
+                "style: auto-format code before PR",
+                cwd=tmp_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            logger.info("Committed auto-format changes on %s", branch)
+            return True
+
+        return False
+    except Exception as e:
+        logger.warning("Auto-format failed (non-fatal): %s", e)
+        return False
+    finally:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "worktree",
+                "remove",
+                tmp_dir,
+                "--force",
+                cwd=project_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+        except Exception:
+            pass
 
 
 async def push_branch(project_dir: str, branch: str) -> bool:
