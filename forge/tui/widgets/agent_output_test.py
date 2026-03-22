@@ -438,7 +438,7 @@ def test_update_unified_before_compose():
 
 def test_render_markdown_escapes_rich_markup_in_plain_text():
     """Square brackets in plain text should be escaped to prevent Rich markup injection."""
-    from forge.tui.widgets.agent_output import _render_markdown, _IN_CODE_BLOCK
+    from forge.tui.widgets.agent_output import _render_markdown
     import forge.tui.widgets.agent_output as ao
     ao._IN_CODE_BLOCK = False
 
