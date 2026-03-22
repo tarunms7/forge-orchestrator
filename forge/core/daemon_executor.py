@@ -870,15 +870,27 @@ class ExecutorMixin:
             if delta_result.returncode == 0 and delta_result.stdout.strip():
                 delta_diff = delta_result.stdout
             else:
-                # Agent made no changes in response to reviewer feedback.
-                # This means the agent determined the feedback was already addressed
-                # or inapplicable. Auto-pass to avoid infinite review loops.
-                no_changes_on_retry = True
-                logger.info(
-                    "Task %s retry %d: agent made no changes — auto-passing review "
-                    "(feedback was likely already addressed)",
-                    task_id, task.retry_count,
-                )
+                # Agent made no changes in the delta between retries.
+                # Only auto-pass if BOTH conditions are true:
+                #   1. This is retry 2+ (not the first retry — first retry always
+                #      gets a full LLM review since the "no changes" might mean
+                #      the agent fixed lint issues that don't show in delta)
+                #   2. The full diff vs base is also empty (truly nothing to review)
+                if task.retry_count >= 2 and not diff.strip():
+                    no_changes_on_retry = True
+                    logger.info(
+                        "Task %s retry %d: no changes in delta AND no diff vs base "
+                        "— auto-passing review",
+                        task_id, task.retry_count,
+                    )
+                else:
+                    # Delta is empty but full diff exists — run full review.
+                    # Common case: agent fixed lint on retry, code was already correct.
+                    logger.info(
+                        "Task %s retry %d: no delta changes but full diff exists "
+                        "— running full LLM review",
+                        task_id, task.retry_count,
+                    )
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         # Store and emit the diff so the TUI can display it immediately.
         # This is the diff computed from the worktree (task's actual changes)
