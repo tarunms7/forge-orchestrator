@@ -72,3 +72,40 @@ class TestWebSocketEndpoint:
         # Connection closes when exiting context manager
         manager = app.state.ws_manager
         assert len(manager.active_connections.get("pipe-xyz", [])) == 0
+
+
+class TestWebSocketBroadcastRepoId:
+    """Test that broadcasts can include repo_id field."""
+
+    def test_ws_event_includes_repo_id(self, app, valid_token):
+        """Broadcast with repo_id field should arrive at the client with repo_id."""
+        import asyncio
+
+        client = TestClient(app)
+        with client.websocket_connect("/api/ws/pipe-repo") as ws:
+            ws.send_json({"token": valid_token})
+            msg = ws.receive_json()
+            assert msg["type"] == "auth_ok"
+
+            manager = app.state.ws_manager
+
+            # Broadcast a task:state_changed event with repo_id
+            async def do_broadcast():
+                await manager.broadcast("pipe-repo", {
+                    "type": "task:state_changed",
+                    "task_id": "t1",
+                    "state": "merging",
+                    "repo_id": "backend",
+                })
+
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(do_broadcast())
+            finally:
+                loop.close()
+
+            received = ws.receive_json()
+            assert received["type"] == "task:state_changed"
+            assert received["task_id"] == "t1"
+            assert received["state"] == "merging"
+            assert received["repo_id"] == "backend"

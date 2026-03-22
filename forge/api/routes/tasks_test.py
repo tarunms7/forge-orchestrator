@@ -1917,3 +1917,408 @@ class TestBackgroundTaskDoneCallback:
         except asyncio.CancelledError:
             pass
         assert logged == []
+
+
+# ── Multi-repo tests ─────────────────────────────────────────────────
+
+
+class TestMultiRepoPipelineCreation:
+    """Chunk 2: Tests for multi-repo support in pipeline creation."""
+
+    async def test_create_pipeline_with_repos(self, client_with_app, tmp_path):
+        """POST /api/tasks with repos list returns repos in response."""
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="multi-repo@example.com")
+        headers = _auth_header(token)
+
+        # Create real directories for repo paths
+        backend_dir = tmp_path / "backend"
+        frontend_dir = tmp_path / "frontend"
+        backend_dir.mkdir()
+        frontend_dir.mkdir()
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Multi-repo task",
+                "project_path": str(tmp_path),
+                "repos": [
+                    {"id": "backend", "path": str(backend_dir), "base_branch": "main"},
+                    {"id": "frontend", "path": str(frontend_dir)},
+                ],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "pipeline_id" in data
+        assert data["repos"] is not None
+        assert len(data["repos"]) == 2
+        assert data["repos"][0]["id"] == "backend"
+        assert data["repos"][0]["path"] == str(backend_dir)
+        assert data["repos"][0]["base_branch"] == "main"
+        assert data["repos"][1]["id"] == "frontend"
+        assert data["repos"][1]["base_branch"] is None
+
+    async def test_create_pipeline_without_repos(self, client):
+        """POST /api/tasks without repos still works (backward compat)."""
+        token = await _register_and_get_token(client, email="no-repos@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Single-repo task",
+                "project_path": "/some/path",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "pipeline_id" in data
+        assert data["repos"] is None
+
+    async def test_create_pipeline_invalid_repos_missing_id(self, client):
+        """POST /api/tasks with repos missing 'id' returns 422."""
+        token = await _register_and_get_token(client, email="bad-repos-id@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Bad repos",
+                "project_path": "/some/path",
+                "repos": [{"path": "/some/dir"}],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_create_pipeline_invalid_repos_missing_path(self, client):
+        """POST /api/tasks with repos missing 'path' returns 422."""
+        token = await _register_and_get_token(client, email="bad-repos-path@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Bad repos",
+                "project_path": "/some/path",
+                "repos": [{"id": "backend"}],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_create_pipeline_invalid_repos_nonexistent_path(self, client):
+        """POST /api/tasks with repos pointing to nonexistent path returns 400."""
+        token = await _register_and_get_token(client, email="bad-repos-nodir@example.com")
+        headers = _auth_header(token)
+
+        resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Bad repos",
+                "project_path": "/some/path",
+                "repos": [{"id": "backend", "path": "/nonexistent/path/that/does/not/exist"}],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestMultiRepoPipelineStatus:
+    """Chunk 3: Tests for multi-repo fields in pipeline/task status."""
+
+    async def test_pipeline_status_includes_repos(self, client_with_app, tmp_path):
+        """GET /api/tasks/{id} response includes repos field."""
+        import json as json_mod
+        import uuid
+
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="status-repos@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        repos_data = [
+            {"id": "backend", "path": str(tmp_path / "backend"), "base_branch": "main"},
+            {"id": "frontend", "path": str(tmp_path / "frontend"), "base_branch": None},
+        ]
+
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Status test", project_dir=str(tmp_path),
+                status="planned", user_id=user_id,
+                repos_json=json_mod.dumps(repos_data),
+            ))
+            await session.commit()
+
+        resp = await client.get(f"/api/tasks/{pid}", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pipeline_id"] == pid
+
+    async def test_task_status_includes_repo_id(self, client_with_app, tmp_path):
+        """Task entries in status response have repo_id field."""
+        import json as json_mod
+        import uuid
+
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="task-repo-id@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Repo ID test", project_dir=str(tmp_path),
+                status="executing", user_id=user_id,
+                task_graph_json=json_mod.dumps({"tasks": [
+                    {"id": "t1", "title": "Backend task", "description": "D", "files": [], "depends_on": [], "complexity": "low"},
+                ]}),
+            ))
+            session.add(TaskRow(
+                id="t1", title="Backend task", description="D", files=[], depends_on=[],
+                complexity="low", state="in_progress", pipeline_id=pid,
+                repo_id="backend",
+            ))
+            await session.commit()
+
+        resp = await client.get(f"/api/tasks/{pid}", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        tasks = data["tasks"]
+        assert len(tasks) >= 1
+        assert tasks[0]["repo_id"] == "backend"
+
+
+class TestMultiRepoWorktreeCleanup:
+    """Chunk 5: Tests for multi-repo worktree cleanup."""
+
+    def test_cleanup_worktree_multi_repo(self, tmp_path):
+        """_cleanup_worktree with repo_id resolves to <worktrees>/backend/<task_id>/."""
+        import os
+        from unittest.mock import patch, MagicMock
+
+        from forge.api.routes.tasks import _cleanup_worktree
+
+        mock_wt_mgr = MagicMock()
+        with patch("forge.merge.worktree.WorktreeManager", return_value=mock_wt_mgr) as MockWTMgr:
+            _cleanup_worktree(str(tmp_path), "task-123", repo_id="backend")
+
+            # Verify the worktrees_dir includes the repo_id
+            call_args = MockWTMgr.call_args
+            worktrees_dir = call_args[0][1]
+            assert "backend" in worktrees_dir
+            assert worktrees_dir == os.path.join(str(tmp_path), ".forge", "worktrees", "backend")
+
+    def test_cleanup_worktree_default_repo(self, tmp_path):
+        """_cleanup_worktree with repo_id='default' uses standard worktrees dir."""
+        import os
+        from unittest.mock import patch, MagicMock
+
+        from forge.api.routes.tasks import _cleanup_worktree
+
+        mock_wt_mgr = MagicMock()
+        with patch("forge.merge.worktree.WorktreeManager", return_value=mock_wt_mgr) as MockWTMgr:
+            _cleanup_worktree(str(tmp_path), "task-456", repo_id="default")
+
+            call_args = MockWTMgr.call_args
+            worktrees_dir = call_args[0][1]
+            assert worktrees_dir == os.path.join(str(tmp_path), ".forge", "worktrees")
+
+    def test_cleanup_worktree_no_repo_id(self, tmp_path):
+        """_cleanup_worktree without repo_id uses standard worktrees dir."""
+        import os
+        from unittest.mock import patch, MagicMock
+
+        from forge.api.routes.tasks import _cleanup_worktree
+
+        mock_wt_mgr = MagicMock()
+        with patch("forge.merge.worktree.WorktreeManager", return_value=mock_wt_mgr) as MockWTMgr:
+            _cleanup_worktree(str(tmp_path), "task-789")
+
+            call_args = MockWTMgr.call_args
+            worktrees_dir = call_args[0][1]
+            assert worktrees_dir == os.path.join(str(tmp_path), ".forge", "worktrees")
+
+    async def test_cleanup_all_worktrees_multi_repo(self):
+        """_cleanup_all_pipeline_worktrees passes each task's repo_id."""
+        from unittest.mock import patch, AsyncMock, MagicMock
+
+        from forge.api.routes.tasks import _cleanup_all_pipeline_worktrees
+
+        mock_db = AsyncMock()
+        task1 = MagicMock()
+        task1.id = "t1"
+        task1.repo_id = "backend"
+        task2 = MagicMock()
+        task2.id = "t2"
+        task2.repo_id = "frontend"
+        mock_db.list_tasks_by_pipeline.return_value = [task1, task2]
+
+        with patch("forge.api.routes.tasks._cleanup_worktree") as mock_cleanup, \
+             patch("subprocess.run"):
+            mock_cleanup.return_value = True
+            await _cleanup_all_pipeline_worktrees(mock_db, "pipe-1", "/proj")
+
+            assert mock_cleanup.call_count == 2
+            mock_cleanup.assert_any_call("/proj", "t1", repo_id="backend")
+            mock_cleanup.assert_any_call("/proj", "t2", repo_id="frontend")
+
+
+class TestMultiRepoBackwardCompat:
+    """Chunk 7: Backward compatibility tests for single-repo pipelines."""
+
+    async def test_single_repo_backward_compat(self, client):
+        """Full create→status flow without repos produces identical responses."""
+        token = await _register_and_get_token(client, email="compat@example.com")
+        headers = _auth_header(token)
+
+        # Create without repos
+        create_resp = await client.post(
+            "/api/tasks",
+            json={
+                "description": "Backward compat test",
+                "project_path": "/some/path",
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 201
+        data = create_resp.json()
+        assert data["repos"] is None
+        pipeline_id = data["pipeline_id"]
+
+        # Get status
+        status_resp = await client.get(
+            f"/api/tasks/{pipeline_id}",
+            headers=headers,
+        )
+        assert status_resp.status_code == 200
+        status_data = status_resp.json()
+        assert status_data["pipeline_id"] == pipeline_id
+        assert status_data["repo_id"] == "default"
+
+
+class TestMultiRepoWebSocketBroadcasts:
+    """Chunk 6: WebSocket broadcasts include repo_id."""
+
+    async def test_approve_task_broadcast_includes_repo_id(self, client_with_app):
+        """approve_task broadcasts should include repo_id field."""
+        import asyncio
+        import uuid
+
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="ws-repo-id@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = "ws-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="WS test", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=[], depends_on=[],
+                complexity="low", state="awaiting_approval", pipeline_id=pid,
+                repo_id="backend",
+                approval_context='{"worktree_path": "/tmp/wt", "pipeline_branch": "forge/branch"}',
+            ))
+            await session.commit()
+
+        # Mock ws_manager to capture broadcasts
+        captured = []
+        mock_ws = MagicMock()
+
+        async def capture_broadcast(pipe_id, payload):
+            captured.append(payload)
+
+        mock_ws.broadcast = capture_broadcast
+        app.state.ws_manager = mock_ws
+
+        # Mock the merge worker and diff stats to avoid filesystem access
+        with patch("forge.merge.worker.MergeWorker"), \
+             patch("forge.core.daemon_helpers._get_diff_stats", new_callable=AsyncMock, return_value={"linesAdded": 0, "linesRemoved": 0}), \
+             patch("forge.api.routes.tasks._cleanup_worktree"):
+            resp = await client.post(
+                f"/api/tasks/{pid}/tasks/{tid}/approve",
+                headers=headers,
+            )
+            assert resp.status_code == 202
+
+        # The first broadcast should be the "merging" state change with repo_id
+        merging_broadcasts = [c for c in captured if c.get("type") == "task:state_changed" and c.get("state") == "merging"]
+        assert len(merging_broadcasts) >= 1
+        assert merging_broadcasts[0].get("repo_id") == "backend"
+
+    async def test_reject_task_broadcast_includes_repo_id(self, client_with_app):
+        """reject_task broadcast should include repo_id field."""
+        import uuid
+
+        from forge.api.security.jwt import decode_token
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="ws-reject@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = "ws-reject-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(PipelineRow(
+                id=pid, description="Reject test", project_dir="/proj",
+                status="executing", user_id=user_id,
+            ))
+            session.add(TaskRow(
+                id=tid, title="T1", description="D", files=[], depends_on=[],
+                complexity="low", state="awaiting_approval", pipeline_id=pid,
+                repo_id="frontend",
+            ))
+            await session.commit()
+
+        # Mock ws_manager
+        captured = []
+        mock_ws = MagicMock()
+
+        async def capture_broadcast(pipe_id, payload):
+            captured.append(payload)
+
+        mock_ws.broadcast = capture_broadcast
+        app.state.ws_manager = mock_ws
+
+        resp = await client.post(
+            f"/api/tasks/{pid}/tasks/{tid}/reject",
+            json={"reason": "Not ready"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+        # The broadcast should include repo_id
+        state_broadcasts = [c for c in captured if c.get("type") == "task:state_changed"]
+        assert len(state_broadcasts) >= 1
+        assert state_broadcasts[0].get("repo_id") == "frontend"

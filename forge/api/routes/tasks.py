@@ -21,6 +21,7 @@ from forge.api.models.schemas import (
     ExecuteRequest,
     PipelineResponse,
     RejectRequest,
+    RepoEntry,
     RestartPipelineRequest,
     TaskListItem,
     TaskStatusResponse,
@@ -44,11 +45,13 @@ security = HTTPBearer(auto_error=False)
 # Worktree cleanup helpers
 # ---------------------------------------------------------------------------
 
-def _cleanup_worktree(project_dir: str, task_id: str) -> bool:
+def _cleanup_worktree(project_dir: str, task_id: str, repo_id: str | None = None) -> bool:
     """Remove a single task's worktree + branch. Returns True if cleaned."""
     from forge.merge.worktree import WorktreeManager
 
     worktrees_dir = os.path.join(project_dir, ".forge", "worktrees")
+    if repo_id and repo_id != "default":
+        worktrees_dir = os.path.join(project_dir, ".forge", "worktrees", repo_id)
     try:
         wt_mgr = WorktreeManager(project_dir, worktrees_dir)
         wt_mgr.remove(task_id)
@@ -65,7 +68,7 @@ async def _cleanup_all_pipeline_worktrees(
     tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
     cleaned = 0
     for task in tasks:
-        if _cleanup_worktree(project_dir, task.id):
+        if _cleanup_worktree(project_dir, task.id, repo_id=getattr(task, "repo_id", "default")):
             cleaned += 1
     # Prune stale git worktree admin files
     subprocess.run(
@@ -379,6 +382,18 @@ async def create_task(
             for path in image_paths:
                 description += f"- {path}\n"
 
+    # Validate repo paths exist on disk
+    if body.repos:
+        for repo in body.repos:
+            if not os.path.isdir(repo.path):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Repository path does not exist: {repo.path}",
+                )
+
+    # Serialize repos for DB storage
+    repos_json = json.dumps([r.model_dump() for r in body.repos]) if body.repos else None
+
     if forge_db is not None:
         # Resolve template + preset + overrides into a merged config
         resolved_config = await _resolve_pipeline_config(body, forge_db)
@@ -396,6 +411,7 @@ async def create_task(
             build_cmd=resolved_build_cmd,
             test_cmd=resolved_test_cmd,
             budget_limit_usd=body.budget_limit_usd,
+            repos_json=repos_json,
         )
 
         # Store resolved template config on the pipeline
@@ -504,7 +520,10 @@ async def create_task(
             "tasks": [],
         }
 
-    return PipelineResponse(pipeline_id=pipeline_id)
+    return PipelineResponse(
+        pipeline_id=pipeline_id,
+        repos=[r.model_dump() for r in body.repos] if body.repos else None,
+    )
 
 
 @router.get("/stats")
@@ -871,6 +890,7 @@ async def approve_task(
             "type": "task:state_changed",
             "task_id": task_id,
             "state": "merging",
+            "repo_id": getattr(task, "repo_id", "default"),
         })
 
     # Launch merge in background
@@ -921,6 +941,7 @@ async def approve_task(
                         "type": "task:state_changed",
                         "task_id": task_id,
                         "state": "done",
+                        "repo_id": getattr(task, "repo_id", "default"),
                     })
             else:
                 logger.error("Merge failed for task %s: %s", task_id, merge_result.error)
@@ -943,18 +964,19 @@ async def approve_task(
                         "type": "task:state_changed",
                         "task_id": task_id,
                         "state": "error",
+                        "repo_id": getattr(task, "repo_id", "default"),
                     })
 
             # Clear approval context after merge completes
             await forge_db.clear_task_approval_context(task_id)
 
             # Clean up worktree (success or failure — it's no longer useful)
-            _cleanup_worktree(project_dir, task_id)
+            _cleanup_worktree(project_dir, task_id, repo_id=getattr(task, "repo_id", "default"))
         except Exception as exc:
             logger.exception("Merge failed for approved task %s: %s", task_id, exc)
             await forge_db.update_task_state(task_id, "error")
             # Still try to clean up the worktree on error
-            _cleanup_worktree(pipeline.project_dir, task_id)
+            _cleanup_worktree(pipeline.project_dir, task_id, repo_id=getattr(task, "repo_id", "default"))
 
     def _on_done(t: asyncio.Task) -> None:
         if not t.cancelled() and t.exception():
@@ -1008,6 +1030,7 @@ async def reject_task(
             "type": "task:state_changed",
             "task_id": task_id,
             "state": "todo",
+            "repo_id": getattr(task, "repo_id", "default"),
         })
 
     return {"status": "retrying", "task_id": task_id}
@@ -1577,6 +1600,9 @@ async def get_task_status(
                 enriched["cost_usd"] = (row.agent_cost_usd or 0) + (row.review_cost_usd or 0)
                 enriched["input_tokens"] = row.input_tokens
                 enriched["output_tokens"] = row.output_tokens
+            # Add repo_id from TaskRow (defaults to "default" for single-repo)
+            if tid in task_row_map:
+                enriched["repo_id"] = getattr(task_row_map[tid], "repo_id", "default")
             enriched_tasks.append(enriched)
 
         return TaskStatusResponse(
