@@ -4,6 +4,8 @@ import os
 import shutil
 import subprocess
 
+from forge.core.sanitize import validate_task_id
+
 
 class WorktreeManager:
     """Creates, tracks, and removes git worktrees for tasks."""
@@ -47,6 +49,7 @@ class WorktreeManager:
         Handles repos with no commits by using ``--orphan`` flag so that
         each worktree branch starts as an independent root.
         """
+        validate_task_id(task_id)
         path = self._task_path(task_id)
         if os.path.exists(path):
             raise ValueError(f"Worktree for '{task_id}' already exists: {path}")
@@ -92,6 +95,7 @@ class WorktreeManager:
 
     def remove(self, task_id: str) -> None:
         """Remove a task's worktree and its branch."""
+        validate_task_id(task_id)
         path = self._task_path(task_id)
         if not os.path.exists(path):
             raise ValueError(f"Worktree for '{task_id}' does not exist")

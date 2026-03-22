@@ -17,6 +17,7 @@ from enum import Enum
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.agents.adapter import ClaudeAdapter
+from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.agents.runtime import AgentRuntime
 from forge.core.events import EventEmitter
 from forge.core.sdk_helpers import sdk_query
@@ -347,8 +348,10 @@ async def _execute_task_followup(
     # Set up worktree on the pipeline branch
     # Multi-repo: {project_dir}/.forge/worktrees/{repo_id}/{worktree_id}
     # Single-repo: {project_dir}/.forge/worktrees/{worktree_id}
+    validate_task_id(task_id)
     worktree_id = f"followup-{followup_id[:8]}-{task_id}"
     if is_multi_repo:
+        validate_repo_id(repo_id)
         worktree_dir = os.path.join(project_dir, ".forge", "worktrees", repo_id, worktree_id)
     else:
         worktree_dir = os.path.join(project_dir, ".forge", "worktrees", worktree_id)

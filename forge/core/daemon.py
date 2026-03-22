@@ -17,6 +17,7 @@ from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.cost_estimator import estimate_pipeline_cost
 from forge.core.errors import ForgeError
+from forge.core.sanitize import validate_task_id
 from forge.core.models import RepoConfig, row_to_record
 from forge.core.events import EventEmitter
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
@@ -331,8 +332,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if len(self._repos) > 1:
             rc = self._repos.get(repo_id)
             repo_path = rc.path if rc else self._workspace_dir
-            return os.path.join(repo_path, ".forge", "worktrees", task_id)
-        return os.path.join(self._workspace_dir, ".forge", "worktrees", task_id)
+            return os.path.join(repo_path, ".forge", "worktrees", validate_task_id(task_id))
+        return os.path.join(self._workspace_dir, ".forge", "worktrees", validate_task_id(task_id))
 
     def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:
         """Return the per-repo infrastructure tuple for *repo_id*.

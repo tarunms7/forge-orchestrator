@@ -16,6 +16,7 @@ import subprocess
 from rich.table import Table
 
 from forge.core.logging_config import make_console
+from forge.core.sanitize import validate_repo_id, validate_task_id
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -838,8 +839,10 @@ def compute_worktree_path(
     Single-repo (repo_count=1, repo_id='default'): <workspace_dir>/.forge/worktrees/<task_id>
     Multi-repo (repo_count > 1): <workspace_dir>/.forge/worktrees/<repo_id>/<task_id>
     """
+    validate_task_id(task_id)
     if repo_count <= 1 and repo_id == "default":
         return os.path.join(workspace_dir, ".forge", "worktrees", task_id)
+    validate_repo_id(repo_id)
     return os.path.join(workspace_dir, ".forge", "worktrees", repo_id, task_id)
 
 

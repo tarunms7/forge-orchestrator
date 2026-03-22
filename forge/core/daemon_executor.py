@@ -8,6 +8,7 @@ import os
 import time
 
 from forge.core.budget import check_budget
+from forge.core.sanitize import validate_task_id
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
@@ -189,7 +190,7 @@ class ExecutorMixin:
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
-        branch = f"forge/{task_id}"
+        branch = f"forge/{validate_task_id(task_id)}"
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
         await self._ensure_clean_for_rebase(worktree_path, task_id)
@@ -1017,7 +1018,7 @@ class ExecutorMixin:
 
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
-        branch = f"forge/{task_id}"
+        branch = f"forge/{validate_task_id(task_id)}"
 
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
