@@ -266,8 +266,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     def _setup_per_repo_infra(self, pipeline_branch: str) -> None:
         """Create per-repo WorktreeManager, MergeWorker, and pipeline branch names.
 
-        Single default repo uses flat layout (.forge/worktrees/).
-        Multi-repo nests by repo_id (.forge/worktrees/<repo_id>/).
+        Single default repo uses flat layout (<project_dir>/.forge/worktrees/).
+        Multi-repo creates worktrees inside each repo's own directory
+        (<repo_path>/.forge/worktrees/) so git operations use the correct remote.
 
         Args:
             pipeline_branch: The resolved pipeline branch name (e.g. 'forge/pipeline-abc12345').
@@ -280,7 +281,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         for repo_id, rc in self._repos.items():
             if multi:
-                wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees", repo_id)
+                # Each repo gets worktrees in its own .forge/ directory
+                # so git push/pull use the correct remote
+                wt_dir = os.path.join(rc.path, ".forge", "worktrees")
             else:
                 wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
 
@@ -308,11 +311,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     def _worktree_path(self, repo_id: str, task_id: str) -> str:
         """Compute the filesystem path for a task's git worktree.
 
-        Single default repo: .forge/worktrees/<task_id> (flat, backward compat).
-        Multi-repo: .forge/worktrees/<repo_id>/<task_id> (nested).
+        Single default repo: <project_dir>/.forge/worktrees/<task_id> (flat, backward compat).
+        Multi-repo: <repo_path>/.forge/worktrees/<task_id> (inside each repo).
         """
         if len(self._repos) > 1:
-            return os.path.join(self._workspace_dir, ".forge", "worktrees", repo_id, task_id)
+            rc = self._repos.get(repo_id)
+            repo_path = rc.path if rc else self._workspace_dir
+            return os.path.join(repo_path, ".forge", "worktrees", task_id)
         return os.path.join(self._workspace_dir, ".forge", "worktrees", task_id)
 
     def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:

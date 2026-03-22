@@ -1274,7 +1274,7 @@ class TestWorktreePath:
         assert result == expected
 
     def test_worktree_path_multi_repo(self, tmp_path):
-        """Multi-repo uses nested layout: .forge/worktrees/<repo_id>/<task_id>."""
+        """Multi-repo creates worktrees inside each repo's own .forge/ directory."""
         repos = [
             RepoConfig(id="backend", path=str(tmp_path / "b"), base_branch="main"),
             RepoConfig(id="frontend", path=str(tmp_path / "f"), base_branch="develop"),
@@ -1286,7 +1286,7 @@ class TestWorktreePath:
         )
 
         result = daemon._worktree_path("backend", "task-1")
-        expected = os.path.join(str(tmp_path), ".forge", "worktrees", "backend", "task-1")
+        expected = os.path.join(str(tmp_path / "b"), ".forge", "worktrees", "task-1")
         assert result == expected
 
 
