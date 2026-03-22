@@ -1029,16 +1029,20 @@ class ExecutorMixin:
 
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
+        # Hold the lock for the entire first-attempt + retry sequence so no
+        # other task's merge can interleave between the two attempts.
         async with self._merge_lock:
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
+            if not merge_result.success:
+                console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
+                await self._emit_merge_failure(db, task_id, merge_result.error, pid)
+                await self._ensure_clean_for_rebase(worktree_path, task_id)  # clean before retry
+                retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
+            else:
+                retry_result = None
         if merge_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
             return
-        console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
-        await self._emit_merge_failure(db, task_id, merge_result.error, pid)
-        await self._ensure_clean_for_rebase(worktree_path, task_id)  # clean before retry
-        async with self._merge_lock:
-            retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
         if retry_result.success:
             await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref)
             return
