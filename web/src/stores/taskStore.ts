@@ -317,8 +317,18 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       payload: entry.payload as Record<string, unknown> || entry,
       timestamp: (entry.timestamp as string) || new Date().toISOString(),
     }));
+    const existing = get().tasks;
+    const merged: Record<string, TaskState> = {};
+    for (const [id, newTask] of Object.entries(newTasks)) {
+      const existingTask = existing[id];
+      if (existingTask && existingTask.output.length > newTask.output.length) {
+        merged[id] = { ...newTask, output: existingTask.output };
+      } else {
+        merged[id] = newTask;
+      }
+    }
     set({
-      tasks: newTasks,
+      tasks: merged,
       phase,
       timeline,
       prUrl: data.pr_url ?? null,
@@ -707,3 +717,6 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       }
     }),
 }));
+
+export const useTask = (taskId: string) =>
+  useTaskStore((s) => s.tasks[taskId]);

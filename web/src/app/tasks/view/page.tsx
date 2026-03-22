@@ -778,7 +778,7 @@ function TaskExecutionPageInner() {
       {showAgentCards ? (
         <div className={`task-grid ${isCancelled ? "opacity-50" : ""}`} style={isCancelled ? { pointerEvents: "none" } : {}}>
           {taskList.map((task) => (
-            <AgentCard key={task.id} task={task} onClick={isCancelled ? undefined : () => setSelectedTaskId(task.id)} />
+            <AgentCard key={task.id} taskId={task.id} onClick={isCancelled ? undefined : () => setSelectedTaskId(task.id)} />
           ))}
         </div>
       ) : (

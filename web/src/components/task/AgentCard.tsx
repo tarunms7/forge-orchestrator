@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TaskState } from "@/stores/taskStore";
-import { useTaskStore } from "@/stores/taskStore";
+import { useTaskStore, useTask } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
 import { apiPost } from "@/lib/api";
 import { FormattedLine } from "./FormattedLine";
@@ -137,8 +137,12 @@ function formatTokenCount(count: number): string {
 
 const COLLAPSED_LINE_LIMIT = 6;
 
-export default function AgentCard({ task, onClick }: { task: TaskState; onClick?: () => void }) {
+export default function AgentCard({ taskId, onClick }: { taskId: string; onClick?: () => void }) {
+  const task = useTask(taskId);
   const outputRef = useRef<HTMLDivElement>(null);
+
+  if (!task) return null;
+
   const stateInfo = STATE_CLASS[task.state];
   const [showModal, setShowModal] = useState(false);
   const pipelineId = useTaskStore((s) => s.pipelineId);
