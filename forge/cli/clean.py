@@ -1,6 +1,5 @@
 """Forge CLI clean command. Removes stale worktrees and orphaned forge branches."""
 
-import json
 import logging
 import os
 import subprocess
