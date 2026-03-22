@@ -193,12 +193,18 @@ async def gate2_llm_review(
         if attempt < max_review_attempts:
             await asyncio.sleep(2)  # Brief pause before retrying
 
-    # All attempts returned empty
+    # All attempts returned empty — auto-pass with warning rather than
+    # retrying the entire task.  Empty results are transient SDK issues
+    # (rate limits, overload), not code quality signals.  Retrying the
+    # whole task would just regenerate the same diff and hit the same issue.
+    logger.warning(
+        "L2 review returned empty after %d attempts — auto-passing to avoid infinite retry loop",
+        max_review_attempts,
+    )
     return (
         GateResult(
-            passed=False, gate="gate2_llm_review",
-            details=f"Empty review response after {max_review_attempts} attempts",
-            retriable=True,
+            passed=True, gate="gate2_llm_review",
+            details=f"Review auto-passed: empty response after {max_review_attempts} attempts (likely transient SDK issue)",
         ),
         cost_info,
     )

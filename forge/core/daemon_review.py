@@ -960,13 +960,42 @@ class ReviewMixin:
                 details=f"No linter available for {strategy.name} (install {strategy.tool_check})",
             )
 
+        # Determine the correct cwd for the linter.  When changed files live
+        # inside a subdirectory that has its own package.json (e.g. web/),
+        # tools like ESLint must run from that subdirectory so they find
+        # their config and node_modules.
+        lint_cwd = worktree_path
+        lint_files = list(changed_files)
+        if strategy.supports_file_args and changed_files:
+            common_prefix = os.path.commonpath(changed_files) if len(changed_files) > 1 else os.path.dirname(changed_files[0])
+            # Walk up from common prefix to find a directory with package.json
+            # (for JS/TS tools) or pyproject.toml (for Python tools)
+            candidate = common_prefix
+            while candidate:
+                candidate_abs = os.path.join(worktree_path, candidate)
+                has_pkg = os.path.isfile(os.path.join(candidate_abs, "package.json"))
+                has_lint_config = any(
+                    os.path.isfile(os.path.join(candidate_abs, cfg))
+                    for cfg in ("eslint.config.mjs", "eslint.config.js", ".eslintrc.js", ".eslintrc.json", "pyproject.toml")
+                )
+                if has_pkg or has_lint_config:
+                    lint_cwd = candidate_abs
+                    prefix = candidate + "/"
+                    lint_files = [f[len(prefix):] if f.startswith(prefix) else f for f in changed_files]
+                    logger.info("Lint cwd adjusted to %s (found config in subdirectory)", candidate)
+                    break
+                parent = os.path.dirname(candidate)
+                if parent == candidate:
+                    break
+                candidate = parent
+
         # Build final commands
         fix_cmd = list(strategy.fix_cmd) if strategy.fix_cmd else None
         check_cmd = list(strategy.check_cmd)
         if strategy.supports_file_args:
             if fix_cmd is not None:
-                fix_cmd += changed_files
-            check_cmd += changed_files
+                fix_cmd += lint_files
+            check_cmd += lint_files
 
         # Acquire gate semaphore to limit concurrent subprocess-heavy operations
         gate_sem = getattr(self, "_gate_semaphore", None)
@@ -990,7 +1019,7 @@ class ReviewMixin:
             auto_fix_diff = ""
             if fix_cmd is not None:
                 try:
-                    await async_subprocess(fix_cmd, cwd=worktree_path, timeout=lint_timeout)
+                    await async_subprocess(fix_cmd, cwd=lint_cwd, timeout=lint_timeout)
                 except asyncio.TimeoutError:
                     logger.warning(
                         "Lint fix command timed out after %ds: %s",
@@ -1029,7 +1058,7 @@ class ReviewMixin:
 
             # PASS 2: Verify
             try:
-                lint_result = await async_subprocess(check_cmd, cwd=worktree_path, timeout=lint_timeout)
+                lint_result = await async_subprocess(check_cmd, cwd=lint_cwd, timeout=lint_timeout)
             except asyncio.TimeoutError:
                 logger.warning(
                     "Lint check command timed out after %ds: %s",
