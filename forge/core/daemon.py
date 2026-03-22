@@ -216,6 +216,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Limit concurrent subprocess-heavy gates (lint, build, test) to prevent
         # CPU saturation when multiple agents run ESLint/tsc/pytest simultaneously.
         self._gate_semaphore = asyncio.Semaphore(2)
+        self._active_tasks: dict[str, asyncio.Task] = {}
+        self._active_tasks_lock = asyncio.Lock()
         self._project_config = ProjectConfig.load(project_dir)
 
         # Multi-repo support: build repos dict
@@ -1481,7 +1483,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         _all_paused_since: float | None = None
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
-        self._active_tasks: dict[str, asyncio.Task] = {}
+        self._active_tasks.clear()
         self._effective_max_agents = self._settings.max_agents
         self._executor_token = str(_uuid_mod.uuid4())
 
@@ -1507,7 +1509,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Reap completed tasks from the pool
             done_ids = [tid for tid, atask in list(self._active_tasks.items()) if atask.done()]
             for tid in done_ids:
-                atask = self._active_tasks.pop(tid, None)
+                async with self._active_tasks_lock:
+                    atask = self._active_tasks.pop(tid, None)
                 if atask is None:
                     continue  # Already removed by concurrent event handler
                 exc = atask.exception() if not atask.cancelled() else None
@@ -1697,7 +1700,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                                             repo_id=repo_id),
                     name=f"forge-task-{task_id}",
                 )
-                self._active_tasks[task_id] = atask
+                async with self._active_tasks_lock:
+                    self._active_tasks[task_id] = atask
 
             # Wait efficiently
             if self._active_tasks:

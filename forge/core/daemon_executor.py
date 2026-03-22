@@ -696,9 +696,10 @@ class ExecutorMixin:
             return
 
         # Skip if task is already being resumed (in active pool)
-        if task_id in getattr(self, "_active_tasks", {}):
-            logger.debug("_on_task_answered: task %s already active, skipping", task_id)
-            return
+        async with self._active_tasks_lock:
+            if task_id in self._active_tasks:
+                logger.debug("_on_task_answered: task %s already active, skipping", task_id)
+                return
 
         # Acquire an agent slot via Scheduler
         from forge.core.scheduler import Scheduler
@@ -738,7 +739,8 @@ class ExecutorMixin:
             ),
             name=f"forge-resume-{task_id}",
         )
-        self._active_tasks[task_id] = atask
+        async with self._active_tasks_lock:
+            self._active_tasks[task_id] = atask
 
     async def _safe_execute_resume(
         self, db, runtime, worktree_mgr, merge_worker,
@@ -764,7 +766,8 @@ class ExecutorMixin:
             except Exception:
                 logger.exception("Failed to clean up after resume crash for %s", task_id)
         finally:
-            self._active_tasks.pop(task_id, None)
+            async with self._active_tasks_lock:
+                self._active_tasks.pop(task_id, None)
 
     # -- file scope enforcement -------------------------------------------
 
