@@ -295,10 +295,40 @@ async def _execute_task_followup(
 
     Creates a worktree on the pipeline branch, builds a context-rich prompt,
     and spawns a Claude agent to address the follow-ups.
+
+    Multi-repo aware: resolves repo_id from the task to determine the correct
+    repo directory and worktree path layout.
     """
     task_title = task_info.get("title", task_id)
     task_description = task_info.get("description", "")
     task_files = task_info.get("files", [])
+
+    # Resolve repo context for multi-repo support
+    repo_id = task_info.get("repo_id") or getattr(db_task, "repo_id", None) or "default"
+
+    # Look up repo config from the pipeline
+    repo_dir = project_dir  # fallback for single-repo
+    is_multi_repo = False
+    try:
+        pipeline = await db.get_pipeline(pipeline_id)
+        if pipeline:
+            is_multi_repo = pipeline.repos_json is not None
+            repos = pipeline.get_repos()
+            repo_config = next((r for r in repos if r["id"] == repo_id), None)
+            if repo_config:
+                repo_dir = repo_config["path"]
+            else:
+                logger.warning(
+                    "repo_id '%s' not found in pipeline repos_json, "
+                    "falling back to project_dir '%s'",
+                    repo_id, project_dir,
+                )
+    except ValueError:
+        # get_repos() raises ValueError if base_branch is missing
+        logger.warning(
+            "Could not resolve repos for pipeline %s, using project_dir",
+            pipeline_id,
+        )
 
     # Gather original agent output and review feedback from events
     original_output = await _gather_task_context(pipeline_id, task_id, db)
@@ -311,14 +341,20 @@ async def _execute_task_followup(
         original_output=original_output,
         review_feedback=getattr(db_task, "review_feedback", None) if db_task else None,
         questions=questions,
+        repo_name=repo_id,
     )
 
     # Set up worktree on the pipeline branch
+    # Multi-repo: {project_dir}/.forge/worktrees/{repo_id}/{worktree_id}
+    # Single-repo: {project_dir}/.forge/worktrees/{worktree_id}
     worktree_id = f"followup-{followup_id[:8]}-{task_id}"
-    worktree_dir = os.path.join(project_dir, ".forge", "worktrees", worktree_id)
+    if is_multi_repo:
+        worktree_dir = os.path.join(project_dir, ".forge", "worktrees", repo_id, worktree_id)
+    else:
+        worktree_dir = os.path.join(project_dir, ".forge", "worktrees", worktree_id)
 
     try:
-        _setup_worktree(project_dir, worktree_dir, branch_name, worktree_id)
+        _setup_worktree(repo_dir, worktree_dir, branch_name, worktree_id)
     except Exception as exc:
         return FollowUpResult(
             task_id=task_id,
@@ -360,7 +396,7 @@ async def _execute_task_followup(
         # If the agent made changes, commit and push
         files_changed = agent_result.files_changed
         if files_changed and agent_result.success:
-            _commit_and_push(worktree_dir, project_dir, branch_name, followup_id, task_title)
+            _commit_and_push(worktree_dir, repo_dir, branch_name, followup_id, task_title)
 
         return FollowUpResult(
             task_id=task_id,
@@ -375,7 +411,7 @@ async def _execute_task_followup(
 
     finally:
         # Clean up worktree
-        _cleanup_worktree(project_dir, worktree_dir, worktree_id)
+        _cleanup_worktree(repo_dir, worktree_dir, worktree_id)
 
 
 async def _gather_task_context(
@@ -420,6 +456,7 @@ def _build_followup_prompt(
     original_output: str,
     review_feedback: str | None,
     questions: list[FollowUpQuestion],
+    repo_name: str | None = None,
 ) -> str:
     """Build a comprehensive prompt for the follow-up agent."""
     files_str = "\n".join(f"  - {f}" for f in task_files) if task_files else "  (none specified)"
@@ -433,6 +470,10 @@ def _build_followup_prompt(
     if review_feedback:
         feedback_section = f"\n## Review Feedback from Previous Run\n{review_feedback}\n"
 
+    repo_section = ""
+    if repo_name and repo_name != "default":
+        repo_section = f"**Repository:** This task is in the **{repo_name}** repo.\n"
+
     return (
         f"# Follow-up Task\n\n"
         f"You are continuing work on a previously completed task. "
@@ -440,6 +481,7 @@ def _build_followup_prompt(
         f"## Original Task\n"
         f"**Title:** {task_title}\n"
         f"**Description:** {task_description}\n"
+        f"{repo_section}"
         f"**Files:** \n{files_str}\n\n"
         f"## What Was Previously Done\n"
         f"{original_output}\n"
@@ -456,7 +498,7 @@ def _build_followup_prompt(
 
 
 def _setup_worktree(
-    project_dir: str,
+    repo_dir: str,
     worktree_dir: str,
     branch_name: str,
     worktree_id: str,
@@ -467,7 +509,7 @@ def _setup_worktree(
     # Check if the branch exists
     branch_check = subprocess.run(
         ["git", "rev-parse", "--verify", branch_name],
-        cwd=project_dir,
+        cwd=repo_dir,
         capture_output=True,
         text=True,
     )
@@ -481,7 +523,7 @@ def _setup_worktree(
     # Create worktree from the pipeline branch (detached)
     result = subprocess.run(
         ["git", "worktree", "add", worktree_dir, branch_name],
-        cwd=project_dir,
+        cwd=repo_dir,
         capture_output=True,
         text=True,
     )
@@ -493,7 +535,7 @@ def _setup_worktree(
 
 def _commit_and_push(
     worktree_dir: str,
-    project_dir: str,
+    repo_dir: str,
     branch_name: str,
     followup_id: str,
     task_title: str,
@@ -528,7 +570,7 @@ def _commit_and_push(
     # Push to remote (best effort — don't fail the whole follow-up if push fails)
     remote_result = subprocess.run(
         ["git", "remote"],
-        cwd=project_dir,
+        cwd=repo_dir,
         capture_output=True,
         text=True,
     )
@@ -550,7 +592,7 @@ def _commit_and_push(
 
 
 def _cleanup_worktree(
-    project_dir: str,
+    repo_dir: str,
     worktree_dir: str,
     worktree_id: str,
 ) -> None:
@@ -558,7 +600,7 @@ def _cleanup_worktree(
     try:
         subprocess.run(
             ["git", "worktree", "remove", worktree_dir, "--force"],
-            cwd=project_dir,
+            cwd=repo_dir,
             capture_output=True,
         )
     except Exception as exc:
