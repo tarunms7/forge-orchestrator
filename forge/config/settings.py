@@ -35,6 +35,7 @@ class ForgeSettings(BaseSettings):
     test_cmd: str | None = None
     lint_cmd: str | None = None       # Override auto-detected linter check command
     lint_fix_cmd: str | None = None   # Override auto-detected linter fix command
+    lint_timeout: int = 180           # Lint gate timeout (seconds). Adaptive: doubles on timeout via learning system.
 
     # Resource thresholds
     cpu_threshold: float = 80.0

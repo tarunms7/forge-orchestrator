@@ -754,10 +754,12 @@ class ExecutorMixin:
         except Exception as e:
             logger.error("Resume of %s crashed: %s", task_id, e, exc_info=True)
             try:
-                await db.update_task_state(task_id, TaskState.AWAITING_INPUT.value)
+                # Mark as ERROR (not AWAITING_INPUT) so the pipeline can terminate.
+                # AWAITING_INPUT with no pending question creates a zombie task.
+                await db.update_task_state(task_id, TaskState.ERROR.value)
                 await db.release_agent(agent_id)
             except Exception:
-                pass
+                logger.exception("Failed to clean up after resume crash for %s", task_id)
         finally:
             self._active_tasks.pop(task_id, None)
 

@@ -471,48 +471,56 @@ class ReviewMixin:
     ) -> GateResult:
         """Execute a shell command as a review gate.
 
-        Runs *cmd* inside *worktree_path* with a timeout.  Captures stdout+stderr,
-        truncated to the last 5000 characters so logs stay manageable.
+        Runs *cmd* inside *worktree_path* with a timeout.  Uses the gate
+        semaphore to limit concurrent subprocess-heavy operations.
 
         If the failure output matches known infrastructure error patterns
         (missing modules, wrong Python version, command not found), the result
         is marked with ``infra_error=True`` so callers can skip the gate
         instead of consuming a retry.
         """
+        gate_sem = getattr(self, "_gate_semaphore", None)
+        if gate_sem:
+            await gate_sem.acquire()
         try:
-            parts = shlex.split(cmd)
-            proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
-        except asyncio.TimeoutError:
+            try:
+                parts = shlex.split(cmd)
+                proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
+            except asyncio.TimeoutError:
+                return GateResult(
+                    passed=False,
+                    gate=gate_name,
+                    details=f"Command timed out after {timeout}s: {cmd}",
+                    retriable=True,
+                )
+            except FileNotFoundError:
+                # The command binary itself doesn't exist (e.g. ruff not installed)
+                return GateResult(
+                    passed=False,
+                    gate=gate_name,
+                    details=f"Command not found: {cmd}",
+                    infra_error=True,
+                )
+
+            combined = (proc.stdout or "") + (proc.stderr or "")
+            # Keep last 5000 chars so we see the tail of build/test output
+            truncated = combined[-5000:] if len(combined) > 5000 else combined
+
+            if proc.returncode == 0:
+                return GateResult(passed=True, gate=gate_name, details="OK")
+
+            # Check if this is an infrastructure failure, not a code problem
+            is_infra = any(pattern in combined for pattern in self._INFRA_ERROR_PATTERNS)
+
             return GateResult(
                 passed=False,
                 gate=gate_name,
-                details=f"Command timed out after {timeout}s: {cmd}",
+                details=f"Exit code {proc.returncode}:\n{truncated}",
+                infra_error=is_infra,
             )
-        except FileNotFoundError:
-            # The command binary itself doesn't exist (e.g. ruff not installed)
-            return GateResult(
-                passed=False,
-                gate=gate_name,
-                details=f"Command not found: {cmd}",
-                infra_error=True,
-            )
-
-        combined = (proc.stdout or "") + (proc.stderr or "")
-        # Keep last 5000 chars so we see the tail of build/test output
-        truncated = combined[-5000:] if len(combined) > 5000 else combined
-
-        if proc.returncode == 0:
-            return GateResult(passed=True, gate=gate_name, details="OK")
-
-        # Check if this is an infrastructure failure, not a code problem
-        is_infra = any(pattern in combined for pattern in self._INFRA_ERROR_PATTERNS)
-
-        return GateResult(
-            passed=False,
-            gate=gate_name,
-            details=f"Exit code {proc.returncode}:\n{truncated}",
-            infra_error=is_infra,
-        )
+        finally:
+            if gate_sem:
+                gate_sem.release()
 
     # -- streaming helpers --------------------------------------------------
 
@@ -687,7 +695,7 @@ class ReviewMixin:
         await self._emit("review:gate_started", {
             "task_id": task.id, "gate": "gate1_lint",
         }, db=db, pipeline_id=pipeline_id)
-        gate1_result = await self._run_lint_gate(worktree_path, pipeline_branch=pipeline_branch, repo_id=repo_id)
+        gate1_result = await self._run_lint_gate(worktree_path, pipeline_branch=pipeline_branch, repo_id=repo_id, db=db)
         await self._emit(
             "review:gate_passed" if gate1_result.passed else "review:gate_failed",
             {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details},
@@ -706,7 +714,8 @@ class ReviewMixin:
                 }, db=db, pipeline_id=pipeline_id)
             else:
                 console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
-                feedback_parts.append(f"L1 (lint) FAILED:\n{gate1_result.details}")
+                prefix = "[RETRIABLE] " if gate1_result.retriable else ""
+                feedback_parts.append(f"{prefix}L1 (lint) FAILED:\n{gate1_result.details}")
                 return False, "\n\n".join(feedback_parts)
         else:
             console.print("[green]  L1 passed[/green]")
@@ -915,7 +924,7 @@ class ReviewMixin:
         console.print("[dim]  Gate 3 (merge readiness): deferred to merge step[/dim]")
         return True, None
 
-    async def _run_lint_gate(self, worktree_path: str, *, pipeline_branch: str | None = None, repo_id: str | None = None) -> GateResult:
+    async def _run_lint_gate(self, worktree_path: str, *, pipeline_branch: str | None = None, repo_id: str | None = None, db=None) -> GateResult:
         """Gate 1: Language-agnostic lint check on the worktree.
 
         Uses LintStrategy detection to support any language/toolchain.
@@ -959,88 +968,208 @@ class ReviewMixin:
                 fix_cmd += changed_files
             check_cmd += changed_files
 
-        # PASS 1: Fix
-        auto_fix_diff = ""
-        if fix_cmd is not None:
-            await async_subprocess(fix_cmd, cwd=worktree_path, timeout=90)
-            # Capture what changed
-            diff_result = await _run_git(
-                ["diff"], cwd=worktree_path, check=False,
-                description=f"capture {strategy.name} auto-fix diff",
-            )
-            if diff_result.stdout.strip():
-                diff_lines = diff_result.stdout.splitlines()
-                if len(diff_lines) > 30:
-                    auto_fix_diff = "\n".join(diff_lines[:30]) + "\n... (truncated)"
-                else:
-                    auto_fix_diff = diff_result.stdout.strip()
+        # Acquire gate semaphore to limit concurrent subprocess-heavy operations
+        gate_sem = getattr(self, "_gate_semaphore", None)
+        if gate_sem:
+            await gate_sem.acquire()
 
-            # Stage and commit auto-fixes
-            await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
-            staged = await _run_git(
-                ["diff", "--cached", "--name-only"],
-                cwd=worktree_path, check=False, description="check staged lint fixes",
-            )
-            if staged.stdout.strip():
-                await _run_git(
-                    ["commit", "-m", strategy.commit_msg],
-                    cwd=worktree_path, check=False, description="commit lint fixes",
-                )
-
-        # PASS 2: Verify
-        lint_result = await async_subprocess(check_cmd, cwd=worktree_path, timeout=90)
-
-        # Determine pass/fail
-        if strategy.check_via_output:
-            lint_clean = not lint_result.stdout.strip()
-        else:
-            lint_clean = lint_result.returncode == 0
-
-        if lint_clean:
-            if auto_fix_diff:
-                summary = _summarize_auto_fix(auto_fix_diff)
-                return GateResult(
-                    passed=True, gate="gate1_auto_check",
-                    details=f"Lint clean (auto-fixed: {summary})",
-                )
-            return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
-
-        # Failed — check if errors are only in files this task didn't modify.
-        # Even when supports_file_args=True, linters like eslint can report errors
-        # in files not passed on the command line (e.g., pre-existing issues in
-        # files inherited from the pipeline branch that the current task didn't touch).
-        combined_output = (lint_result.stdout or "") + (lint_result.stderr or "")
-        if changed_files:
-            # Filter lint output: only keep lines referencing files this task changed.
-            # Lint tools typically output error lines starting with the file path.
-            changed_basenames = {os.path.basename(f) for f in changed_files}
-            changed_set = set(changed_files)
-            relevant_lines = []
-            for line in combined_output.splitlines():
-                # Check if this error line references any file the task modified
-                # Match both full relative paths and basenames (different linters vary)
-                is_relevant = any(f in line for f in changed_set) or any(b in line for b in changed_basenames)
-                if is_relevant:
-                    relevant_lines.append(line)
-            if not relevant_lines:
-                # All lint errors are in files this task didn't touch — pass
+        try:
+            # Resolve timeout: use setting, but check lessons for adaptive override.
+            lint_timeout = getattr(self, "_settings", None)
+            lint_timeout = lint_timeout.lint_timeout if lint_timeout and hasattr(lint_timeout, "lint_timeout") else 180
+            # Check if we have a learned timeout for this linter
+            learned_timeout = await self._get_learned_lint_timeout(strategy.name, db=db)
+            if learned_timeout and learned_timeout > lint_timeout:
                 logger.info(
-                    "Lint errors found but none in task's changed files — passing. "
-                    "Pre-existing errors in: %s",
-                    combined_output[:200],
+                    "Using learned lint timeout of %ds for %s (default: %ds)",
+                    learned_timeout, strategy.name, lint_timeout,
                 )
-                return GateResult(
-                    passed=True, gate="gate1_auto_check",
-                    details="Lint clean (pre-existing errors in unchanged files ignored)",
-                )
-            # Errors exist in files this task touched — fail with only relevant output
-            combined_output = "\n".join(relevant_lines)
+                lint_timeout = learned_timeout
 
-        output = (combined_output or "Unknown error")[:500]
-        is_infra = any(pattern in combined_output for pattern in self._INFRA_ERROR_PATTERNS)
-        return GateResult(
-            passed=False,
-            gate="gate1_auto_check",
-            details=f"Lint errors:\n{output}",
-            infra_error=is_infra,
+            # PASS 1: Fix
+            auto_fix_diff = ""
+            if fix_cmd is not None:
+                try:
+                    await async_subprocess(fix_cmd, cwd=worktree_path, timeout=lint_timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Lint fix command timed out after %ds: %s",
+                        lint_timeout, " ".join(fix_cmd),
+                    )
+                    await self._learn_lint_timeout(strategy.name, lint_timeout, db=db)
+                    return GateResult(
+                        passed=False,
+                        gate="gate1_auto_check",
+                        details=f"Lint fix timed out after {lint_timeout}s: {' '.join(fix_cmd[:3])}...",
+                        retriable=True,
+                    )
+                # Capture what changed
+                diff_result = await _run_git(
+                    ["diff"], cwd=worktree_path, check=False,
+                    description=f"capture {strategy.name} auto-fix diff",
+                )
+                if diff_result.stdout.strip():
+                    diff_lines = diff_result.stdout.splitlines()
+                    if len(diff_lines) > 30:
+                        auto_fix_diff = "\n".join(diff_lines[:30]) + "\n... (truncated)"
+                    else:
+                        auto_fix_diff = diff_result.stdout.strip()
+
+                # Stage and commit auto-fixes
+                await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes")
+                staged = await _run_git(
+                    ["diff", "--cached", "--name-only"],
+                    cwd=worktree_path, check=False, description="check staged lint fixes",
+                )
+                if staged.stdout.strip():
+                    await _run_git(
+                        ["commit", "-m", strategy.commit_msg],
+                        cwd=worktree_path, check=False, description="commit lint fixes",
+                    )
+
+            # PASS 2: Verify
+            try:
+                lint_result = await async_subprocess(check_cmd, cwd=worktree_path, timeout=lint_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Lint check command timed out after %ds: %s",
+                    lint_timeout, " ".join(check_cmd),
+                )
+                await self._learn_lint_timeout(strategy.name, lint_timeout, db=db)
+                return GateResult(
+                    passed=False,
+                    gate="gate1_auto_check",
+                    details=f"Lint check timed out after {lint_timeout}s: {' '.join(check_cmd[:3])}...",
+                    retriable=True,
+                )
+
+            # Determine pass/fail
+            if strategy.check_via_output:
+                lint_clean = not lint_result.stdout.strip()
+            else:
+                lint_clean = lint_result.returncode == 0
+
+            if lint_clean:
+                if auto_fix_diff:
+                    summary = _summarize_auto_fix(auto_fix_diff)
+                    return GateResult(
+                        passed=True, gate="gate1_auto_check",
+                        details=f"Lint clean (auto-fixed: {summary})",
+                    )
+                return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
+
+            # Failed — check if errors are only in files this task didn't modify.
+            combined_output = (lint_result.stdout or "") + (lint_result.stderr or "")
+            if changed_files:
+                changed_basenames = {os.path.basename(f) for f in changed_files}
+                changed_set = set(changed_files)
+                relevant_lines = []
+                for line in combined_output.splitlines():
+                    is_relevant = any(f in line for f in changed_set) or any(b in line for b in changed_basenames)
+                    if is_relevant:
+                        relevant_lines.append(line)
+                if not relevant_lines:
+                    logger.info(
+                        "Lint errors found but none in task's changed files — passing. "
+                        "Pre-existing errors in: %s",
+                        combined_output[:200],
+                    )
+                    return GateResult(
+                        passed=True, gate="gate1_auto_check",
+                        details="Lint clean (pre-existing errors in unchanged files ignored)",
+                    )
+                combined_output = "\n".join(relevant_lines)
+
+            output = (combined_output or "Unknown error")[:500]
+            is_infra = any(pattern in combined_output for pattern in self._INFRA_ERROR_PATTERNS)
+            return GateResult(
+                passed=False,
+                gate="gate1_auto_check",
+                details=f"Lint errors:\n{output}",
+                infra_error=is_infra,
+            )
+        finally:
+            if gate_sem:
+                gate_sem.release()
+
+    # -- Adaptive lint timeout via learning system ----------------------------
+
+    async def _get_learned_lint_timeout(self, linter_name: str, db=None) -> int | None:
+        """Check if the learning system has a timeout override for this linter.
+
+        Looks for lessons with category 'infra_timeout' whose trigger matches
+        the linter name.  The lesson's resolution contains the recommended
+        timeout in seconds (e.g. "timeout:360").
+        """
+        try:
+            if db is None:
+                return None
+            trigger = f"lint_timeout:{linter_name}"
+            lesson = await db.find_matching_lesson(trigger, project_dir=getattr(self, "_project_dir", None))
+            if lesson and lesson.resolution:
+                # Parse "timeout:NNN" from resolution
+                for part in lesson.resolution.split():
+                    if part.startswith("timeout:"):
+                        try:
+                            val = int(part.split(":")[1])
+                            await db.bump_lesson_hit(lesson.id)
+                            return val
+                        except (ValueError, IndexError):
+                            pass
+        except Exception:
+            logger.debug("Failed to check learned lint timeout", exc_info=True)
+        return None
+
+    async def _learn_lint_timeout(self, linter_name: str, failed_timeout: int, db=None) -> None:
+        """Record a lint timeout lesson so future runs use a longer timeout.
+
+        Doubles the failed timeout value.  If a lesson already exists,
+        bumps its hit count and updates the resolution with the new value.
+        """
+        new_timeout = failed_timeout * 2
+        trigger = f"lint_timeout:{linter_name}"
+        title = f"{linter_name} lint timed out at {failed_timeout}s"
+        resolution = f"timeout:{new_timeout}"
+        content = (
+            f"The {linter_name} linter timed out after {failed_timeout}s. "
+            f"Learned: use {new_timeout}s for future runs."
         )
+        try:
+            if db is None:
+                return
+            project_dir = getattr(self, "_project_dir", None)
+            existing = await db.find_matching_lesson(trigger, project_dir=project_dir)
+            if existing:
+                await db.bump_lesson_hit(existing.id)
+                # Update the resolution with the new (larger) timeout
+                # Only if the new timeout is larger than what's already stored
+                for part in existing.resolution.split():
+                    if part.startswith("timeout:"):
+                        try:
+                            old_val = int(part.split(":")[1])
+                            if new_timeout <= old_val:
+                                return  # Already learned a sufficient timeout
+                        except (ValueError, IndexError):
+                            pass
+                # Update the lesson with the new timeout
+                async with db._session_factory() as session:
+                    from forge.storage.db import LessonRow
+                    row = await session.get(LessonRow, existing.id)
+                    if row:
+                        row.resolution = resolution
+                        row.content = content
+                        await session.commit()
+                logger.info("Updated lint timeout lesson: %s → %ds", linter_name, new_timeout)
+            else:
+                await db.add_lesson(
+                    scope="project",
+                    category="infra_timeout",
+                    title=title,
+                    content=content,
+                    trigger=trigger,
+                    resolution=resolution,
+                    project_dir=project_dir,
+                )
+                logger.info("Created lint timeout lesson: %s → %ds", linter_name, new_timeout)
+        except Exception:
+            logger.warning("Failed to record lint timeout lesson", exc_info=True)
