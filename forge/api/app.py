@@ -68,6 +68,7 @@ def create_app(
         - pending_graphs
         """
         import time
+        from datetime import datetime, timezone
 
         ttl_seconds = 2 * 60 * 60  # 2 hours
         interval_seconds = 30 * 60  # 30 minutes
@@ -76,21 +77,24 @@ def create_app(
             await asyncio.sleep(interval_seconds)
             now = time.monotonic()
             cutoff = now - ttl_seconds
+            utc_now = datetime.now(timezone.utc)
 
-            # Prune followup_store using parallel timestamp dict
+            # Prune followup_store using FollowUpExecution.created_at field
             followup_store: dict = getattr(app.state, "followup_store", {})
-            followup_ts: dict = getattr(app.state, "followup_store_ts", {})
-            stale_keys = [
-                k for k, ts in followup_ts.items()
-                if ts < cutoff and k in followup_store
-            ]
+            stale_keys = []
+            for k, v in followup_store.items():
+                created_at = getattr(v, "created_at", None)
+                if created_at is None:
+                    continue
+                try:
+                    created_dt = datetime.fromisoformat(created_at)
+                    age_seconds = (utc_now - created_dt).total_seconds()
+                    if age_seconds > ttl_seconds:
+                        stale_keys.append(k)
+                except (ValueError, TypeError):
+                    continue
             for k in stale_keys:
                 followup_store.pop(k, None)
-                followup_ts.pop(k, None)
-            # Also clean orphaned timestamps
-            orphaned = [k for k in followup_ts if k not in followup_store]
-            for k in orphaned:
-                followup_ts.pop(k, None)
             if stale_keys:
                 logger.info("Pruned %d stale followup_store entries", len(stale_keys))
 
@@ -152,7 +156,6 @@ def create_app(
     app.state.forge_db = db
     app.state.pending_graphs = {}
     app.state.pending_graphs_lock = asyncio.Lock()
-    app.state.followup_store_ts: dict[str, float] = {}
     app.state.rate_limit_store: dict[str, list[float]] = {}
     app.state.rate_limit_last_cleanup: float = 0.0
 
