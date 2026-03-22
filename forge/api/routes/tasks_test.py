@@ -2218,7 +2218,6 @@ class TestMultiRepoWebSocketBroadcasts:
 
     async def test_approve_task_broadcast_includes_repo_id(self, client_with_app):
         """approve_task broadcasts should include repo_id field."""
-        import asyncio
         import uuid
 
         from forge.api.security.jwt import decode_token

@@ -21,7 +21,6 @@ from forge.api.models.schemas import (
     ExecuteRequest,
     PipelineResponse,
     RejectRequest,
-    RepoEntry,
     RestartPipelineRequest,
     TaskListItem,
     TaskStatusResponse,
