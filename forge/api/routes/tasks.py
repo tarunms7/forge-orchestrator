@@ -511,7 +511,7 @@ async def create_task(
                             request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
                     else:
                         request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
-                except Exception as exc:
+                except Exception:
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
                     await ws_manager.broadcast(pipeline_id, {
@@ -690,7 +690,7 @@ async def execute_pipeline(
                     await ws_manager.broadcast(pipeline_id, {
                         "type": "pipeline:pr_failed", "error": "PR creation failed",
                     })
-        except Exception as exc:
+        except Exception:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
             await ws_manager.broadcast(pipeline_id, {
@@ -1415,7 +1415,7 @@ async def restart_pipeline(
                         request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
                 else:
                     request.app.state.pending_graphs[pipeline_id] = (graph, daemon)
-            except Exception as exc:
+            except Exception:
                 logger.exception("Restart planning failed for pipeline %s", pipeline_id)
                 await forge_db.update_pipeline_status(pipeline_id, "error")
                 if ws_manager:
