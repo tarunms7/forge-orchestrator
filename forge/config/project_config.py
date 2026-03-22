@@ -161,6 +161,10 @@ class ReviewConfig:
     enabled: bool = True
     max_retries: int = 3
 
+    def __post_init__(self):
+        if self.max_retries < 0:
+            self.max_retries = 0
+
 
 @dataclass
 class AgentConfig:
@@ -175,7 +179,16 @@ class AgentConfig:
         if self.model not in ("sonnet", "opus", "haiku"):
             raise ValueError("model must be 'sonnet', 'opus', or 'haiku'")
         if self.autonomy not in ("full", "balanced", "supervised"):
-            raise ValueError("autonomy must be 'full', 'balanced', or 'supervised'")
+            logger.warning(
+                "Invalid autonomy value %r — defaulting to 'full'", self.autonomy
+            )
+            self.autonomy = "full"
+        if self.max_parallel < 1:
+            self.max_parallel = 1
+        if self.max_turns < 1:
+            self.max_turns = 1
+        if self.timeout_seconds < 30:
+            self.timeout_seconds = 30
 
 
 @dataclass
@@ -193,6 +206,8 @@ class IntegrationCheckConfig:
     def __post_init__(self):
         if self.on_failure not in ("ask", "ignore_and_continue", "stop_pipeline"):
             raise ValueError("on_failure must be 'ask', 'ignore_and_continue', or 'stop_pipeline'")
+        if self.timeout_seconds < 1:
+            self.timeout_seconds = 1
 
 
 @dataclass
