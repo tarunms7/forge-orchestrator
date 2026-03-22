@@ -9,7 +9,6 @@ import pytest
 from forge.core.daemon_executor import ExecutorMixin
 from forge.core.daemon_merge import MergeMixin
 from forge.core.daemon_review import ReviewMixin
-from forge.core.models import TaskState
 from forge.merge.worker import MergeResult
 from forge.review.pipeline import GateResult
 
@@ -43,12 +42,12 @@ class FakeTask:
         self.files = kwargs.get("files", ["file.py"])
         self.state = kwargs.get("state", "in_progress")
         self.retry_count = kwargs.get("retry_count", 0)
-        self.retry_reason = kwargs.get("retry_reason", None)
+        self.retry_reason = kwargs.get("retry_reason")
         self.complexity = kwargs.get("complexity", "medium")
-        self.review_feedback = kwargs.get("review_feedback", None)
-        self.depends_on = kwargs.get("depends_on", None)
+        self.review_feedback = kwargs.get("review_feedback")
+        self.depends_on = kwargs.get("depends_on")
         self.repo_id = kwargs.get("repo_id", "default")
-        self.prior_diff = kwargs.get("prior_diff", None)
+        self.prior_diff = kwargs.get("prior_diff")
 
 
 def _make_db():
