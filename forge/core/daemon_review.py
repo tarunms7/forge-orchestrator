@@ -1006,10 +1006,11 @@ class ReviewMixin:
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
         # Failed — check if errors are only in files this task didn't modify.
-        # When supports_file_args=False (e.g., npm run lint), the linter checks
-        # ALL files, so pre-existing errors in untouched files would fail the gate.
+        # Even when supports_file_args=True, linters like eslint can report errors
+        # in files not passed on the command line (e.g., pre-existing issues in
+        # files inherited from the pipeline branch that the current task didn't touch).
         combined_output = (lint_result.stdout or "") + (lint_result.stderr or "")
-        if not strategy.supports_file_args and changed_files:
+        if changed_files:
             # Filter lint output: only keep lines referencing files this task changed.
             # Lint tools typically output error lines starting with the file path.
             changed_basenames = {os.path.basename(f) for f in changed_files}

@@ -871,21 +871,19 @@ class ExecutorMixin:
                 delta_diff = delta_result.stdout
             else:
                 # Agent made no changes in the delta between retries.
-                # Only auto-pass if BOTH conditions are true:
-                #   1. This is retry 2+ (not the first retry — first retry always
-                #      gets a full LLM review since the "no changes" might mean
-                #      the agent fixed lint issues that don't show in delta)
-                #   2. The full diff vs base is also empty (truly nothing to review)
-                if task.retry_count >= 2 and not diff.strip():
+                # Auto-pass ONLY when there is truly nothing to review:
+                # the full diff vs base must also be empty (no code at all).
+                # If a diff exists, always run LLM review — the agent may have
+                # fixed lint on retry and the underlying code still needs review.
+                if not diff.strip():
                     no_changes_on_retry = True
                     logger.info(
-                        "Task %s retry %d: no changes in delta AND no diff vs base "
-                        "— auto-passing review",
+                        "Task %s retry %d: no delta changes AND no diff vs base "
+                        "— auto-passing review (nothing to review)",
                         task_id, task.retry_count,
                     )
                 else:
-                    # Delta is empty but full diff exists — run full review.
-                    # Common case: agent fixed lint on retry, code was already correct.
+                    # Delta is empty but full diff exists — always run full review.
                     logger.info(
                         "Task %s retry %d: no delta changes but full diff exists "
                         "— running full LLM review",
