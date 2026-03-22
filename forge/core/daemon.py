@@ -61,6 +61,32 @@ logger = logging.getLogger("forge")
 console = make_console()
 
 
+_EXCLUDE_KEYWORDS = re.compile(
+    r"\b(?:ignore|skip|exclude|don'?t\s+touch|don'?t\s+use|don'?t\s+include|nothing\s+to\s+do\s+with)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_excluded_repos(user_input: str, repo_ids: set[str]) -> set[str]:
+    """Detect repos the user wants excluded from planning.
+
+    Scans user input for exclude keywords (ignore, skip, exclude, etc.)
+    near repo names. If a sentence contains both an exclude keyword and
+    a repo name, that repo is excluded.
+    """
+    excluded = set()
+    # Split by sentence boundaries (., !, newlines, commas with spaces)
+    sentences = re.split(r"[.!\n]+|,\s+", user_input)
+    for sentence in sentences:
+        if not _EXCLUDE_KEYWORDS.search(sentence):
+            continue
+        sentence_lower = sentence.lower()
+        for repo_id in repo_ids:
+            if repo_id.lower() in sentence_lower:
+                excluded.add(repo_id)
+    return excluded
+
+
 def _classify_pipeline_result(task_states: list[str]) -> str:
     """Classify pipeline outcome from terminal task states."""
     active_states = [s for s in task_states if s != "cancelled"]
@@ -484,9 +510,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         rc.base_branch, repo_id, result.stderr.strip(),
                     )
 
+        # Filter out repos the user asked to exclude — before gathering
+        # snapshots so the planner never sees them at all.
+        planning_repos = self._repos
+        if len(self._repos) > 1:
+            pre_excluded = _detect_excluded_repos(user_input, set(self._repos.keys()))
+            if pre_excluded:
+                planning_repos = {k: v for k, v in self._repos.items() if k not in pre_excluded}
+                logger.info("Excluding repos from planning: %s", ", ".join(sorted(pre_excluded)))
+
         # Run snapshot gathering in a thread to avoid blocking the event loop
-        if len(self._repos) == 1:
-            repo = next(iter(self._repos.values()))
+        if len(planning_repos) == 1:
+            repo = next(iter(planning_repos.values()))
             self._snapshot = await asyncio.get_event_loop().run_in_executor(
                 None, gather_project_snapshot, repo.path,
             )
@@ -494,9 +529,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             repo_ids = None
         else:
             from forge.core.context import gather_multi_repo_snapshots, format_multi_repo_snapshot
-            snapshots = await gather_multi_repo_snapshots(self._repos)
-            snapshot_text = format_multi_repo_snapshot(snapshots, self._repos)
-            repo_ids = set(self._repos.keys())
+            snapshots = await gather_multi_repo_snapshots(planning_repos)
+            snapshot_text = format_multi_repo_snapshot(snapshots, planning_repos)
+            repo_ids = set(planning_repos.keys())
             self._snapshot = next(iter(snapshots.values())) if snapshots else None
 
         # Decide planning mode
@@ -620,6 +655,23 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 raise RuntimeError("Unified planner failed to produce a TaskGraph")
 
             graph = planning_result.task_graph
+
+            # Safety net: drop tasks for excluded repos even if the planner
+            # ignored the instruction. This is a hard programmatic filter.
+            if len(self._repos) > 1:
+                excluded = _detect_excluded_repos(user_input, set(self._repos.keys()))
+                if excluded:
+                    before = len(graph.tasks)
+                    graph.tasks = [
+                        t for t in graph.tasks
+                        if getattr(t, "repo", None) not in excluded
+                    ]
+                    dropped = before - len(graph.tasks)
+                    if dropped:
+                        logger.info(
+                            "Dropped %d tasks for excluded repos: %s",
+                            dropped, ", ".join(sorted(excluded)),
+                        )
 
             # Track costs
             if pipeline_id and planning_result.total_cost_usd > 0:
