@@ -1,6 +1,5 @@
 """Tests for _build_task_summaries multi-repo fields and multi-repo wiring."""
 
-from unittest.mock import MagicMock, patch
 
 from forge.tui.app import _build_task_summaries
 from forge.tui.state import TuiState
