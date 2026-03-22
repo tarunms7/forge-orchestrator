@@ -2,16 +2,16 @@
 
 # Forge
 
-### One command. Multiple agents. Reviewed code delivered via pull request.
+### One command. Multiple agents. Contracts before code. PRs that actually work.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-cc785c?logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code)
 [![Next.js](https://img.shields.io/badge/dashboard-Next.js-000?logo=next.js)](https://nextjs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-The only AI coding tool that generates **interface contracts** before agents write a single line — so your backend and frontend always agree on API shapes, field names, and types. No copy-paste. No pray-and-merge.
+AI agents that agree on interfaces before writing code — so your backend and frontend are compatible on the first try.
 
-[Install](#install) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Contract Builder](#contract-builder) · [Web Dashboard](#web-dashboard) · [Configuration](#configuration)
+[Install](#install) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Contract Builder](#contract-builder) · [Terminal UI](#terminal-ui) · [Web Dashboard](#web-dashboard) · [Configuration](#configuration)
 
 </div>
 
@@ -45,9 +45,31 @@ Writing code with an AI assistant is powerful — but you're still the bottlenec
 | Parallel agents produce incompatible interfaces | The **Contract Builder** generates binding API & type contracts *before* any code is written — agents build against the same spec |
 | AI changes break other code | Each agent works in an **isolated git worktree** — no file conflicts between concurrent agents |
 | You manually review AI output | A **multi-gate review pipeline** (build > lint > test > LLM review > contract compliance > merge check) catches issues before anything touches `main` |
+| Agents make the same mistake twice | **Self-evolving learning** detects retry loops and persists lessons across runs — agents don't repeat past failures |
+| No visibility into what agents are doing | Full **Terminal UI** with live agent output, DAG view, and real-time cost tracking |
 | Context gets lost in long sessions | Each agent is a **fresh Claude session** with a focused prompt + its relevant contracts — no context bleeding |
 | Merging is manual and error-prone | Forge **rebases and fast-forward merges** each task, then auto-creates a **pull request** |
 | You can't control AI spend | **Per-pipeline budget limits** with real-time cost tracking — hard stop when the budget is hit |
+
+---
+
+## Features at a Glance
+
+🧠 **Multi-Pass Planning** — Not a single LLM call. A 4-stage pipeline: Scout explores your codebase → Architect decomposes tasks → Detailers enrich in parallel → Validator checks consistency. The result is a dependency graph that actually makes sense.
+
+🔗 **Interface Contracts** — Agents agree on API shapes, field names, and types *before* writing code. Producers implement the spec, consumers call the spec. [Details →](#contract-builder)
+
+🖥️ **Terminal UI** — Full Textual TUI with DAG visualization, command palette (`Ctrl+P`), live agent output streaming, inline diff review, and keyboard navigation (`j`/`k`, `Tab`, `/`). [Details →](#terminal-ui)
+
+🤝 **Human-in-the-Loop** — Agents ask questions mid-execution. You can send interjections to running agents. Plan approval before execution. Diff approval before merge. Full control without blocking parallelism.
+
+🧬 **Self-Evolving Learning** — RuntimeGuard detects wasteful retry loops (same failing command 3× = hard stop). LessonStore persists lessons across runs — agents learn from past mistakes. [Details →](#self-evolving-learning)
+
+🌐 **Multi-Repo Workspaces** — Single pipeline across frontend/backend/infra repos. Each task writes to exactly one repo. Agents can read all repos. *(Design phase)*
+
+💰 **Budget Control & Model Routing** — Per-pipeline spend caps with real-time cost tracking. Route tasks to Haiku, Sonnet, or Opus based on complexity.
+
+🔍 **Language-Agnostic Lint Gate** — Auto-detects: pre-commit hooks, npm scripts, Makefile targets, or falls back to language-specific tools (ruff, eslint, gofmt, cargo clippy, rubocop, ktlint, swiftlint, shellcheck). Two-pass: fix then verify.
 
 ---
 
@@ -97,27 +119,31 @@ forge run "Add input validation to all API endpoints"
 
 ```
 forge run "your task"
-        |
-   1. PLAN ---------> Claude decomposes into a task graph (DAG) with dependencies & integration hints
-        |
-   2. CONTRACT -----> Contract Builder generates binding API & type contracts from hints
-        |
-   3. EXECUTE ------> Parallel agents write code in isolated worktrees, each with its contracts injected
-        |
-   4. REVIEW -------> Multi-gate pipeline: build > lint > test > LLM review > contract compliance
-        |
-   5. MERGE --------> Rebase + fast-forward into working branch, auto-create PR
+        │
+   1. PLAN ─────────┐
+        │            │  Scout explores codebase
+        │            │  Architect decomposes tasks
+        │            │  Detailers enrich in parallel
+        │            │  Validator checks consistency
+        │◄───────────┘
+   2. CONTRACT ───→ Generates binding API & type contracts from integration hints
+        │
+   3. EXECUTE ────→ Task pool dispatches agents to isolated worktrees (continuous, not batch)
+        │
+   4. REVIEW ─────→ Multi-gate: build › lint › test › LLM review › contract compliance
+        │
+   5. MERGE ──────→ Rebase + fast-forward into working branch, auto-create PR
 ```
 
-**Plan** — Claude decomposes your request into a DAG of tasks with dependencies, file ownership, complexity ratings, and integration hints. You can edit the plan before execution.
+**Plan** — The multi-pass planner runs four specialized stages. Scout gathers codebase context. Architect creates a task DAG with dependencies and complexity ratings. Detailers enrich each task with file paths and integration hints — in parallel. Validator ensures the full plan is consistent. You approve the plan before execution starts.
 
 **Contract** — The Contract Builder generates precise API and type contracts from integration hints + codebase context — *before* any code is written.
 
-**Execute** — Each task gets its own git worktree. Producers are prompted with exact response shapes to implement; consumers receive exact shapes to expect. Two agents, same spec, compatible on first try.
+**Execute** — A continuous task pool dispatches work as dependencies resolve — not in rigid batches. Each task gets its own git worktree. Producers implement exact response shapes; consumers receive exact shapes to expect. Two agents, same spec, compatible on first try.
 
 **Review** — Every task passes up to 5 gates: build, lint, test, LLM review (diff + contract compliance), and merge readiness check.
 
-**Merge** — Task branches are rebased and fast-forward merged. When all tasks pass, Forge opens a pull request via `gh pr create`. If any step fails, Forge retries up to 3 times with failure feedback.
+**Merge** — Task branches are rebased and fast-forward merged. When all tasks pass, Forge runs `gh pr create`. If any step fails, Forge retries up to 3 times with failure feedback.
 
 ---
 
@@ -157,6 +183,39 @@ PipelineTemplate:
 
 ---
 
+## Terminal UI
+
+```bash
+forge tui
+```
+
+A full terminal interface built with [Textual](https://textual.textualize.io/). No browser needed.
+
+- **Home screen** — Logo, recent pipelines, prompt input with suggestion chips. Type a task and go.
+- **Pipeline screen** — Split-pane view: task list on the left, live agent output on the right. Watch agents work in real time.
+- **Review screen** — Inline diff viewer for every task. Approve or reject changes before merge.
+- **Settings screen** — Configure model strategy, budget limits, and approval requirements.
+- **DAG overlay** — Toggle with `g` to see the full task dependency graph.
+- **Command palette** — `Ctrl+P` to jump between screens, pipelines, and actions.
+- **Agent interaction** — Agents can ask questions mid-execution; answer inline. Send interjections to running agents without stopping them.
+- **Smart launch** — Auto-detects if the Forge daemon is already running. If not, embeds one — no manual server management.
+
+Keyboard-driven: `j`/`k` to navigate, `Tab` to switch panes, `/` to search, `?` for help.
+
+---
+
+## Self-Evolving Learning
+
+Agents that repeat mistakes waste time and money. Forge's learning system fixes this at two levels.
+
+**RuntimeGuard** monitors agent commands in real time. If an agent runs the same failing command three times, it gets a hard stop — not another retry. Commands are normalized (UUIDs, temp paths stripped) so variations of the same failure are caught. Warning on the 2nd attempt, kill on the 3rd.
+
+**LessonStore** persists lessons in the database, scoped globally or per-project. Categories include command failures, review failures, code patterns, and infra timeouts. On every new agent session, relevant lessons are injected into the prompt as "DO NOT repeat these mistakes."
+
+Agents also self-report: when a retry succeeds after a failure, the agent records what worked — so the next agent starts with the answer instead of discovering it the hard way.
+
+---
+
 ## Web Dashboard
 
 ```bash
@@ -189,6 +248,8 @@ Build and test commands are **auto-detected** from your project (`package.json`,
 | `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
 | `FORGE_BUILD_CMD` | *(auto-detected)* | Build command |
 | `FORGE_TEST_CMD` | *(auto-detected)* | Test command |
+| `FORGE_LINT_CMD` | *(auto-detected)* | Lint check command |
+| `FORGE_LINT_FIX_CMD` | *(auto-detected)* | Lint fix command |
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap |
 | `FORGE_MODEL_STRATEGY` | auto | Model routing: `auto`, `fast`, `quality` |
 | `FORGE_REQUIRE_APPROVAL` | false | Require human approval before merge |
@@ -250,6 +311,7 @@ Your code arrives as a **pull request** — never pushed directly to `main`:
 - **Cost** — A 4-task pipeline makes ~12 Claude calls. Use `fast` strategy or set `FORGE_BUDGET_LIMIT_USD`.
 - **Speed** — Tasks with dependencies run sequentially; independent tasks run in parallel.
 - **Linting** — Lint gate auto-detects the language and runs the appropriate tool: `ruff` (Python), `eslint` (JS/TS), `gofmt` (Go), `cargo clippy` (Rust), `rubocop` (Ruby), `ktlint` (Kotlin), `swiftlint` (Swift), `shellcheck` (Shell). Override with `FORGE_LINT_CMD`/`FORGE_LINT_FIX_CMD`.
+- **Multi-repo** — Multi-repo workspace support is currently in design phase. Single-repo pipelines are fully supported.
 - **Merge conflicts** — If two tasks modify the same file, the later merge may fail and retry.
 - **Contracts** — Adds ~15-30s to startup. Skipped automatically for single-task pipelines.
 
