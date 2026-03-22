@@ -21,7 +21,7 @@ from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
 from forge.tui.screens.stats import StatsScreen
 from forge.tui.state import TuiState
-from forge.tui.widgets.command_palette import CommandPalette
+from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteAction, get_all_actions
 from forge.tui.widgets.pipeline_list import PipelineList
 
 logger = logging.getLogger("forge.tui.app")
@@ -183,7 +183,18 @@ class ForgeApp(App):
         """Initialize DB, push home screen, wire state changes."""
         await self._init_db()
         # Mount the command palette overlay at the app level so it's available on all screens
-        await self.mount(CommandPalette())
+        # Extend default command palette actions with Stats screen entry
+        _stats_action = CommandPaletteAction(
+            name="Stats",
+            description="View pipeline stats and metrics",
+            shortcut="5",
+            category="Navigation",
+            callback_name="switch_stats",
+        )
+        palette_actions = get_all_actions()
+        # Insert after Settings (index 3) in Navigation category
+        palette_actions.insert(4, _stats_action)
+        await self.mount(CommandPalette(actions=palette_actions))
         recent = await self._load_recent_pipelines()
         repos = self._resolve_repos()
         self.push_screen(HomeScreen(recent_pipelines=recent, repos=repos))
