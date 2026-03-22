@@ -186,6 +186,8 @@ export default function ContractsPanel({
 
   useEffect(() => {
     if (!pipelineId || !token) return;
+    setLoading(true);
+    setError(null);
     let cancelled = false;
     (async () => {
       try {
