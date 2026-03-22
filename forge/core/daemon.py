@@ -347,16 +347,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """Serialize repos + pipeline branches to JSON.
 
         Returns None for single-repo (no need to store).
+        Format: list of dicts with "id", "path", "base_branch", "branch_name".
+        Must match what update_repos_json_branches() and app.py PR creator expect.
         """
         if len(self._repos) <= 1:
             return None
-        data: dict[str, dict] = {}
+        data: list[dict] = []
         for repo_id, rc in self._repos.items():
-            data[repo_id] = {
+            data.append({
+                "id": repo_id,
                 "path": rc.path,
                 "base_branch": rc.base_branch,
-                "pipeline_branch": self._pipeline_branches.get(repo_id, ""),
-            }
+                "branch_name": self._pipeline_branches.get(repo_id, ""),
+            })
         return json.dumps(data)
 
     def _auto_detect_commands(self, project_dir: str) -> None:

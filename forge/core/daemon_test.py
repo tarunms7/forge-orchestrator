@@ -1398,7 +1398,9 @@ class TestReposJsonStorage:
         result = daemon._build_repos_json()
         assert result is not None
         data = json.loads(result)
-        assert "backend" in data
-        assert "frontend" in data
-        assert data["backend"]["path"] == str(tmp_path / "b")
-        assert data["backend"]["pipeline_branch"] == "forge/pipeline-abc"
+        assert isinstance(data, list)
+        by_id = {entry["id"]: entry for entry in data}
+        assert "backend" in by_id
+        assert "frontend" in by_id
+        assert by_id["backend"]["path"] == str(tmp_path / "b")
+        assert by_id["backend"]["branch_name"] == "forge/pipeline-abc"
