@@ -570,27 +570,34 @@ def validate_repos_startup(repos: list) -> None:
             )
 
     for repo in repos:
-        # Dirty working tree check (skip for single default repo)
+        # Staged changes check (skip for single default repo; untracked files
+        # like .forge/, .claude/ are expected and should not block execution)
         if not is_single_default:
             result = subprocess.run(
-                ["git", "status", "--porcelain"],
+                ["git", "diff", "--cached", "--quiet"],
                 cwd=repo.path,
                 capture_output=True,
-                text=True,
             )
-            if result.stdout.strip():
+            if result.returncode != 0:
                 raise click.ClickException(
-                    f"Dirty working tree in repo '{repo.id}' ({repo.path}). "
+                    f"Staged changes in repo '{repo.id}' ({repo.path}). "
                     "Commit or stash changes before running a pipeline."
                 )
 
-        # Base branch existence check
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}"],
+        # Base branch existence check (skip for repos with no commits yet —
+        # the branch ref doesn't exist until the first commit)
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
             cwd=repo.path,
             capture_output=True,
         )
-        if result.returncode != 0:
-            raise click.ClickException(
-                f"Base branch '{repo.base_branch}' not found in repo '{repo.id}' ({repo.path})"
+        if has_commits.returncode == 0:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}"],
+                cwd=repo.path,
+                capture_output=True,
             )
+            if result.returncode != 0:
+                raise click.ClickException(
+                    f"Base branch '{repo.base_branch}' not found in repo '{repo.id}' ({repo.path})"
+                )
