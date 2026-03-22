@@ -83,9 +83,9 @@ def generate_pr_body(
             formatted_files = ", ".join(f"`{f}`" for f in file_list)
             detail_lines.append(f"  **Files:** {formatted_files}")
         if detail_lines:
-            lines.append(f"  <details><summary>Details</summary>\n")
+            lines.append("  <details><summary>Details</summary>\n")
             lines.extend(detail_lines)
-            lines.append(f"\n  </details>")
+            lines.append("\n  </details>")
 
     if failed_tasks:
         lines.append("")
