@@ -262,6 +262,8 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   // Lock body scroll while dialog is open
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -278,6 +280,35 @@ function ConfirmDialog({
     return () => window.removeEventListener("keydown", handler);
   }, [onCancel]);
 
+  // Focus trap: focus first element on mount and trap Tab within dialog
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    const focusable = el.querySelectorAll<HTMLElement>("button, [tabindex]");
+    if (focusable.length > 0) focusable[0].focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const items = el.querySelectorAll<HTMLElement>("button, [tabindex]");
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    el.addEventListener("keydown", handleKeyDown);
+    return () => el.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return createPortal(
     <div
       className="log-modal-overlay"
@@ -285,6 +316,7 @@ function ConfirmDialog({
       style={{ zIndex: 9999 }}
     >
       <div
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-surface-2)",
