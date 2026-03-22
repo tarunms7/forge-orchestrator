@@ -7,10 +7,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
-
 from forge.api.routes.tasks import get_current_user
 from forge.api.services.github_service import build_pr_description, create_pr
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/github", tags=["github"])
 
