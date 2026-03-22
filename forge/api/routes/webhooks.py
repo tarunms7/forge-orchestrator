@@ -332,7 +332,7 @@ async def _run_webhook_pipeline(
             logger.warning("Auto-PR failed for webhook pipeline %s: %s", pipeline_id, pr_exc)
             await _post_issue_comment(
                 repo_full_name, issue_number,
-                f"✅ **Pipeline complete!** (PR creation failed: {pr_exc})",
+                "✅ **Pipeline complete!** (PR creation failed. Check server logs for details.)",
                 project_dir,
             )
 
@@ -344,6 +344,6 @@ async def _run_webhook_pipeline(
             pass
         await _post_issue_comment(
             repo_full_name, issue_number,
-            f"❌ **Pipeline failed**\n\n```\n{str(exc)[:500]}\n```",
+            f"❌ **Pipeline failed** (`{type(exc).__name__}`). Check server logs for details.",
             project_dir,
         )

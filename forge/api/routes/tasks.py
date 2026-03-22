@@ -41,6 +41,21 @@ security = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
+# Error helpers — never leak internal details to clients
+# ---------------------------------------------------------------------------
+
+def _safe_error(exc: BaseException, prefix: str) -> str:
+    """Log the full exception with traceback, return only the safe prefix to callers.
+
+    Use this wherever an exception message would otherwise be forwarded to
+    the HTTP response body, preventing internal paths/stack traces from being
+    sent to clients.
+    """
+    logger.error("%s: %s", prefix, exc, exc_info=True)
+    return prefix
+
+
+# ---------------------------------------------------------------------------
 # Worktree cleanup helpers
 # ---------------------------------------------------------------------------
 
@@ -500,7 +515,7 @@ async def create_task(
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
                     await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:error", "error": str(exc),
+                        "type": "pipeline:error", "error": "Task execution failed",
                     })
 
             safe_create_task(_run_plan(), logger=logger, name="plan-pipeline")
@@ -673,13 +688,13 @@ async def execute_pipeline(
                 except Exception as pr_exc:
                     logger.warning("Auto-PR failed for %s: %s", pipeline_id, pr_exc)
                     await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:pr_failed", "error": str(pr_exc),
+                        "type": "pipeline:pr_failed", "error": "PR creation failed",
                     })
         except Exception as exc:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
             await ws_manager.broadcast(pipeline_id, {
-                "type": "pipeline:error", "error": str(exc),
+                "type": "pipeline:error", "error": "Execution error",
             })
 
     safe_create_task(_run_execute(), logger=logger, name="execute-pipeline")
@@ -806,9 +821,15 @@ async def create_pr(
         )
 
         if pr_result.returncode != 0:
+            logger.error(
+                "gh pr create failed (pipeline=%s): stderr=%r stdout=%r",
+                pipeline_id,
+                pr_result.stderr,
+                pr_result.stdout,
+            )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to create PR: {pr_result.stderr or pr_result.stdout}",
+                detail="Failed to create PR. Check server logs for details.",
             )
 
         pr_url = pr_result.stdout.strip()
@@ -1399,7 +1420,7 @@ async def restart_pipeline(
                 await forge_db.update_pipeline_status(pipeline_id, "error")
                 if ws_manager:
                     await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:error", "error": str(exc),
+                        "type": "pipeline:error", "error": "Task execution failed",
                     })
 
         safe_create_task(_run_restart_plan(), logger=logger, name="restart-pipeline")
@@ -1774,7 +1795,13 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     )
 
     if pr_result.returncode != 0:
-        raise RuntimeError(f"Failed to create PR: {pr_result.stderr or pr_result.stdout}")
+        logger.error(
+            "gh pr create failed (pipeline=%s): stderr=%r stdout=%r",
+            pipeline_id,
+            pr_result.stderr,
+            pr_result.stdout,
+        )
+        raise RuntimeError("Failed to create PR. Check server logs for details.")
 
     pr_url = pr_result.stdout.strip()
     await forge_db.set_pipeline_pr_url(pipeline_id, pr_url)
