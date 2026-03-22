@@ -1,5 +1,7 @@
 "use client";
 
+import React from "react";
+
 interface DiffFile {
   header: string;
   hunks: DiffHunk[];
@@ -86,24 +88,67 @@ interface DiffViewerProps {
 export default function DiffViewer({ diff }: DiffViewerProps) {
   if (!diff.trim()) {
     return (
-      <div className="flex h-48 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950">
-        <p className="text-sm text-zinc-500">No diff available</p>
+      <div
+        style={{
+          display: "flex",
+          height: "12rem",
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: "0.5rem",
+          border: "1px solid var(--border-subtle)",
+          background: "var(--bg-surface-1)",
+        }}
+      >
+        <p style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>No diff available</p>
       </div>
     );
   }
 
   const files = parseDiff(diff);
 
+  const lineNumStyle: React.CSSProperties = {
+    width: "3rem",
+    userSelect: "none",
+    borderRight: "1px solid var(--border-subtle)",
+    padding: "0 0.5rem",
+    textAlign: "right",
+    fontSize: "0.75rem",
+    color: "color-mix(in srgb, var(--text-secondary) 55%, transparent)",
+  };
+
+  const prefixStyle: React.CSSProperties = {
+    userSelect: "none",
+    borderRight: "1px solid var(--border-subtle)",
+    padding: "0 0.5rem",
+    textAlign: "center",
+    fontSize: "0.75rem",
+    color: "color-mix(in srgb, var(--text-secondary) 55%, transparent)",
+  };
+
   return (
-    <div className="space-y-4 font-mono text-sm">
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
+      className="font-mono text-sm"
+    >
       {files.map((file, fileIdx) => (
         <div
           key={fileIdx}
-          className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+          style={{
+            overflow: "hidden",
+            borderRadius: "0.5rem",
+            border: "1px solid var(--border-subtle)",
+            background: "var(--bg-surface-1)",
+          }}
         >
           {/* File header */}
-          <div className="border-b border-zinc-800 bg-zinc-900 px-4 py-2">
-            <span className="text-xs text-zinc-400">
+          <div
+            style={{
+              borderBottom: "1px solid var(--border-subtle)",
+              background: "var(--bg-surface-2)",
+              padding: "0.5rem 1rem",
+            }}
+          >
+            <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
               {file.header.split("\n")[0]}
             </span>
           </div>
@@ -112,45 +157,49 @@ export default function DiffViewer({ diff }: DiffViewerProps) {
           {file.hunks.map((hunk, hunkIdx) => (
             <div key={hunkIdx}>
               {/* Hunk header */}
-              <div className="border-b border-zinc-800 bg-zinc-900/50 px-4 py-1">
-                <span className="text-xs text-blue-400">{hunk.header}</span>
+              <div
+                style={{
+                  borderBottom: "1px solid var(--border-subtle)",
+                  background: "color-mix(in srgb, var(--bg-surface-2) 50%, transparent)",
+                  padding: "0.25rem 1rem",
+                }}
+              >
+                <span style={{ fontSize: "0.75rem", color: "var(--accent)" }}>
+                  {hunk.header}
+                </span>
               </div>
 
               {/* Lines */}
-              <table className="w-full border-collapse">
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
                   {hunk.lines.map((line, lineIdx) => {
-                    const bgClass =
+                    const rowBg =
                       line.type === "add"
-                        ? "bg-green-950/40"
+                        ? "color-mix(in srgb, var(--green) 15%, transparent)"
                         : line.type === "remove"
-                          ? "bg-red-950/40"
-                          : "";
-                    const textClass =
+                          ? "color-mix(in srgb, var(--red) 15%, transparent)"
+                          : "transparent";
+                    const textColor =
                       line.type === "add"
-                        ? "text-green-300"
+                        ? "var(--green)"
                         : line.type === "remove"
-                          ? "text-red-300"
-                          : "text-zinc-400";
+                          ? "var(--red)"
+                          : "var(--text-secondary)";
                     const prefix =
-                      line.type === "add"
-                        ? "+"
-                        : line.type === "remove"
-                          ? "-"
-                          : " ";
+                      line.type === "add" ? "+" : line.type === "remove" ? "-" : " ";
 
                     return (
-                      <tr key={lineIdx} className={bgClass}>
-                        <td className="w-12 select-none border-r border-zinc-800 px-2 text-right text-xs text-zinc-600">
-                          {line.oldLineNum ?? ""}
-                        </td>
-                        <td className="w-12 select-none border-r border-zinc-800 px-2 text-right text-xs text-zinc-600">
-                          {line.newLineNum ?? ""}
-                        </td>
-                        <td className="select-none border-r border-zinc-800 px-2 text-center text-xs text-zinc-600">
-                          {prefix}
-                        </td>
-                        <td className={`px-3 py-0.5 whitespace-pre ${textClass}`}>
+                      <tr key={lineIdx} style={{ background: rowBg }}>
+                        <td style={lineNumStyle}>{line.oldLineNum ?? ""}</td>
+                        <td style={lineNumStyle}>{line.newLineNum ?? ""}</td>
+                        <td style={prefixStyle}>{prefix}</td>
+                        <td
+                          style={{
+                            padding: "0.125rem 0.75rem",
+                            whiteSpace: "pre",
+                            color: textColor,
+                          }}
+                        >
                           {line.content}
                         </td>
                       </tr>
