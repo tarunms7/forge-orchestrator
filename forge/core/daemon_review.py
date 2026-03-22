@@ -962,7 +962,7 @@ class ReviewMixin:
         # PASS 1: Fix
         auto_fix_diff = ""
         if fix_cmd is not None:
-            await async_subprocess(fix_cmd, cwd=worktree_path)
+            await async_subprocess(fix_cmd, cwd=worktree_path, timeout=90)
             # Capture what changed
             diff_result = await _run_git(
                 ["diff"], cwd=worktree_path, check=False,
@@ -988,7 +988,7 @@ class ReviewMixin:
                 )
 
         # PASS 2: Verify
-        lint_result = await async_subprocess(check_cmd, cwd=worktree_path)
+        lint_result = await async_subprocess(check_cmd, cwd=worktree_path, timeout=90)
 
         # Determine pass/fail
         if strategy.check_via_output:
