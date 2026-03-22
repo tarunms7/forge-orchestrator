@@ -79,6 +79,11 @@ class TuiState:
         self.integration_prompt: dict | None = None         # pending user decision
         self.integration_final_gate: dict | None = None
 
+        # Multi-repo state
+        self.repos: list[dict] = []
+        self.per_repo_pr_urls: dict[str, str] = {}
+        self.per_repo_merge_status: dict[str, str] = {}
+
     def on_change(self, callback: Callable[[str], None]) -> None:
         self._change_callbacks.append(callback)
 
@@ -105,6 +110,7 @@ class TuiState:
         self._notify("phase")
 
     def _on_plan_ready(self, data: dict) -> None:
+        self.repos = data.get("repos", [])
         self.tasks.clear()
         self.task_order.clear()
         for t in data.get("tasks", []):
@@ -119,6 +125,7 @@ class TuiState:
                 "state": "todo",
                 "agent_cost": 0.0,
                 "error": None,
+                "repo": t.get("repo"),
             }
             self.task_order.append(tid)
         if self.task_order:
@@ -528,6 +535,9 @@ class TuiState:
 
     def _on_pr_created(self, data: dict) -> None:
         self.pr_url = data.get("pr_url")
+        repo_id = data.get("repo_id")
+        if repo_id and self.pr_url:
+            self.per_repo_pr_urls[repo_id] = self.pr_url
         self.phase = "pr_created"
         self._notify("phase")
 
@@ -565,6 +575,10 @@ class TuiState:
         self.integration_checks.clear()
         self.integration_prompt = None
         self.integration_final_gate = None
+        # Multi-repo state
+        self.repos = []
+        self.per_repo_pr_urls = {}
+        self.per_repo_merge_status = {}
 
     @property
     def done_count(self) -> int:
@@ -587,6 +601,10 @@ class TuiState:
     @property
     def active_task_ids(self) -> list[str]:
         return [tid for tid, t in self.tasks.items() if t["state"] in ("in_progress", "in_review", "merging")]
+
+    @property
+    def is_multi_repo(self) -> bool:
+        return len(self.repos) > 1
 
     _EVENT_MAP: dict[str, Callable[["TuiState", dict], None]] = {
         "pipeline:phase_changed": _on_phase_changed,
