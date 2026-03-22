@@ -741,7 +741,9 @@ class ReviewMixin:
                     console.print(f"[red]  Gate 0 (build) failed: {build_result.details}[/red]")
                     feedback_parts.append(f"Gate 0 (build) FAILED:\n{build_result.details}")
                     try:
-                        await db.set_task_timing(task.id, review_duration_s=time.monotonic() - review_t0)
+                        await db.set_task_timing(
+                            task.id, review_duration_s=time.monotonic() - review_t0
+                        )
                     except Exception:
                         pass
                     return False, "\n\n".join(feedback_parts)
@@ -824,7 +826,9 @@ class ReviewMixin:
                 prefix = "[RETRIABLE] " if gate1_result.retriable else ""
                 feedback_parts.append(f"{prefix}L1 (lint) FAILED:\n{gate1_result.details}")
                 try:
-                    await db.set_task_timing(task.id, review_duration_s=time.monotonic() - review_t0)
+                    await db.set_task_timing(
+                        task.id, review_duration_s=time.monotonic() - review_t0
+                    )
                 except Exception:
                     pass
                 return False, "\n\n".join(feedback_parts)
@@ -899,7 +903,9 @@ class ReviewMixin:
                     console.print(f"[red]  Gate 1.5 (test) failed: {test_result.details}[/red]")
                     feedback_parts.append(f"Gate 1.5 (test) FAILED:\n{test_result.details}")
                     try:
-                        await db.set_task_timing(task.id, review_duration_s=time.monotonic() - review_t0)
+                        await db.set_task_timing(
+                            task.id, review_duration_s=time.monotonic() - review_t0
+                        )
                     except Exception:
                         pass
                     return False, "\n\n".join(feedback_parts)
@@ -1067,7 +1073,9 @@ class ReviewMixin:
                     f"{prefix}L2 (LLM code review) FAILED:\n{gate2_result.details}"
                 )
                 try:
-                    await db.set_task_timing(task.id, review_duration_s=time.monotonic() - review_t0)
+                    await db.set_task_timing(
+                        task.id, review_duration_s=time.monotonic() - review_t0
+                    )
                 except Exception:
                     pass
                 return False, "\n\n".join(feedback_parts)
@@ -1153,7 +1161,9 @@ class ReviewMixin:
                         console.print(f"[red]  L2 (extra pass) failed: {gate2_extra.details}[/red]")
                         feedback_parts.append(f"L2 extra pass FAILED:\n{gate2_extra.details}")
                         try:
-                            await db.set_task_timing(task.id, review_duration_s=time.monotonic() - review_t0)
+                            await db.set_task_timing(
+                                task.id, review_duration_s=time.monotonic() - review_t0
+                            )
                         except Exception:
                             pass
                         return False, "\n\n".join(feedback_parts)

@@ -25,7 +25,9 @@ async def _create_pipeline(db: Database, pipeline_id: str = "pipe-1", **kwargs):
     await db.create_pipeline(**defaults)
 
 
-async def _create_task(db: Database, task_id: str = "task-1", pipeline_id: str = "pipe-1", **kwargs):
+async def _create_task(
+    db: Database, task_id: str = "task-1", pipeline_id: str = "pipe-1", **kwargs
+):
     """Helper to create a task with defaults."""
     defaults = {
         "id": task_id,
@@ -315,9 +317,17 @@ class TestGetPipelineTrends:
         assert len(trends) == 1
         t = trends[0]
         expected_keys = {
-            "id", "description", "status", "duration_s", "total_cost_usd",
-            "total_input_tokens", "total_output_tokens", "tasks_succeeded",
-            "tasks_failed", "total_retries", "created_at",
+            "id",
+            "description",
+            "status",
+            "duration_s",
+            "total_cost_usd",
+            "total_input_tokens",
+            "total_output_tokens",
+            "tasks_succeeded",
+            "tasks_failed",
+            "total_retries",
+            "created_at",
         }
         assert set(t.keys()) == expected_keys
 

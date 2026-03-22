@@ -1084,9 +1084,7 @@ class ForgeApp(App):
             except Exception:
                 logger.debug("Failed to load retry summary", exc_info=True)
 
-        self.push_screen(
-            StatsScreen(stats=stats, trends=trends, retry_summary=retry_summary)
-        )
+        self.push_screen(StatsScreen(stats=stats, trends=trends, retry_summary=retry_summary))
 
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():

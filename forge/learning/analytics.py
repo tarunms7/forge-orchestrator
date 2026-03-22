@@ -11,9 +11,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("forge.learning")
 
 
-async def get_lesson_effectiveness(
-    db: Database, project_dir: str | None = None
-) -> list[dict]:
+async def get_lesson_effectiveness(db: Database, project_dir: str | None = None) -> list[dict]:
     """Return lessons sorted by hit_count descending with effectiveness fields.
 
     Each dict contains: id, title, category, hit_count, confidence, scope, last_hit_at.
@@ -23,9 +21,7 @@ async def get_lesson_effectiveness(
 
     if project_dir is not None:
         rows = [
-            r
-            for r in rows
-            if r.scope == "global" or getattr(r, "project_dir", None) == project_dir
+            r for r in rows if r.scope == "global" or getattr(r, "project_dir", None) == project_dir
         ]
 
     return [
@@ -42,9 +38,7 @@ async def get_lesson_effectiveness(
     ]
 
 
-async def get_retry_prevention_estimate(
-    db: Database, project_dir: str | None = None
-) -> dict:
+async def get_retry_prevention_estimate(db: Database, project_dir: str | None = None) -> dict:
     """Estimate retries prevented by the learning system.
 
     For each lesson with hit_count > 1 and confidence >= 0.6 (active lesson),
@@ -58,16 +52,12 @@ async def get_retry_prevention_estimate(
     active = [le for le in lessons if le["hit_count"] > 1 and le["confidence"] >= 0.6]
     active_lessons = len(active)
 
-    estimated_retries_prevented = sum(
-        (le["hit_count"] - 1) * le["confidence"] for le in active
-    )
+    estimated_retries_prevented = sum((le["hit_count"] - 1) * le["confidence"] for le in active)
 
     # Build top lessons sorted by estimated retries prevented descending
     for le in active:
         le["estimated_prevented"] = (le["hit_count"] - 1) * le["confidence"]
-    top_lessons = sorted(
-        active, key=lambda x: x["estimated_prevented"], reverse=True
-    )[:10]
+    top_lessons = sorted(active, key=lambda x: x["estimated_prevented"], reverse=True)[:10]
     # Remove temp key
     for le in top_lessons:
         le.pop("estimated_prevented", None)

@@ -66,6 +66,7 @@ def _fmt_cost(cost: float) -> str:
 
 def _fmt_tokens(input_t: int, output_t: int) -> str:
     """Format token counts compactly."""
+
     def _compact(n: int) -> str:
         if n >= 1_000_000:
             return f"{n / 1_000_000:.1f}M"
@@ -254,7 +255,9 @@ def _show_pipeline_drilldown(pipeline_id: str, as_json: bool) -> None:
         f"Tokens: {_fmt_tokens(data['total_input_tokens'], data['total_output_tokens'])}  |  "
         f"Retries: {data['total_retries']}",
     ]
-    console.print(Panel("\n".join(header_lines), title=f"Pipeline {data['id'][:8]}", border_style="cyan"))
+    console.print(
+        Panel("\n".join(header_lines), title=f"Pipeline {data['id'][:8]}", border_style="cyan")
+    )
 
     tasks = data.get("tasks", [])
     if not tasks:
@@ -284,7 +287,9 @@ def _show_pipeline_drilldown(pipeline_id: str, as_json: bool) -> None:
             + t["lint_duration_s"]
             + t["merge_duration_s"]
         )
-        turns_str = f"{t['num_turns']}/{t['max_turns']}" if t["max_turns"] > 0 else str(t["num_turns"])
+        turns_str = (
+            f"{t['num_turns']}/{t['max_turns']}" if t["max_turns"] > 0 else str(t["num_turns"])
+        )
 
         table.add_row(
             t["id"][:8],
@@ -363,9 +368,7 @@ def _show_waterfall(console: Console, tasks: list[dict]) -> None:
         legend = "  [cyan]█[/cyan] agent  [yellow]█[/yellow] review  [blue]█[/blue] lint  [green]█[/green] merge"
         lines.append("")
         lines.append(legend)
-        console.print(
-            Panel("\n".join(lines), title="Timing Waterfall", border_style="dim")
-        )
+        console.print(Panel("\n".join(lines), title="Timing Waterfall", border_style="dim"))
 
 
 def _show_trends(project_path: str | None, as_json: bool) -> None:
@@ -396,12 +399,8 @@ def _show_trends(project_path: str | None, as_json: bool) -> None:
     console = Console()
 
     # Compute rolling averages (over all pipelines)
-    avg_duration = (
-        sum(p["duration_s"] for p in pipelines) / len(pipelines) if pipelines else 0
-    )
-    avg_cost = (
-        sum(p["total_cost_usd"] for p in pipelines) / len(pipelines) if pipelines else 0
-    )
+    avg_duration = sum(p["duration_s"] for p in pipelines) / len(pipelines) if pipelines else 0
+    avg_cost = sum(p["total_cost_usd"] for p in pipelines) / len(pipelines) if pipelines else 0
 
     table = Table(title="Pipeline Trends (recent first)")
     table.add_column("ID", style="cyan", no_wrap=True)

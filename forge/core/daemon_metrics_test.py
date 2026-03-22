@@ -13,8 +13,12 @@ from forge.merge.worker import MergeResult
 from forge.review.pipeline import GateResult
 
 
-def _make_proc(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=["git"], returncode=returncode, stdout=stdout, stderr=stderr)
+def _make_proc(
+    stdout: str = "", returncode: int = 0, stderr: str = ""
+) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 @dataclass
@@ -86,6 +90,7 @@ def _make_executor():
     mixin._events = MagicMock()
     mixin._events.emit = AsyncMock()
     import asyncio as _asyncio
+
     mixin._merge_lock = _asyncio.Lock()
     return mixin
 
@@ -110,10 +115,17 @@ async def test_execute_task_records_started_at():
     merge_worker._main = "main"
     runtime = MagicMock()
 
-    with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=_make_proc()):
+    with patch(
+        "forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=_make_proc()
+    ):
         await mixin._execute_task(
-            db, runtime, worktree_mgr, merge_worker,
-            "task-1", "agent-1", pipeline_id="pipe-1",
+            db,
+            runtime,
+            worktree_mgr,
+            merge_worker,
+            "task-1",
+            "agent-1",
+            pipeline_id="pipe-1",
         )
 
     # Verify started_at was recorded
@@ -150,8 +162,14 @@ async def test_run_agent_records_duration():
                     return_value=None,
                 ):
                     result = await mixin._run_agent(
-                        db, MagicMock(), MagicMock(), task, "task-1",
-                        "agent-1", "/wt/task-1", "pipe-1",
+                        db,
+                        MagicMock(),
+                        MagicMock(),
+                        task,
+                        "task-1",
+                        "agent-1",
+                        "/wt/task-1",
+                        "pipe-1",
                     )
 
     assert result is not None
@@ -186,8 +204,14 @@ async def test_run_agent_records_error_on_failure():
     with patch("forge.core.daemon_executor.check_budget", new_callable=AsyncMock):
         with patch("forge.core.daemon_executor.select_model", return_value="sonnet"):
             result = await mixin._run_agent(
-                db, MagicMock(), MagicMock(), task, "task-1",
-                "agent-1", "/wt/task-1", "pipe-1",
+                db,
+                MagicMock(),
+                MagicMock(),
+                task,
+                "task-1",
+                "agent-1",
+                "/wt/task-1",
+                "pipe-1",
             )
 
     assert result is None
@@ -222,8 +246,14 @@ async def test_run_agent_records_error_on_no_changes():
                     return_value=None,
                 ):
                     result = await mixin._run_agent(
-                        db, MagicMock(), MagicMock(), task, "task-1",
-                        "agent-1", "/wt/task-1", "pipe-1",
+                        db,
+                        MagicMock(),
+                        MagicMock(),
+                        task,
+                        "task-1",
+                        "agent-1",
+                        "/wt/task-1",
+                        "pipe-1",
                     )
 
     assert result is None
@@ -246,18 +276,36 @@ async def test_attempt_merge_records_duration():
 
     mixin._run_review = AsyncMock(return_value=(True, None))
     mixin._emit_merge_success = AsyncMock()
-    mixin._get_review_config = MagicMock(return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""})
+    mixin._get_review_config = MagicMock(
+        return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""}
+    )
 
     with (
-        patch("forge.core.daemon_executor._get_diff_vs_main", new_callable=AsyncMock, return_value="+ change"),
-        patch("forge.core.daemon_executor._resolve_ref", new_callable=AsyncMock, return_value="abc123"),
+        patch(
+            "forge.core.daemon_executor._get_diff_vs_main",
+            new_callable=AsyncMock,
+            return_value="+ change",
+        ),
+        patch(
+            "forge.core.daemon_executor._resolve_ref", new_callable=AsyncMock, return_value="abc123"
+        ),
         patch("forge.core.daemon_executor.validate_task_id", return_value="task-1"),
         patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock),
-        patch("forge.core.daemon_executor._get_changed_files_vs_main", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "forge.core.daemon_executor._get_changed_files_vs_main",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         await mixin._attempt_merge(
-            db, merge_worker, MagicMock(), task, "task-1",
-            "/wt/task-1", "sonnet", "pipe-1",
+            db,
+            merge_worker,
+            MagicMock(),
+            task,
+            "task-1",
+            "/wt/task-1",
+            "sonnet",
+            "pipe-1",
             pipeline_branch="forge/pipeline-abc",
         )
 
@@ -290,13 +338,20 @@ async def test_execute_task_records_completed_at():
     merge_worker._main = "main"
 
     with (
-        patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=_make_proc()),
+        patch(
+            "forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=_make_proc()
+        ),
         patch("forge.core.daemon_executor._parse_forge_question", return_value=None),
         patch("forge.core.daemon_executor.select_model", return_value="sonnet"),
     ):
         await mixin._execute_task(
-            db, MagicMock(), MagicMock(), merge_worker,
-            "task-1", "agent-1", pipeline_id="pipe-1",
+            db,
+            MagicMock(),
+            MagicMock(),
+            merge_worker,
+            "task-1",
+            "agent-1",
+            pipeline_id="pipe-1",
         )
 
     timing_calls = db.set_task_timing.call_args_list
@@ -327,11 +382,23 @@ async def test_run_review_records_review_duration():
         patch.object(mixin, "_resolve_build_cmd", return_value=None),
         patch.object(mixin, "_resolve_test_cmd", return_value=None),
         patch.object(mixin, "_run_lint_gate", new_callable=AsyncMock, return_value=lint_result),
-        patch.object(mixin, "_get_review_config", return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""}),
-        patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=[]),
+        patch.object(
+            mixin,
+            "_get_review_config",
+            return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""},
+        ),
+        patch(
+            "forge.core.daemon_review._get_changed_files_vs_main",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         passed, feedback = await mixin._run_review(
-            task, "/wt/task-1", "+ diff", db=db, pipeline_id="pipe-1",
+            task,
+            "/wt/task-1",
+            "+ diff",
+            db=db,
+            pipeline_id="pipe-1",
         )
 
     assert passed is True
@@ -364,11 +431,23 @@ async def test_run_review_records_lint_duration():
         patch.object(mixin, "_resolve_build_cmd", return_value=None),
         patch.object(mixin, "_resolve_test_cmd", return_value=None),
         patch.object(mixin, "_run_lint_gate", new_callable=AsyncMock, return_value=lint_result),
-        patch.object(mixin, "_get_review_config", return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""}),
-        patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=[]),
+        patch.object(
+            mixin,
+            "_get_review_config",
+            return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""},
+        ),
+        patch(
+            "forge.core.daemon_review._get_changed_files_vs_main",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         await mixin._run_review(
-            task, "/wt/task-1", "+ diff", db=db, pipeline_id="pipe-1",
+            task,
+            "/wt/task-1",
+            "+ diff",
+            db=db,
+            pipeline_id="pipe-1",
         )
 
     timing_calls = db.set_task_timing.call_args_list
@@ -399,10 +478,18 @@ async def test_run_review_records_duration_on_lint_failure():
     with (
         patch.object(mixin, "_resolve_build_cmd", return_value=None),
         patch.object(mixin, "_run_lint_gate", new_callable=AsyncMock, return_value=lint_result),
-        patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "forge.core.daemon_review._get_changed_files_vs_main",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         passed, feedback = await mixin._run_review(
-            task, "/wt/task-1", "+ diff", db=db, pipeline_id="pipe-1",
+            task,
+            "/wt/task-1",
+            "+ diff",
+            db=db,
+            pipeline_id="pipe-1",
         )
 
     assert passed is False

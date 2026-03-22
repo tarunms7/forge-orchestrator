@@ -138,9 +138,7 @@ async def test_prevention_with_active_lessons(db):
 async def test_prevention_top_lessons_capped_at_10(db):
     lids = []
     for i in range(15):
-        lid = await _add_lesson(
-            db, title=f"lesson-{i}", trigger=f"t-{i}", confidence=0.8
-        )
+        lid = await _add_lesson(db, title=f"lesson-{i}", trigger=f"t-{i}", confidence=0.8)
         await db.bump_lesson_hit(lid)
         await db.bump_lesson_hit(lid)
         lids.append(lid)

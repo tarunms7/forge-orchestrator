@@ -243,41 +243,31 @@ class StatsScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static("[bold #58a6ff]STATS[/]", id="stats-header")
         with VerticalScroll(id="stats-body"):
-            yield Static(
-                "[bold #58a6ff]Pipeline Performance[/]", classes="stats-section-title"
-            )
+            yield Static("[bold #58a6ff]Pipeline Performance[/]", classes="stats-section-title")
             yield Static(
                 format_pipeline_summary(self._trends),
                 id="pipeline-summary",
                 classes="stats-section",
             )
-            yield Static(
-                "[bold #58a6ff]Cost Breakdown[/]", classes="stats-section-title"
-            )
+            yield Static("[bold #58a6ff]Cost Breakdown[/]", classes="stats-section-title")
             yield Static(
                 format_cost_breakdown(self._stats),
                 id="cost-breakdown",
                 classes="stats-section",
             )
-            yield Static(
-                "[bold #58a6ff]Retry Hotspots[/]", classes="stats-section-title"
-            )
+            yield Static("[bold #58a6ff]Retry Hotspots[/]", classes="stats-section-title")
             yield Static(
                 format_retry_hotspots(self._retry_summary),
                 id="retry-hotspots",
                 classes="stats-section",
             )
-            yield Static(
-                "[bold #58a6ff]Token Usage[/]", classes="stats-section-title"
-            )
+            yield Static("[bold #58a6ff]Token Usage[/]", classes="stats-section-title")
             yield Static(
                 format_token_usage(self._stats),
                 id="token-usage",
                 classes="stats-section",
             )
-            yield Static(
-                "[bold #58a6ff]Trends[/]", classes="stats-section-title"
-            )
+            yield Static("[bold #58a6ff]Trends[/]", classes="stats-section-title")
             yield Static(
                 format_trend_indicators(self._trends),
                 id="trend-indicators",
@@ -300,15 +290,11 @@ class StatsScreen(Screen):
             self.query_one("#pipeline-summary", Static).update(
                 format_pipeline_summary(self._trends)
             )
-            self.query_one("#cost-breakdown", Static).update(
-                format_cost_breakdown(self._stats)
-            )
+            self.query_one("#cost-breakdown", Static).update(format_cost_breakdown(self._stats))
             self.query_one("#retry-hotspots", Static).update(
                 format_retry_hotspots(self._retry_summary)
             )
-            self.query_one("#token-usage", Static).update(
-                format_token_usage(self._stats)
-            )
+            self.query_one("#token-usage", Static).update(format_token_usage(self._stats))
             self.query_one("#trend-indicators", Static).update(
                 format_trend_indicators(self._trends)
             )
