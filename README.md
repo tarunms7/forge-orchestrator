@@ -1,91 +1,123 @@
 <div align="center">
 
-# Forge
+# FORGE
 
-### One command. Multiple agents. Reviewed code delivered via pull request.
+### Ship features, not prompts.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-cc785c?logo=anthropic&logoColor=white)](https://docs.anthropic.com/en/docs/claude-code)
-[![Next.js](https://img.shields.io/badge/dashboard-Next.js-000?logo=next.js)](https://nextjs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/tarunms7/forge-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/tarunms7/forge-orchestrator/actions/workflows/ci.yml)
 
-The only AI coding tool that generates **interface contracts** before agents write a single line — so your backend and frontend always agree on API shapes, field names, and types. No copy-paste. No pray-and-merge.
+Forge is a multi-agent orchestration engine. You describe what you want. Forge plans the work, generates interface contracts, runs agents in parallel, reviews every line, and opens a pull request.
 
-[Install](#install) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Contract Builder](#contract-builder) · [Web Dashboard](#web-dashboard) · [Configuration](#configuration)
+**One command. Multiple agents. Reviewed code delivered via PR.**
+
+[Install](#install) · [How It Works](#how-it-works) · [Screenshots](#see-it-in-action) · [Configuration](#configuration)
 
 </div>
 
 <br/>
 
 ```bash
-forge run "Build a REST API with JWT auth, user registration, and integration tests"
+forge tui
 ```
 
-That's it. Forge plans the work, generates interface contracts so agents agree on API shapes before writing a line of code, spins up agents in parallel, reviews their output, and opens a pull request when everything passes.
-
-<br/>
-
 <p align="center">
-  <img src="docs/screenshots/forge-pipeline-planning.png" alt="Forge — planning phase with task breakdown" width="800" />
+  <img src="docs/screenshots/forge_tui_dashboard.png" alt="Forge TUI — home screen" width="720" />
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/forge-pipeline-complete.png" alt="Forge — completed pipeline with cost tracking" width="800" />
-</p>
+Type your task. Hit Ctrl+S. Walk away. Come back to a pull request.
 
 ---
 
-## Why Forge?
+## What makes Forge different
 
-Writing code with an AI assistant is powerful — but you're still the bottleneck. You prompt one thing at a time, manually review every change, copy-paste between files, and pray that the backend and frontend agree on field names. Forge removes all of that.
+Most AI coding tools are **chat interfaces**. You prompt, you wait, you review, you prompt again. You're still the bottleneck.
 
-| Pain point | How Forge solves it |
+Forge is an **orchestration engine**. It breaks your task into a dependency graph, assigns each piece to an agent, and runs them in parallel — each in its own git worktree, each with its own review pipeline. When everything passes, you get a PR.
+
+| You're doing this today | Forge does this instead |
 |---|---|
-| You prompt one thing at a time | Forge decomposes your task into a **dependency graph** and runs independent tasks **in parallel** |
-| Parallel agents produce incompatible interfaces | The **Contract Builder** generates binding API & type contracts *before* any code is written — agents build against the same spec |
-| AI changes break other code | Each agent works in an **isolated git worktree** — no file conflicts between concurrent agents |
-| You manually review AI output | A **multi-gate review pipeline** (build > lint > test > LLM review > contract compliance > merge check) catches issues before anything touches `main` |
-| Context gets lost in long sessions | Each agent is a **fresh Claude session** with a focused prompt + its relevant contracts — no context bleeding |
-| Merging is manual and error-prone | Forge **rebases and fast-forward merges** each task, then auto-creates a **pull request** |
-| You can't control AI spend | **Per-pipeline budget limits** with real-time cost tracking — hard stop when the budget is hit |
+| Prompting one thing at a time | Decomposes into a **DAG** and runs independent tasks **in parallel** |
+| Hoping two AI-written files agree on an API shape | **Contract Builder** generates binding specs *before* any code is written |
+| Manually reviewing every AI change | **5-gate review pipeline**: build, lint, test, LLM review, contract compliance |
+| Copy-pasting between chat and terminal | Each agent works in an **isolated git worktree** — zero conflicts |
+| Losing context in long sessions | Each agent is a **fresh session** with a focused prompt + its contracts |
+| Merging by hand | Auto **rebase + fast-forward merge**, then `gh pr create` |
+| No idea what the AI spend was | **Real-time cost tracking** with per-pipeline budget limits |
+
+---
+
+## See it in action
+
+### Planning — Forge reads your codebase, then builds a task graph
+
+<p align="center">
+  <img src="docs/screenshots/forge_planning_screen.png" alt="Forge — planning phase, reading codebase" width="720" />
+</p>
+
+### Plan review — Approve, edit, or reject before any code is written
+
+<p align="center">
+  <img src="docs/screenshots/forge_plans_screen.png" alt="Forge — task plan with dependencies and complexity" width="720" />
+</p>
+
+### Execution — Agents work in parallel, learning from failures in real-time
+
+<p align="center">
+  <img src="docs/screenshots/forge_execution_with_learning.png" alt="Forge — parallel execution with self-learning" width="720" />
+</p>
+
+### Code review — Inspect every diff before merge
+
+<p align="center">
+  <img src="docs/screenshots/forge_diff_screen.png" alt="Forge — diff review screen" width="720" />
+</p>
+
+### Done — PR created, cost tracked, ready to merge
+
+<p align="center">
+  <img src="docs/screenshots/forge_final_pr_screen.png" alt="Forge — pipeline complete with PR link" width="720" />
+</p>
 
 ---
 
 ## Install
 
-> **Prerequisites:** Git 2.20+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude login`), and optionally [`gh` CLI](https://cli.github.com) for auto-PR creation.
-
-### One-command install
+> **Prerequisites:** Git 2.20+ and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude login`).
+> Optional: [`gh` CLI](https://cli.github.com) for automatic PR creation.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
 ```
 
-Installs [uv](https://docs.astral.sh/uv/) + Forge + Python 3.12 (if needed), creates the data directory, and runs `forge doctor`. Idempotent — safe to re-run to upgrade.
+That's it. The installer handles Python 3.12, [uv](https://docs.astral.sh/uv/), and the Forge CLI. Safe to re-run to upgrade.
 
-### Manual install
+<details>
+<summary><b>Manual install</b></summary>
 
 ```bash
-git clone https://github.com/tarunms7/forge-orchestrator.git  # Clone the repo
-cd forge-orchestrator                                          # Enter project dir
-uv tool install .                                              # Install as global CLI tool
-mkdir -p ~/.local/share/forge                                  # Create data directory
-forge doctor                                                   # Verify setup
+git clone https://github.com/tarunms7/forge-orchestrator.git
+cd forge-orchestrator
+uv tool install .
+forge doctor
 ```
 
-No virtual environment activation required — `uv tool` installs Forge as a global command.
+</details>
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
 cd your-project
 forge tui
 ```
 
-That's it. Forge auto-creates `.forge/` in your project on first run. Or run a task directly:
+Type what you want. Forge auto-creates `.forge/` in your project on first run.
+
+Or skip the TUI:
 
 ```bash
 forge run "Add input validation to all API endpoints"
@@ -93,43 +125,37 @@ forge run "Add input validation to all API endpoints"
 
 ---
 
-## How It Works
+## How it works
 
 ```
-forge run "your task"
-        |
-   1. PLAN ---------> Claude decomposes into a task graph (DAG) with dependencies & integration hints
-        |
-   2. CONTRACT -----> Contract Builder generates binding API & type contracts from hints
-        |
-   3. EXECUTE ------> Parallel agents write code in isolated worktrees, each with its contracts injected
-        |
-   4. REVIEW -------> Multi-gate pipeline: build > lint > test > LLM review > contract compliance
-        |
-   5. MERGE --------> Rebase + fast-forward into working branch, auto-create PR
+You: "Build a REST API with JWT auth and tests"
+                    |
+              1. PLAN
+              Reads codebase, decomposes into task DAG
+              with dependencies, file ownership, complexity
+                    |
+              2. CONTRACT
+              Generates binding API & type specs so
+              agents agree on interfaces before coding
+                    |
+              3. EXECUTE
+              Parallel agents in isolated git worktrees,
+              each with its contracts injected into the prompt
+                    |
+              4. REVIEW
+              5-gate pipeline per task:
+              build > lint > test > LLM review > contracts
+                    |
+              5. MERGE
+              Rebase + fast-forward, then gh pr create
 ```
 
-**Plan** — Claude decomposes your request into a DAG of tasks with dependencies, file ownership, complexity ratings, and integration hints. You can edit the plan before execution.
+### The Contract Builder
 
-**Contract** — The Contract Builder generates precise API and type contracts from integration hints + codebase context — *before* any code is written.
+The #1 problem with multi-agent code generation is **integration**. Two agents writing a backend API and a frontend client will invent different field names, response shapes, and auth patterns.
 
-**Execute** — Each task gets its own git worktree. Producers are prompted with exact response shapes to implement; consumers receive exact shapes to expect. Two agents, same spec, compatible on first try.
+Forge solves this by generating **binding contracts** before agents write a single line:
 
-**Review** — Every task passes up to 5 gates: build, lint, test, LLM review (diff + contract compliance), and merge readiness check.
-
-**Merge** — Task branches are rebased and fast-forward merged. When all tasks pass, Forge opens a pull request via `gh pr create`. If any step fails, Forge retries up to 3 times with failure feedback.
-
----
-
-## Contract Builder
-
-> The #1 problem with multi-agent code generation isn't quality — it's **integration**. Two agents writing a backend API and a frontend client will independently invent different field names, response shapes, and auth patterns. Forge solves this with contracts.
-
-<p align="center">
-  <img src="docs/screenshots/forge-contract-builder.png" alt="Forge — Contract Builder showing API and type contracts" width="800" />
-</p>
-
-**API Contracts** define exact endpoint shapes:
 ```
 POST /api/templates
   Request:  { name: string, description: string, tasks: TaskConfig[] }
@@ -137,131 +163,117 @@ POST /api/templates
   Producer: task-1 (backend)  |  Consumer: task-2 (frontend)
 ```
 
-**Type Contracts** define shared data structures:
-```
-PipelineTemplate:
-  id: string          — UUID for user-created, slug for built-in
-  name: string        — Display name
-  description: string — Human-readable summary
-  tasks: TaskConfig[] — Array of task configurations
-  Used by: task-1, task-2, task-3
-```
+Producers implement the spec. Consumers call the spec. The reviewer verifies compliance. No pray-and-merge.
 
-### How contracts flow
+### Self-evolving learning
 
-1. **Planner** flags integration hints: *"task-1 produces a REST API that task-2 consumes"*
-2. **Contract Builder** generates precise contracts from hints + codebase context
-3. **Agents** receive contracts in their system prompt — producers implement the spec, consumers call the spec
-4. **Reviewers** verify contract compliance in each diff
-5. Contracts degrade gracefully — if generation fails, agents proceed without them
+Forge learns from its own failures. When a task fails and succeeds on retry, the system captures what changed and stores it as a lesson. Next time a similar pattern appears, that knowledge is injected into the agent's prompt.
 
----
-
-## Web Dashboard
-
-```bash
-forge serve   # Backend :8000 + Frontend :3000
-```
-
-> Requires `pip install forge-orchestrator[web]` and a git clone for the `web/` directory. Set `FORGE_JWT_SECRET` for multi-user auth.
-
-- **Live pipeline progress** via WebSocket with streaming agent output
-- **Interactive plan editing** — reorder, add/remove tasks, edit dependencies
-- **Contract viewer** — API & type contracts with producer/consumer linkage
-- **Review gate results** — build, lint, test, and LLM review status per task
-- **Pre-merge approval** — review diffs before merge
-- **Real-time cost tracking** with budget enforcement
-- **Pipeline history** with duration, task counts, and cost
+- Adaptive lint timeouts (ESLint took 180s? Next run starts at 360s)
+- Agent self-reported learnings from review feedback
+- Lessons persist across pipelines and projects
 
 ---
 
 ## Configuration
 
-All settings use the `FORGE_` prefix. See [`.env.example`](.env.example) for the full list.
+All settings use the `FORGE_` prefix. Build and test commands are **auto-detected** from your project.
 
-Build and test commands are **auto-detected** from your project (`package.json`, `Makefile`, `pyproject.toml`, etc.).
-
-| Setting | Default | Description |
+| Setting | Default | What it does |
 |---|---|---|
-| `FORGE_DATA_DIR` | `~/.local/share/forge` | Central data directory |
-| `FORGE_MAX_AGENTS` | 5 | Max concurrent agent sessions |
-| `FORGE_AGENT_TIMEOUT_SECONDS` | 600 | Per-task timeout (10 min) |
+| `FORGE_MAX_AGENTS` | 5 | Max concurrent agents |
+| `FORGE_AGENT_TIMEOUT_SECONDS` | 600 | Per-task timeout |
 | `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
-| `FORGE_BUILD_CMD` | *(auto-detected)* | Build command |
-| `FORGE_TEST_CMD` | *(auto-detected)* | Test command |
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap |
-| `FORGE_MODEL_STRATEGY` | auto | Model routing: `auto`, `fast`, `quality` |
-| `FORGE_REQUIRE_APPROVAL` | false | Require human approval before merge |
+| `FORGE_MODEL_STRATEGY` | auto | `fast` / `auto` / `quality` |
+| `FORGE_REQUIRE_APPROVAL` | false | Human approval before merge |
+| `FORGE_BUILD_CMD` | *(auto)* | Override build command |
+| `FORGE_TEST_CMD` | *(auto)* | Override test command |
 
 ```bash
-FORGE_BUDGET_LIMIT_USD=5 FORGE_MODEL_STRATEGY=quality forge run "Refactor auth to OAuth2"
+FORGE_BUDGET_LIMIT_USD=5 forge run "Refactor auth to OAuth2"
+```
+
+### Project config
+
+Drop a `forge.toml` in your project root for per-project settings:
+
+```toml
+[agents]
+max_parallel = 4
+timeout_seconds = 300
+
+[review]
+max_retries = 3
+
+[lint]
+check_cmd = "npm run lint"
+fix_cmd = "npm run lint:fix"
 ```
 
 ### Model routing
 
-| Strategy | Planner | Contract Builder | Agent | Reviewer |
-|---|---|---|---|---|
-| `fast` | Sonnet | Sonnet | Haiku | Haiku/Sonnet |
-| `auto` (default) | Opus | Opus | Sonnet/Opus | Sonnet |
-| `quality` | Opus | Opus | Opus | Sonnet |
+| Strategy | Planner | Agents | Reviewer |
+|---|---|---|---|
+| `fast` | Sonnet | Haiku | Haiku |
+| `auto` | Opus | Sonnet | Sonnet |
+| `quality` | Opus | Opus | Sonnet |
 
 ---
 
-## Data Storage
+## Web dashboard
 
-```
-~/.local/share/forge/          # Central (shared across all projects)
-  forge.db                     #   Pipeline history, task state, cost tracking
-
-your-project/.forge/           # Project-local
-  worktrees/                   #   Isolated git worktrees for each task
-  config/                      #   Project-specific settings
+```bash
+pip install forge-orchestrator[web]
+forge serve
 ```
 
-Pipeline history follows you across projects — `forge status --all` shows everything. Customize location with `FORGE_DATA_DIR` or `FORGE_DB_URL`.
+Live pipeline progress via WebSocket, interactive plan editing, contract viewer, review gate results, and cost tracking. Set `FORGE_JWT_SECRET` for multi-user auth.
 
 ---
 
-## Code Delivery
+## Architecture
 
-Your code arrives as a **pull request** — never pushed directly to `main`:
-
-1. Each task works in an isolated git worktree
-2. After passing review + contract compliance, branches are rebased and fast-forward merged
-3. When all tasks complete, Forge runs `gh pr create`
-4. You review and merge through your normal workflow
+```
+forge/
+  cli/           # Click CLI — forge run, forge tui, forge status, forge clean
+  tui/           # Textual TUI — full terminal UI with live pipeline view
+  core/          # Orchestration engine — daemon, planner, executor, scheduler
+  agents/        # Claude Code SDK adapter — agent runtime, prompt building
+  merge/         # Git worktree lifecycle — create, merge, cleanup
+  review/        # Multi-gate review — lint, build, test, LLM review
+  learning/      # Self-evolving system — lesson store, runtime guard, extractor
+  storage/       # SQLite via SQLAlchemy async — tasks, pipelines, events
+  config/        # Settings, project config, forge.toml parsing
+  api/           # FastAPI backend for web dashboard
+web/             # Next.js 14 frontend — TypeScript, Tailwind, Zustand
+```
 
 ---
 
 ## Troubleshooting
 
-**`forge: command not found`** — Add `~/.local/bin` to your PATH, or re-run the installer.
-
-**Database issues** — Run `forge doctor` to diagnose. Forge auto-creates the database on next run if missing.
-
-**Claude CLI not authenticated** — Run `claude login`.
-
-**`gh: command not found`** — Install the [GitHub CLI](https://cli.github.com) and run `gh auth login`.
-
----
-
-## Limitations
-
-- **Cost** — A 4-task pipeline makes ~12 Claude calls. Use `fast` strategy or set `FORGE_BUDGET_LIMIT_USD`.
-- **Speed** — Tasks with dependencies run sequentially; independent tasks run in parallel.
-- **Linting** — Lint gate auto-detects the language and runs the appropriate tool: `ruff` (Python), `eslint` (JS/TS), `gofmt` (Go), `cargo clippy` (Rust), `rubocop` (Ruby), `ktlint` (Kotlin), `swiftlint` (Swift), `shellcheck` (Shell). Override with `FORGE_LINT_CMD`/`FORGE_LINT_FIX_CMD`.
-- **Merge conflicts** — If two tasks modify the same file, the later merge may fail and retry.
-- **Contracts** — Adds ~15-30s to startup. Skipped automatically for single-task pipelines.
+| Problem | Fix |
+|---|---|
+| `forge: command not found` | Add `~/.local/bin` to PATH, or re-run the installer |
+| Claude CLI not authenticated | Run `claude login` |
+| `gh: command not found` | Install [GitHub CLI](https://cli.github.com) and run `gh auth login` |
+| Database issues | Run `forge doctor` |
+| Pipeline stuck | Check `.forge/forge.log` for details |
 
 ---
 
-## Uninstall
+## Contributing
 
 ```bash
-uv tool uninstall forge-orchestrator                           # Remove the tool
-rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/forge"            # Remove pipeline history
-rm -rf .forge/                                                 # Remove per-project data (optional)
+git clone https://github.com/tarunms7/forge-orchestrator.git
+cd forge-orchestrator
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev,web]'
+python -m pytest forge/ -q
 ```
+
+CI runs ruff lint + format check + tests on every PR.
 
 ---
 
