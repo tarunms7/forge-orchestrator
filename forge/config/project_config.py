@@ -528,9 +528,25 @@ def _auto_detect_repos(project_dir: str) -> list | None:
     """
     from forge.core.models import RepoConfig
 
-    # If CWD is itself a git repo, this is a normal single-repo — skip
+    # If CWD is a git repo with actual content, it's a normal single-repo — skip.
+    # But if it's an empty container repo (no commits, no tracked files), it might
+    # be a super-repo wrapper around real repos in subdirectories.
     if os.path.isdir(os.path.join(project_dir, ".git")):
-        return None
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+        )
+        if has_commits.returncode == 0:
+            # Has commits — check if it has tracked files (not just a bare wrapper)
+            tracked = subprocess.run(
+                ["git", "ls-files"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+            )
+            if tracked.stdout.strip():
+                return None  # Real repo with tracked files — not a super-repo
 
     repos = []
     try:
