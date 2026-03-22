@@ -466,6 +466,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 else:
                     await self._events.emit("planner:output", {"line": text})
 
+        # Ensure each repo is on its base_branch before reading files.
+        # Without this, the planner reads whatever branch is checked out locally
+        # instead of the branch specified in workspace.toml.
+        for repo_id, rc in self._repos.items():
+            current = await _get_current_branch(rc.path)
+            if current != rc.base_branch:
+                result = await async_subprocess(
+                    ["git", "checkout", rc.base_branch],
+                    cwd=rc.path,
+                )
+                if result.returncode != 0:
+                    logger.warning(
+                        "Could not checkout %s in repo %s: %s",
+                        rc.base_branch, repo_id, result.stderr.strip(),
+                    )
+
         # Run snapshot gathering in a thread to avoid blocking the event loop
         if len(self._repos) == 1:
             repo = next(iter(self._repos.values()))
