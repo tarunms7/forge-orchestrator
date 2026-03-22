@@ -77,35 +77,66 @@ class TestWebSocketEndpoint:
 class TestWebSocketBroadcastRepoId:
     """Test that broadcasts can include repo_id field."""
 
-    def test_ws_event_includes_repo_id(self, app, valid_token):
-        """Broadcast with repo_id field should arrive at the client with repo_id."""
-        import asyncio
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_includes_repo_id(self):
+        """ConnectionManager.broadcast passes repo_id through to clients."""
+        import json
 
-        client = TestClient(app)
-        with client.websocket_connect("/api/ws/pipe-repo") as ws:
-            ws.send_json({"token": valid_token})
-            msg = ws.receive_json()
-            assert msg["type"] == "auth_ok"
+        from forge.api.ws.manager import ConnectionManager
 
-            manager = app.state.ws_manager
+        manager = ConnectionManager()
 
-            # Broadcast a task:state_changed event with repo_id
-            async def do_broadcast():
-                await manager.broadcast("pipe-repo", {
-                    "type": "task:state_changed",
-                    "task_id": "t1",
-                    "state": "merging",
-                    "repo_id": "backend",
-                })
+        # Mock WebSocket that captures sent messages
+        sent_messages: list[str] = []
 
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(do_broadcast())
-            finally:
-                loop.close()
+        class MockWebSocket:
+            async def send_text(self, data: str) -> None:
+                sent_messages.append(data)
 
-            received = ws.receive_json()
-            assert received["type"] == "task:state_changed"
-            assert received["task_id"] == "t1"
-            assert received["state"] == "merging"
-            assert received["repo_id"] == "backend"
+        mock_ws = MockWebSocket()
+        manager.active_connections["pipe-repo"].append(mock_ws)
+
+        # Broadcast a task:state_changed event with repo_id
+        await manager.broadcast("pipe-repo", {
+            "type": "task:state_changed",
+            "task_id": "t1",
+            "state": "merging",
+            "repo_id": "backend",
+        })
+
+        assert len(sent_messages) == 1
+        received = json.loads(sent_messages[0])
+        assert received["type"] == "task:state_changed"
+        assert received["task_id"] == "t1"
+        assert received["state"] == "merging"
+        assert received["repo_id"] == "backend"
+
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_default_repo_id(self):
+        """Broadcast without repo_id should not break anything."""
+        import json
+
+        from forge.api.ws.manager import ConnectionManager
+
+        manager = ConnectionManager()
+
+        sent_messages: list[str] = []
+
+        class MockWebSocket:
+            async def send_text(self, data: str) -> None:
+                sent_messages.append(data)
+
+        mock_ws = MockWebSocket()
+        manager.active_connections["pipe-single"].append(mock_ws)
+
+        # Broadcast without repo_id (single-repo backward compat)
+        await manager.broadcast("pipe-single", {
+            "type": "task:state_changed",
+            "task_id": "t2",
+            "state": "merged",
+        })
+
+        assert len(sent_messages) == 1
+        received = json.loads(sent_messages[0])
+        assert received["type"] == "task:state_changed"
+        assert "repo_id" not in received  # Not added if not provided

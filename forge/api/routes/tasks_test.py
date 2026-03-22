@@ -2064,6 +2064,9 @@ class TestMultiRepoPipelineStatus:
         assert resp.status_code == 200
         data = resp.json()
         assert data["pipeline_id"] == pid
+        # TaskStatusResponse doesn't have a 'repos' field directly,
+        # but verify the response is valid and contains expected pipeline data
+        assert data["phase"] == "planned"
 
     async def test_task_status_includes_repo_id(self, client_with_app, tmp_path):
         """Task entries in status response have repo_id field."""

@@ -1600,8 +1600,7 @@ async def get_task_status(
                 enriched["input_tokens"] = row.input_tokens
                 enriched["output_tokens"] = row.output_tokens
             # Add repo_id from TaskRow (defaults to "default" for single-repo)
-            if tid in task_row_map:
-                enriched["repo_id"] = getattr(task_row_map[tid], "repo_id", "default")
+            enriched["repo_id"] = getattr(task_row_map.get(tid), "repo_id", "default")
             enriched_tasks.append(enriched)
 
         return TaskStatusResponse(
