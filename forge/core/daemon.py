@@ -212,6 +212,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._strategy = self._settings.model_strategy
         self._snapshot: ProjectSnapshot | None = None
         self._merge_lock = asyncio.Lock()
+        # Limit concurrent subprocess-heavy gates (lint, build, test) to prevent
+        # CPU saturation when multiple agents run ESLint/tsc/pytest simultaneously.
+        self._gate_semaphore = asyncio.Semaphore(2)
         self._project_config = ProjectConfig.load(project_dir)
 
         # Multi-repo support: build repos dict
@@ -225,14 +228,25 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Lessons use the central DB — no separate initialization needed
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
-        """Emit event to WebSocket AND persist to DB."""
-        await self._events.emit(event_type, data)
-        await db.log_event(
-            pipeline_id=pipeline_id,
-            task_id=data.get("task_id"),
-            event_type=event_type,
-            payload=data,
-        )
+        """Emit event to WebSocket AND persist to DB.
+
+        This method is **fail-safe**: exceptions from event handlers or DB
+        logging are caught and logged, never propagated.  Event emission
+        must never kill a running task — it's telemetry, not business logic.
+        """
+        try:
+            await self._events.emit(event_type, data)
+        except Exception:
+            logger.warning("Event handler failed for %s (non-fatal)", event_type, exc_info=True)
+        try:
+            await db.log_event(
+                pipeline_id=pipeline_id,
+                task_id=data.get("task_id"),
+                event_type=event_type,
+                payload=data,
+            )
+        except Exception:
+            logger.warning("Failed to persist event %s to DB (non-fatal)", event_type, exc_info=True)
 
     # ── Multi-repo initialization & infrastructure ─────────────────────
 
@@ -1343,8 +1357,46 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self, task_id: str, exc: BaseException,
         db, worktree_mgr, pipeline_id: str | None,
     ) -> None:
-        """Handle a task that raised an unhandled exception in the pool."""
+        """Handle a task that raised an unhandled exception in the pool.
+
+        Instead of permanently marking the task as ERROR, attempt a retry
+        via ``_handle_retry`` if retries remain.  This is the safety net
+        that catches transient infrastructure failures (DB locks, ESLint
+        timeouts, disk errors) and gives the task another chance.
+        """
         logger.error("Task %s raised unhandled exception: %s", task_id, exc, exc_info=exc)
+
+        # Release the agent slot first — this must happen regardless of retry.
+        try:
+            task_rec = await db.get_task(task_id)
+            if task_rec and task_rec.assigned_agent:
+                await db.release_agent(task_rec.assigned_agent)
+        except Exception:
+            logger.exception("Failed to release agent for crashed task %s", task_id)
+
+        # Attempt retry instead of permanent death.
+        try:
+            task_rec = task_rec or await db.get_task(task_id)
+            if task_rec and task_rec.retry_count < self._settings.max_retries:
+                crash_feedback = (
+                    f"[INFRASTRUCTURE CRASH] Task crashed with {type(exc).__name__}: {str(exc)[:300]}\n"
+                    "This was an infrastructure/runtime error, not a code quality issue. "
+                    "The previous code changes in the worktree are preserved — retry from where you left off."
+                )
+                logger.warning(
+                    "Task %s crashed, retrying (%d/%d): %s",
+                    task_id, task_rec.retry_count + 1, self._settings.max_retries, exc,
+                )
+                await self._handle_retry(
+                    db, task_id, worktree_mgr,
+                    review_feedback=crash_feedback,
+                    pipeline_id=pipeline_id,
+                )
+                return  # Retry scheduled — do NOT mark as permanent error
+        except Exception:
+            logger.exception("Failed to schedule retry for crashed task %s, falling back to ERROR", task_id)
+
+        # Retry not possible (max retries exceeded or retry itself failed) — permanent ERROR.
         try:
             await db.update_task_state(task_id, TaskState.ERROR.value)
             await self._emit("task:state_changed", {
@@ -1352,12 +1404,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             }, db=db, pipeline_id=pipeline_id or "")
         except Exception:
             logger.exception("Failed to mark crashed task %s as error", task_id)
-        try:
-            task_rec = await db.get_task(task_id)
-            if task_rec and task_rec.assigned_agent:
-                await db.release_agent(task_rec.assigned_agent)
-        except Exception:
-            pass
         try:
             worktree_mgr.remove(task_id)
         except Exception as cleanup_err:
@@ -1395,7 +1441,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await self._emit("pipeline:error", {"error": f"Pipeline crashed: {e}"}, db=db, pipeline_id=pipeline_id or "")
                 await self._emit("pipeline:phase_changed", {"phase": "error"}, db=db, pipeline_id=pipeline_id or "")
             except Exception:
-                pass
+                logger.exception("Failed to emit pipeline:error event after execution loop crash")
             raise
         finally:
             self._cleanup_answer_handler()
