@@ -229,6 +229,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._gate_semaphore = asyncio.Semaphore(2)
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_tasks_lock = asyncio.Lock()
+        self._effective_max_agents: int = self._settings.max_agents
         self._project_config = ProjectConfig.load(project_dir)
 
         # Multi-repo support: build repos dict
@@ -344,8 +345,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """
         if len(self._repos) > 1:
             rc = self._repos.get(repo_id)
-            repo_path = rc.path if rc else self._workspace_dir
-            return os.path.join(repo_path, ".forge", "worktrees", validate_task_id(task_id))
+            if rc is None:
+                logger.error(
+                    "repo_id '%s' not found in configured repos: %s",
+                    repo_id, sorted(self._repos.keys()),
+                )
+                raise ValueError(
+                    f"repo_id '{repo_id}' not found in configured repos: "
+                    f"{sorted(self._repos.keys())}"
+                )
+            return os.path.join(rc.path, ".forge", "worktrees", validate_task_id(task_id))
         return os.path.join(self._workspace_dir, ".forge", "worktrees", validate_task_id(task_id))
 
     def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:
@@ -583,11 +592,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Filter out repos the user asked to exclude — before gathering
         # snapshots so the planner never sees them at all.
         planning_repos = self._repos
+        excluded_repos: set[str] = set()
         if len(self._repos) > 1:
-            pre_excluded = _detect_excluded_repos(user_input, set(self._repos.keys()))
-            if pre_excluded:
-                planning_repos = {k: v for k, v in self._repos.items() if k not in pre_excluded}
-                logger.info("Excluding repos from planning: %s", ", ".join(sorted(pre_excluded)))
+            excluded_repos = _detect_excluded_repos(user_input, set(self._repos.keys()))
+            if excluded_repos:
+                planning_repos = {k: v for k, v in self._repos.items() if k not in excluded_repos}
+                logger.info("Excluding repos from planning: %s", ", ".join(sorted(excluded_repos)))
 
         # Run snapshot gathering in a thread to avoid blocking the event loop
         if len(planning_repos) == 1:
@@ -728,20 +738,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Safety net: drop tasks for excluded repos even if the planner
             # ignored the instruction. This is a hard programmatic filter.
-            if len(self._repos) > 1:
-                excluded = _detect_excluded_repos(user_input, set(self._repos.keys()))
-                if excluded:
-                    before = len(graph.tasks)
-                    graph.tasks = [
-                        t for t in graph.tasks
-                        if getattr(t, "repo", None) not in excluded
-                    ]
-                    dropped = before - len(graph.tasks)
-                    if dropped:
-                        logger.info(
-                            "Dropped %d tasks for excluded repos: %s",
-                            dropped, ", ".join(sorted(excluded)),
-                        )
+            if len(self._repos) > 1 and excluded_repos:
+                before = len(graph.tasks)
+                graph.tasks = [
+                    t for t in graph.tasks
+                    if getattr(t, "repo", None) not in excluded_repos
+                ]
+                dropped = before - len(graph.tasks)
+                if dropped:
+                    logger.info(
+                        "Dropped %d tasks for excluded repos: %s",
+                        dropped, ", ".join(sorted(excluded_repos)),
+                    )
 
             # Track costs
             if pipeline_id and planning_result.total_cost_usd > 0:
@@ -1391,8 +1399,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         except asyncio.CancelledError:
             logger.info("Task %s was cancelled (shutdown)", task_id)
             raise
-        except Exception:
-            raise
         finally:
             released = False
             for attempt in range(3):
@@ -1549,7 +1555,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
         self._active_tasks.clear()
-        self._effective_max_agents = self._settings.max_agents
+        # _effective_max_agents is set in __init__ (default) and recalculated
+        # in execute() based on DAG width — do NOT overwrite here on loop re-entry.
         self._executor_token = str(_uuid_mod.uuid4())
 
         # Store dependencies for event-driven resume

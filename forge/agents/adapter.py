@@ -152,6 +152,7 @@ def _load_claude_md(project_dir: str) -> str | None:
 
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
     """Build the human interaction protocol section for agent system prompts."""
+    remaining = max(0, remaining)  # Prevent negative remaining count
     if autonomy == "full":
         when_to_ask = "NEVER ask questions. Make your best judgment on all decisions."
     elif autonomy == "supervised":
