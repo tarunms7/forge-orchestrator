@@ -318,7 +318,7 @@ def upgrade() -> None:
 
 def _write_if_missing(path: str, content: str) -> None:
     if not os.path.exists(path):
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
 
@@ -326,12 +326,12 @@ def _ensure_gitignore_entries(gitignore_path: str, entries: list[str]) -> None:
     """Ensure specific entries exist in a .gitignore file."""
     existing = set()
     if os.path.exists(gitignore_path):
-        with open(gitignore_path, "r") as f:
+        with open(gitignore_path, "r", encoding="utf-8") as f:
             existing = {line.strip() for line in f if line.strip() and not line.startswith("#")}
 
     new_entries = [e for e in entries if e not in existing]
     if new_entries:
-        with open(gitignore_path, "a") as f:
+        with open(gitignore_path, "a", encoding="utf-8") as f:
             if existing:  # Add newline separator if file already had content
                 f.write("\n")
             for entry in new_entries:
