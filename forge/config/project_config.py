@@ -546,9 +546,18 @@ def _auto_detect_repos(project_dir: str) -> list | None:
             continue
         if not os.path.isdir(os.path.join(subdir, ".git")):
             continue
-        # This subdirectory is a git repo
+        # This subdirectory has a .git folder — verify it's a valid repo
         repo_id = name.lower().replace(" ", "-")
         if not _REPO_ID_RE.match(repo_id):
+            continue
+        # Verify git can actually read this repo (catches corrupt/broken repos)
+        check = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=subdir,
+            capture_output=True,
+        )
+        if check.returncode != 0:
+            logger.warning("Skipping %s: has .git but git cannot read it", name)
             continue
         base_branch = auto_detect_base_branch(subdir)
         repos.append(RepoConfig(id=repo_id, path=os.path.realpath(subdir), base_branch=base_branch))
