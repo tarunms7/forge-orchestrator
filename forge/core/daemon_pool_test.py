@@ -347,7 +347,7 @@ class TestContinuousTaskPool:
             )
             try:
                 await asyncio.wait_for(task2_completed.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pytest.fail("task-2 did not complete within timeout")
             finally:
                 loop_task.cancel()
