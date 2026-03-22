@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import UTC, datetime
 
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
@@ -217,6 +219,15 @@ class MergeMixin:
         else:
             console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
+            # Record error and completion time
+            try:
+                error_msg = "Max retries exceeded"
+                if review_feedback:
+                    error_msg = f"Max retries exceeded. Last feedback: {review_feedback[:500]}"
+                await db.set_task_error(task_id, error_msg)
+                await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+            except Exception:
+                logger.debug("Failed to record error/timing for %s", task_id, exc_info=True)
             if pipeline_id:
                 await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
@@ -287,6 +298,12 @@ class MergeMixin:
         else:
             console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
+            # Record error and completion time
+            try:
+                await db.set_task_error(task_id, "Max merge retries exceeded")
+                await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+            except Exception:
+                logger.debug("Failed to record error/timing for %s", task_id, exc_info=True)
             if pipeline_id:
                 await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
