@@ -525,13 +525,10 @@ class ClaudeAdapter(AgentAdapter):
             )
         except asyncio.TimeoutError:
             logger.warning("Agent timed out after %ds for worktree %s", timeout_seconds, worktree_path)
-            files_changed = await _get_changed_files(worktree_path)
-            return AgentResult(
-                success=False,
-                files_changed=files_changed,
-                summary=f"Agent timed out after {timeout_seconds}s",
-                error=f"Timeout after {timeout_seconds}s",
-            )
+            # Re-raise so the caller's finally block can clean up the
+            # worktree via worktree_mgr.remove(task_id).  Swallowing the
+            # timeout here previously left zombie worktrees on disk.
+            raise
         files_changed = await _get_changed_files(worktree_path)
 
         if result is None:

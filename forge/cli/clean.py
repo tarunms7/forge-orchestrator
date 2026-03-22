@@ -1,11 +1,15 @@
 """Forge CLI clean command. Removes stale worktrees and orphaned forge branches."""
 
+import json
+import logging
 import os
 import subprocess
 
 import click
 from rich.console import Console
 from rich.table import Table
+
+logger = logging.getLogger("forge.cli.clean")
 
 
 def _list_worktree_dirs(worktrees_dir: str) -> list[str]:
@@ -102,6 +106,37 @@ def _delete_orphaned_branches(
     return deleted
 
 
+def _discover_repo_paths(project_dir: str) -> list[str]:
+    """Discover all known repo paths for multi-repo support.
+
+    Scans for .forge/worktrees/ directories in:
+    1. The top-level project dir (single-repo / default)
+    2. Immediate subdirectories that contain .forge/worktrees/ (multi-repo)
+
+    Returns a list of repo root paths that have .forge/worktrees/ directories.
+    """
+    repo_paths: list[str] = []
+
+    # Always include the top-level project dir
+    top_wt = os.path.join(project_dir, ".forge", "worktrees")
+    if os.path.isdir(top_wt):
+        repo_paths.append(project_dir)
+
+    # Scan immediate subdirectories for multi-repo worktree dirs
+    try:
+        for entry in os.listdir(project_dir):
+            subdir = os.path.join(project_dir, entry)
+            if not os.path.isdir(subdir) or entry.startswith("."):
+                continue
+            sub_wt = os.path.join(subdir, ".forge", "worktrees")
+            if os.path.isdir(sub_wt):
+                repo_paths.append(subdir)
+    except OSError:
+        pass
+
+    return repo_paths
+
+
 @click.command("clean")
 @click.option("--project-dir", default=".", help="Project root directory")
 def clean(project_dir: str) -> None:
@@ -113,19 +148,31 @@ def clean(project_dir: str) -> None:
         click.echo(f"Error: .forge directory not found at {forge_dir}")
         raise SystemExit(1)
 
-    worktrees_dir = os.path.join(forge_dir, "worktrees")
+    # Discover all repo paths (top-level + multi-repo subdirectories)
+    repo_paths = _discover_repo_paths(project_dir)
+    if not repo_paths:
+        # Fall back to top-level worktrees dir even if empty
+        repo_paths = [project_dir]
 
-    # Step 1: Remove stale worktree directories
-    removed_worktrees = _remove_worktrees(project_dir, worktrees_dir)
+    all_removed_worktrees: list[str] = []
+    all_deleted_branches: list[str] = []
 
-    # Step 2: Prune worktree admin files
-    _prune_worktrees(project_dir)
+    for repo_path in repo_paths:
+        worktrees_dir = os.path.join(repo_path, ".forge", "worktrees")
 
-    # Step 3: Delete orphaned forge/* branches (after worktrees removed)
-    deleted_branches = _delete_orphaned_branches(project_dir, worktrees_dir)
+        # Step 1: Remove stale worktree directories
+        removed = _remove_worktrees(repo_path, worktrees_dir)
+        all_removed_worktrees.extend(removed)
+
+        # Step 2: Prune worktree admin files
+        _prune_worktrees(repo_path)
+
+        # Step 3: Delete orphaned forge/* branches (after worktrees removed)
+        deleted = _delete_orphaned_branches(repo_path, worktrees_dir)
+        all_deleted_branches.extend(deleted)
 
     # Step 4: Display summary
-    if not removed_worktrees and not deleted_branches:
+    if not all_removed_worktrees and not all_deleted_branches:
         click.echo("Nothing to clean.")
         return
 
@@ -135,18 +182,18 @@ def clean(project_dir: str) -> None:
     table.add_column("Count", justify="right", style="green")
     table.add_column("Names")
 
-    if removed_worktrees:
+    if all_removed_worktrees:
         table.add_row(
             "Worktrees removed",
-            str(len(removed_worktrees)),
-            ", ".join(removed_worktrees),
+            str(len(all_removed_worktrees)),
+            ", ".join(all_removed_worktrees),
         )
 
-    if deleted_branches:
+    if all_deleted_branches:
         table.add_row(
             "Branches cleaned",
-            str(len(deleted_branches)),
-            ", ".join(deleted_branches),
+            str(len(all_deleted_branches)),
+            ", ".join(all_deleted_branches),
         )
 
     console.print(table)

@@ -395,6 +395,40 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             })
         return json.dumps(data)
 
+    async def _cleanup_pipeline_branches(self) -> None:
+        """Delete pipeline branches from all repos on pipeline error.
+
+        Best-effort: logs failures instead of raising so the original
+        exception is never masked.
+        """
+        branches = getattr(self, "_pipeline_branches", {})
+        if not branches:
+            return
+        for repo_id, branch_name in branches.items():
+            rc = self._repos.get(repo_id)
+            if not rc:
+                continue
+            try:
+                result = await async_subprocess(
+                    ["git", "branch", "-D", branch_name],
+                    cwd=rc.path,
+                )
+                if result.returncode == 0:
+                    logger.info(
+                        "Cleaned up pipeline branch '%s' in repo '%s'",
+                        branch_name, repo_id,
+                    )
+                else:
+                    logger.debug(
+                        "Pipeline branch '%s' already removed or doesn't exist in '%s'",
+                        branch_name, repo_id,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clean up pipeline branch '%s' in repo '%s': %s",
+                    branch_name, repo_id, exc,
+                )
+
     def _auto_detect_commands(self, project_dir: str) -> None:
         """Auto-detect build_cmd and test_cmd from project config files.
 
@@ -1270,6 +1304,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await db.update_pipeline_status(self._pipeline_id, "error")
                 raise
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
+        except Exception:
+            # Clean up pipeline branches on error to avoid orphaned branches
+            await self._cleanup_pipeline_branches()
+            raise
         finally:
             await db.close()
 
