@@ -60,6 +60,16 @@ class WorktreeManager:
             if os.path.isdir(path):
                 shutil.rmtree(path, ignore_errors=True)
             raise
+
+        # Symlink dependency directories (node_modules, .venv, etc.) from the
+        # source repo into the worktree so tools like eslint, pytest work
+        # without a full install.
+        for dep_dir in ("node_modules", ".venv", "venv"):
+            src = os.path.join(self._repo, dep_dir)
+            dst = os.path.join(path, dep_dir)
+            if os.path.isdir(src) and not os.path.exists(dst):
+                os.symlink(src, dst)
+
         return path
 
     def remove(self, task_id: str) -> None:

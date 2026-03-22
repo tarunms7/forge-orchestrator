@@ -344,6 +344,7 @@ This workspace contains multiple repositories: {repo_list}
 - Every task MUST have a `"repo"` field set to one of the available repos.
 - A task operates in exactly ONE repo. If work spans repos, split into separate tasks with dependencies.
 - File paths are RELATIVE to the repo root (not the workspace root).
+- If the user says to "ignore", "skip", or "exclude" a specific repo, do NOT create any tasks for that repo. Only assign tasks to repos the user wants changed.
 
 ### Cross-Repo Dependencies
 - If task B in repo `frontend` depends on an API from task A in repo `backend`, use `depends_on`.
