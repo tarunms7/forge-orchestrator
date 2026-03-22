@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from forge.api.routes.tasks import get_current_user
+from forge.api.security.dependencies import get_current_user
 
 router = APIRouter(prefix="/history", tags=["history"])
 

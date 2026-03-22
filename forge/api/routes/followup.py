@@ -7,10 +7,9 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from forge.api.security.jwt import decode_token
+from forge.api.security.dependencies import get_current_user
 from forge.core.async_utils import safe_create_task
 from forge.core.events import EventEmitter
 from forge.core.followup import (
@@ -24,22 +23,6 @@ from forge.core.followup import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["followup"])
-
-security = HTTPBearer(auto_error=False)
-
-
-async def get_current_user(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-) -> str:
-    """Extract and verify the JWT token. Returns user_id."""
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
-    try:
-        payload = decode_token(credentials.credentials, secret=request.app.state.jwt_secret)
-        return payload["sub"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 def _get_forge_db(request: Request):

@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from forge.api.routes.tasks import get_current_user
+from forge.api.security.dependencies import get_current_user
 from forge.api.services.github_service import build_pr_description, create_pr
 
 logger = logging.getLogger(__name__)
