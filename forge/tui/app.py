@@ -767,10 +767,12 @@ class ForgeApp(App):
                 self._state.apply_event(_type, data)
             self._bus.subscribe(evt_type, _handler)
 
+        repos = self._resolve_repos()
         self._daemon = ForgeDaemon(
             self._project_dir,
             settings=settings,
             event_emitter=emitter,
+            repos=repos if len(repos) > 1 or (repos and repos[0].id != "default") else None,
         )
 
         self._pipeline_id = str(uuid.uuid4())
