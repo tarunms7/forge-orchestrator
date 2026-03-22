@@ -6,10 +6,10 @@ intelligently routed to the agent that originally worked on the relevant task.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -357,7 +357,7 @@ async def _execute_task_followup(
         worktree_dir = os.path.join(project_dir, ".forge", "worktrees", worktree_id)
 
     try:
-        _setup_worktree(repo_dir, worktree_dir, branch_name, worktree_id)
+        await _setup_worktree(repo_dir, worktree_dir, branch_name, worktree_id)
     except Exception as exc:
         return FollowUpResult(
             task_id=task_id,
@@ -399,7 +399,7 @@ async def _execute_task_followup(
         # If the agent made changes, commit and push
         files_changed = agent_result.files_changed
         if files_changed and agent_result.success:
-            _commit_and_push(worktree_dir, repo_dir, branch_name, followup_id, task_title)
+            await _commit_and_push(worktree_dir, repo_dir, branch_name, followup_id, task_title)
 
         return FollowUpResult(
             task_id=task_id,
@@ -414,7 +414,7 @@ async def _execute_task_followup(
 
     finally:
         # Clean up worktree
-        _cleanup_worktree(repo_dir, worktree_dir, worktree_id)
+        await _cleanup_worktree(repo_dir, worktree_dir, worktree_id)
 
 
 async def _gather_task_context(
@@ -500,7 +500,7 @@ def _build_followup_prompt(
     )
 
 
-def _setup_worktree(
+async def _setup_worktree(
     repo_dir: str,
     worktree_dir: str,
     branch_name: str,
@@ -510,33 +510,35 @@ def _setup_worktree(
     os.makedirs(os.path.dirname(worktree_dir), exist_ok=True)
 
     # Check if the branch exists
-    branch_check = subprocess.run(
-        ["git", "rev-parse", "--verify", branch_name],
+    proc = await asyncio.create_subprocess_exec(
+        "git", "rev-parse", "--verify", branch_name,
         cwd=repo_dir,
-        capture_output=True,
-        text=True,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
+    await asyncio.wait_for(proc.communicate(), timeout=30)
 
-    if branch_check.returncode != 0:
+    if proc.returncode != 0:
         raise RuntimeError(
             f"Pipeline branch '{branch_name}' does not exist. "
             f"Cannot create worktree for follow-up."
         )
 
     # Create worktree from the pipeline branch (detached)
-    result = subprocess.run(
-        ["git", "worktree", "add", worktree_dir, branch_name],
+    proc = await asyncio.create_subprocess_exec(
+        "git", "worktree", "add", worktree_dir, branch_name,
         cwd=repo_dir,
-        capture_output=True,
-        text=True,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
 
-    if result.returncode != 0:
-        error = result.stderr.strip() or result.stdout.strip()
+    if proc.returncode != 0:
+        error = stderr.decode().strip() or stdout.decode().strip()
         raise RuntimeError(f"Failed to create worktree: {error}")
 
 
-def _commit_and_push(
+async def _commit_and_push(
     worktree_dir: str,
     repo_dir: str,
     branch_name: str,
@@ -544,67 +546,59 @@ def _commit_and_push(
     task_title: str,
 ) -> None:
     """Commit follow-up changes and push to the pipeline branch."""
+
+    async def _run_git(args: list[str], *, cwd: str) -> tuple[int, str, str]:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return proc.returncode or 0, stdout.decode(), stderr.decode()
+
     # Stage all changes
-    subprocess.run(
-        ["git", "add", "-A"],
-        cwd=worktree_dir,
-        capture_output=True,
-    )
+    await _run_git(["git", "add", "-A"], cwd=worktree_dir)
 
     # Check if there are staged changes
-    status = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"],
-        cwd=worktree_dir,
-        capture_output=True,
-    )
-    if status.returncode == 0:
+    rc, _, _ = await _run_git(["git", "diff", "--cached", "--quiet"], cwd=worktree_dir)
+    if rc == 0:
         # No changes to commit
         return
 
     # Commit
     commit_msg = f"followup({followup_id[:8]}): address follow-up for '{task_title}'"
-    subprocess.run(
-        ["git", "commit", "-m", commit_msg],
-        cwd=worktree_dir,
-        capture_output=True,
-        text=True,
-    )
+    await _run_git(["git", "commit", "-m", commit_msg], cwd=worktree_dir)
 
     # Push to remote (best effort — don't fail the whole follow-up if push fails)
-    remote_result = subprocess.run(
-        ["git", "remote"],
-        cwd=repo_dir,
-        capture_output=True,
-        text=True,
-    )
-    remotes = remote_result.stdout.strip()
+    _, remote_out, _ = await _run_git(["git", "remote"], cwd=repo_dir)
+    remotes = remote_out.strip()
     if remotes:
         remote_name = remotes.split("\n")[0]
-        push_result = subprocess.run(
-            ["git", "push", remote_name, f"HEAD:{branch_name}"],
-            cwd=worktree_dir,
-            capture_output=True,
-            text=True,
+        rc, _, push_err = await _run_git(
+            ["git", "push", remote_name, f"HEAD:{branch_name}"], cwd=worktree_dir,
         )
-        if push_result.returncode != 0:
+        if rc != 0:
             logger.warning(
                 "Push failed for follow-up %s: %s",
                 followup_id,
-                push_result.stderr.strip(),
+                push_err.strip(),
             )
 
 
-def _cleanup_worktree(
+async def _cleanup_worktree(
     repo_dir: str,
     worktree_dir: str,
     worktree_id: str,
 ) -> None:
     """Remove a follow-up worktree."""
     try:
-        subprocess.run(
-            ["git", "worktree", "remove", worktree_dir, "--force"],
+        proc = await asyncio.create_subprocess_exec(
+            "git", "worktree", "remove", worktree_dir, "--force",
             cwd=repo_dir,
-            capture_output=True,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
     except Exception as exc:
         logger.warning("Failed to remove worktree %s: %s", worktree_id, exc)

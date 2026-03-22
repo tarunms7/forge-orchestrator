@@ -85,9 +85,10 @@ async def _cleanup_all_pipeline_worktrees(
         if _cleanup_worktree(project_dir, task.id, repo_id=getattr(task, "repo_id", "default")):
             cleaned += 1
     # Prune stale git worktree admin files
-    subprocess.run(
+    await asyncio.to_thread(
+        subprocess.run,
         ["git", "worktree", "prune"],
-        cwd=project_dir, capture_output=True,
+        cwd=project_dir, capture_output=True, timeout=30,
     )
     return cleaned
 
@@ -745,9 +746,10 @@ async def create_pr(
 
     try:
         # Verify gh CLI is authenticated
-        gh_check = subprocess.run(
+        gh_check = await asyncio.to_thread(
+            subprocess.run,
             ["gh", "auth", "status"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         if gh_check.returncode != 0:
             raise HTTPException(
@@ -756,9 +758,10 @@ async def create_pr(
             )
 
         # Detect remote name — fail early if no remote configured
-        remote_result = subprocess.run(
+        remote_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "remote"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         remotes = remote_result.stdout.strip()
         if not remotes:
@@ -770,9 +773,10 @@ async def create_pr(
 
         # Push the pipeline branch directly — NO checkout needed.
         # The branch was created by the daemon and advanced via update-ref.
-        push_result = subprocess.run(
+        push_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         if push_result.returncode != 0:
             error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
@@ -782,9 +786,10 @@ async def create_pr(
             )
 
         # Check if a PR already exists for this branch
-        existing_pr = subprocess.run(
+        existing_pr = await asyncio.to_thread(
+            subprocess.run,
             ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
         if existing_pr.returncode == 0 and existing_pr.stdout.strip():
             pr_url = existing_pr.stdout.strip()
@@ -811,13 +816,14 @@ async def create_pr(
         pr_title = f"forge: {pr_title_body}"
 
         # Create PR — base_branch from DB, head is the pipeline branch
-        pr_result = subprocess.run(
+        pr_result = await asyncio.to_thread(
+            subprocess.run,
             ["gh", "pr", "create",
              "--base", base_branch,
              "--head", branch_name,
              "--title", pr_title,
              "--body", pr_body],
-            cwd=project_dir, capture_output=True, text=True,
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
         )
 
         if pr_result.returncode != 0:
@@ -1080,9 +1086,10 @@ async def cleanup_pipeline_worktrees(
     branches_deleted = 0
     for tid in task_ids:
         branch = f"forge/{tid}"
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "branch", "-D", branch],
-            cwd=project_dir, capture_output=True,
+            cwd=project_dir, capture_output=True, timeout=30,
         )
         if result.returncode == 0:
             branches_deleted += 1
@@ -1710,9 +1717,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         logger.warning("Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name)
 
     # Detect remote name — fail early if no remote configured
-    remote_result = subprocess.run(
+    remote_result = await asyncio.to_thread(
+        subprocess.run,
         ["git", "remote"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     remotes = remote_result.stdout.strip()
     if not remotes:
@@ -1723,9 +1731,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     remote_name = remotes.split("\n")[0]
 
     # Check if gh CLI is available and authenticated
-    gh_check = subprocess.run(
+    gh_check = await asyncio.to_thread(
+        subprocess.run,
         ["gh", "auth", "status"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     if gh_check.returncode != 0:
         raise RuntimeError(
@@ -1736,16 +1745,19 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     # Falls back to detecting current branch for backward compatibility.
     base_branch = getattr(pipeline, "base_branch", None)
     if not base_branch:
-        base_branch = subprocess.run(
+        base_branch_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_dir, capture_output=True, text=True,
-        ).stdout.strip() or "main"
+            cwd=project_dir, capture_output=True, text=True, timeout=30,
+        )
+        base_branch = base_branch_result.stdout.strip() or "main"
 
     # Pipeline branch already exists (created by daemon at start) with all
     # merged task code.  Just push it — no checkout needed.
-    push_result = subprocess.run(
+    push_result = await asyncio.to_thread(
+        subprocess.run,
         ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     if push_result.returncode != 0:
         error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
@@ -1755,9 +1767,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         )
 
     # Check if a PR already exists for this branch
-    existing_pr = subprocess.run(
+    existing_pr = await asyncio.to_thread(
+        subprocess.run,
         ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
     if existing_pr.returncode == 0 and existing_pr.stdout.strip():
         pr_url = existing_pr.stdout.strip()
@@ -1785,13 +1798,14 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
     pr_title = f"forge: {pr_title_body}"
 
-    pr_result = subprocess.run(
+    pr_result = await asyncio.to_thread(
+        subprocess.run,
         ["gh", "pr", "create",
          "--base", base_branch,
          "--head", branch_name,
          "--title", pr_title,
          "--body", pr_body],
-        cwd=project_dir, capture_output=True, text=True,
+        cwd=project_dir, capture_output=True, text=True, timeout=30,
     )
 
     if pr_result.returncode != 0:

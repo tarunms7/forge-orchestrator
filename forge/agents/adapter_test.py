@@ -286,7 +286,7 @@ async def test_claude_adapter_passes_on_message_to_sdk_query():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", return_value=["a.py"]):
+        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=["a.py"]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -320,7 +320,7 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
+        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -379,7 +379,7 @@ async def test_claude_adapter_run_forwards_autonomy():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
+        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -408,7 +408,7 @@ async def test_claude_adapter_error_includes_cost():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
+        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",

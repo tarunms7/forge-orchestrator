@@ -65,6 +65,7 @@ class WorktreeManager:
             ["git", "rev-parse", "HEAD"],
             cwd=self._repo,
             capture_output=True,
+            timeout=60,
         ).returncode == 0
 
         if has_commits:
@@ -76,7 +77,7 @@ class WorktreeManager:
             cmd = ["git", "worktree", "add", "--orphan", "-b", branch, path]
 
         try:
-            subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True)
+            subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True, timeout=60)
         except subprocess.CalledProcessError:
             if os.path.isdir(path):
                 shutil.rmtree(path, ignore_errors=True)
@@ -105,12 +106,14 @@ class WorktreeManager:
             cwd=self._repo,
             check=True,
             capture_output=True,
+            timeout=60,
         )
         branch = self._branch_name(task_id)
         subprocess.run(
             ["git", "branch", "-D", branch],
             cwd=self._repo,
             capture_output=True,
+            timeout=60,
         )
 
     def list_active(self) -> list[str]:
