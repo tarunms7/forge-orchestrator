@@ -8,6 +8,21 @@
 
 **Tech Stack:** Python 3.12+, asyncio, FastAPI, SQLAlchemy, Next.js 14, TypeScript, Zustand, Tailwind v4
 
+## ⚠️ IMPORTANT: Line Numbers Are Approximate
+
+Recent commits to `fix/pipeline-reliability` have shifted line numbers in several core files:
+- `forge/core/daemon.py` — shifted +5 to +50 lines (more in later sections)
+- `forge/core/daemon_executor.py` — shifted +2 to +35 lines
+- `forge/core/daemon_helpers.py` — shifted +72 lines in the latter half
+- `forge/storage/db.py` — shifted +50 lines
+
+**DO NOT rely on line numbers. Use `grep` to find the exact code before editing.**
+
+## Already Completed (skip these)
+
+- **Task 6 (Replace `except Exception: pass` with logging)** — DONE in `fix/pipeline-reliability` PR. All 3 specific instances fixed. Still do Step 4 (grep for any remaining instances across the codebase) as a verification pass.
+- **Task 13 partial (Staleness pruning)** — `prune_stale_lessons()` and confidence scoring already added. Still need: max lesson cap (500) and CLI dedup check in `forge lessons add`.
+
 ---
 
 ## Task Group A: Input Sanitization & Security (forge/merge/, forge/core/)
