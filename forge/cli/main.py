@@ -288,12 +288,20 @@ def upgrade() -> None:
         click.echo(f"Upgrade failed:\n{result.stderr}", err=True)
         sys.exit(1)
 
-    # Get the new version
+    # Get the new version — forge --version outputs "Forge, version X.Y.Z"
     ver_result = subprocess.run(
         [uv, "tool", "run", "forge", "--version"],
         capture_output=True, text=True,
     )
-    new_version = ver_result.stdout.strip() if ver_result.returncode == 0 else "unknown"
+    if ver_result.returncode == 0 and ver_result.stdout.strip():
+        raw = ver_result.stdout.strip()
+        # Extract version from "Forge, version X.Y.Z" format
+        if "version" in raw:
+            new_version = raw.split("version")[-1].strip()
+        else:
+            new_version = raw
+    else:
+        new_version = "latest"
     click.echo(f"Done. {new_version}")
 
 

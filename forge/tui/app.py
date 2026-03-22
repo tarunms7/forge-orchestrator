@@ -409,12 +409,13 @@ class ForgeApp(App):
                 repos: dict[str, dict] = {}
                 pipeline_branches: dict[str, str] = {}
                 for entry in repos_list:
-                    rid = entry.get("repo_id", "default")
+                    # get_repos() returns "id" and "path"; support both old and new field names
+                    rid = entry.get("id") or entry.get("repo_id", "default")
                     repos[rid] = {
-                        "project_dir": entry.get("project_dir", project_dir),
+                        "project_dir": entry.get("path") or entry.get("project_dir", project_dir),
                         "base_branch": entry.get("base_branch", base_branch),
                     }
-                    pipeline_branches[rid] = entry.get("branch", branch)
+                    pipeline_branches[rid] = entry.get("branch_name") or entry.get("branch", branch)
 
                 result = await create_prs_multi_repo(
                     task_summaries=task_summaries,
@@ -428,7 +429,7 @@ class ForgeApp(App):
 
                 # Update repos_json with PR URLs
                 for entry in repos_list:
-                    rid = entry.get("repo_id", "default")
+                    rid = entry.get("id") or entry.get("repo_id", "default")
                     if rid in result.pr_urls:
                         entry["pr_url"] = result.pr_urls[rid]
                 if self._db and self._pipeline_id:
