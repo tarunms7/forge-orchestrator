@@ -524,7 +524,7 @@ class PipelineScreen(Screen):
         self._refresh_integration_badge()
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
-        task_list.update_tasks(ordered_tasks, state.selected_task_id, phase=state.phase)
+        task_list.update_tasks(ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo)
 
         tid = state.selected_task_id
 

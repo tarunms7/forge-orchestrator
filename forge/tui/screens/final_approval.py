@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import OrderedDict
 
 from textual.screen import Screen
 from textual.binding import Binding
@@ -20,24 +21,27 @@ from forge.tui.widgets.shortcut_bar import ShortcutBar
 logger = logging.getLogger("forge.tui.screens.final_approval")
 
 
-def format_summary_stats(stats: dict) -> str:
+def format_summary_stats(stats: dict, multi_repo: bool = False) -> str:
     added = stats.get("added", 0)
     removed = stats.get("removed", 0)
     files = stats.get("files", 0)
     elapsed = stats.get("elapsed", "?")
     cost = stats.get("cost", 0)
     questions = stats.get("questions", 0)
-    lines = [
+    lines: list[str] = []
+    if multi_repo:
+        repo_count = stats.get("repo_count", 0)
+        task_count = stats.get("task_count", 0)
+        lines.append(f"{repo_count} repos, {task_count} tasks")
+    lines.extend([
         f"[bold #3fb950]+{added}[/] / [bold #f85149]-{removed}[/]  •  {files} files  •  {elapsed}",
         f"[#8b949e]${cost:.2f} cost  •  {questions} questions answered[/]",
-    ]
+    ])
     return "\n".join(lines)
 
 
-def format_task_table(tasks: list[dict]) -> str:
-    """Format task table with status icons based on task state."""
-    if not tasks:
-        return "[#484f58]No tasks[/]"
+def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
+    """Format a list of tasks as lines with status icons."""
     lines: list[str] = []
     for t in tasks:
         title = t.get("title", "?")
@@ -54,15 +58,15 @@ def format_task_table(tasks: list[dict]) -> str:
                 stats += f"  tests: {tp}/{tt}"
             if files > 0:
                 stats += f"  {files} files"
-            lines.append(f"  [#3fb950]✅[/] [bold]{title}[/]  [#8b949e]{stats}[/]")
+            lines.append(f"{indent}[#3fb950]✅[/] [bold]{title}[/]  [#8b949e]{stats}[/]")
         elif state == "error":
             error = t.get("error", "failed")
-            lines.append(f"  [#f85149]❌[/] [bold]{title}[/]  [#f85149]{error}[/]")
+            lines.append(f"{indent}[#f85149]❌[/] [bold]{title}[/]  [#f85149]{error}[/]")
         elif state == "blocked":
             error = t.get("error", "blocked by dependency")
-            lines.append(f"  [#d29922]⚠️[/] [bold]{title}[/]  [#d29922]{error}[/]")
+            lines.append(f"{indent}[#d29922]⚠️[/] [bold]{title}[/]  [#d29922]{error}[/]")
         elif state == "cancelled":
-            lines.append(f"  [#8b949e]✘[/] [bold]{title}[/]  [#8b949e]cancelled[/]")
+            lines.append(f"{indent}[#8b949e]✘[/] [bold]{title}[/]  [#8b949e]cancelled[/]")
         else:
             # Legacy: review-based display
             review = t.get("review", "?")
@@ -74,7 +78,34 @@ def format_task_table(tasks: list[dict]) -> str:
             stats = f"+{added}/-{removed}"
             if tt > 0:
                 stats += f"  tests: {tp}/{tt}"
-            lines.append(f"  {icon} [bold]{title}[/]  [#8b949e]{stats}[/]")
+            lines.append(f"{indent}{icon} [bold]{title}[/]  [#8b949e]{stats}[/]")
+    return lines
+
+
+def format_task_table(tasks: list[dict], multi_repo: bool = False) -> str:
+    """Format task table with status icons based on task state."""
+    if not tasks:
+        return "[#484f58]No tasks[/]"
+
+    if not multi_repo:
+        lines = _format_task_list(tasks, indent="  ")
+        return "\n".join(lines)
+
+    # Group tasks by repo
+    groups: OrderedDict[str, list[dict]] = OrderedDict()
+    for t in tasks:
+        repo_id = t.get("repo", "default")
+        if repo_id not in groups:
+            groups[repo_id] = []
+        groups[repo_id].append(t)
+
+    lines: list[str] = []
+    for repo_id, repo_tasks in groups.items():
+        # Aggregate stats for repo header
+        total_added = sum(t.get("added", 0) for t in repo_tasks)
+        total_removed = sum(t.get("removed", 0) for t in repo_tasks)
+        lines.append(f"[bold #58a6ff]{repo_id}[/]  +{total_added}/-{total_removed}")
+        lines.extend(_format_task_list(repo_tasks, indent="    "))
     return "\n".join(lines)
 
 
@@ -104,6 +135,91 @@ class DiffScreen(Screen):
             ("g/G", "Top/Bottom"),
             ("Esc", "Back"),
         ])
+
+
+class RepoSelectorScreen(Screen):
+    """Repo selector screen for multi-repo diff viewing."""
+
+    BINDINGS = [
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        Binding("enter", "select", "Select", show=True),
+        Binding("escape", "app.pop_screen", "Back", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    RepoSelectorScreen { align: center middle; }
+    #repo-selector-container { width: 60; padding: 2; }
+    .repo-item { padding: 0 1; }
+    .repo-item--selected { background: #1f6feb; }
+    """
+
+    def __init__(
+        self,
+        repos: list[dict],
+        tasks: list[dict],
+        on_select: callable,
+    ) -> None:
+        super().__init__()
+        self._repos = repos
+        self._tasks = tasks
+        self._on_select = on_select
+        self._cursor = 0
+
+    def compose(self):
+        with Center():
+            with Vertical(id="repo-selector-container"):
+                yield Static("[bold #58a6ff]Select Repository[/]\n")
+                for i, repo in enumerate(self._repos):
+                    repo_id = repo.get("repo_id", repo.get("id", "unknown"))
+                    # Calculate aggregate stats for this repo
+                    repo_tasks = [t for t in self._tasks if t.get("repo") == repo_id]
+                    total_added = sum(t.get("added", 0) for t in repo_tasks)
+                    total_removed = sum(t.get("removed", 0) for t in repo_tasks)
+                    marker = "▸ " if i == 0 else "  "
+                    yield Static(
+                        f"{marker}[bold]{repo_id}[/]  [#8b949e]+{total_added}/-{total_removed}[/]",
+                        id=f"repo-item-{i}",
+                        classes="repo-item repo-item--selected" if i == 0 else "repo-item",
+                    )
+                yield Static("\n[#8b949e]j/k: navigate  Enter: select  Esc: back[/]")
+
+    def _update_cursor(self) -> None:
+        """Update visual cursor state."""
+        for i in range(len(self._repos)):
+            try:
+                widget = self.query_one(f"#repo-item-{i}", Static)
+                repo_id = self._repos[i].get("repo_id", self._repos[i].get("id", "unknown"))
+                repo_tasks = [t for t in self._tasks if t.get("repo") == repo_id]
+                total_added = sum(t.get("added", 0) for t in repo_tasks)
+                total_removed = sum(t.get("removed", 0) for t in repo_tasks)
+                marker = "▸ " if i == self._cursor else "  "
+                widget.update(
+                    f"{marker}[bold]{repo_id}[/]  [#8b949e]+{total_added}/-{total_removed}[/]"
+                )
+                if i == self._cursor:
+                    widget.add_class("repo-item--selected")
+                else:
+                    widget.remove_class("repo-item--selected")
+            except Exception:
+                pass
+
+    def action_cursor_down(self) -> None:
+        if self._cursor < len(self._repos) - 1:
+            self._cursor += 1
+            self._update_cursor()
+
+    def action_cursor_up(self) -> None:
+        if self._cursor > 0:
+            self._cursor -= 1
+            self._update_cursor()
+
+    def action_select(self) -> None:
+        if self._repos:
+            repo = self._repos[self._cursor]
+            repo_id = repo.get("repo_id", repo.get("id", "unknown"))
+            self.app.pop_screen()
+            self._on_select(repo_id)
 
 
 class FinalApprovalScreen(Screen):
@@ -149,6 +265,9 @@ class FinalApprovalScreen(Screen):
         pipeline_branch: str = "",
         base_branch: str = "main",
         partial: bool = False,
+        multi_repo: bool = False,
+        per_repo_pr_urls: dict[str, str] | None = None,
+        repos: list[dict] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -157,6 +276,9 @@ class FinalApprovalScreen(Screen):
         self._pipeline_branch = pipeline_branch
         self._base_branch = base_branch
         self._partial = partial
+        self._multi_repo = multi_repo
+        self._per_repo_pr_urls = per_repo_pr_urls or {}
+        self._repos = repos or []
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Dynamically enable/disable actions based on partial mode."""
@@ -205,6 +327,7 @@ class FinalApprovalScreen(Screen):
 
     def compose(self):
         files_count = self._stats.get("files", 0)
+        pr_label = "Create PRs" if self._multi_repo else "Create PR"
         if self._partial:
             done = sum(1 for t in self._tasks if t.get("state") == "done")
             total = len(self._tasks)
@@ -216,10 +339,10 @@ class FinalApprovalScreen(Screen):
                 with Vertical(id="approval-container"):
                     yield Static(f"[bold #58a6ff]{header}[/]\n", id="header")
                     yield Static("", id="behind-main-warning")  # populated by _check_behind_main
-                    yield Static(format_summary_stats(self._stats), id="stats")
+                    yield Static(format_summary_stats(self._stats, multi_repo=self._multi_repo), id="stats")
                     yield Static("", id="pr-url")
                     yield Static("\n[bold]Tasks:[/]", id="tasks-header")
-                    yield Static(format_task_table(self._tasks), id="task-table")
+                    yield Static(format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table")
                     yield Static(
                         "\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
                         "f: follow up  n: new task  Esc: cancel[/]"
@@ -230,7 +353,7 @@ class FinalApprovalScreen(Screen):
                     )
         if self._partial:
             yield ShortcutBar([
-                ("Enter", "Create PR (completed only)"),
+                ("Enter", f"{pr_label} (completed only)"),
                 ("r", "Retry Failed"),
                 ("s", "Skip & Finish"),
                 ("d", "View Diff"),
@@ -239,18 +362,28 @@ class FinalApprovalScreen(Screen):
             ])
         else:
             yield ShortcutBar([
-                ("Enter", "Create PR"),
+                ("Enter", pr_label),
                 ("d", "View Diff"),
                 ("f", "Follow Up"),
                 ("n", "New Task"),
                 ("Esc", "Back"),
             ])
 
-    def show_pr_url(self, url: str) -> None:
-        """Display the PR URL inline in the stats area."""
+    def show_pr_url(self, url: str, repo_id: str | None = None) -> None:
+        """Display PR URL(s) inline, with optional per-repo labeling."""
         try:
             pr_widget = self.query_one("#pr-url", Static)
-            pr_widget.update(f"[bold #3fb950]PR created:[/] [underline #58a6ff]{url}[/]")
+            if repo_id is not None:
+                self._per_repo_pr_urls[repo_id] = url
+                # Render all accumulated repo PR URLs
+                pr_lines = []
+                for rid, rurl in self._per_repo_pr_urls.items():
+                    pr_lines.append(
+                        f"[bold #3fb950]{rid}:[/] [underline #58a6ff]{rurl}[/]"
+                    )
+                pr_widget.update("\n".join(pr_lines))
+            else:
+                pr_widget.update(f"[bold #3fb950]PR created:[/] [underline #58a6ff]{url}[/]")
         except Exception:
             pass
 
@@ -294,7 +427,20 @@ class FinalApprovalScreen(Screen):
         if not self._pipeline_branch:
             self.notify("No pipeline branch available.", severity="warning")
             return
-        safe_create_task(self._load_and_show_diff(), logger=logger, name="load-diff")
+        if self._multi_repo and self._repos:
+            self.app.push_screen(
+                RepoSelectorScreen(
+                    repos=self._repos,
+                    tasks=self._tasks,
+                    on_select=lambda repo_id: safe_create_task(
+                        self._load_and_show_diff(repo_id=repo_id),
+                        logger=logger,
+                        name=f"load-diff-{repo_id}",
+                    ),
+                )
+            )
+        else:
+            safe_create_task(self._load_and_show_diff(), logger=logger, name="load-diff")
 
     def _get_project_dir(self) -> str | None:
         """Get the project directory from the app if available."""
@@ -303,14 +449,32 @@ class FinalApprovalScreen(Screen):
         except Exception:
             return None
 
-    async def _load_and_show_diff(self) -> None:
+    def _get_repo_config(self, repo_id: str) -> dict | None:
+        """Find repo config by repo_id."""
+        for repo in self._repos:
+            if repo.get("repo_id", repo.get("id")) == repo_id:
+                return repo
+        return None
+
+    async def _load_and_show_diff(self, repo_id: str | None = None) -> None:
         """Run git diff and push a DiffScreen with the result."""
+        project_dir = self._get_project_dir()
+        base_branch = self._base_branch
+        branch = self._pipeline_branch
+
+        if repo_id is not None:
+            repo_config = self._get_repo_config(repo_id)
+            if repo_config:
+                project_dir = repo_config.get("project_dir", project_dir)
+                base_branch = repo_config.get("base_branch", base_branch)
+                branch = repo_config.get("branch", branch)
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "diff", f"{self._base_branch}...{self._pipeline_branch}",
+                "git", "diff", f"{base_branch}...{branch}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self._get_project_dir(),
+                cwd=project_dir,
             )
             stdout, stderr = await proc.communicate()
             diff_text = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
@@ -318,4 +482,4 @@ class FinalApprovalScreen(Screen):
             diff_text = f"Error running git diff: {e}"
         if not self.is_running:
             return
-        self.app.push_screen(DiffScreen(diff_text, branch=self._pipeline_branch))
+        self.app.push_screen(DiffScreen(diff_text, branch=branch))

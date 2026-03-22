@@ -815,3 +815,86 @@ def test_integration_events_in_event_map():
     ]
     for event in integration_events:
         assert event in TuiState._EVENT_MAP, f"Missing from _EVENT_MAP: {event}"
+
+
+# ── Multi-repo state tests ────────────────────────────────────────────
+
+
+class TestMultiRepoState:
+    def test_tui_state_stores_repos(self):
+        """plan_ready with repos field populates state.repos."""
+        state = TuiState()
+        repos = [
+            {"repo_id": "backend", "project_dir": "/path/to/backend", "base_branch": "main"},
+            {"repo_id": "frontend", "project_dir": "/path/to/frontend", "base_branch": "main"},
+        ]
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [
+                {"id": "t1", "title": "Add auth", "repo": "backend", "files": ["auth.py"], "depends_on": [], "complexity": "medium"},
+                {"id": "t2", "title": "Add login", "repo": "frontend", "files": ["Login.tsx"], "depends_on": ["t1"], "complexity": "low"},
+            ],
+            "repos": repos,
+        })
+        assert state.repos == repos
+
+    def test_tui_state_is_multi_repo(self):
+        """is_multi_repo returns True when repos has more than one entry."""
+        state = TuiState()
+        # Single repo — not multi-repo
+        state.repos = [{"repo_id": "backend", "project_dir": "/path/to/backend", "base_branch": "main"}]
+        assert state.is_multi_repo is False
+        # Two repos — multi-repo
+        state.repos = [
+            {"repo_id": "backend", "project_dir": "/path/to/backend", "base_branch": "main"},
+            {"repo_id": "frontend", "project_dir": "/path/to/frontend", "base_branch": "main"},
+        ]
+        assert state.is_multi_repo is True
+
+    def test_tui_state_per_repo_pr_urls(self):
+        """pr_created event with repo_id populates per_repo_pr_urls."""
+        state = TuiState()
+        state.apply_event("pipeline:pr_created", {
+            "pr_url": "https://github.com/org/backend/pull/42",
+            "repo_id": "backend",
+        })
+        state.apply_event("pipeline:pr_created", {
+            "pr_url": "https://github.com/org/frontend/pull/99",
+            "repo_id": "frontend",
+        })
+        assert state.per_repo_pr_urls == {
+            "backend": "https://github.com/org/backend/pull/42",
+            "frontend": "https://github.com/org/frontend/pull/99",
+        }
+
+    def test_tui_state_per_repo_merge_status(self):
+        """per_repo_merge_status starts empty and can be set directly."""
+        state = TuiState()
+        assert state.per_repo_merge_status == {}
+        state.per_repo_merge_status["backend"] = "merged"
+        state.per_repo_merge_status["frontend"] = "pending"
+        assert state.per_repo_merge_status == {"backend": "merged", "frontend": "pending"}
+
+    def test_tui_state_single_repo_no_repo_field(self):
+        """plan_ready without repos field leaves state.repos empty."""
+        state = TuiState()
+        state.apply_event("pipeline:plan_ready", {
+            "tasks": [
+                {"id": "t1", "title": "Setup DB", "files": ["db.py"], "depends_on": [], "complexity": "low"},
+            ],
+        })
+        assert state.repos == []
+        assert state.is_multi_repo is False
+
+    def test_tui_state_reset_clears_multi_repo(self):
+        """reset() clears all multi-repo state."""
+        state = TuiState()
+        state.repos = [
+            {"repo_id": "backend", "project_dir": "/path/to/backend", "base_branch": "main"},
+            {"repo_id": "frontend", "project_dir": "/path/to/frontend", "base_branch": "main"},
+        ]
+        state.per_repo_pr_urls = {"backend": "https://github.com/org/backend/pull/42"}
+        state.per_repo_merge_status = {"backend": "merged"}
+        state.reset()
+        assert state.repos == []
+        assert state.per_repo_pr_urls == {}
+        assert state.per_repo_merge_status == {}

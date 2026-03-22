@@ -220,7 +220,7 @@ class ForgeApp(App):
                 total_removed += mr.get("linesRemoved", 0)
                 total_files += mr.get("filesChanged", 0)
 
-        stats = {
+        stats: dict = {
             "added": total_added,
             "removed": total_removed,
             "files": total_files,
@@ -228,6 +228,9 @@ class ForgeApp(App):
             "cost": state.total_cost_usd,
             "questions": total_questions,
         }
+        if state.is_multi_repo:
+            stats["repo_count"] = len(state.repos)
+            stats["task_count"] = len(tasks_list)
         task_summaries = _build_task_summaries(tasks_list)
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
@@ -236,6 +239,9 @@ class ForgeApp(App):
         self.push_screen(FinalApprovalScreen(
             stats=stats, tasks=task_summaries, pipeline_branch=pipeline_branch,
             base_branch=base_branch, partial=partial,
+            multi_repo=state.is_multi_repo,
+            per_repo_pr_urls=dict(state.per_repo_pr_urls),
+            repos=list(state.repos),
         ))
         # If no cached branch, fetch async and update the screen
         if not pipeline_branch:
@@ -428,10 +434,17 @@ class ForgeApp(App):
                     self.notify(f"PR failed for {rid}: {err}", severity="warning")
 
                 if result.pr_urls:
-                    # Emit success with first available URL
-                    first_url = next(iter(result.pr_urls.values()))
-                    self._state.apply_event("pipeline:pr_created", {"pr_url": first_url})
-                    # Show all URLs
+                    # Emit per-repo pr_created events with repo_id
+                    for rid, url in result.pr_urls.items():
+                        self._state.apply_event("pipeline:pr_created", {"pr_url": url, "repo_id": rid})
+                        # Show PR URL on the FinalApprovalScreen per-repo
+                        try:
+                            screen = self.screen
+                            if isinstance(screen, FinalApprovalScreen):
+                                screen.show_pr_url(url, repo_id=rid)
+                        except Exception:
+                            pass
+                    # Show all URLs in notification
                     url_lines = ", ".join(
                         f"{rid}: {url}" for rid, url in result.pr_urls.items()
                     )

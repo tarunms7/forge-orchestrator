@@ -40,11 +40,19 @@ def _escape(text: str | None) -> str:
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
-def format_task_line(task: dict, *, selected: bool) -> str:
+def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False) -> str:
     state = task.get("state", "todo")
     icon = STATE_ICONS.get(state, "?")
     color = STATE_COLORS.get(state, "#8b949e")
     title = task.get("title", "Untitled")
+
+    # Build repo prefix for multi-repo pipelines
+    repo_prefix = ""
+    repo_width = 0
+    repo_id = task.get("repo")
+    if multi_repo and repo_id:
+        repo_prefix = f"[#79c0ff]\\[{repo_id}][/] "
+        repo_width = len(repo_id) + 3  # brackets + space
 
     # Build suffix parts
     suffix_parts: list[str] = []
@@ -58,14 +66,14 @@ def format_task_line(task: dict, *, selected: bool) -> str:
 
     suffix = " ".join(suffix_parts)
 
-    # Calculate available width for title: max_width - icon prefix (3 chars) - suffix
+    # Calculate available width for title: max_width - icon prefix (3 chars) - repo prefix - suffix
     # Rough visible length of suffix (strip markup for length calc)
     suffix_visible_len = 0
     if suffix:
         import re
         suffix_visible_len = len(re.sub(r"\[.*?\]", "", suffix)) + 1  # +1 for space before suffix
 
-    available = MAX_WIDTH - 3 - suffix_visible_len  # 3 = " X " icon prefix
+    available = MAX_WIDTH - 3 - repo_width - suffix_visible_len  # 3 = " X " icon prefix
     if available < 4:
         available = 4
 
@@ -76,9 +84,9 @@ def format_task_line(task: dict, *, selected: bool) -> str:
     suffix_str = f" {suffix}" if suffix else ""
     escaped_title = _escape(title)
     if selected:
-        return f"[bold on #1f2937] [{color}]{icon} [#c9d1d9]{escaped_title}{suffix_str} [/]"
+        return f"[bold on #1f2937] [{color}]{icon} {repo_prefix}[#c9d1d9]{escaped_title}{suffix_str} [/]"
     else:
-        return f" [{color}]{icon}[/] [#c9d1d9]{escaped_title}{suffix_str}[/]"
+        return f" [{color}]{icon}[/] {repo_prefix}[#c9d1d9]{escaped_title}{suffix_str}[/]"
 
 
 class TaskList(Widget):
@@ -103,8 +111,10 @@ class TaskList(Widget):
         self._tasks: list[dict] = []
         self._selected_index: int = 0
         self._phase: str = ""
+        self._multi_repo: bool = False
 
-    def update_tasks(self, tasks: list[dict], selected_id: str | None = None, *, phase: str = "") -> None:
+    def update_tasks(self, tasks: list[dict], selected_id: str | None = None, *, phase: str = "", multi_repo: bool = False) -> None:
+        self._multi_repo = multi_repo
         self._tasks = tasks
         self._phase = phase
         if selected_id:
@@ -128,7 +138,7 @@ class TaskList(Widget):
             return "[#8b949e]No tasks yet[/]"
         lines = []
         for i, task in enumerate(self._tasks):
-            lines.append(format_task_line(task, selected=(i == self._selected_index)))
+            lines.append(format_task_line(task, selected=(i == self._selected_index), multi_repo=self._multi_repo))
         return "\n".join(lines)
 
     def action_cursor_down(self) -> None:
