@@ -180,8 +180,8 @@ async def test_multi_repo_pipeline_e2e(tmp_path, make_git_repo):
 
     # Build repos_json
     repos = [
-        {"id": "backend", "path": backend_path, "base_branch": "main", "branch_name": ""},
-        {"id": "frontend", "path": frontend_path, "base_branch": "main", "branch_name": ""},
+        {"id": "backend", "path": str(backend_path), "base_branch": "main", "branch_name": ""},
+        {"id": "frontend", "path": str(frontend_path), "base_branch": "main", "branch_name": ""},
     ]
 
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
@@ -251,7 +251,7 @@ async def test_single_repo_pipeline_regression(tmp_path, make_git_repo):
     await db.create_pipeline(
         id=pid,
         description="single-repo test",
-        project_dir=project_path,
+        project_dir=str(project_path),
         model_strategy="balanced",
         budget_limit_usd=10,
         base_branch="main",
@@ -266,7 +266,7 @@ async def test_single_repo_pipeline_regression(tmp_path, make_git_repo):
     assert len(got_repos) == 1
     default_repo = got_repos[0]
     assert default_repo["id"] == "default"
-    assert default_repo["path"] == project_path
+    assert default_repo["path"] == str(project_path)
     assert default_repo["base_branch"] == "main"
 
     # Create a task with default repo_id
@@ -279,7 +279,7 @@ async def test_single_repo_pipeline_regression(tmp_path, make_git_repo):
     assert task.repo_id == "default"
 
     # Verify worktree path is flat (no repo_id subdirectory)
-    worktree_base = os.path.join(project_path, ".forge", "worktrees")
+    worktree_base = os.path.join(str(project_path), ".forge", "worktrees")
     single_repo_worktree = os.path.join(worktree_base, "t-single")
     multi_repo_worktree = os.path.join(worktree_base, "default", "t-single")
     # Single-repo should use flat path, not nested
@@ -328,8 +328,8 @@ async def test_cross_repo_dependency_ordering(tmp_path, make_git_repo):
     frontend_path = make_git_repo("frontend")
 
     repos = [
-        {"id": "backend", "path": backend_path, "base_branch": "main", "branch_name": ""},
-        {"id": "frontend", "path": frontend_path, "base_branch": "main", "branch_name": ""},
+        {"id": "backend", "path": str(backend_path), "base_branch": "main", "branch_name": ""},
+        {"id": "frontend", "path": str(frontend_path), "base_branch": "main", "branch_name": ""},
     ]
 
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
