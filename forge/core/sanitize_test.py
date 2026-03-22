@@ -10,6 +10,7 @@ from forge.core.sanitize import (
 
 # ── validate_task_id: valid inputs ──────────────────────────────────────
 
+
 class TestValidateTaskIdValid:
     def test_simple_alphanumeric(self):
         assert validate_task_id("task1") == "task1"
@@ -38,6 +39,7 @@ class TestValidateTaskIdValid:
 
 
 # ── validate_task_id: invalid inputs ────────────────────────────────────
+
 
 class TestValidateTaskIdInvalid:
     def test_empty_string(self):
@@ -91,6 +93,7 @@ class TestValidateTaskIdInvalid:
 
 # ── validate_repo_id: valid inputs ──────────────────────────────────────
 
+
 class TestValidateRepoIdValid:
     def test_simple(self):
         assert validate_repo_id("default") == "default"
@@ -109,6 +112,7 @@ class TestValidateRepoIdValid:
 
 
 # ── validate_repo_id: invalid inputs ────────────────────────────────────
+
 
 class TestValidateRepoIdInvalid:
     def test_empty_string(self):
@@ -149,6 +153,7 @@ class TestValidateRepoIdInvalid:
 
 
 # ── UnsafeInputError is a ValueError ────────────────────────────────────
+
 
 class TestUnsafeInputError:
     def test_is_value_error(self):

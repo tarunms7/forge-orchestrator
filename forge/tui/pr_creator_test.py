@@ -48,15 +48,17 @@ def test_pr_body_with_failed_tasks():
 
 def test_pr_body_with_details():
     """Tasks with description, implementation_summary, and file_list show details."""
-    tasks = [{
-        "title": "Add auth middleware",
-        "description": "Implement JWT authentication middleware",
-        "implementation_summary": "Added JWT validation to all API routes",
-        "added": 120,
-        "removed": 5,
-        "files": 4,
-        "file_list": ["forge/api/auth.py", "forge/api/middleware.py"],
-    }]
+    tasks = [
+        {
+            "title": "Add auth middleware",
+            "description": "Implement JWT authentication middleware",
+            "implementation_summary": "Added JWT validation to all API routes",
+            "added": 120,
+            "removed": 5,
+            "files": 4,
+            "file_list": ["forge/api/auth.py", "forge/api/middleware.py"],
+        }
+    ]
     body = generate_pr_body(tasks=tasks, time="5m", cost=1.00, questions=[])
     assert "Add auth middleware" in body
     assert "+120/-5" in body
@@ -139,7 +141,9 @@ class TestCreatePrsMultiRepo:
         with (
             patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True),
             patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock) as mock_create,
-            patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock) as mock_comment,
+            patch(
+                "forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock
+            ) as mock_comment,
         ):
             mock_create.side_effect = [
                 "https://github.com/org/backend/pull/1",
@@ -210,7 +214,11 @@ class TestCreatePrsMultiRepo:
 
         with (
             patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True),
-            patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock, return_value="https://github.com/x/pull/1") as mock_create,
+            patch(
+                "forge.tui.pr_creator.create_pr",
+                new_callable=AsyncMock,
+                return_value="https://github.com/x/pull/1",
+            ) as mock_create,
             patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock),
         ):
             await create_prs_multi_repo(
@@ -235,7 +243,11 @@ class TestCreatePrsMultiRepo:
 
         with (
             patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True),
-            patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock, return_value="https://github.com/x/pull/1") as mock_create,
+            patch(
+                "forge.tui.pr_creator.create_pr",
+                new_callable=AsyncMock,
+                return_value="https://github.com/x/pull/1",
+            ) as mock_create,
             patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock),
         ):
             await create_prs_multi_repo(
@@ -265,8 +277,14 @@ class TestCreatePrsMultiRepo:
         branches = {"a": "branch-a", "b": "branch-b"}
 
         with (
-            patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True) as mock_push,
-            patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock, return_value="https://github.com/x/pull/1"),
+            patch(
+                "forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True
+            ) as mock_push,
+            patch(
+                "forge.tui.pr_creator.create_pr",
+                new_callable=AsyncMock,
+                return_value="https://github.com/x/pull/1",
+            ),
             patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock),
         ):
             await create_prs_multi_repo(
@@ -294,7 +312,9 @@ class TestAddRelatedPrsComment:
         mock_proc.returncode = 0
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc) as mock_exec:
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc
+        ) as mock_exec:
             await _add_related_prs_comment(
                 pr_url="https://github.com/org/repo/pull/42",
                 related_prs={"backend": "https://github.com/org/backend/pull/1"},
@@ -330,7 +350,11 @@ class TestAddRelatedPrsComment:
         with (
             patch("forge.tui.pr_creator.push_branch", new_callable=AsyncMock, return_value=True),
             patch("forge.tui.pr_creator.create_pr", new_callable=AsyncMock) as mock_create,
-            patch("forge.tui.pr_creator._add_related_prs_comment", new_callable=AsyncMock, side_effect=Exception("network error")),
+            patch(
+                "forge.tui.pr_creator._add_related_prs_comment",
+                new_callable=AsyncMock,
+                side_effect=Exception("network error"),
+            ),
         ):
             mock_create.side_effect = [
                 "https://github.com/org/a/pull/1",

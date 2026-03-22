@@ -1,4 +1,5 @@
 """Safe asyncio task creation with automatic exception logging."""
+
 from __future__ import annotations
 
 import asyncio

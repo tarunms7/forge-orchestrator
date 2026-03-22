@@ -26,12 +26,16 @@ GB = 1024**3
 
 # Default good results for subprocess.run dispatch
 _GIT_OK = subprocess.CompletedProcess(
-    args=["git", "--version"], returncode=0,
-    stdout="git version 2.39.3\n", stderr="",
+    args=["git", "--version"],
+    returncode=0,
+    stdout="git version 2.39.3\n",
+    stderr="",
 )
 _NODE_OK = subprocess.CompletedProcess(
-    args=["node", "--version"], returncode=0,
-    stdout="v20.0.0\n", stderr="",
+    args=["node", "--version"],
+    returncode=0,
+    stdout="v20.0.0\n",
+    stderr="",
 )
 
 
@@ -86,11 +90,12 @@ def test_python_version_shown(runner):
 def test_git_ok(runner):
     """Git >= 2.20 shows success."""
     git_ok = subprocess.CompletedProcess(
-        args=["git", "--version"], returncode=0,
-        stdout="git version 2.39.3 (Apple Git-146)\n", stderr="",
+        args=["git", "--version"],
+        returncode=0,
+        stdout="git version 2.39.3 (Apple Git-146)\n",
+        stderr="",
     )
-    with patch("forge.cli.doctor.subprocess.run",
-               side_effect=_make_subprocess_run(git=git_ok)):
+    with patch("forge.cli.doctor.subprocess.run", side_effect=_make_subprocess_run(git=git_ok)):
         result = runner.invoke(doctor)
     assert "2.39.3" in result.output
     assert "Git" in result.output
@@ -99,11 +104,12 @@ def test_git_ok(runner):
 def test_git_old_version(runner):
     """Git < 2.20 shows failure."""
     git_old = subprocess.CompletedProcess(
-        args=["git", "--version"], returncode=0,
-        stdout="git version 2.17.1\n", stderr="",
+        args=["git", "--version"],
+        returncode=0,
+        stdout="git version 2.17.1\n",
+        stderr="",
     )
-    with patch("forge.cli.doctor.subprocess.run",
-               side_effect=_make_subprocess_run(git=git_old)):
+    with patch("forge.cli.doctor.subprocess.run", side_effect=_make_subprocess_run(git=git_old)):
         result = runner.invoke(doctor)
     assert "2.17.1" in result.output
     assert "requires" in result.output
@@ -112,8 +118,9 @@ def test_git_old_version(runner):
 
 def test_git_not_installed(runner):
     """Git missing shows failure."""
-    with patch("forge.cli.doctor.subprocess.run",
-               side_effect=_make_subprocess_run(git=FileNotFoundError())):
+    with patch(
+        "forge.cli.doctor.subprocess.run", side_effect=_make_subprocess_run(git=FileNotFoundError())
+    ):
         result = runner.invoke(doctor)
     assert "not installed" in result.output
     assert result.exit_code != 0
@@ -122,10 +129,12 @@ def test_git_not_installed(runner):
 def test_git_command_error(runner):
     """Git returning non-zero exit code shows failure."""
     git_err = subprocess.CompletedProcess(
-        args=["git", "--version"], returncode=1, stdout="", stderr="error",
+        args=["git", "--version"],
+        returncode=1,
+        stdout="",
+        stderr="error",
     )
-    with patch("forge.cli.doctor.subprocess.run",
-               side_effect=_make_subprocess_run(git=git_err)):
+    with patch("forge.cli.doctor.subprocess.run", side_effect=_make_subprocess_run(git=git_err)):
         result = runner.invoke(doctor)
     assert "not found" in result.output or "error" in result.output
 
@@ -136,11 +145,19 @@ def test_git_command_error(runner):
 def test_claude_cli_ok(runner):
     """Claude CLI present and ~/.claude exists."""
     with (
-        patch("forge.cli.doctor.shutil.which",
-              side_effect=lambda c: "/usr/bin/claude" if c == "claude" else None),
+        patch(
+            "forge.cli.doctor.shutil.which",
+            side_effect=lambda c: "/usr/bin/claude" if c == "claude" else None,
+        ),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "Claude CLI" in result.output
@@ -151,8 +168,14 @@ def test_claude_cli_missing(runner):
     """Claude CLI not on PATH."""
     with (
         patch("forge.cli.doctor.shutil.which", return_value=None),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "not found" in result.output
@@ -160,14 +183,21 @@ def test_claude_cli_missing(runner):
 
 def test_claude_cli_no_auth(runner):
     """Claude CLI found but ~/.claude missing."""
+
     def _which(cmd):
         return "/usr/bin/claude" if cmd == "claude" else None
 
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=False),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "claude login" in result.output
@@ -177,8 +207,12 @@ def test_claude_cli_no_auth(runner):
 
 
 _CENTRAL_OK = [
-    patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-    patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+    patch(
+        "forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")
+    ),
+    patch(
+        "forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")
+    ),
 ]
 
 
@@ -187,8 +221,14 @@ def test_gh_present(runner):
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "GitHub CLI" in result.output
@@ -196,14 +236,21 @@ def test_gh_present(runner):
 
 def test_gh_missing(runner):
     """gh CLI missing shows warning about PR creation."""
+
     def _which(cmd):
         return None if cmd == "gh" else f"/usr/bin/{cmd}"
 
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "PR creation won't work" in result.output
@@ -217,8 +264,14 @@ def test_node_npm_present(runner):
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "Node/npm" in result.output
@@ -226,6 +279,7 @@ def test_node_npm_present(runner):
 
 def test_node_npm_missing(runner):
     """Both node and npm missing shows warning."""
+
     def _which(cmd):
         if cmd in ("node", "npm"):
             return None
@@ -234,8 +288,14 @@ def test_node_npm_missing(runner):
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "Web UI won't work" in result.output
@@ -243,14 +303,21 @@ def test_node_npm_missing(runner):
 
 def test_node_missing_npm_present(runner):
     """Only node missing shows warning."""
+
     def _which(cmd):
         return None if cmd == "node" else f"/usr/bin/{cmd}"
 
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "Web UI won't work" in result.output
@@ -258,14 +325,21 @@ def test_node_missing_npm_present(runner):
 
 def test_npm_missing_node_present(runner):
     """Only npm missing shows warning."""
+
     def _which(cmd):
         return None if cmd == "npm" else f"/usr/bin/{cmd}"
 
     with (
         patch("forge.cli.doctor.shutil.which", side_effect=_which),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
     ):
         result = runner.invoke(doctor)
     assert "Web UI won't work" in result.output
@@ -285,8 +359,10 @@ def test_parse_node_version_major_only():
 def test_check_node_version_18_passes():
     """Node v18.17.0 satisfies >= 18 requirement."""
     node_v18 = subprocess.CompletedProcess(
-        args=["node", "--version"], returncode=0,
-        stdout="v18.17.0\n", stderr="",
+        args=["node", "--version"],
+        returncode=0,
+        stdout="v18.17.0\n",
+        stderr="",
     )
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
@@ -300,8 +376,10 @@ def test_check_node_version_18_passes():
 def test_check_node_version_22_passes():
     """Node v22.1.0 satisfies >= 18 requirement."""
     node_v22 = subprocess.CompletedProcess(
-        args=["node", "--version"], returncode=0,
-        stdout="v22.1.0\n", stderr="",
+        args=["node", "--version"],
+        returncode=0,
+        stdout="v22.1.0\n",
+        stderr="",
     )
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
@@ -315,8 +393,10 @@ def test_check_node_version_22_passes():
 def test_check_node_version_16_fails():
     """Node v16.20.0 fails >= 18 requirement."""
     node_v16 = subprocess.CompletedProcess(
-        args=["node", "--version"], returncode=0,
-        stdout="v16.20.0\n", stderr="",
+        args=["node", "--version"],
+        returncode=0,
+        stdout="v16.20.0\n",
+        stderr="",
     )
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
@@ -340,8 +420,10 @@ def test_check_node_version_timeout():
     """Node --version timing out returns fail."""
     with (
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/node"),
-        patch("forge.cli.doctor.subprocess.run",
-              side_effect=subprocess.TimeoutExpired(cmd="node", timeout=10)),
+        patch(
+            "forge.cli.doctor.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="node", timeout=10),
+        ),
     ):
         status, label, detail = _check_node_version()
     assert status == "fail"
@@ -494,13 +576,18 @@ def test_all_pass_exit_zero(runner):
 
     with (
         patch("forge.cli.doctor._check_python", return_value=("ok", "Python", "3.12.0")),
-        patch("forge.cli.doctor.subprocess.run",
-              side_effect=_make_subprocess_run()),
+        patch("forge.cli.doctor.subprocess.run", side_effect=_make_subprocess_run()),
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
         patch("forge.cli.doctor.shutil.disk_usage", return_value=usage),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
         patch.dict(os.environ, {"FORGE_JWT_SECRET": "s3cret"}),
     ):
         result = runner.invoke(doctor)
@@ -511,20 +598,27 @@ def test_all_pass_exit_zero(runner):
 def test_failure_exit_nonzero(runner):
     """Exit code != 0 when a critical check fails."""
     git_fail = subprocess.CompletedProcess(
-        args=["git", "--version"], returncode=0,
-        stdout="git version 1.9.0\n", stderr="",
+        args=["git", "--version"],
+        returncode=0,
+        stdout="git version 1.9.0\n",
+        stderr="",
     )
     usage = DiskUsage(total=500 * GB, used=400 * GB, free=100 * GB)
 
     with (
         patch("forge.cli.doctor._check_python", return_value=("ok", "Python", "3.12.0")),
-        patch("forge.cli.doctor.subprocess.run",
-              side_effect=_make_subprocess_run(git=git_fail)),
+        patch("forge.cli.doctor.subprocess.run", side_effect=_make_subprocess_run(git=git_fail)),
         patch("forge.cli.doctor.shutil.which", return_value="/usr/bin/thing"),
         patch("forge.cli.doctor.os.path.isdir", return_value=True),
         patch("forge.cli.doctor.shutil.disk_usage", return_value=usage),
-        patch("forge.cli.doctor._check_central_data_dir", return_value=("ok", "Central data dir", "/data")),
-        patch("forge.cli.doctor._check_central_db", return_value=("ok", "Central DB", "/data/forge.db")),
+        patch(
+            "forge.cli.doctor._check_central_data_dir",
+            return_value=("ok", "Central data dir", "/data"),
+        ),
+        patch(
+            "forge.cli.doctor._check_central_db",
+            return_value=("ok", "Central DB", "/data/forge.db"),
+        ),
         patch.dict(os.environ, {"FORGE_JWT_SECRET": "s3cret"}),
     ):
         result = runner.invoke(doctor)

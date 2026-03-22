@@ -33,9 +33,11 @@ class ForgeSettings(BaseSettings):
     # Build, test & lint verification
     build_cmd: str | None = None
     test_cmd: str | None = None
-    lint_cmd: str | None = None       # Override auto-detected linter check command
-    lint_fix_cmd: str | None = None   # Override auto-detected linter fix command
-    lint_timeout: int = 180           # Lint gate timeout (seconds). Adaptive: doubles on timeout via learning system.
+    lint_cmd: str | None = None  # Override auto-detected linter check command
+    lint_fix_cmd: str | None = None  # Override auto-detected linter fix command
+    lint_timeout: int = (
+        180  # Lint gate timeout (seconds). Adaptive: doubles on timeout via learning system.
+    )
 
     # Resource thresholds
     cpu_threshold: float = 80.0
@@ -93,9 +95,14 @@ class ForgeSettings(BaseSettings):
             raise ValueError("budget_limit_usd must be >= 0")
         return v
 
-    @field_validator("cost_rate_sonnet_input", "cost_rate_sonnet_output",
-                     "cost_rate_haiku_input", "cost_rate_haiku_output",
-                     "cost_rate_opus_input", "cost_rate_opus_output")
+    @field_validator(
+        "cost_rate_sonnet_input",
+        "cost_rate_sonnet_output",
+        "cost_rate_haiku_input",
+        "cost_rate_haiku_output",
+        "cost_rate_opus_input",
+        "cost_rate_opus_output",
+    )
     @classmethod
     def cost_rates_positive(cls, v: float) -> float:
         if v <= 0:

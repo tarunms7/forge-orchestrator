@@ -39,10 +39,7 @@ def _get_rates(family: str, settings: ForgeSettings) -> tuple[float, float]:
 def _estimate_session_cost(family: str, settings: ForgeSettings) -> float:
     """Estimate the cost of a single session for a given model family."""
     input_rate, output_rate = _get_rates(family, settings)
-    return (
-        (_AVG_INPUT_TOKENS / 1000) * input_rate
-        + (_AVG_OUTPUT_TOKENS / 1000) * output_rate
-    )
+    return (_AVG_INPUT_TOKENS / 1000) * input_rate + (_AVG_OUTPUT_TOKENS / 1000) * output_rate
 
 
 async def estimate_pipeline_cost(

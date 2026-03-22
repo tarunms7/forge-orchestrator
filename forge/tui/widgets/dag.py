@@ -17,9 +17,14 @@ def build_dag_text(tasks: list[dict]) -> str:
         return "[#8b949e]No tasks[/]"
 
     state_colors = {
-        "todo": "#8b949e", "in_progress": "#f0883e", "in_review": "#a371f7",
-        "awaiting_approval": "#d29922", "merging": "#79c0ff", "done": "#3fb950",
-        "cancelled": "#8b949e", "error": "#f85149",
+        "todo": "#8b949e",
+        "in_progress": "#f0883e",
+        "in_review": "#a371f7",
+        "awaiting_approval": "#d29922",
+        "merging": "#79c0ff",
+        "done": "#3fb950",
+        "cancelled": "#8b949e",
+        "error": "#f85149",
     }
 
     task_map = {t["id"]: t for t in tasks}

@@ -1,4 +1,5 @@
 """Tests for ForgeDaemon: pause tracking, all_tasks_done event, question timeout checker."""
+
 from __future__ import annotations
 
 import os
@@ -15,6 +16,7 @@ from forge.core.models import RepoConfig, TaskState
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_daemon(tmp_path, **settings_kwargs):
     settings = ForgeSettings(**settings_kwargs)
@@ -48,6 +50,7 @@ def _make_question(q_id: str, task_id: str, pipeline_id: str) -> MagicMock:
 # ---------------------------------------------------------------------------
 # Tests for _check_question_timeouts
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestCheckQuestionTimeouts:
@@ -163,6 +166,7 @@ class TestCheckQuestionTimeouts:
 # ---------------------------------------------------------------------------
 # Tests for pipeline:all_tasks_done event in _execution_loop
 # ---------------------------------------------------------------------------
+
 
 def _make_minimal_execution_loop_mocks(tasks: list[MagicMock]):
     """Build the mocks needed for _execution_loop to run one iteration and exit."""
@@ -294,6 +298,7 @@ class TestAllTasksDoneEvent:
 # ---------------------------------------------------------------------------
 # Tests for pipeline pause tracking
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestPipelinePauseTracking:
@@ -453,11 +458,15 @@ class TestPipelinePauseTracking:
         with patch("forge.core.daemon._print_status_table"):
             with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
                 await daemon._execution_loop(
-                    db, MagicMock(), MagicMock(), MagicMock(), monitor=MagicMock(
+                    db,
+                    MagicMock(),
+                    MagicMock(),
+                    MagicMock(),
+                    monitor=MagicMock(
                         take_snapshot=AsyncMock(return_value=MagicMock()),
                         can_dispatch=MagicMock(return_value=True),
                     ),
-                    pipeline_id="pipe-abc"
+                    pipeline_id="pipe-abc",
                 )
 
         # paused_at should have been set with a timestamp (pause started)
@@ -465,7 +474,9 @@ class TestPipelinePauseTracking:
         set_calls = db.set_pipeline_paused_at.call_args_list
         paused_at_values = [c.args[1] for c in set_calls]
         # At least one call with a timestamp (set when paused)
-        assert any(v is not None for v in paused_at_values), "paused_at should be set to a timestamp"
+        assert any(v is not None for v in paused_at_values), (
+            "paused_at should be set to a timestamp"
+        )
         # At least one call with None (cleared when resumed or on exit)
         assert None in paused_at_values, "paused_at should be cleared to None on resume"
 
@@ -560,6 +571,7 @@ class TestPipelinePauseTracking:
 # ---------------------------------------------------------------------------
 # Tests for retry_task
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestRetryTask:
@@ -696,6 +708,7 @@ class TestRetryTask:
 # Tests for run() using central DB path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestRunCentralDB:
     """Tests that run() uses forge_db_url() instead of per-project DB."""
@@ -709,12 +722,18 @@ class TestRunCentralDB:
         mock_db.create_pipeline = AsyncMock()
         mock_db.close = AsyncMock()
 
-        with patch("forge.core.daemon.Database", return_value=mock_db) as MockDB, \
-             patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db") as mock_url, \
-             patch.object(daemon, "plan", new_callable=AsyncMock) as mock_plan, \
-             patch.object(daemon, "generate_contracts", new_callable=AsyncMock, return_value=MagicMock()), \
-             patch.object(daemon, "execute", new_callable=AsyncMock), \
-             patch("forge.core.daemon.check_budget", new_callable=AsyncMock):
+        with (
+            patch("forge.core.daemon.Database", return_value=mock_db) as MockDB,
+            patch(
+                "forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///central/forge.db"
+            ) as mock_url,
+            patch.object(daemon, "plan", new_callable=AsyncMock) as mock_plan,
+            patch.object(
+                daemon, "generate_contracts", new_callable=AsyncMock, return_value=MagicMock()
+            ),
+            patch.object(daemon, "execute", new_callable=AsyncMock),
+            patch("forge.core.daemon.check_budget", new_callable=AsyncMock),
+        ):
             mock_plan.return_value = MagicMock(tasks=[])
             await daemon.run("test task")
 
@@ -730,12 +749,16 @@ class TestRunCentralDB:
         mock_db.create_pipeline = AsyncMock()
         mock_db.close = AsyncMock()
 
-        with patch("forge.core.daemon.Database", return_value=mock_db), \
-             patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///test.db"), \
-             patch.object(daemon, "plan", new_callable=AsyncMock) as mock_plan, \
-             patch.object(daemon, "generate_contracts", new_callable=AsyncMock, return_value=MagicMock()), \
-             patch.object(daemon, "execute", new_callable=AsyncMock), \
-             patch("forge.core.daemon.check_budget", new_callable=AsyncMock):
+        with (
+            patch("forge.core.daemon.Database", return_value=mock_db),
+            patch("forge.core.paths.forge_db_url", return_value="sqlite+aiosqlite:///test.db"),
+            patch.object(daemon, "plan", new_callable=AsyncMock) as mock_plan,
+            patch.object(
+                daemon, "generate_contracts", new_callable=AsyncMock, return_value=MagicMock()
+            ),
+            patch.object(daemon, "execute", new_callable=AsyncMock),
+            patch("forge.core.daemon.check_budget", new_callable=AsyncMock),
+        ):
             mock_plan.return_value = MagicMock(tasks=[])
             await daemon.run("test task")
 
@@ -815,6 +838,7 @@ class TestDetectExcludedRepos:
 # Tests for planning question wiring in daemon.plan()
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestPlanningQuestionWiring:
     """Tests for on_question callback wiring in daemon.plan()."""
@@ -830,19 +854,25 @@ class TestPlanningQuestionWiring:
 
         daemon._emit = AsyncMock()
 
-        with patch("forge.core.daemon.gather_project_snapshot", return_value=MagicMock(
-            total_files=100,
-            format_for_planner=MagicMock(return_value="snapshot"),
-        )), \
-             patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"), \
-             patch("forge.core.daemon._should_use_deep_planning", return_value=True), \
-             patch("forge.core.planning.unified_planner.UnifiedPlanner") as MockPlanner:
-
-            MockPlanner.return_value.run = AsyncMock(return_value=MagicMock(
-                task_graph=MagicMock(tasks=[]),
-                cost_breakdown={"planner": 0.0},
-                total_cost_usd=0.0,
-            ))
+        with (
+            patch(
+                "forge.core.daemon.gather_project_snapshot",
+                return_value=MagicMock(
+                    total_files=100,
+                    format_for_planner=MagicMock(return_value="snapshot"),
+                ),
+            ),
+            patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"),
+            patch("forge.core.daemon._should_use_deep_planning", return_value=True),
+            patch("forge.core.planning.unified_planner.UnifiedPlanner") as MockPlanner,
+        ):
+            MockPlanner.return_value.run = AsyncMock(
+                return_value=MagicMock(
+                    task_graph=MagicMock(tasks=[]),
+                    cost_breakdown={"planner": 0.0},
+                    total_cost_usd=0.0,
+                )
+            )
 
             await daemon.plan("add auth", db, pipeline_id="pipe-1")
 
@@ -862,19 +892,25 @@ class TestPlanningQuestionWiring:
 
         daemon._emit = AsyncMock()
 
-        with patch("forge.core.daemon.gather_project_snapshot", return_value=MagicMock(
-            total_files=100,
-            format_for_planner=MagicMock(return_value="snapshot"),
-        )), \
-             patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"), \
-             patch("forge.core.daemon._should_use_deep_planning", return_value=True), \
-             patch("forge.core.planning.unified_planner.UnifiedPlanner") as MockPlanner:
-
-            MockPlanner.return_value.run = AsyncMock(return_value=MagicMock(
-                task_graph=MagicMock(tasks=[]),
-                cost_breakdown={"planner": 0.0},
-                total_cost_usd=0.0,
-            ))
+        with (
+            patch(
+                "forge.core.daemon.gather_project_snapshot",
+                return_value=MagicMock(
+                    total_files=100,
+                    format_for_planner=MagicMock(return_value="snapshot"),
+                ),
+            ),
+            patch("forge.core.daemon.select_model", return_value="claude-sonnet-4-20250514"),
+            patch("forge.core.daemon._should_use_deep_planning", return_value=True),
+            patch("forge.core.planning.unified_planner.UnifiedPlanner") as MockPlanner,
+        ):
+            MockPlanner.return_value.run = AsyncMock(
+                return_value=MagicMock(
+                    task_graph=MagicMock(tasks=[]),
+                    cost_breakdown={"planner": 0.0},
+                    total_cost_usd=0.0,
+                )
+            )
 
             await daemon.plan("add auth", db, pipeline_id="pipe-1")
 
@@ -887,13 +923,17 @@ class TestPlanningQuestionWiring:
 # Helper: build a mock CompletedProcess for async_subprocess
 # ---------------------------------------------------------------------------
 
-def _mock_completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+
+def _mock_completed(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 # ---------------------------------------------------------------------------
 # Tests for _preflight_checks (async_subprocess mocking)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestPreflightChecks:
@@ -907,15 +947,19 @@ class TestPreflightChecks:
         db.log_event = AsyncMock()
         daemon._emit = AsyncMock()
 
-        async_sub = AsyncMock(side_effect=[
-            _mock_completed(0, "true\n"),      # git rev-parse --is-inside-work-tree
-            _mock_completed(0, "abc123\n"),     # git rev-parse HEAD
-            _mock_completed(0, "origin\n"),     # git remote
-            _mock_completed(0, ""),             # gh auth status
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                _mock_completed(0, "true\n"),  # git rev-parse --is-inside-work-tree
+                _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+                _mock_completed(0, "origin\n"),  # git remote
+                _mock_completed(0, ""),  # gh auth status
+            ]
+        )
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"),
+        ):
             result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
 
         assert result is True
@@ -930,14 +974,20 @@ class TestPreflightChecks:
         db.log_event = AsyncMock()
         daemon._emit = AsyncMock()
 
-        async_sub = AsyncMock(side_effect=[
-            _mock_completed(128, "", "fatal: not a git repo"),  # git rev-parse --is-inside-work-tree
-            _mock_completed(0, "abc123\n"),                      # git rev-parse HEAD
-            _mock_completed(0, "origin\n"),                      # git remote
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                _mock_completed(
+                    128, "", "fatal: not a git repo"
+                ),  # git rev-parse --is-inside-work-tree
+                _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+                _mock_completed(0, "origin\n"),  # git remote
+            ]
+        )
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value=None):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value=None),
+        ):
             result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
 
         assert result is False
@@ -952,15 +1002,19 @@ class TestPreflightChecks:
         db.log_event = AsyncMock()
         daemon._emit = AsyncMock()
 
-        async_sub = AsyncMock(side_effect=[
-            _mock_completed(0, "true\n"),      # git rev-parse --is-inside-work-tree
-            _mock_completed(128, "", "fatal"),  # git rev-parse HEAD — no commits
-            _mock_completed(0, ""),             # git commit --allow-empty
-            _mock_completed(0, "origin\n"),     # git remote
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                _mock_completed(0, "true\n"),  # git rev-parse --is-inside-work-tree
+                _mock_completed(128, "", "fatal"),  # git rev-parse HEAD — no commits
+                _mock_completed(0, ""),  # git commit --allow-empty
+                _mock_completed(0, "origin\n"),  # git remote
+            ]
+        )
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value=None):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value=None),
+        ):
             result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
 
         assert result is True
@@ -977,14 +1031,18 @@ class TestPreflightChecks:
         db.log_event = AsyncMock()
         daemon._emit = AsyncMock()
 
-        async_sub = AsyncMock(side_effect=[
-            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
-            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
-            _mock_completed(0, ""),          # git remote — empty stdout
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                _mock_completed(0, "true\n"),  # git rev-parse --is-inside-work-tree
+                _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+                _mock_completed(0, ""),  # git remote — empty stdout
+            ]
+        )
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value=None):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value=None),
+        ):
             result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
 
         assert result is True
@@ -997,15 +1055,19 @@ class TestPreflightChecks:
         db.log_event = AsyncMock()
         daemon._emit = AsyncMock()
 
-        async_sub = AsyncMock(side_effect=[
-            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
-            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
-            _mock_completed(0, "origin\n"),  # git remote
-            _mock_completed(1, "", "not logged in"),  # gh auth status — fails
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                _mock_completed(0, "true\n"),  # git rev-parse --is-inside-work-tree
+                _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+                _mock_completed(0, "origin\n"),  # git remote
+                _mock_completed(1, "", "not logged in"),  # gh auth status — fails
+            ]
+        )
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"),
+        ):
             result = await daemon._preflight_checks(str(tmp_path), db, "pipe-1")
 
         assert result is True
@@ -1014,6 +1076,7 @@ class TestPreflightChecks:
 # ---------------------------------------------------------------------------
 # Tests for execute() branch creation (async_subprocess mocking)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 class TestExecuteBranchCreation:
@@ -1025,38 +1088,55 @@ class TestExecuteBranchCreation:
 
         # Use AsyncMock as spec_set-free base so ANY db.method() is awaitable
         db = AsyncMock()
-        db.get_pipeline = AsyncMock(return_value=MagicMock(
-            paused=False, executor_token=None, base_branch="main",
-            branch_name=None, description="test pipeline",
-        ))
-        db.list_tasks_by_pipeline = AsyncMock(return_value=[
-            _make_task(TaskState.DONE.value, "task-1"),
-        ])
+        db.get_pipeline = AsyncMock(
+            return_value=MagicMock(
+                paused=False,
+                executor_token=None,
+                base_branch="main",
+                branch_name=None,
+                description="test pipeline",
+            )
+        )
+        db.list_tasks_by_pipeline = AsyncMock(
+            return_value=[
+                _make_task(TaskState.DONE.value, "task-1"),
+            ]
+        )
         db.list_agents = AsyncMock(return_value=[])
         db.get_expired_questions = AsyncMock(return_value=[])
 
-        async_sub = AsyncMock(side_effect=[
-            # _preflight_checks calls (5 max)
-            _mock_completed(0, "true\n"),    # git rev-parse --is-inside-work-tree
-            _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
-            _mock_completed(0, "origin\n"),  # git remote
-            _mock_completed(0),              # gh auth status
-            # execute() branch creation
-            _mock_completed(0),              # git branch -f pipeline_branch base_branch
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                # _preflight_checks calls (5 max)
+                _mock_completed(0, "true\n"),  # git rev-parse --is-inside-work-tree
+                _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
+                _mock_completed(0, "origin\n"),  # git remote
+                _mock_completed(0),  # gh auth status
+                # execute() branch creation
+                _mock_completed(0),  # git branch -f pipeline_branch base_branch
+            ]
+        )
 
         daemon._emit = AsyncMock()
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"), \
-             patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"), \
-             patch("forge.core.daemon._generate_branch_name", new_callable=AsyncMock, return_value="forge/test-branch"), \
-             patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]), \
-             patch("forge.core.daemon.WorktreeManager"), \
-             patch("forge.core.daemon.MergeWorker"), \
-             patch("forge.core.daemon.ResourceMonitor") as MockMon, \
-             patch.object(daemon, "_init_repos", new_callable=AsyncMock):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"),
+            patch(
+                "forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"
+            ),
+            patch(
+                "forge.core.daemon._generate_branch_name",
+                new_callable=AsyncMock,
+                return_value="forge/test-branch",
+            ),
+            patch("forge.core.daemon._print_status_table"),
+            patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]),
+            patch("forge.core.daemon.WorktreeManager"),
+            patch("forge.core.daemon.MergeWorker"),
+            patch("forge.core.daemon.ResourceMonitor") as MockMon,
+            patch.object(daemon, "_init_repos", new_callable=AsyncMock),
+        ):
             MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
             MockMon.return_value.can_dispatch = MagicMock(return_value=True)
 
@@ -1065,8 +1145,7 @@ class TestExecuteBranchCreation:
 
         # Verify git branch -f was called (one of the async_subprocess calls)
         branch_calls = [
-            c for c in async_sub.call_args_list
-            if len(c.args[0]) >= 3 and c.args[0][1] == "branch"
+            c for c in async_sub.call_args_list if len(c.args[0]) >= 3 and c.args[0][1] == "branch"
         ]
         assert len(branch_calls) >= 1
         assert "-f" in branch_calls[0].args[0]
@@ -1078,37 +1157,50 @@ class TestExecuteBranchCreation:
         db = MagicMock()
         db.initialize = AsyncMock()
         db = AsyncMock()
-        db.get_pipeline = AsyncMock(return_value=MagicMock(
-            paused=False, executor_token=None, base_branch="main",
-            branch_name="forge/existing-branch", description="test pipeline",
-        ))
-        db.list_tasks_by_pipeline = AsyncMock(return_value=[
-            _make_task(TaskState.DONE.value, "task-1"),
-        ])
+        db.get_pipeline = AsyncMock(
+            return_value=MagicMock(
+                paused=False,
+                executor_token=None,
+                base_branch="main",
+                branch_name="forge/existing-branch",
+                description="test pipeline",
+            )
+        )
+        db.list_tasks_by_pipeline = AsyncMock(
+            return_value=[
+                _make_task(TaskState.DONE.value, "task-1"),
+            ]
+        )
         db.list_agents = AsyncMock(return_value=[])
         db.get_expired_questions = AsyncMock(return_value=[])
 
-        async_sub = AsyncMock(side_effect=[
-            # _preflight_checks calls
-            _mock_completed(0, "true\n"),
-            _mock_completed(0, "abc123\n"),
-            _mock_completed(0, "origin\n"),
-            _mock_completed(0),
-            # execute() branch verification (resume path)
-            _mock_completed(0, "abc123\n"),  # git rev-parse --verify — branch exists
-        ])
+        async_sub = AsyncMock(
+            side_effect=[
+                # _preflight_checks calls
+                _mock_completed(0, "true\n"),
+                _mock_completed(0, "abc123\n"),
+                _mock_completed(0, "origin\n"),
+                _mock_completed(0),
+                # execute() branch verification (resume path)
+                _mock_completed(0, "abc123\n"),  # git rev-parse --verify — branch exists
+            ]
+        )
 
         daemon._emit = AsyncMock()
 
-        with patch("forge.core.daemon.async_subprocess", async_sub), \
-             patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"), \
-             patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"), \
-             patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]), \
-             patch("forge.core.daemon.WorktreeManager"), \
-             patch("forge.core.daemon.MergeWorker"), \
-             patch("forge.core.daemon.ResourceMonitor") as MockMon, \
-             patch.object(daemon, "_init_repos", new_callable=AsyncMock):
+        with (
+            patch("forge.core.daemon.async_subprocess", async_sub),
+            patch("forge.core.daemon.shutil.which", return_value="/usr/bin/gh"),
+            patch(
+                "forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"
+            ),
+            patch("forge.core.daemon._print_status_table"),
+            patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]),
+            patch("forge.core.daemon.WorktreeManager"),
+            patch("forge.core.daemon.MergeWorker"),
+            patch("forge.core.daemon.ResourceMonitor") as MockMon,
+            patch.object(daemon, "_init_repos", new_callable=AsyncMock),
+        ):
             MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
             MockMon.return_value.can_dispatch = MagicMock(return_value=True)
 
@@ -1117,8 +1209,7 @@ class TestExecuteBranchCreation:
 
         # Should have called rev-parse --verify for the branch check
         verify_calls = [
-            c for c in async_sub.call_args_list
-            if len(c.args[0]) >= 3 and "--verify" in c.args[0]
+            c for c in async_sub.call_args_list if len(c.args[0]) >= 3 and "--verify" in c.args[0]
         ]
         assert len(verify_calls) == 1
 
@@ -1127,22 +1218,32 @@ class TestExecuteBranchCreation:
 # Helpers for multi-repo tests
 # ---------------------------------------------------------------------------
 
+
 def _init_git_repo(path, branch: str = "main") -> None:
     """Initialize a real git repo at *path* with one commit."""
-    subprocess.run(["git", "init", "-b", branch], cwd=str(path), check=True,
-                   capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(path),
-                   check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(path),
-                   check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", branch], cwd=str(path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=str(path), check=True, capture_output=True
+    )
     # Create initial commit so HEAD is valid
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=str(path),
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Chunk 1: Multi-Repo Init Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDaemonMultiRepoInit:
     """Tests for ForgeDaemon.__init__ with repos parameter."""
@@ -1189,7 +1290,9 @@ class TestInitRepos:
 
         assert daemon._repos["default"].base_branch == ""
 
-        with patch("forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"):
+        with patch(
+            "forge.core.daemon._get_current_branch", new_callable=AsyncMock, return_value="main"
+        ):
             await daemon._init_repos()
 
         assert daemon._repos["default"].base_branch == "main"
@@ -1230,8 +1333,9 @@ class TestInitRepos:
         _init_git_repo(tmp_path, "main")
         # Create and stage a file (but don't commit)
         (tmp_path / "dirty.txt").write_text("dirty")
-        subprocess.run(["git", "add", "dirty.txt"], cwd=str(tmp_path),
-                       check=True, capture_output=True)
+        subprocess.run(
+            ["git", "add", "dirty.txt"], cwd=str(tmp_path), check=True, capture_output=True
+        )
 
         daemon = _make_daemon(tmp_path)
 
@@ -1261,6 +1365,7 @@ class TestInitRepos:
 # Chunk 2: Per-Repo Infrastructure Tests
 # ---------------------------------------------------------------------------
 
+
 class TestDaemonPerRepoInfra:
     """Tests for _setup_per_repo_infra and _create_pipeline_branches."""
 
@@ -1269,7 +1374,9 @@ class TestDaemonPerRepoInfra:
         daemon = _make_daemon(tmp_path)
         # Manually set base_branch so it's valid
         daemon._repos["default"] = RepoConfig(
-            id="default", path=str(tmp_path), base_branch="main",
+            id="default",
+            path=str(tmp_path),
+            base_branch="main",
         )
 
         daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
@@ -1297,8 +1404,7 @@ class TestDaemonPerRepoInfra:
             repos=repos,
         )
 
-        with patch("forge.core.daemon.WorktreeManager"), \
-             patch("forge.core.daemon.MergeWorker"):
+        with patch("forge.core.daemon.WorktreeManager"), patch("forge.core.daemon.MergeWorker"):
             daemon._setup_per_repo_infra("forge/pipeline-pipe-xyz")
 
         assert "backend" in daemon._worktree_managers
@@ -1310,7 +1416,9 @@ class TestDaemonPerRepoInfra:
         """Alias test: verifying per-repo infra dict structure."""
         daemon = _make_daemon(tmp_path)
         daemon._repos["default"] = RepoConfig(
-            id="default", path=str(tmp_path), base_branch="main",
+            id="default",
+            path=str(tmp_path),
+            base_branch="main",
         )
         daemon._setup_per_repo_infra("forge/pipeline-pipe-123")
 
@@ -1330,8 +1438,7 @@ class TestDaemonPerRepoInfra:
             repos=repos,
         )
 
-        with patch("forge.core.daemon.WorktreeManager"), \
-             patch("forge.core.daemon.MergeWorker"):
+        with patch("forge.core.daemon.WorktreeManager"), patch("forge.core.daemon.MergeWorker"):
             daemon._setup_per_repo_infra("forge/pipeline-abc12345")
 
         assert daemon._pipeline_branches["backend"] == "forge/pipeline-abc12345"
@@ -1341,6 +1448,7 @@ class TestDaemonPerRepoInfra:
 # ---------------------------------------------------------------------------
 # Chunk 2: Worktree Path Tests
 # ---------------------------------------------------------------------------
+
 
 class TestWorktreePath:
     """Tests for ForgeDaemon._worktree_path."""
@@ -1374,6 +1482,7 @@ class TestWorktreePath:
 # Chunk 4: Task Dispatch Routing Tests
 # ---------------------------------------------------------------------------
 
+
 class TestDispatchTaskRouting:
     """Tests for _get_repo_infra routing."""
 
@@ -1381,7 +1490,9 @@ class TestDispatchTaskRouting:
         """_get_repo_infra returns the correct infrastructure tuple."""
         daemon = _make_daemon(tmp_path)
         daemon._repos["default"] = RepoConfig(
-            id="default", path=str(tmp_path), base_branch="main",
+            id="default",
+            path=str(tmp_path),
+            base_branch="main",
         )
         daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
 
@@ -1395,7 +1506,9 @@ class TestDispatchTaskRouting:
         """_get_repo_infra raises ForgeError for unknown repo_id."""
         daemon = _make_daemon(tmp_path)
         daemon._repos["default"] = RepoConfig(
-            id="default", path=str(tmp_path), base_branch="main",
+            id="default",
+            path=str(tmp_path),
+            base_branch="main",
         )
         daemon._setup_per_repo_infra("forge/pipeline-pipe-abc")
 
@@ -1406,6 +1519,7 @@ class TestDispatchTaskRouting:
 # ---------------------------------------------------------------------------
 # Chunk 5: Allowed Dirs & Repos JSON Tests
 # ---------------------------------------------------------------------------
+
 
 class TestAllowedDirs:
     """Tests for _build_allowed_dirs."""
@@ -1450,7 +1564,9 @@ class TestReposJsonStorage:
         """Single-repo returns None (no need to store)."""
         daemon = _make_daemon(tmp_path)
         daemon._repos["default"] = RepoConfig(
-            id="default", path=str(tmp_path), base_branch="main",
+            id="default",
+            path=str(tmp_path),
+            base_branch="main",
         )
         daemon._pipeline_branches = {"default": "forge/pipeline-abc"}
 

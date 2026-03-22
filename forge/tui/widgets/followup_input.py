@@ -139,9 +139,7 @@ class FollowUpInput(Widget):
             text = ta.text.strip()
             if text:
                 self.add_history(text)
-                self.post_message(
-                    self.Submitted(text, self._branch, self._files_changed)
-                )
+                self.post_message(self.Submitted(text, self._branch, self._files_changed))
                 ta.clear()
         except Exception:
             pass
@@ -149,6 +147,4 @@ class FollowUpInput(Widget):
     def on_suggestion_chips_selected(self, event: SuggestionChips.Selected) -> None:
         """When a chip is selected, fill and submit it as the follow-up prompt."""
         self.add_history(event.text)
-        self.post_message(
-            self.Submitted(event.text, self._branch, self._files_changed)
-        )
+        self.post_message(self.Submitted(event.text, self._branch, self._files_changed))

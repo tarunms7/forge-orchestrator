@@ -16,6 +16,7 @@ logger = logging.getLogger("forge.learning")
 @dataclass
 class Lesson:
     """Lesson data transfer object."""
+
     id: str
     scope: str  # 'global' or 'project'
     category: str  # 'command_failure', 'review_failure', 'code_pattern'

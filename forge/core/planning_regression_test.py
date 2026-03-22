@@ -19,26 +19,28 @@ from forge.storage.db import Database
 
 # -- Shared test data -------------------------------------------------------
 
-VALID_GRAPH = TaskGraph.model_validate({
-    "tasks": [
-        {
-            "id": "task-1",
-            "title": "Create model",
-            "description": "Build user model",
-            "files": ["src/models/user.py"],
-            "depends_on": [],
-            "complexity": "low",
-        },
-        {
-            "id": "task-2",
-            "title": "Build API",
-            "description": "Build auth endpoints",
-            "files": ["src/api/auth.py"],
-            "depends_on": ["task-1"],
-            "complexity": "medium",
-        },
-    ]
-})
+VALID_GRAPH = TaskGraph.model_validate(
+    {
+        "tasks": [
+            {
+                "id": "task-1",
+                "title": "Create model",
+                "description": "Build user model",
+                "files": ["src/models/user.py"],
+                "depends_on": [],
+                "complexity": "low",
+            },
+            {
+                "id": "task-2",
+                "title": "Build API",
+                "description": "Build auth endpoints",
+                "files": ["src/api/auth.py"],
+                "depends_on": ["task-1"],
+                "complexity": "medium",
+            },
+        ]
+    }
+)
 
 
 def _make_daemon(event_emitter: EventEmitter | None = None) -> ForgeDaemon:
@@ -77,8 +79,13 @@ async def test_plan_emits_events_in_correct_order():
     emitter = EventEmitter()
 
     # Register handlers for all relevant events
-    for evt in ("pipeline:phase_changed", "planner:output", "pipeline:plan_ready",
-                "pipeline:cost_update", "pipeline:cost_estimate"):
+    for evt in (
+        "pipeline:phase_changed",
+        "planner:output",
+        "pipeline:plan_ready",
+        "pipeline:cost_update",
+        "pipeline:cost_estimate",
+    ):
         handler = AsyncMock(side_effect=lambda data, evt=evt: emitted_events.append((evt, data)))
         emitter.on(evt, handler)
 
@@ -92,10 +99,11 @@ async def test_plan_emits_events_in_correct_order():
     mock_planner_llm = MagicMock()
     mock_planner_llm._last_sdk_result = None
 
-    with patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm), \
-         patch("forge.core.daemon.Planner", return_value=mock_planner_instance), \
-         patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot:
-
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
         mock_snapshot.return_value = MagicMock()
         mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
 
@@ -117,9 +125,12 @@ async def test_plan_emits_events_in_correct_order():
     assert emitted_events[0][1] == {"phase": "planning"}
 
     # plan_ready must appear before phase_changed:planned
-    plan_ready_idx = next(i for i, (evt, _) in enumerate(emitted_events) if evt == "pipeline:plan_ready")
+    plan_ready_idx = next(
+        i for i, (evt, _) in enumerate(emitted_events) if evt == "pipeline:plan_ready"
+    )
     planned_idx = next(
-        i for i, (evt, data) in enumerate(emitted_events)
+        i
+        for i, (evt, data) in enumerate(emitted_events)
         if evt == "pipeline:phase_changed" and data.get("phase") == "planned"
     )
     assert plan_ready_idx < planned_idx, (
@@ -127,7 +138,9 @@ async def test_plan_emits_events_in_correct_order():
     )
 
     # phase_changed:planned must be the last phase_changed event
-    phase_events = [(i, data) for i, (evt, data) in enumerate(emitted_events) if evt == "pipeline:phase_changed"]
+    phase_events = [
+        (i, data) for i, (evt, data) in enumerate(emitted_events) if evt == "pipeline:phase_changed"
+    ]
     assert phase_events[-1][1] == {"phase": "planned"}
 
 
@@ -140,8 +153,13 @@ async def test_emit_plan_ready_false_skips_plan_ready_but_emits_planned():
 
     emitter = EventEmitter()
 
-    for evt in ("pipeline:phase_changed", "planner:output", "pipeline:plan_ready",
-                "pipeline:cost_update", "pipeline:cost_estimate"):
+    for evt in (
+        "pipeline:phase_changed",
+        "planner:output",
+        "pipeline:plan_ready",
+        "pipeline:cost_update",
+        "pipeline:cost_estimate",
+    ):
         handler = AsyncMock(side_effect=lambda data, evt=evt: emitted_events.append((evt, data)))
         emitter.on(evt, handler)
 
@@ -153,10 +171,11 @@ async def test_emit_plan_ready_false_skips_plan_ready_but_emits_planned():
     mock_planner_llm = MagicMock()
     mock_planner_llm._last_sdk_result = None
 
-    with patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm), \
-         patch("forge.core.daemon.Planner", return_value=mock_planner_instance), \
-         patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot:
-
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
         mock_snapshot.return_value = MagicMock()
         mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
 
@@ -181,7 +200,8 @@ async def test_emit_plan_ready_false_skips_plan_ready_but_emits_planned():
 
     # phase_changed:planned should STILL be emitted even when emit_plan_ready=False
     planned_events = [
-        data for evt, data in emitted_events
+        data
+        for evt, data in emitted_events
         if evt == "pipeline:phase_changed" and data.get("phase") == "planned"
     ]
     assert len(planned_events) == 1, (
@@ -261,8 +281,7 @@ async def test_handle_retry_allows_max_retries_then_errors():
     db.update_task_state.assert_called_with("task-1", "error")
     db.retry_task.assert_not_called()
     assert any(
-        evt == "task:state_changed" and data.get("state") == "error"
-        for evt, data in emitter_calls
+        evt == "task:state_changed" and data.get("state") == "error" for evt, data in emitter_calls
     ), "retry_count=5 should emit error state"
 
 
@@ -275,8 +294,13 @@ async def test_plan_ready_data_has_tasks_but_no_phase():
 
     emitter = EventEmitter()
 
-    for evt in ("pipeline:phase_changed", "planner:output", "pipeline:plan_ready",
-                "pipeline:cost_update", "pipeline:cost_estimate"):
+    for evt in (
+        "pipeline:phase_changed",
+        "planner:output",
+        "pipeline:plan_ready",
+        "pipeline:cost_update",
+        "pipeline:cost_estimate",
+    ):
         handler = AsyncMock(side_effect=lambda data, evt=evt: emitted_events.append((evt, data)))
         emitter.on(evt, handler)
 
@@ -288,10 +312,11 @@ async def test_plan_ready_data_has_tasks_but_no_phase():
     mock_planner_llm = MagicMock()
     mock_planner_llm._last_sdk_result = None
 
-    with patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm), \
-         patch("forge.core.daemon.Planner", return_value=mock_planner_instance), \
-         patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot:
-
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
         mock_snapshot.return_value = MagicMock()
         mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
 
@@ -304,8 +329,7 @@ async def test_plan_ready_data_has_tasks_but_no_phase():
 
     # Find the plan_ready event
     plan_ready_events = [
-        (evt, data) for evt, data in emitted_events
-        if evt == "pipeline:plan_ready"
+        (evt, data) for evt, data in emitted_events if evt == "pipeline:plan_ready"
     ]
     assert len(plan_ready_events) == 1, "Exactly one plan_ready event expected"
 
@@ -353,10 +377,11 @@ async def test_plan_without_pipeline_id_uses_events_emit():
     mock_planner_llm = MagicMock()
     mock_planner_llm._last_sdk_result = None
 
-    with patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm), \
-         patch("forge.core.daemon.Planner", return_value=mock_planner_instance), \
-         patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot:
-
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
         mock_snapshot.return_value = MagicMock()
         mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
 

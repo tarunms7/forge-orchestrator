@@ -7,6 +7,7 @@ Tests the key flows from the spec's Flow Matrix:
 - Flow F: Skip & Finish path
 - Flow G/H: Quit + resume path
 """
+
 import json
 import os
 
@@ -24,14 +25,20 @@ async def test_flow_a_full_success(tmp_path):
         pid = "test-flow-a-001"
         await db.create_pipeline(
             id=pid,
-            description="test", project_dir=str(tmp_path),
-            model_strategy="balanced", budget_limit_usd=10,
+            description="test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "executing")
         for i in range(3):
             await db.create_task(
-                id=f"t{i}", title=f"Task {i}", description="",
-                files=[], depends_on=[], complexity="low",
+                id=f"t{i}",
+                title=f"Task {i}",
+                description="",
+                files=[],
+                depends_on=[],
+                complexity="low",
                 pipeline_id=pid,
             )
             await db.update_task_state(f"t{i}", "done")
@@ -63,18 +70,28 @@ async def test_flow_b_partial_success(tmp_path):
         pid = "test-flow-b-001"
         await db.create_pipeline(
             id=pid,
-            description="test", project_dir=str(tmp_path),
-            model_strategy="balanced", budget_limit_usd=10,
+            description="test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "executing")
         await db.create_task(
-            id="t0", title="A", description="",
-            files=[], depends_on=[], complexity="low",
+            id="t0",
+            title="A",
+            description="",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.create_task(
-            id="t1", title="B", description="",
-            files=[], depends_on=["t0"], complexity="low",
+            id="t1",
+            title="B",
+            description="",
+            files=[],
+            depends_on=["t0"],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.update_task_state("t0", "done")
@@ -107,18 +124,28 @@ async def test_flow_c_retry_resets_and_resumes(tmp_path):
         pid = "test-flow-c-001"
         await db.create_pipeline(
             id=pid,
-            description="test", project_dir=str(tmp_path),
-            model_strategy="balanced", budget_limit_usd=10,
+            description="test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "partial_success")
         await db.create_task(
-            id="t0", title="A", description="",
-            files=[], depends_on=[], complexity="low",
+            id="t0",
+            title="A",
+            description="",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.create_task(
-            id="t1", title="B", description="",
-            files=[], depends_on=["t0"], complexity="low",
+            id="t1",
+            title="B",
+            description="",
+            files=[],
+            depends_on=["t0"],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.update_task_state("t0", "error")
@@ -149,18 +176,28 @@ async def test_flow_f_skip_and_finish(tmp_path):
         pid = "test-flow-f-001"
         await db.create_pipeline(
             id=pid,
-            description="test", project_dir=str(tmp_path),
-            model_strategy="balanced", budget_limit_usd=10,
+            description="test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "partial_success")
         await db.create_task(
-            id="t0", title="A", description="",
-            files=[], depends_on=[], complexity="low",
+            id="t0",
+            title="A",
+            description="",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.create_task(
-            id="t1", title="B", description="",
-            files=[], depends_on=[], complexity="low",
+            id="t1",
+            title="B",
+            description="",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.update_task_state("t0", "done")
@@ -190,26 +227,39 @@ async def test_flow_gh_quit_and_resume(tmp_path):
         pid = "test-flow-gh-001"
         await db.create_pipeline(
             id=pid,
-            description="test", project_dir=str(tmp_path),
-            model_strategy="balanced", budget_limit_usd=10,
+            description="test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
         )
         await db.update_pipeline_status(pid, "executing")
         await db.create_task(
-            id="t0", title="A", description="",
-            files=[], depends_on=[], complexity="low",
+            id="t0",
+            title="A",
+            description="",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.create_task(
-            id="t1", title="B", description="",
-            files=[], depends_on=[], complexity="low",
+            id="t1",
+            title="B",
+            description="",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         await db.update_task_state("t0", "done")
         await db.update_task_state("t1", "in_progress")
 
         non_terminal = (
-            "in_progress", "in_review", "merging",
-            "awaiting_input", "awaiting_approval",
+            "in_progress",
+            "in_review",
+            "merging",
+            "awaiting_input",
+            "awaiting_approval",
         )
         for t in await db.list_tasks_by_pipeline(pid):
             if t.state in non_terminal:
@@ -261,19 +311,34 @@ async def test_multi_repo_pipeline_e2e(tmp_path, make_git_repo):
 
         # Create 3 tasks across repos
         await db.create_task(
-            id="t-be-1", title="Backend API", description="Create API",
-            files=["src/main.py"], depends_on=[], complexity="low",
-            pipeline_id=pid, repo_id="backend",
+            id="t-be-1",
+            title="Backend API",
+            description="Create API",
+            files=["src/main.py"],
+            depends_on=[],
+            complexity="low",
+            pipeline_id=pid,
+            repo_id="backend",
         )
         await db.create_task(
-            id="t-be-2", title="Backend DB", description="Add DB layer",
-            files=["src/db.py"], depends_on=["t-be-1"], complexity="low",
-            pipeline_id=pid, repo_id="backend",
+            id="t-be-2",
+            title="Backend DB",
+            description="Add DB layer",
+            files=["src/db.py"],
+            depends_on=["t-be-1"],
+            complexity="low",
+            pipeline_id=pid,
+            repo_id="backend",
         )
         await db.create_task(
-            id="t-fe-1", title="Frontend UI", description="Build UI",
-            files=["src/index.ts"], depends_on=["t-be-1"], complexity="low",
-            pipeline_id=pid, repo_id="frontend",
+            id="t-fe-1",
+            title="Frontend UI",
+            description="Build UI",
+            files=["src/index.ts"],
+            depends_on=["t-be-1"],
+            complexity="low",
+            pipeline_id=pid,
+            repo_id="frontend",
         )
 
         # Verify tasks stored with correct repo_id
@@ -335,8 +400,12 @@ async def test_single_repo_pipeline_regression(tmp_path, make_git_repo):
 
         # Create a task with default repo_id
         await db.create_task(
-            id="t-single", title="Single task", description="Do something",
-            files=[], depends_on=[], complexity="low",
+            id="t-single",
+            title="Single task",
+            description="Do something",
+            files=[],
+            depends_on=[],
+            complexity="low",
             pipeline_id=pid,
         )
         task = await db.get_task("t-single")
@@ -415,15 +484,25 @@ async def test_cross_repo_dependency_ordering(tmp_path, make_git_repo):
 
         # Backend task (no deps)
         await db.create_task(
-            id="t-be", title="Backend service", description="Build backend",
-            files=[], depends_on=[], complexity="low",
-            pipeline_id=pid, repo_id="backend",
+            id="t-be",
+            title="Backend service",
+            description="Build backend",
+            files=[],
+            depends_on=[],
+            complexity="low",
+            pipeline_id=pid,
+            repo_id="backend",
         )
         # Frontend task depends on backend
         await db.create_task(
-            id="t-fe", title="Frontend client", description="Build frontend",
-            files=[], depends_on=["t-be"], complexity="low",
-            pipeline_id=pid, repo_id="frontend",
+            id="t-fe",
+            title="Frontend client",
+            description="Build frontend",
+            files=[],
+            depends_on=["t-be"],
+            complexity="low",
+            pipeline_id=pid,
+            repo_id="frontend",
         )
 
         # Verify dependency

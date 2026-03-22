@@ -9,10 +9,15 @@ from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 from forge.merge.worker import MergeResult
 
 
-def _make_proc(stdout: str = "", returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
+def _make_proc(
+    stdout: str = "", returncode: int = 0, stderr: str = ""
+) -> subprocess.CompletedProcess:
     """Return a fake CompletedProcess."""
     return subprocess.CompletedProcess(
-        args=["git"], returncode=returncode, stdout=stdout, stderr=stderr,
+        args=["git"],
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
@@ -30,7 +35,11 @@ class TestRebaseWorktree:
         rebase_ok = _make_proc(returncode=0)
 
         with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
-            with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, return_value=rebase_ok) as mock_git:
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+                return_value=rebase_ok,
+            ) as mock_git:
                 await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
         assert mock_git.call_count == 1
@@ -45,7 +54,11 @@ class TestRebaseWorktree:
         abort_ok = _make_proc(returncode=0)
 
         with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
-            with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_ok]) as mock_git:
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+                side_effect=[rebase_fail, abort_ok],
+            ) as mock_git:
                 await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
         assert mock_git.call_count == 2
@@ -61,7 +74,11 @@ class TestRebaseWorktree:
         abort_fail = _make_proc(returncode=1)
 
         with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
-            with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[rebase_fail, abort_fail]):
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+                side_effect=[rebase_fail, abort_fail],
+            ):
                 # Should not raise
                 await mixin._rebase_worktree("/wt/task-1", "main", "task-1")
 
@@ -160,7 +177,11 @@ class TestAutoCommitIfNeeded:
         add_result = _make_proc(returncode=0)
         commit_result = _make_proc(returncode=0)
 
-        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[status_result, add_result, commit_result]) as mock_git:
+        with patch(
+            "forge.core.daemon_executor._run_git",
+            new_callable=AsyncMock,
+            side_effect=[status_result, add_result, commit_result],
+        ) as mock_git:
             result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is True
@@ -176,7 +197,11 @@ class TestAutoCommitIfNeeded:
         status_result = _make_proc(stdout="M  src/main.py", returncode=0)
         add_fail = _make_proc(returncode=1, stdout="error: ...")
 
-        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[status_result, add_fail]) as mock_git:
+        with patch(
+            "forge.core.daemon_executor._run_git",
+            new_callable=AsyncMock,
+            side_effect=[status_result, add_fail],
+        ) as mock_git:
             result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is False
@@ -188,7 +213,11 @@ class TestAutoCommitIfNeeded:
         add_ok = _make_proc(returncode=0)
         commit_fail = _make_proc(returncode=1, stdout="error: ...")
 
-        with patch("forge.core.daemon_executor._run_git", new_callable=AsyncMock, side_effect=[status_result, add_ok, commit_fail]) as mock_git:
+        with patch(
+            "forge.core.daemon_executor._run_git",
+            new_callable=AsyncMock,
+            side_effect=[status_result, add_ok, commit_fail],
+        ) as mock_git:
             result = await ExecutorMixin._auto_commit_if_needed("/wt/task-1", "task-1")
 
         assert result is False
@@ -227,10 +256,16 @@ class TestDeliverInterjections:
         executor._run_agent = AsyncMock(return_value=agent_result)
 
         delivered, session_id = await executor._deliver_interjections(
-            db=mock_db, runtime=MagicMock(), worktree_mgr=MagicMock(),
-            task_id="t1", task=MagicMock(), agent_id="a1",
-            worktree_path="/tmp/wt", pipeline_id="pipe1",
-            session_id="sess-1", pipeline_branch="main",
+            db=mock_db,
+            runtime=MagicMock(),
+            worktree_mgr=MagicMock(),
+            task_id="t1",
+            task=MagicMock(),
+            agent_id="a1",
+            worktree_path="/tmp/wt",
+            pipeline_id="pipe1",
+            session_id="sess-1",
+            pipeline_branch="main",
         )
 
         assert delivered is True
@@ -250,9 +285,14 @@ class TestDeliverInterjections:
         mock_db.get_pending_interjections = AsyncMock(return_value=[])
 
         delivered, session_id = await executor._deliver_interjections(
-            db=mock_db, runtime=MagicMock(), worktree_mgr=MagicMock(),
-            task_id="t1", task=MagicMock(), agent_id="a1",
-            worktree_path="/tmp/wt", pipeline_id="pipe1",
+            db=mock_db,
+            runtime=MagicMock(),
+            worktree_mgr=MagicMock(),
+            task_id="t1",
+            task=MagicMock(),
+            agent_id="a1",
+            worktree_path="/tmp/wt",
+            pipeline_id="pipe1",
             session_id="sess-1",
         )
 
@@ -278,7 +318,9 @@ class TestWorktreePathThreading:
         mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
         # _worktree_path is provided by ForgeDaemon at runtime; mock it here
         mixin._worktree_path = MagicMock(
-            side_effect=lambda repo_id, task_id: f"/fake/project/.forge/worktrees/{repo_id}/{task_id}",
+            side_effect=lambda repo_id, task_id: (
+                f"/fake/project/.forge/worktrees/{repo_id}/{task_id}"
+            ),
         )
         return mixin
 
@@ -297,8 +339,12 @@ class TestWorktreePathThreading:
         with patch("os.path.isdir", return_value=True):
             with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
                 result = await mixin._prepare_worktree(
-                    worktree_mgr, "task-1", "pipe-1", db,
-                    base_ref="main", repo_id="backend",
+                    worktree_mgr,
+                    "task-1",
+                    "pipe-1",
+                    db,
+                    base_ref="main",
+                    repo_id="backend",
                 )
 
         assert result == "/fake/project/.forge/worktrees/backend/task-1"
@@ -321,8 +367,14 @@ class TestWorktreePathThreading:
 
         with patch("os.path.isdir", return_value=False):
             await mixin._handle_merge_fast_path(
-                db, merge_worker, worktree_mgr, task,
-                "task-1", "agent-1", "pipe-1", repo_id="frontend",
+                db,
+                merge_worker,
+                worktree_mgr,
+                task,
+                "task-1",
+                "agent-1",
+                "pipe-1",
+                repo_id="frontend",
             )
 
         mixin._worktree_path.assert_called_once_with("frontend", "task-1")
@@ -349,8 +401,14 @@ class TestWorktreePathThreading:
         # Worktree doesn't exist — should fall back to retry
         with patch("os.path.isdir", return_value=False):
             await mixin._resume_task(
-                db, runtime, worktree_mgr, merge_worker,
-                "task-1", "agent-1", "answer text", "pipe-1",
+                db,
+                runtime,
+                worktree_mgr,
+                merge_worker,
+                "task-1",
+                "agent-1",
+                "answer text",
+                "pipe-1",
                 repo_id="backend",
             )
 
@@ -383,8 +441,12 @@ class TestWorktreePathThreading:
         # Worktree doesn't exist → will go to error path and release agent
         with patch("os.path.isdir", return_value=False):
             await mixin._execute_task(
-                db, MagicMock(), worktree_mgr, merge_worker,
-                task_id="task-1", agent_id="agent-1",
+                db,
+                MagicMock(),
+                worktree_mgr,
+                merge_worker,
+                task_id="task-1",
+                agent_id="agent-1",
                 pipeline_id="pipe-1",
                 repo_id="default",  # will be overridden by task.repo_id="backend"
             )
@@ -405,7 +467,11 @@ class TestWorktreePathThreading:
         with patch("os.path.isdir", return_value=True):
             with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
                 await mixin._prepare_worktree(
-                    worktree_mgr, "task-1", "pipe-1", db, base_ref="main",
+                    worktree_mgr,
+                    "task-1",
+                    "pipe-1",
+                    db,
+                    base_ref="main",
                 )
 
         # Default repo_id is 'default'
@@ -428,7 +494,9 @@ class TestAttemptMergeLockBehavior:
         mixin._merge_lock.__aenter__ = AsyncMock(return_value=None)
         mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
         mixin._worktree_path = MagicMock(
-            side_effect=lambda repo_id, task_id: f"/fake/project/.forge/worktrees/{repo_id}/{task_id}",
+            side_effect=lambda repo_id, task_id: (
+                f"/fake/project/.forge/worktrees/{repo_id}/{task_id}"
+            ),
         )
         return mixin
 
@@ -448,9 +516,13 @@ class TestAttemptMergeLockBehavior:
         db = AsyncMock()
         db.update_task_state = AsyncMock()
         db.set_task_review_diff = AsyncMock()
-        db.get_pipeline = AsyncMock(return_value=MagicMock(
-            require_approval=False, build_cmd=None, test_cmd=None,
-        ))
+        db.get_pipeline = AsyncMock(
+            return_value=MagicMock(
+                require_approval=False,
+                build_cmd=None,
+                test_cmd=None,
+            )
+        )
 
         merge_worker = MagicMock()
         merge_worker._main = "main"
@@ -459,11 +531,21 @@ class TestAttemptMergeLockBehavior:
 
         worktree_mgr = MagicMock()
 
-        with patch("forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")):
-            with patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")):
+        with patch(
+            "forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")
+        ):
+            with patch(
+                "forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")
+            ):
                 await mixin._attempt_merge(
-                    db, merge_worker, worktree_mgr, task,
-                    "task-1", "/wt/task-1", "claude-3-5-sonnet-20241022", "pipe-1",
+                    db,
+                    merge_worker,
+                    worktree_mgr,
+                    task,
+                    "task-1",
+                    "/wt/task-1",
+                    "claude-3-5-sonnet-20241022",
+                    "pipe-1",
                 )
 
         # Lock entered exactly once
@@ -488,26 +570,43 @@ class TestAttemptMergeLockBehavior:
         db = AsyncMock()
         db.update_task_state = AsyncMock()
         db.set_task_review_diff = AsyncMock()
-        db.get_pipeline = AsyncMock(return_value=MagicMock(
-            require_approval=False, build_cmd=None, test_cmd=None,
-        ))
+        db.get_pipeline = AsyncMock(
+            return_value=MagicMock(
+                require_approval=False,
+                build_cmd=None,
+                test_cmd=None,
+            )
+        )
 
         merge_worker = MagicMock()
         merge_worker._main = "main"
         # First attempt fails
-        merge_worker.merge = AsyncMock(return_value=MergeResult(
-            success=False, error="rebase conflict",
-        ))
+        merge_worker.merge = AsyncMock(
+            return_value=MergeResult(
+                success=False,
+                error="rebase conflict",
+            )
+        )
         # Retry succeeds
         merge_worker.retry_merge = AsyncMock(return_value=MergeResult(success=True))
 
         worktree_mgr = MagicMock()
 
-        with patch("forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")):
-            with patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")):
+        with patch(
+            "forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")
+        ):
+            with patch(
+                "forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")
+            ):
                 await mixin._attempt_merge(
-                    db, merge_worker, worktree_mgr, task,
-                    "task-1", "/wt/task-1", "claude-3-5-sonnet-20241022", "pipe-1",
+                    db,
+                    merge_worker,
+                    worktree_mgr,
+                    task,
+                    "task-1",
+                    "/wt/task-1",
+                    "claude-3-5-sonnet-20241022",
+                    "pipe-1",
                 )
 
         # Lock entered exactly ONCE even though merge failed and retry was needed
@@ -537,26 +636,46 @@ class TestAttemptMergeLockBehavior:
         db = AsyncMock()
         db.update_task_state = AsyncMock()
         db.set_task_review_diff = AsyncMock()
-        db.get_pipeline = AsyncMock(return_value=MagicMock(
-            require_approval=False, build_cmd=None, test_cmd=None,
-        ))
+        db.get_pipeline = AsyncMock(
+            return_value=MagicMock(
+                require_approval=False,
+                build_cmd=None,
+                test_cmd=None,
+            )
+        )
 
         merge_worker = MagicMock()
         merge_worker._main = "main"
-        merge_worker.merge = AsyncMock(return_value=MergeResult(
-            success=False, error="rebase conflict",
-        ))
-        merge_worker.retry_merge = AsyncMock(return_value=MergeResult(
-            success=False, error="still conflicting",
-        ))
+        merge_worker.merge = AsyncMock(
+            return_value=MergeResult(
+                success=False,
+                error="rebase conflict",
+            )
+        )
+        merge_worker.retry_merge = AsyncMock(
+            return_value=MergeResult(
+                success=False,
+                error="still conflicting",
+            )
+        )
 
         worktree_mgr = MagicMock()
 
-        with patch("forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")):
-            with patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")):
+        with patch(
+            "forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")
+        ):
+            with patch(
+                "forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")
+            ):
                 await mixin._attempt_merge(
-                    db, merge_worker, worktree_mgr, task,
-                    "task-1", "/wt/task-1", "claude-3-5-sonnet-20241022", "pipe-1",
+                    db,
+                    merge_worker,
+                    worktree_mgr,
+                    task,
+                    "task-1",
+                    "/wt/task-1",
+                    "claude-3-5-sonnet-20241022",
+                    "pipe-1",
                 )
 
         # Lock still entered exactly once

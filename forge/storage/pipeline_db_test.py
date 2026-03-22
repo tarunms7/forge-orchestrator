@@ -28,22 +28,30 @@ async def test_create_and_get_pipeline(db):
 
 
 async def test_update_pipeline_status(db):
-    await db.create_pipeline(id="pipe-1", description="t", project_dir="/tmp", model_strategy="auto")
+    await db.create_pipeline(
+        id="pipe-1", description="t", project_dir="/tmp", model_strategy="auto"
+    )
     await db.update_pipeline_status("pipe-1", "executing")
     p = await db.get_pipeline("pipe-1")
     assert p.status == "executing"
 
 
 async def test_set_pipeline_plan(db):
-    await db.create_pipeline(id="pipe-1", description="t", project_dir="/tmp", model_strategy="auto")
+    await db.create_pipeline(
+        id="pipe-1", description="t", project_dir="/tmp", model_strategy="auto"
+    )
     await db.set_pipeline_plan("pipe-1", '{"tasks": []}')
     p = await db.get_pipeline("pipe-1")
     assert p.task_graph_json == '{"tasks": []}'
 
 
 async def test_list_pipelines(db):
-    await db.create_pipeline(id="p1", description="a", project_dir="/tmp", model_strategy="auto", user_id="u1")
-    await db.create_pipeline(id="p2", description="b", project_dir="/tmp", model_strategy="auto", user_id="u2")
+    await db.create_pipeline(
+        id="p1", description="a", project_dir="/tmp", model_strategy="auto", user_id="u1"
+    )
+    await db.create_pipeline(
+        id="p2", description="b", project_dir="/tmp", model_strategy="auto", user_id="u2"
+    )
     all_pipes = await db.list_pipelines()
     assert len(all_pipes) == 2
     user_pipes = await db.list_pipelines(user_id="u1")
@@ -57,7 +65,9 @@ async def test_list_pipelines(db):
 async def test_create_pipeline_with_project_path(db):
     """create_pipeline should store project_path and project_name."""
     await db.create_pipeline(
-        id="pipe-proj", description="Project test", project_dir="/tmp/proj",
+        id="pipe-proj",
+        description="Project test",
+        project_dir="/tmp/proj",
         model_strategy="auto",
         project_path="/Users/tarun/my-project",
         project_name="my-project",
@@ -71,7 +81,9 @@ async def test_create_pipeline_with_project_path(db):
 async def test_create_pipeline_project_defaults_to_none(db):
     """create_pipeline without project params should default to None."""
     await db.create_pipeline(
-        id="pipe-no-proj", description="No project", project_dir="/tmp",
+        id="pipe-no-proj",
+        description="No project",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     p = await db.get_pipeline("pipe-no-proj")
@@ -82,16 +94,25 @@ async def test_create_pipeline_project_defaults_to_none(db):
 async def test_list_pipelines_filter_by_project_path(db):
     """list_pipelines with project_path should only return matching pipelines."""
     await db.create_pipeline(
-        id="p1", description="a", project_dir="/tmp",
-        project_path="/Users/tarun/proj-a", project_name="proj-a",
+        id="p1",
+        description="a",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-a",
+        project_name="proj-a",
     )
     await db.create_pipeline(
-        id="p2", description="b", project_dir="/tmp",
-        project_path="/Users/tarun/proj-b", project_name="proj-b",
+        id="p2",
+        description="b",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-b",
+        project_name="proj-b",
     )
     await db.create_pipeline(
-        id="p3", description="c", project_dir="/tmp",
-        project_path="/Users/tarun/proj-a", project_name="proj-a",
+        id="p3",
+        description="c",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-a",
+        project_name="proj-a",
     )
     # No filter — all pipelines
     all_pipes = await db.list_pipelines()
@@ -110,11 +131,16 @@ async def test_list_pipelines_filter_by_project_path(db):
 async def test_list_pipelines_filter_by_project_path_none_returns_all(db):
     """list_pipelines with project_path=None returns all pipelines."""
     await db.create_pipeline(
-        id="p1", description="a", project_dir="/tmp",
-        project_path="/Users/tarun/proj-a", project_name="proj-a",
+        id="p1",
+        description="a",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-a",
+        project_name="proj-a",
     )
     await db.create_pipeline(
-        id="p2", description="b", project_dir="/tmp",
+        id="p2",
+        description="b",
+        project_dir="/tmp",
     )
     all_pipes = await db.list_pipelines(project_path=None)
     assert len(all_pipes) == 2
@@ -123,20 +149,31 @@ async def test_list_pipelines_filter_by_project_path_none_returns_all(db):
 async def test_list_projects(db):
     """list_projects should return unique projects with counts."""
     await db.create_pipeline(
-        id="p1", description="a", project_dir="/tmp",
-        project_path="/Users/tarun/proj-a", project_name="proj-a",
+        id="p1",
+        description="a",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-a",
+        project_name="proj-a",
     )
     await db.create_pipeline(
-        id="p2", description="b", project_dir="/tmp",
-        project_path="/Users/tarun/proj-a", project_name="proj-a",
+        id="p2",
+        description="b",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-a",
+        project_name="proj-a",
     )
     await db.create_pipeline(
-        id="p3", description="c", project_dir="/tmp",
-        project_path="/Users/tarun/proj-b", project_name="proj-b",
+        id="p3",
+        description="c",
+        project_dir="/tmp",
+        project_path="/Users/tarun/proj-b",
+        project_name="proj-b",
     )
     # Pipeline with no project_path should be excluded
     await db.create_pipeline(
-        id="p4", description="d", project_dir="/tmp",
+        id="p4",
+        description="d",
+        project_dir="/tmp",
     )
 
     projects = await db.list_projects()

@@ -308,6 +308,7 @@ class TestRowToRecord:
 
     def test_row_to_record_without_repo_id(self):
         """Backward compat: rows without repo_id default to 'default'."""
+
         # Use a simple namespace without repo_id attribute (MagicMock auto-creates attrs)
         class FakeRow:
             id = "task-1"

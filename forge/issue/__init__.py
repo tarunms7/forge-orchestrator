@@ -28,9 +28,7 @@ class GitHubIssue:
     repo_url: str | None = None
 
 
-_GITHUB_ISSUE_URL_RE = re.compile(
-    r"^https?://github\.com/([^/]+/[^/]+)/issues/(\d+)/?$"
-)
+_GITHUB_ISSUE_URL_RE = re.compile(r"^https?://github\.com/([^/]+/[^/]+)/issues/(\d+)/?$")
 
 
 def parse_issue_ref(ref: str) -> tuple[int, str | None]:

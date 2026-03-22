@@ -118,9 +118,7 @@ def _check_dependency_validity(graph: TaskGraph) -> list[ValidationIssue]:
                         severity="major",
                         category="invalid_dependency",
                         affected_tasks=[task.id],
-                        description=(
-                            f"Task '{task.id}' depends on unknown task '{dep}'."
-                        ),
+                        description=(f"Task '{task.id}' depends on unknown task '{dep}'."),
                         suggested_fix=f"Remove '{dep}' from depends_on or add a task with that ID.",
                     )
                 )

@@ -61,10 +61,18 @@ class TestFuzzyScore:
 class TestFuzzyMatch:
     def _make_actions(self):
         return [
-            CommandPaletteAction(name="Home", description="Go to home screen", category="Navigation"),
-            CommandPaletteAction(name="Pipeline", description="Go to pipeline screen", category="Navigation"),
-            CommandPaletteAction(name="Toggle DAG", description="Toggle dependency graph", category="View"),
-            CommandPaletteAction(name="Settings", description="Open settings", category="Navigation"),
+            CommandPaletteAction(
+                name="Home", description="Go to home screen", category="Navigation"
+            ),
+            CommandPaletteAction(
+                name="Pipeline", description="Go to pipeline screen", category="Navigation"
+            ),
+            CommandPaletteAction(
+                name="Toggle DAG", description="Toggle dependency graph", category="View"
+            ),
+            CommandPaletteAction(
+                name="Settings", description="Open settings", category="Navigation"
+            ),
             CommandPaletteAction(name="Help", description="Show help", category="Tools"),
         ]
 
@@ -125,12 +133,16 @@ class TestFormatResultLine:
         assert "Test" in line
 
     def test_shortcut_displayed(self):
-        action = CommandPaletteAction(name="Home", description="Go home", shortcut="1", category="Navigation")
+        action = CommandPaletteAction(
+            name="Home", description="Go home", shortcut="1", category="Navigation"
+        )
         line = format_result_line(action, selected=False)
         assert "1" in line
 
     def test_no_shortcut(self):
-        action = CommandPaletteAction(name="Test", description="desc", shortcut="", category="Tools")
+        action = CommandPaletteAction(
+            name="Test", description="desc", shortcut="", category="Tools"
+        )
         line = format_result_line(action, selected=False)
         # Should not crash, no shortcut section
         assert "Test" in line
@@ -232,7 +244,9 @@ class TestCommandPaletteWidget:
 
     def test_init_custom_actions(self):
         actions = [
-            CommandPaletteAction(name="Foo", description="Do foo", category="Tools", callback_name="foo"),
+            CommandPaletteAction(
+                name="Foo", description="Do foo", category="Tools", callback_name="foo"
+            ),
         ]
         palette = CommandPalette(actions=actions)
         assert len(palette.results) == 1
@@ -240,8 +254,12 @@ class TestCommandPaletteWidget:
 
     def test_set_query_filters_results(self):
         actions = [
-            CommandPaletteAction(name="Home", description="Go home", category="Navigation", callback_name="home"),
-            CommandPaletteAction(name="Pipeline", description="Go pipe", category="Navigation", callback_name="pipe"),
+            CommandPaletteAction(
+                name="Home", description="Go home", category="Navigation", callback_name="home"
+            ),
+            CommandPaletteAction(
+                name="Pipeline", description="Go pipe", category="Navigation", callback_name="pipe"
+            ),
         ]
         palette = CommandPalette(actions=actions)
         palette.set_query("home")
@@ -250,7 +268,9 @@ class TestCommandPaletteWidget:
 
     def test_set_query_no_match(self):
         actions = [
-            CommandPaletteAction(name="Home", description="Go home", category="Navigation", callback_name="home"),
+            CommandPaletteAction(
+                name="Home", description="Go home", category="Navigation", callback_name="home"
+            ),
         ]
         palette = CommandPalette(actions=actions)
         palette.set_query("zzzzz")
@@ -316,7 +336,9 @@ class TestCommandPaletteWidget:
 
     def test_execute_posts_message(self):
         actions = [
-            CommandPaletteAction(name="Test", description="test", category="Tools", callback_name="test_action"),
+            CommandPaletteAction(
+                name="Test", description="test", category="Tools", callback_name="test_action"
+            ),
         ]
         palette = CommandPalette(actions=actions)
         messages = []
@@ -363,9 +385,13 @@ class TestCommandPaletteWidget:
 
     def test_selected_index_clamped_on_filter(self):
         actions = [
-            CommandPaletteAction(name="Alpha", description="a", category="Tools", callback_name="a"),
+            CommandPaletteAction(
+                name="Alpha", description="a", category="Tools", callback_name="a"
+            ),
             CommandPaletteAction(name="Beta", description="b", category="Tools", callback_name="b"),
-            CommandPaletteAction(name="Gamma", description="g", category="Tools", callback_name="g"),
+            CommandPaletteAction(
+                name="Gamma", description="g", category="Tools", callback_name="g"
+            ),
         ]
         palette = CommandPalette(actions=actions)
         palette._selected_index = 2

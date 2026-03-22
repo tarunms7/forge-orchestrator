@@ -6,13 +6,13 @@ from textual.widget import Widget
 
 # 7 stages in the pipeline
 _STAGES = [
-    ("planning",       "Planning"),
-    ("planned",        "Plan Approval"),
-    ("contracts",      "Contracts"),
-    ("executing",      "Execution"),
-    ("review",         "Review"),
+    ("planning", "Planning"),
+    ("planned", "Plan Approval"),
+    ("contracts", "Contracts"),
+    ("executing", "Execution"),
+    ("review", "Review"),
     ("final_approval", "Final Approval"),
-    ("pr_created",     "PR Created"),
+    ("pr_created", "PR Created"),
 ]
 
 _STAGE_ORDER = [s[0] for s in _STAGES]
@@ -58,7 +58,15 @@ def _make_segment_bar(current_phase: str) -> str:
     return "".join(parts)
 
 
-def format_progress(done: int, total: int, cost_usd: float, elapsed_seconds: float, phase: str, *, bar_width: int = 30) -> str:
+def format_progress(
+    done: int,
+    total: int,
+    cost_usd: float,
+    elapsed_seconds: float,
+    phase: str,
+    *,
+    bar_width: int = 30,
+) -> str:
     minutes = int(elapsed_seconds) // 60
     seconds = int(elapsed_seconds) % 60
     time_str = f"{minutes}:{seconds:02d}"
@@ -111,7 +119,9 @@ class PipelineProgress(Widget):
         self._elapsed = 0.0
         self._phase = "idle"
 
-    def update_progress(self, done: int, total: int, cost_usd: float, elapsed: float, phase: str) -> None:
+    def update_progress(
+        self, done: int, total: int, cost_usd: float, elapsed: float, phase: str
+    ) -> None:
         self._done = done
         self._total = total
         self._cost_usd = cost_usd

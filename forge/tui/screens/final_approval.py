@@ -33,10 +33,12 @@ def format_summary_stats(stats: dict, multi_repo: bool = False) -> str:
         repo_count = stats.get("repo_count", 0)
         task_count = stats.get("task_count", 0)
         lines.append(f"{repo_count} repos, {task_count} tasks")
-    lines.extend([
-        f"[bold #3fb950]+{added}[/] / [bold #f85149]-{removed}[/]  •  {files} files  •  {elapsed}",
-        f"[#8b949e]${cost:.2f} cost  •  {questions} questions answered[/]",
-    ])
+    lines.extend(
+        [
+            f"[bold #3fb950]+{added}[/] / [bold #f85149]-{removed}[/]  •  {files} files  •  {elapsed}",
+            f"[#8b949e]${cost:.2f} cost  •  {questions} questions answered[/]",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -130,11 +132,13 @@ class DiffScreen(Screen):
         viewer = DiffViewer()
         viewer.update_diff("pipeline", f"diff main...{self._branch}", self._diff_text)
         yield viewer
-        yield ShortcutBar([
-            ("j/k", "Scroll"),
-            ("g/G", "Top/Bottom"),
-            ("Esc", "Back"),
-        ])
+        yield ShortcutBar(
+            [
+                ("j/k", "Scroll"),
+                ("g/G", "Top/Bottom"),
+                ("Esc", "Back"),
+            ]
+        )
 
 
 class RepoSelectorScreen(Screen):
@@ -298,7 +302,11 @@ class FinalApprovalScreen(Screen):
         base = self._base_branch
         try:
             fetch = await asyncio.create_subprocess_exec(
-                "git", "fetch", "origin", base, "--quiet",
+                "git",
+                "fetch",
+                "origin",
+                base,
+                "--quiet",
                 cwd=project_dir,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -306,7 +314,9 @@ class FinalApprovalScreen(Screen):
             await asyncio.wait_for(fetch.wait(), timeout=15)
 
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-list", "--count",
+                "git",
+                "rev-list",
+                "--count",
                 f"{self._pipeline_branch}..origin/{base}",
                 cwd=project_dir,
                 stdout=asyncio.subprocess.PIPE,
@@ -338,10 +348,14 @@ class FinalApprovalScreen(Screen):
                 with Vertical(id="approval-container"):
                     yield Static(f"[bold #58a6ff]{header}[/]\n", id="header")
                     yield Static("", id="behind-main-warning")  # populated by _check_behind_main
-                    yield Static(format_summary_stats(self._stats, multi_repo=self._multi_repo), id="stats")
+                    yield Static(
+                        format_summary_stats(self._stats, multi_repo=self._multi_repo), id="stats"
+                    )
                     yield Static("", id="pr-url")
                     yield Static("\n[bold]Tasks:[/]", id="tasks-header")
-                    yield Static(format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table")
+                    yield Static(
+                        format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table"
+                    )
                     yield Static(
                         "\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
                         "f: follow up  n: new task  Esc: cancel[/]"
@@ -351,22 +365,26 @@ class FinalApprovalScreen(Screen):
                         files_changed=files_count,
                     )
         if self._partial:
-            yield ShortcutBar([
-                ("Enter", f"{pr_label} (completed only)"),
-                ("r", "Retry Failed"),
-                ("s", "Skip & Finish"),
-                ("d", "View Diff"),
-                ("f", "Follow Up"),
-                ("Esc", "Back"),
-            ])
+            yield ShortcutBar(
+                [
+                    ("Enter", f"{pr_label} (completed only)"),
+                    ("r", "Retry Failed"),
+                    ("s", "Skip & Finish"),
+                    ("d", "View Diff"),
+                    ("f", "Follow Up"),
+                    ("Esc", "Back"),
+                ]
+            )
         else:
-            yield ShortcutBar([
-                ("Enter", pr_label),
-                ("d", "View Diff"),
-                ("f", "Follow Up"),
-                ("n", "New Task"),
-                ("Esc", "Back"),
-            ])
+            yield ShortcutBar(
+                [
+                    ("Enter", pr_label),
+                    ("d", "View Diff"),
+                    ("f", "Follow Up"),
+                    ("n", "New Task"),
+                    ("Esc", "Back"),
+                ]
+            )
 
     def show_pr_url(self, url: str, repo_id: str | None = None) -> None:
         """Display PR URL(s) inline, with optional per-repo labeling."""
@@ -377,9 +395,7 @@ class FinalApprovalScreen(Screen):
                 # Render all accumulated repo PR URLs
                 pr_lines = []
                 for rid, rurl in self._per_repo_pr_urls.items():
-                    pr_lines.append(
-                        f"[bold #3fb950]{rid}:[/] [underline #58a6ff]{rurl}[/]"
-                    )
+                    pr_lines.append(f"[bold #3fb950]{rid}:[/] [underline #58a6ff]{rurl}[/]")
                 pr_widget.update("\n".join(pr_lines))
             else:
                 pr_widget.update(f"[bold #3fb950]PR created:[/] [underline #58a6ff]{url}[/]")
@@ -418,9 +434,7 @@ class FinalApprovalScreen(Screen):
 
     def on_follow_up_input_submitted(self, event: FollowUpInput.Submitted) -> None:
         """Relay the follow-up submission as a screen-level message."""
-        self.post_message(
-            self.FollowUp(event.prompt, event.branch, event.files_changed)
-        )
+        self.post_message(self.FollowUp(event.prompt, event.branch, event.files_changed))
 
     def action_view_diff(self) -> None:
         if not self._pipeline_branch:
@@ -470,13 +484,19 @@ class FinalApprovalScreen(Screen):
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "diff", f"{base_branch}...{branch}",
+                "git",
+                "diff",
+                f"{base_branch}...{branch}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=project_dir,
             )
             stdout, stderr = await proc.communicate()
-            diff_text = stdout.decode(errors="replace") if proc.returncode == 0 else f"git diff failed: {stderr.decode(errors='replace')}"
+            diff_text = (
+                stdout.decode(errors="replace")
+                if proc.returncode == 0
+                else f"git diff failed: {stderr.decode(errors='replace')}"
+            )
         except Exception as e:
             diff_text = f"Error running git diff: {e}"
         if not self.is_running:

@@ -21,7 +21,9 @@ class TestBuildReviewPrompt:
     def test_includes_project_context(self):
         """Project context appears before the task spec."""
         prompt = _build_review_prompt(
-            "T", "D", "diff",
+            "T",
+            "D",
+            "diff",
             project_context="## Project Snapshot\nPython 3.12",
         )
         assert "## Project Snapshot" in prompt
@@ -35,7 +37,10 @@ class TestBuildReviewPrompt:
             "- **task-1** (Add DB schema): files=[db.py], state=done"
         )
         prompt = _build_review_prompt(
-            "T", "D", "diff", sibling_context=sibling_ctx,
+            "T",
+            "D",
+            "diff",
+            sibling_context=sibling_ctx,
         )
         assert "Pipeline Task Context" in prompt
         assert "task-1" in prompt
@@ -49,7 +54,10 @@ class TestBuildReviewPrompt:
     def test_includes_file_scope(self):
         """File scope enforcement appears in the prompt."""
         prompt = _build_review_prompt(
-            "T", "D", "diff", allowed_files=["src/auth.py", "src/models.py"],
+            "T",
+            "D",
+            "diff",
+            allowed_files=["src/auth.py", "src/models.py"],
         )
         assert "src/auth.py" in prompt
         assert "src/models.py" in prompt
@@ -58,7 +66,9 @@ class TestBuildReviewPrompt:
     def test_includes_prior_feedback_on_retry(self):
         """Prior reviewer feedback appears for re-reviews."""
         prompt = _build_review_prompt(
-            "T", "D", "diff",
+            "T",
+            "D",
+            "diff",
             prior_feedback="Missing error handling in line 42",
         )
         assert "PRIOR REVIEW CONTEXT" in prompt
@@ -68,7 +78,9 @@ class TestBuildReviewPrompt:
     def test_includes_prior_diff_on_retry(self):
         """Prior diff appears alongside prior feedback."""
         prompt = _build_review_prompt(
-            "T", "D", "current diff",
+            "T",
+            "D",
+            "current diff",
             prior_feedback="Bug in auth",
             prior_diff="old diff content here",
         )
@@ -79,7 +91,9 @@ class TestBuildReviewPrompt:
         """Prior diff is capped at 6000 characters."""
         long_diff = "x" * 10000
         prompt = _build_review_prompt(
-            "T", "D", "diff",
+            "T",
+            "D",
+            "diff",
             prior_feedback="Issues",
             prior_diff=long_diff,
         )
@@ -89,7 +103,9 @@ class TestBuildReviewPrompt:
     def test_includes_delta_diff(self):
         """Delta diff section appears when provided."""
         prompt = _build_review_prompt(
-            "T", "D", "full diff",
+            "T",
+            "D",
+            "full diff",
             delta_diff="delta changes only",
         )
         assert "CHANGES SINCE LAST REVIEW (DELTA)" in prompt
@@ -110,7 +126,9 @@ class TestBuildReviewPrompt:
     def test_full_retry_prompt_ordering(self):
         """On a full retry review, all sections appear in correct order."""
         prompt = _build_review_prompt(
-            "Add webhook", "Create POST endpoint", "full diff here",
+            "Add webhook",
+            "Create POST endpoint",
+            "full diff here",
             prior_feedback="Missing PR creation",
             prior_diff="old diff",
             allowed_files=["webhooks.py"],
@@ -212,7 +230,9 @@ class TestOnMessagePassthrough:
         with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
             mock_sdk.return_value = mock_result
             result, cost = await gate2_llm_review(
-                "Test task", "Test desc", "diff content",
+                "Test task",
+                "Test desc",
+                "diff content",
                 on_message=callback,
             )
 
@@ -258,7 +278,10 @@ class TestOnMessagePassthrough:
         with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
             mock_sdk.side_effect = [mock_result_empty, mock_result_ok]
             result, _ = await gate2_llm_review(
-                "T", "D", "diff", on_message=callback,
+                "T",
+                "D",
+                "diff",
+                on_message=callback,
             )
 
         assert result.passed is True
@@ -282,6 +305,7 @@ class TestReviewSystemPrompt:
 
     def test_prompt_has_checklist_categories(self):
         from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+
         assert "CORRECTNESS" in REVIEW_SYSTEM_PROMPT
         assert "ERROR HANDLING" in REVIEW_SYSTEM_PROMPT
         assert "SECURITY" in REVIEW_SYSTEM_PROMPT
@@ -290,11 +314,13 @@ class TestReviewSystemPrompt:
 
     def test_prompt_has_strict_framing(self):
         from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+
         assert "senior code reviewer" in REVIEW_SYSTEM_PROMPT
         assert "production incidents" in REVIEW_SYSTEM_PROMPT
 
     def test_prompt_forbids_style_nitpicking(self):
         from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+
         assert "Do NOT nitpick pure style preferences" in REVIEW_SYSTEM_PROMPT
 
 
@@ -337,7 +363,9 @@ class TestCustomReviewFocusSeparator:
 
         with patch("forge.review.llm_review.sdk_query", side_effect=capture_sdk_query):
             await gate2_llm_review(
-                "T", "D", "diff",
+                "T",
+                "D",
+                "diff",
                 custom_review_focus="Focus on error handling paths.",
             )
 

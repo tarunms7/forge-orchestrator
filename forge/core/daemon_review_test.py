@@ -1,6 +1,5 @@
 """Tests for daemon_review — sibling context builder, test gate scoping, and review streaming."""
 
-
 import subprocess
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -99,7 +98,8 @@ class TestBuildSiblingContext:
         current_task = _make_task("task-1", "Current")
 
         many_files_task = _make_task(
-            "task-2", "Big task",
+            "task-2",
+            "Big task",
             ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py", "g.py"],
             "in_progress",
         )
@@ -159,7 +159,9 @@ class TestGateTestScoping:
             return_value=["forge/core/foo_test.py", "forge/core/bar_test.py"],
         ):
             result = await mixin._gate_test(
-                "/repo", "pytest -v", 300,
+                "/repo",
+                "pytest -v",
+                300,
                 changed_files=["forge/core/foo.py", "forge/core/bar.py"],
             )
 
@@ -178,7 +180,9 @@ class TestGateTestScoping:
             return_value=[],
         ):
             result = await mixin._gate_test(
-                "/repo", "pytest", 300,
+                "/repo",
+                "pytest",
+                300,
                 changed_files=["forge/core/new_module.py"],
             )
 
@@ -199,7 +203,9 @@ class TestGateTestScoping:
         mixin._run_shell_gate = fake_shell_gate
 
         result = await mixin._gate_test(
-            "/repo", "npm test", 300,
+            "/repo",
+            "npm test",
+            300,
             changed_files=["src/foo.js"],
         )
 
@@ -257,10 +263,7 @@ class TestReviewGateEvents:
 
     def _collect_events(self, mixin) -> list[tuple[str, dict]]:
         """Return list of (event_type, data) from all _emit calls."""
-        return [
-            (call.args[0], call.args[1])
-            for call in mixin._emit.call_args_list
-        ]
+        return [(call.args[0], call.args[1]) for call in mixin._emit.call_args_list]
 
     @pytest.mark.asyncio
     async def test_gate_started_event_emitted(self):
@@ -279,15 +282,26 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
-            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
-                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
-                MagicMock(cost_usd=0),
-            )),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
             passed, feedback = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         assert passed is True
@@ -318,15 +332,26 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
-            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
-                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
-                MagicMock(cost_usd=0),
-            )),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
             passed, feedback = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         assert passed is True
@@ -362,12 +387,22 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(
-                passed=False, gate="gate1_auto_check", details="Lint errors:\nE501 line too long",
-            )),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(
+                    passed=False,
+                    gate="gate1_auto_check",
+                    details="Lint errors:\nE501 line too long",
+                ),
+            ),
         ):
             passed, feedback = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         assert passed is False
@@ -399,15 +434,26 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
-            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
-                GateResult(passed=True, gate="gate2_llm_review", details=llm_feedback_text),
-                MagicMock(cost_usd=0),
-            )),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details=llm_feedback_text),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
             passed, feedback = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         assert passed is True
@@ -435,18 +481,35 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate_build", return_value=GateResult(
-                passed=True, gate="gate0_build", details="OK",
-            )),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
-            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
-                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
-                MagicMock(cost_usd=0),
-            )),
+            patch.object(
+                mixin,
+                "_gate_build",
+                return_value=GateResult(
+                    passed=True,
+                    gate="gate0_build",
+                    details="OK",
+                ),
+            ),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
             passed, _ = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         assert passed is True
@@ -475,27 +538,46 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
-            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
-                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
-                MagicMock(cost_usd=0),
-            )),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
             await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         event_names = [call.args[0] for call in mixin._emit.call_args_list]
         # For lint gate: gate_started must come before gate_passed
         lint_started_idx = next(
-            (i for i, e in enumerate(event_names) if e == "review:gate_started"
-             and mixin._emit.call_args_list[i].args[1].get("gate") == "gate1_lint"),
+            (
+                i
+                for i, e in enumerate(event_names)
+                if e == "review:gate_started"
+                and mixin._emit.call_args_list[i].args[1].get("gate") == "gate1_lint"
+            ),
             None,
         )
         lint_result_idx = next(
-            (i for i, e in enumerate(event_names) if e in ("review:gate_passed", "review:gate_failed")
-             and mixin._emit.call_args_list[i].args[1].get("gate") == "gate1_lint"),
+            (
+                i
+                for i, e in enumerate(event_names)
+                if e in ("review:gate_passed", "review:gate_failed")
+                and mixin._emit.call_args_list[i].args[1].get("gate") == "gate1_lint"
+            ),
             None,
         )
         assert lint_started_idx is not None
@@ -526,10 +608,7 @@ class TestMakeReviewOnMessage:
             with patch("forge.core.daemon_review._extract_text", return_value="Review text here"):
                 await on_msg(MagicMock())
 
-        emit_calls = [
-            (call.args[0], call.args[1])
-            for call in mixin._emit.call_args_list
-        ]
+        emit_calls = [(call.args[0], call.args[1]) for call in mixin._emit.call_args_list]
         assert len(emit_calls) == 1
         assert emit_calls[0][0] == "review:llm_output"
         assert emit_calls[0][1]["task_id"] == "task-1"
@@ -624,8 +703,14 @@ class TestRunReviewPassesOnMessage:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_run_lint_gate", return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")),
-            patch("forge.core.daemon_review.gate2_llm_review", new_callable=AsyncMock) as mock_gate2,
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review", new_callable=AsyncMock
+            ) as mock_gate2,
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
             mock_gate2.return_value = (
@@ -633,7 +718,11 @@ class TestRunReviewPassesOnMessage:
                 MagicMock(cost_usd=0),
             )
             passed, _ = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
             )
 
         assert passed is True
@@ -661,6 +750,7 @@ class TestLintGateAutoFix:
     def _ruff_strategy(self):
         """Return a ruff LintStrategy for testing."""
         import sys
+
         return LintStrategy(
             name="ruff",
             check_cmd=[sys.executable, "-m", "ruff", "check"],
@@ -675,11 +765,7 @@ class TestLintGateAutoFix:
         mixin = self._make_mixin()
 
         diff_output = (
-            "diff --git a/foo.py b/foo.py\n"
-            "--- a/foo.py\n"
-            "+++ b/foo.py\n"
-            "-import os\n"
-            "-import sys\n"
+            "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n-import os\n-import sys\n"
         )
 
         async def fake_run_git(args, cwd=None, check=True, description=""):
@@ -696,10 +782,20 @@ class TestLintGateAutoFix:
         check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["foo.py"],
+            ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
-            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
+            patch(
+                "forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()
+            ),
+            patch(
+                "forge.core.daemon_review.async_subprocess",
+                new_callable=AsyncMock,
+                side_effect=[fix_result, check_result],
+            ),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
             result = await mixin._run_lint_gate("/repo")
@@ -722,10 +818,20 @@ class TestLintGateAutoFix:
         check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["foo.py"],
+            ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
-            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
+            patch(
+                "forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()
+            ),
+            patch(
+                "forge.core.daemon_review.async_subprocess",
+                new_callable=AsyncMock,
+                side_effect=[fix_result, check_result],
+            ),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
             result = await mixin._run_lint_gate("/repo")
@@ -740,7 +846,11 @@ class TestLintGateAutoFix:
         mixin = self._make_mixin()
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["foo.py"],
+            ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=None),
         ):
@@ -770,14 +880,24 @@ class TestLintGateAutoFix:
 
         fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         # gofmt -l returns filenames on stdout when unformatted
-        check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="main.go\n", stderr="")
+        check_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="main.go\n", stderr=""
+        )
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["main.go"]),
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["main.go"],
+            ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch("forge.core.daemon_review.detect_lint_strategy", return_value=gofmt_strategy),
             patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/gofmt"),
-            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
+            patch(
+                "forge.core.daemon_review.async_subprocess",
+                new_callable=AsyncMock,
+                side_effect=[fix_result, check_result],
+            ),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
             result = await mixin._run_lint_gate("/repo")
@@ -791,11 +911,7 @@ class TestLintGateAutoFix:
         mixin = self._make_mixin()
 
         diff_output = (
-            "diff --git a/foo.py b/foo.py\n"
-            "--- a/foo.py\n"
-            "+++ b/foo.py\n"
-            "-import unused_module\n"
-            "+\n"
+            "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n-import unused_module\n+\n"
         )
 
         async def fake_run_git(args, cwd=None, check=True, description=""):
@@ -812,10 +928,20 @@ class TestLintGateAutoFix:
         check_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", new_callable=AsyncMock, return_value=["foo.py"]),
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["foo.py"],
+            ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()),
-            patch("forge.core.daemon_review.async_subprocess", new_callable=AsyncMock, side_effect=[fix_result, check_result]),
+            patch(
+                "forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()
+            ),
+            patch(
+                "forge.core.daemon_review.async_subprocess",
+                new_callable=AsyncMock,
+                side_effect=[fix_result, check_result],
+            ),
             patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
         ):
             result = await mixin._run_lint_gate("/repo")
@@ -877,8 +1003,10 @@ class TestDetectLintStrategy:
 
     def test_user_override_with_fix_cmd(self):
         result = detect_lint_strategy(
-            "/repo", ["foo.py"],
-            lint_cmd_override="mycheck", lint_fix_cmd_override="myfix --auto",
+            "/repo",
+            ["foo.py"],
+            lint_cmd_override="mycheck",
+            lint_fix_cmd_override="myfix --auto",
         )
         assert result is not None
         assert result.fix_cmd == ["myfix", "--auto"]
@@ -886,6 +1014,7 @@ class TestDetectLintStrategy:
     def test_python_fallback(self):
         """Python files get ruff strategy when no project config found."""
         import sys
+
         with (
             patch("forge.core.daemon_review.os.path.isfile", return_value=False),
         ):
@@ -936,7 +1065,9 @@ class TestDetectLintStrategy:
 
         with (
             patch("forge.core.daemon_review.os.path.isfile", side_effect=fake_isfile),
-            patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/pre-commit"),
+            patch(
+                "forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/pre-commit"
+            ),
         ):
             result = detect_lint_strategy("/repo", ["foo.py"])
 
@@ -946,6 +1077,7 @@ class TestDetectLintStrategy:
     def test_package_json_lint_script(self, tmp_path):
         """package.json with lint script is detected."""
         import json
+
         pkg = tmp_path / "package.json"
         pkg.write_text(json.dumps({"scripts": {"lint": "eslint .", "lint:fix": "eslint --fix ."}}))
 
@@ -985,84 +1117,84 @@ class TestPerRepoCommandResolution:
         """Per-repo test commands are returned when repo_id is provided."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(tests=CheckConfig(cmd='pytest')),
-            'frontend': ProjectConfig(tests=CheckConfig(cmd='npm test')),
+            "backend": ProjectConfig(tests=CheckConfig(cmd="pytest")),
+            "frontend": ProjectConfig(tests=CheckConfig(cmd="npm test")),
         }
-        assert mixin._resolve_test_cmd(repo_id='backend') == 'pytest'
-        assert mixin._resolve_test_cmd(repo_id='frontend') == 'npm test'
+        assert mixin._resolve_test_cmd(repo_id="backend") == "pytest"
+        assert mixin._resolve_test_cmd(repo_id="frontend") == "npm test"
 
     def test_resolve_lint_cmd_per_repo(self):
         """Per-repo lint commands are returned when repo_id is provided."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(lint=CheckConfig(check_cmd='ruff check .')),
-            'frontend': ProjectConfig(lint=CheckConfig(check_cmd='eslint .')),
+            "backend": ProjectConfig(lint=CheckConfig(check_cmd="ruff check .")),
+            "frontend": ProjectConfig(lint=CheckConfig(check_cmd="eslint .")),
         }
-        assert mixin._resolve_lint_cmd(repo_id='backend') == 'ruff check .'
-        assert mixin._resolve_lint_cmd(repo_id='frontend') == 'eslint .'
+        assert mixin._resolve_lint_cmd(repo_id="backend") == "ruff check ."
+        assert mixin._resolve_lint_cmd(repo_id="frontend") == "eslint ."
 
     def test_resolve_build_cmd_per_repo(self):
         """Per-repo build commands are returned when repo_id is provided."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(build=CheckConfig(cmd='make build')),
-            'frontend': ProjectConfig(build=CheckConfig(cmd='npm run build')),
+            "backend": ProjectConfig(build=CheckConfig(cmd="make build")),
+            "frontend": ProjectConfig(build=CheckConfig(cmd="npm run build")),
         }
-        assert mixin._resolve_build_cmd(repo_id='backend') == 'make build'
-        assert mixin._resolve_build_cmd(repo_id='frontend') == 'npm run build'
+        assert mixin._resolve_build_cmd(repo_id="backend") == "make build"
+        assert mixin._resolve_build_cmd(repo_id="frontend") == "npm run build"
 
     def test_resolve_lint_fix_cmd_per_repo(self):
         """Per-repo lint fix commands are returned when repo_id is provided."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(lint=CheckConfig(fix_cmd='ruff check --fix .')),
-            'frontend': ProjectConfig(lint=CheckConfig(fix_cmd='eslint --fix .')),
+            "backend": ProjectConfig(lint=CheckConfig(fix_cmd="ruff check --fix .")),
+            "frontend": ProjectConfig(lint=CheckConfig(fix_cmd="eslint --fix .")),
         }
-        assert mixin._resolve_lint_fix_cmd(repo_id='backend') == 'ruff check --fix .'
-        assert mixin._resolve_lint_fix_cmd(repo_id='frontend') == 'eslint --fix .'
+        assert mixin._resolve_lint_fix_cmd(repo_id="backend") == "ruff check --fix ."
+        assert mixin._resolve_lint_fix_cmd(repo_id="frontend") == "eslint --fix ."
 
     def test_review_single_repo_unchanged(self):
         """Without repo_id, resolvers fall back to settings as before."""
         mixin = self._make_mixin()
-        mixin._settings.test_cmd = 'pytest'
-        mixin._settings.build_cmd = 'make build'
-        mixin._settings.lint_cmd = 'ruff check .'
-        mixin._settings.lint_fix_cmd = 'ruff check --fix .'
+        mixin._settings.test_cmd = "pytest"
+        mixin._settings.build_cmd = "make build"
+        mixin._settings.lint_cmd = "ruff check ."
+        mixin._settings.lint_fix_cmd = "ruff check --fix ."
         mixin._repo_configs = {}
         mixin._pipeline_build_cmd = None
         mixin._pipeline_test_cmd = None
 
-        assert mixin._resolve_test_cmd() == 'pytest'
-        assert mixin._resolve_build_cmd() == 'make build'
-        assert mixin._resolve_lint_cmd() == 'ruff check .'
-        assert mixin._resolve_lint_fix_cmd() == 'ruff check --fix .'
+        assert mixin._resolve_test_cmd() == "pytest"
+        assert mixin._resolve_build_cmd() == "make build"
+        assert mixin._resolve_lint_cmd() == "ruff check ."
+        assert mixin._resolve_lint_fix_cmd() == "ruff check --fix ."
 
     def test_resolve_test_cmd_disabled_per_repo(self):
         """When per-repo tests are disabled, resolver returns None."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(tests=CheckConfig(enabled=False)),
+            "backend": ProjectConfig(tests=CheckConfig(enabled=False)),
         }
-        assert mixin._resolve_test_cmd(repo_id='backend') is None
+        assert mixin._resolve_test_cmd(repo_id="backend") is None
 
     def test_resolve_build_cmd_disabled_per_repo(self):
         """When per-repo build is disabled, resolver returns None."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(build=CheckConfig(enabled=False)),
+            "backend": ProjectConfig(build=CheckConfig(enabled=False)),
         }
-        assert mixin._resolve_build_cmd(repo_id='backend') is None
+        assert mixin._resolve_build_cmd(repo_id="backend") is None
 
     def test_resolve_unknown_repo_id_falls_through(self):
         """Unknown repo_id falls through to existing resolution chain."""
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(tests=CheckConfig(cmd='pytest')),
+            "backend": ProjectConfig(tests=CheckConfig(cmd="pytest")),
         }
-        mixin._settings.test_cmd = 'npm test'
+        mixin._settings.test_cmd = "npm test"
         mixin._pipeline_test_cmd = None
         # 'unknown' repo_id not in _repo_configs → fall through to settings
-        assert mixin._resolve_test_cmd(repo_id='unknown') == 'npm test'
+        assert mixin._resolve_test_cmd(repo_id="unknown") == "npm test"
 
 
 class TestReviewUsesRepoConfig:
@@ -1089,15 +1221,15 @@ class TestReviewUsesRepoConfig:
         """
         mixin = self._make_mixin()
         mixin._repo_configs = {
-            'backend': ProjectConfig(
-                build=CheckConfig(cmd='make build'),
-                tests=CheckConfig(cmd='pytest -x'),
-                lint=CheckConfig(check_cmd='ruff check .', fix_cmd='ruff check --fix .'),
+            "backend": ProjectConfig(
+                build=CheckConfig(cmd="make build"),
+                tests=CheckConfig(cmd="pytest -x"),
+                lint=CheckConfig(check_cmd="ruff check .", fix_cmd="ruff check --fix ."),
             ),
         }
 
         task = _make_task_for_review()
-        task.repo_id = 'backend'
+        task.repo_id = "backend"
         db = AsyncMock()
         db.list_tasks_by_pipeline.return_value = [task]
         db.get_pipeline_contracts.return_value = None
@@ -1111,46 +1243,65 @@ class TestReviewUsesRepoConfig:
         original_test = ReviewMixin._resolve_test_cmd
 
         def track_build(self_inner, *, repo_id=None):
-            resolve_calls['build'] = repo_id
+            resolve_calls["build"] = repo_id
             return original_build(self_inner, repo_id=repo_id)
 
         def track_test(self_inner, *, repo_id=None):
-            resolve_calls['test'] = repo_id
+            resolve_calls["test"] = repo_id
             return original_test(self_inner, repo_id=repo_id)
 
         # Track _run_lint_gate to verify repo_id is passed
         lint_gate_calls = {}
 
         async def track_lint_gate(worktree_path, *, pipeline_branch=None, repo_id=None):
-            lint_gate_calls['repo_id'] = repo_id
+            lint_gate_calls["repo_id"] = repo_id
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
-            patch.object(mixin, "_gate_build", return_value=GateResult(
-                passed=True, gate="gate0_build", details="OK",
-            )),
+            patch.object(
+                mixin,
+                "_gate_build",
+                return_value=GateResult(
+                    passed=True,
+                    gate="gate0_build",
+                    details="OK",
+                ),
+            ),
             patch.object(mixin, "_run_lint_gate", side_effect=track_lint_gate),
-            patch.object(mixin, "_gate_test", return_value=GateResult(
-                passed=True, gate="gate1_5_test", details="OK",
-            )),
-            patch("forge.core.daemon_review.gate2_llm_review", return_value=(
-                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
-                MagicMock(cost_usd=0),
-            )),
+            patch.object(
+                mixin,
+                "_gate_test",
+                return_value=GateResult(
+                    passed=True,
+                    gate="gate1_5_test",
+                    details="OK",
+                ),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
-            patch.object(ReviewMixin, '_resolve_build_cmd', track_build),
-            patch.object(ReviewMixin, '_resolve_test_cmd', track_test),
+            patch.object(ReviewMixin, "_resolve_build_cmd", track_build),
+            patch.object(ReviewMixin, "_resolve_test_cmd", track_test),
         ):
             passed, _ = await mixin._run_review(
-                task, "/repo", "diff content", db=db, pipeline_id="pipe-1",
-                repo_id='backend',
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
+                repo_id="backend",
             )
 
         assert passed is True
-        assert resolve_calls.get('build') == 'backend'
-        assert resolve_calls.get('test') == 'backend'
-        assert lint_gate_calls.get('repo_id') == 'backend'
+        assert resolve_calls.get("build") == "backend"
+        assert resolve_calls.get("test") == "backend"
+        assert lint_gate_calls.get("repo_id") == "backend"
 
 
 class TestDiffStatsCorrectRepo:
@@ -1164,16 +1315,27 @@ class TestDiffStatsCorrectRepo:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Initialize a git repo with a commit
             import subprocess
+
             subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@test.com"],
+                cwd=tmpdir,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True, check=True
+            )
             # Create initial commit
             import os
+
             filepath = os.path.join(tmpdir, "hello.py")
             with open(filepath, "w") as f:
                 f.write("print('hello')\n")
             subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True, check=True)
-            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True, check=True
+            )
 
             result = await _get_diff_stats(tmpdir)
             assert isinstance(result, dict)

@@ -41,19 +41,21 @@ async def list_history(
         # Count tasks belonging to this pipeline
         tasks = await forge_db.list_tasks_by_pipeline(p.id)
 
-        results.append({
-            "pipeline_id": p.id,
-            "description": p.description,
-            "phase": p.status,
-            "created_at": p.created_at or "",
-            "duration": duration,
-            "task_count": len(tasks),
-            "build_cmd": getattr(p, "build_cmd", None),
-            "test_cmd": getattr(p, "test_cmd", None),
-            "github_issue_url": getattr(p, "github_issue_url", None),
-            "github_issue_number": getattr(p, "github_issue_number", None),
-            "project_path": p.project_dir or "",
-        })
+        results.append(
+            {
+                "pipeline_id": p.id,
+                "description": p.description,
+                "phase": p.status,
+                "created_at": p.created_at or "",
+                "duration": duration,
+                "task_count": len(tasks),
+                "build_cmd": getattr(p, "build_cmd", None),
+                "test_cmd": getattr(p, "test_cmd", None),
+                "github_issue_url": getattr(p, "github_issue_url", None),
+                "github_issue_number": getattr(p, "github_issue_number", None),
+                "project_path": p.project_dir or "",
+            }
+        )
     return results
 
 

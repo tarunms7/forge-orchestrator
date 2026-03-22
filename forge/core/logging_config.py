@@ -85,7 +85,7 @@ def configure_logging(level: str = "INFO", log_file: str | None = None) -> None:
     logger.addHandler(stream_handler)
 
     if log_file is not None:
-        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=3)
+        file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
@@ -108,7 +108,8 @@ def configure_tui_logging() -> None:
 
     # Remove any existing stderr handlers
     logger.handlers = [
-        h for h in logger.handlers
+        h
+        for h in logger.handlers
         if not (isinstance(h, logging.StreamHandler) and h.stream is sys.stderr)
     ]
 
@@ -118,7 +119,7 @@ def configure_tui_logging() -> None:
     log_file = os.path.join(log_dir, "forge.log")
 
     formatter = logging.Formatter(_LOG_FORMAT)
-    file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=3)
+    file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

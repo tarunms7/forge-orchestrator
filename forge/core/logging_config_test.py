@@ -42,6 +42,7 @@ class TestConfigureLogging:
         handler = logger.handlers[0]
         assert isinstance(handler, logging.StreamHandler)
         import sys
+
         assert handler.stream is sys.stderr
 
     def test_suppresses_third_party_loggers(self):

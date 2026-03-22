@@ -20,9 +20,7 @@ async def get_pipeline_diff(
     user_id: str = Depends(get_current_user),
 ) -> dict:
     """Return combined diff text for a pipeline from DB events."""
-    db = getattr(request.app.state, "db", None) or getattr(
-        request.app.state, "forge_db", None
-    )
+    db = getattr(request.app.state, "db", None) or getattr(request.app.state, "forge_db", None)
     if db is None:
         raise HTTPException(status_code=500, detail="Database not available")
 

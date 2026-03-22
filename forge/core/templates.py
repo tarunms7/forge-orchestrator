@@ -16,6 +16,7 @@ from typing import Literal
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ReviewConfig:
     """Review pipeline overrides for a template."""
@@ -187,8 +188,8 @@ BUILTIN_TEMPLATES: dict[str, PipelineTemplate] = {
                 "(4) no stale references to renamed or removed code."
             ),
         ),
-        build_cmd="",   # skip build gate
-        test_cmd="",    # skip test gate
+        build_cmd="",  # skip build gate
+        test_cmd="",  # skip test gate
     ),
 }
 
@@ -231,6 +232,7 @@ QUALITY_PRESETS: dict[str, dict] = {
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
 
 def get_template(template_id: str) -> PipelineTemplate | None:
     """Look up a built-in template by ID.

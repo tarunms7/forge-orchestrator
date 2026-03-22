@@ -72,9 +72,12 @@ async def test_full_flow_guard_to_lesson_in_central_db(db):
     # Extract and store lesson using central DB
     lesson = extract_from_command_failures(exc_info.value.failures, project_dir="/proj")
     await db.add_lesson(
-        scope=lesson.scope, category=lesson.category,
-        title=lesson.title, content=lesson.content,
-        trigger=lesson.trigger, resolution=lesson.resolution,
+        scope=lesson.scope,
+        category=lesson.category,
+        title=lesson.title,
+        content=lesson.content,
+        trigger=lesson.trigger,
+        resolution=lesson.resolution,
         project_dir="/proj" if lesson.scope == "project" else None,
     )
 
@@ -107,9 +110,12 @@ async def test_dedup_bumps_hit_count(db):
                     await db.bump_lesson_hit(existing.id)
                 else:
                     await db.add_lesson(
-                        scope=lesson.scope, category=lesson.category,
-                        title=lesson.title, content=lesson.content,
-                        trigger=lesson.trigger, resolution=lesson.resolution,
+                        scope=lesson.scope,
+                        category=lesson.category,
+                        title=lesson.title,
+                        content=lesson.content,
+                        trigger=lesson.trigger,
+                        resolution=lesson.resolution,
                     )
 
     rows = await db.list_all_lessons()

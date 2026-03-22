@@ -12,8 +12,11 @@ from forge.core.contracts import (
 
 # -- Helpers ---------------------------------------------------------------
 
+
 def _sample_api_contract(
-    producer="task-1", consumers=None, contract_id="contract-api-1",
+    producer="task-1",
+    consumers=None,
+    contract_id="contract-api-1",
 ) -> APIContract:
     return APIContract(
         id=contract_id,
@@ -146,7 +149,9 @@ class TestTaskContractsFormatForAgent:
 
     def test_request_body_shown(self):
         api = APIContract(
-            id="c1", method="POST", path="/api/templates",
+            id="c1",
+            method="POST",
+            path="/api/templates",
             description="Create template",
             request_body=[
                 FieldSpec(name="name", type="string"),

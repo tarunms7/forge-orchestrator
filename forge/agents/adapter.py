@@ -27,101 +27,101 @@ logger = logging.getLogger("forge.agents")
 # clearly dangerous ones (network, sudo, permissions, process killing).
 
 AGENT_ALLOWED_TOOLS = [
-            # Git operations — agents must be able to commit their own work
-            "Bash(git *)",
-            # File operations — refactoring needs rm, mv, cp, mkdir
-            "Bash(rm *)",
-            "Bash(mv *)",
-            "Bash(cp *)",
-            "Bash(mkdir *)",
-            "Bash(touch *)",
-            # Read/inspect — agents need to read files and search
-            "Bash(ls *)",
-            "Bash(cat *)",
-            "Bash(head *)",
-            "Bash(tail *)",
-            "Bash(find *)",
-            "Bash(wc *)",
-            "Bash(pwd)",
-            "Bash(echo *)",
-            "Bash(which *)",
-            # Build/test tools — agents verify their own work
-            "Bash(python *)",
-            "Bash(python3 *)",
-            "Bash(pip *)",
-            "Bash(pytest *)",
-            "Bash(npm *)",
-            "Bash(npx *)",
-            "Bash(node *)",
-            "Bash(make *)",
-            "Bash(cargo *)",
-            "Bash(go *)",
-            "Bash(yarn *)",
-            "Bash(pnpm *)",
-            "Bash(bun *)",
-            "Bash(ruff *)",
-            "Bash(eslint *)",
-            "Bash(tsc *)",
-            "Bash(javac *)",
-            "Bash(gradle *)",
-            "Bash(mvn *)",
-            "Bash(dotnet *)",
-            "Bash(swift *)",
-            "Bash(rustc *)",
-            "Bash(ruby *)",
-            "Bash(bundle *)",
-            "Bash(rake *)",
-            # Shell utilities — agents chain commands, source venvs
-            "Bash(source *)",
-            "Bash(cd *)",
-            "Bash(sort *)",
-            "Bash(uniq *)",
-            "Bash(xargs *)",
-            "Bash(sed *)",
-            "Bash(awk *)",
-            "Bash(tr *)",
-            "Bash(cut *)",
-            "Bash(diff *)",
-            "Bash(grep *)",
-            "Bash(jq *)",
-            "Bash(basename *)",
-            "Bash(dirname *)",
-            "Bash(realpath *)",
-            "Bash(readlink *)",
+    # Git operations — agents must be able to commit their own work
+    "Bash(git *)",
+    # File operations — refactoring needs rm, mv, cp, mkdir
+    "Bash(rm *)",
+    "Bash(mv *)",
+    "Bash(cp *)",
+    "Bash(mkdir *)",
+    "Bash(touch *)",
+    # Read/inspect — agents need to read files and search
+    "Bash(ls *)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(find *)",
+    "Bash(wc *)",
+    "Bash(pwd)",
+    "Bash(echo *)",
+    "Bash(which *)",
+    # Build/test tools — agents verify their own work
+    "Bash(python *)",
+    "Bash(python3 *)",
+    "Bash(pip *)",
+    "Bash(pytest *)",
+    "Bash(npm *)",
+    "Bash(npx *)",
+    "Bash(node *)",
+    "Bash(make *)",
+    "Bash(cargo *)",
+    "Bash(go *)",
+    "Bash(yarn *)",
+    "Bash(pnpm *)",
+    "Bash(bun *)",
+    "Bash(ruff *)",
+    "Bash(eslint *)",
+    "Bash(tsc *)",
+    "Bash(javac *)",
+    "Bash(gradle *)",
+    "Bash(mvn *)",
+    "Bash(dotnet *)",
+    "Bash(swift *)",
+    "Bash(rustc *)",
+    "Bash(ruby *)",
+    "Bash(bundle *)",
+    "Bash(rake *)",
+    # Shell utilities — agents chain commands, source venvs
+    "Bash(source *)",
+    "Bash(cd *)",
+    "Bash(sort *)",
+    "Bash(uniq *)",
+    "Bash(xargs *)",
+    "Bash(sed *)",
+    "Bash(awk *)",
+    "Bash(tr *)",
+    "Bash(cut *)",
+    "Bash(diff *)",
+    "Bash(grep *)",
+    "Bash(jq *)",
+    "Bash(basename *)",
+    "Bash(dirname *)",
+    "Bash(realpath *)",
+    "Bash(readlink *)",
 ]
 
 AGENT_DISALLOWED_TOOLS = [
-            # Network — no exfiltration or downloads
-            "Bash(curl *)",
-            "Bash(wget *)",
-            "Bash(ssh *)",
-            "Bash(scp *)",
-            "Bash(rsync *)",
-            "Bash(nc *)",
-            "Bash(ncat *)",
-            "Bash(telnet *)",
-            "Bash(ftp *)",
-            # Privilege escalation
-            "Bash(sudo *)",
-            "Bash(su *)",
-            "Bash(doas *)",
-            # Permission changes
-            "Bash(chmod *)",
-            "Bash(chown *)",
-            "Bash(chgrp *)",
-            # Process management
-            "Bash(kill *)",
-            "Bash(pkill *)",
-            "Bash(killall *)",
-            # Container/VM escape
-            "Bash(docker *)",
-            "Bash(podman *)",
-            # System modification
-            "Bash(systemctl *)",
-            "Bash(service *)",
-            "Bash(mount *)",
-            "Bash(umount *)",
-            # Environment pollution (could affect other agents)
+    # Network — no exfiltration or downloads
+    "Bash(curl *)",
+    "Bash(wget *)",
+    "Bash(ssh *)",
+    "Bash(scp *)",
+    "Bash(rsync *)",
+    "Bash(nc *)",
+    "Bash(ncat *)",
+    "Bash(telnet *)",
+    "Bash(ftp *)",
+    # Privilege escalation
+    "Bash(sudo *)",
+    "Bash(su *)",
+    "Bash(doas *)",
+    # Permission changes
+    "Bash(chmod *)",
+    "Bash(chown *)",
+    "Bash(chgrp *)",
+    # Process management
+    "Bash(kill *)",
+    "Bash(pkill *)",
+    "Bash(killall *)",
+    # Container/VM escape
+    "Bash(docker *)",
+    "Bash(podman *)",
+    # System modification
+    "Bash(systemctl *)",
+    "Bash(service *)",
+    "Bash(mount *)",
+    "Bash(umount *)",
+    # Environment pollution (could affect other agents)
     "Bash(export *)",
     "Bash(unset *)",
     # Sensitive file reads
@@ -178,12 +178,12 @@ def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> 
             "- It's a naming, formatting, or minor style choice\n"
             "- You can verify your assumption by reading existing code\n\n"
             "EXAMPLES:\n"
-            "- Spec says \"add caching\" but doesn't mention TTL or eviction strategy → ASK\n"
-            "- Spec says \"add a login button to the nav bar\" and you can see the nav component → DON'T ASK\n"
+            '- Spec says "add caching" but doesn\'t mention TTL or eviction strategy → ASK\n'
+            '- Spec says "add a login button to the nav bar" and you can see the nav component → DON\'T ASK\n'
             "- You're about to change a function signature that 12 other files import → ASK\n"
             "- You need to pick between two equivalent testing patterns → DON'T ASK\n"
-            "- Task says \"improve error handling\" but doesn't say which errors → ASK\n"
-            "- Task says \"add tests for the auth module\" and the module is clear → DON'T ASK"
+            '- Task says "improve error handling" but doesn\'t say which errors → ASK\n'
+            '- Task says "add tests for the auth module" and the module is clear → DON\'T ASK'
         )
 
     return f"""## Human Interaction Protocol
@@ -275,7 +275,8 @@ You have {max_turns} turns for this task. Manage them wisely:
 
 
 def _build_conventions_block(
-    conventions_json: str | None, conventions_md: str | None,
+    conventions_json: str | None,
+    conventions_md: str | None,
 ) -> str:
     """Merge user conventions (.forge/conventions.md) with planner-extracted conventions.
 
@@ -406,7 +407,10 @@ class ClaudeAdapter(AgentAdapter):
     """Claude Code agent via claude-code-sdk."""
 
     def _build_options(
-        self, worktree_path: str, allowed_dirs: list[str], model: str = "sonnet",
+        self,
+        worktree_path: str,
+        allowed_dirs: list[str],
+        model: str = "sonnet",
         project_context: str = "",
         conventions_json: str | None = None,
         conventions_md: str | None = None,
@@ -446,16 +450,14 @@ class ClaudeAdapter(AgentAdapter):
         if project_dir:
             claude_md_content = _load_claude_md(project_dir)
             if claude_md_content:
-                claude_md_block = (
-                    "## Project Instructions (from CLAUDE.md)\n\n"
-                    f"{claude_md_content}"
-                )
+                claude_md_block = f"## Project Instructions (from CLAUDE.md)\n\n{claude_md_content}"
 
         max_turns = agent_max_turns
         wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
 
         system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
-            cwd=worktree_path, extra_dirs_clause=extra_dirs_clause,
+            cwd=worktree_path,
+            extra_dirs_clause=extra_dirs_clause,
             project_context=project_context,
             conventions_block=conventions_block,
             contracts_block=contracts_block,
@@ -504,7 +506,9 @@ class ClaudeAdapter(AgentAdapter):
         lessons_block: str = "",
     ) -> AgentResult:
         options = self._build_options(
-            worktree_path, allowed_dirs or [], model=model,
+            worktree_path,
+            allowed_dirs or [],
+            model=model,
             project_context=project_context,
             conventions_json=conventions_json,
             conventions_md=conventions_md,
@@ -525,7 +529,9 @@ class ClaudeAdapter(AgentAdapter):
                 timeout=timeout_seconds,
             )
         except TimeoutError:
-            logger.warning("Agent timed out after %ds for worktree %s", timeout_seconds, worktree_path)
+            logger.warning(
+                "Agent timed out after %ds for worktree %s", timeout_seconds, worktree_path
+            )
             # Re-raise so the caller's finally block can clean up the
             # worktree via worktree_mgr.remove(task_id).  Swallowing the
             # timeout here previously left zombie worktrees on disk.
@@ -580,7 +586,8 @@ async def _get_changed_files(worktree_path: str) -> list[str]:
 
     async def _run_git(*args: str) -> tuple[int, str]:
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git",
+            *args,
             cwd=worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

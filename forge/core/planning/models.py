@@ -55,16 +55,14 @@ class CodebaseMap(BaseModel):
         ``src/foo.py`` match correctly.
         """
         normalized_paths = {self._normalize_path(p) for p in file_paths}
-        relevant = [
-            m for m in self.key_modules
-            if self._normalize_path(m.path) in normalized_paths
-        ]
+        relevant = [m for m in self.key_modules if self._normalize_path(m.path) in normalized_paths]
         return CodebaseMap(
             architecture_summary=self.architecture_summary,
             key_modules=relevant,
             existing_patterns=self.existing_patterns,
             relevant_interfaces=[
-                i for i in self.relevant_interfaces
+                i
+                for i in self.relevant_interfaces
                 if self._normalize_path(i.file) in normalized_paths
             ],
             risks=[],

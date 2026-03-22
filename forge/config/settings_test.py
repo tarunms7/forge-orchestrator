@@ -1,4 +1,3 @@
-
 import pytest
 from pydantic import ValidationError
 
@@ -149,6 +148,7 @@ def test_planning_mode_invalid_raises():
 
 # --- model_strategy validator ---
 
+
 def test_model_strategy_valid_values():
     for val in ("auto", "fast", "quality"):
         s = ForgeSettings(model_strategy=val)
@@ -162,6 +162,7 @@ def test_model_strategy_invalid_raises():
 
 # --- autonomy validator ---
 
+
 def test_autonomy_valid_values_validator():
     for val in ("full", "balanced", "supervised"):
         s = ForgeSettings(autonomy=val)
@@ -174,6 +175,7 @@ def test_autonomy_invalid_raises():
 
 
 # --- agent_max_turns validator ---
+
 
 def test_agent_max_turns_default():
     s = ForgeSettings()
@@ -197,6 +199,7 @@ def test_agent_max_turns_negative_raises():
 
 # --- question_limit validator ---
 
+
 def test_question_limit_valid_range():
     for val in (1, 5, 10):
         s = ForgeSettings(question_limit=val)
@@ -214,6 +217,7 @@ def test_question_limit_over_max_raises():
 
 
 # --- question_timeout validator ---
+
 
 def test_question_timeout_valid_range():
     for val in (60, 1800, 7200):

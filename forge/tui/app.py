@@ -46,23 +46,25 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
     summaries = []
     for t in tasks_list:
         mr = t.get("merge_result") or {}
-        summaries.append({
-            "title": t.get("title", ""),
-            "description": t.get("description", ""),
-            "implementation_summary": mr.get("implementation_summary", "")
+        summaries.append(
+            {
+                "title": t.get("title", ""),
+                "description": t.get("description", ""),
+                "implementation_summary": mr.get("implementation_summary", "")
                 or t.get("implementation_summary", ""),
-            "state": t.get("state", "done"),
-            "repo_id": t.get("repo_id", "default"),
-            "cost_usd": t.get("cost_usd", 0),
-            "added": mr.get("linesAdded", 0) if mr.get("success") else 0,
-            "removed": mr.get("linesRemoved", 0) if mr.get("success") else 0,
-            "files": mr.get("filesChanged", 0) if mr.get("success") else 0,
-            "file_list": t.get("files", []) if isinstance(t.get("files"), list) else [],
-            "tests_passed": t.get("tests_passed", 0),
-            "tests_total": t.get("tests_total", 0),
-            "review": "passed" if t.get("state") == "done" else "failed",
-            "error": t.get("error", ""),
-        })
+                "state": t.get("state", "done"),
+                "repo_id": t.get("repo_id", "default"),
+                "cost_usd": t.get("cost_usd", 0),
+                "added": mr.get("linesAdded", 0) if mr.get("success") else 0,
+                "removed": mr.get("linesRemoved", 0) if mr.get("success") else 0,
+                "files": mr.get("filesChanged", 0) if mr.get("success") else 0,
+                "file_list": t.get("files", []) if isinstance(t.get("files"), list) else [],
+                "tests_passed": t.get("tests_passed", 0),
+                "tests_total": t.get("tests_total", 0),
+                "review": "passed" if t.get("state") == "done" else "failed",
+                "error": t.get("error", ""),
+            }
+        )
     return summaries
 
 
@@ -70,6 +72,7 @@ async def detect_server(base_url: str = "http://localhost:8000", timeout: float 
     """Probe the Forge server health endpoint."""
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(f"{base_url}/health")
             return resp.status_code == 200
@@ -121,6 +124,7 @@ class ForgeApp(App):
         self._pipeline_start_time: float | None = None
         self._elapsed_timer = None
         from forge.core.paths import forge_db_path
+
         self._db_path = forge_db_path()
         self._db = None
         self._graph = None
@@ -131,6 +135,7 @@ class ForgeApp(App):
         """Initialize database connection."""
         from forge.core.paths import forge_db_url
         from forge.storage.db import Database
+
         try:
             self._db = Database(forge_db_url())
             await self._db.initialize()
@@ -143,6 +148,7 @@ class ForgeApp(App):
         """Resolve repos for HomeScreen display."""
         try:
             from forge.config.project_config import resolve_repos
+
             return resolve_repos(repo_flags=(), project_dir=self._project_dir)
         except Exception:
             logger.debug("Failed to resolve repos", exc_info=True)
@@ -246,13 +252,18 @@ class ForgeApp(App):
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
         base_branch = getattr(self, "_cached_base_branch", "main") or "main"
-        self.push_screen(FinalApprovalScreen(
-            stats=stats, tasks=task_summaries, pipeline_branch=pipeline_branch,
-            base_branch=base_branch, partial=partial,
-            multi_repo=state.is_multi_repo,
-            per_repo_pr_urls=dict(state.per_repo_pr_urls),
-            repos=list(state.repos),
-        ))
+        self.push_screen(
+            FinalApprovalScreen(
+                stats=stats,
+                tasks=task_summaries,
+                pipeline_branch=pipeline_branch,
+                base_branch=base_branch,
+                partial=partial,
+                multi_repo=state.is_multi_repo,
+                per_repo_pr_urls=dict(state.per_repo_pr_urls),
+                repos=list(state.repos),
+            )
+        )
         # If no cached branch, fetch async and update the screen
         if not pipeline_branch:
             safe_create_task(self._resolve_pipeline_branch(), logger=logger, name="resolve-branch")
@@ -286,11 +297,14 @@ class ForgeApp(App):
                 if q.task_id == task_id and q.answer is None:
                     await self._db.answer_question(q.id, answer, "human")
                     # Emit the right event type for planning questions
-                    if is_planning and self._daemon and hasattr(self._daemon, '_events'):
-                        await self._daemon._events.emit("planning:answer", {
-                            "question_id": q.id,
-                            "answer": answer,
-                        })
+                    if is_planning and self._daemon and hasattr(self._daemon, "_events"):
+                        await self._daemon._events.emit(
+                            "planning:answer",
+                            {
+                                "question_id": q.id,
+                                "answer": answer,
+                            },
+                        )
                     break
         except Exception:
             logger.error("Failed to record answer to DB", exc_info=True)
@@ -300,13 +314,16 @@ class ForgeApp(App):
         else:
             self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
             # Notify daemon to resume the task
-            if self._daemon and hasattr(self._daemon, '_events'):
+            if self._daemon and hasattr(self._daemon, "_events"):
                 try:
-                    await self._daemon._events.emit("task:answer", {
-                        "task_id": task_id,
-                        "answer": answer,
-                        "pipeline_id": self._pipeline_id,
-                    })
+                    await self._daemon._events.emit(
+                        "task:answer",
+                        {
+                            "task_id": task_id,
+                            "answer": answer,
+                            "pipeline_id": self._pipeline_id,
+                        },
+                    )
                 except Exception:
                     logger.error("Failed to emit task:answer to daemon", exc_info=True)
 
@@ -349,10 +366,13 @@ class ForgeApp(App):
                 pipeline_id=self._pipeline_id,
                 message=message,
             )
-            self._state.apply_event("task:interjection", {
-                "task_id": task_id,
-                "message": message,
-            })
+            self._state.apply_event(
+                "task:interjection",
+                {
+                    "task_id": task_id,
+                    "message": message,
+                },
+            )
         except Exception:
             logger.error("Failed to create interjection", exc_info=True)
 
@@ -373,7 +393,9 @@ class ForgeApp(App):
         # (usually main), which is wrong.
         branch = await self._get_pipeline_branch()
         if not branch:
-            self._state.apply_event("pipeline:pr_failed", {"error": "Could not determine pipeline branch"})
+            self._state.apply_event(
+                "pipeline:pr_failed", {"error": "Could not determine pipeline branch"}
+            )
             self.notify("PR creation failed: no pipeline branch found.", severity="error")
             return
         project_dir = self._project_dir
@@ -393,7 +415,9 @@ class ForgeApp(App):
         raw_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
         task_summaries = _build_task_summaries(raw_tasks)
         done_tasks = [t for t in task_summaries if t["state"] == "done"]
-        failed_tasks = [t for t in task_summaries if t["state"] not in ("done", "todo", "pending")] or None
+        failed_tasks = [
+            t for t in task_summaries if t["state"] not in ("done", "todo", "pending")
+        ] or None
 
         # Determine the base branch for the PR target and detect multi-repo
         base_branch = "main"
@@ -410,6 +434,7 @@ class ForgeApp(App):
         # ── Multi-repo PR creation ──────────────────────────────────────
         if len(repos_list) > 1:
             import json
+
             try:
                 repos: dict[str, dict] = {}
                 pipeline_branches: dict[str, str] = {}
@@ -440,7 +465,8 @@ class ForgeApp(App):
                 if self._db and self._pipeline_id:
                     try:
                         await self._db.update_pipeline_repos_json(
-                            self._pipeline_id, json.dumps(repos_list),
+                            self._pipeline_id,
+                            json.dumps(repos_list),
                         )
                     except Exception:
                         logger.warning("Failed to update repos_json with PR URLs", exc_info=True)
@@ -452,7 +478,9 @@ class ForgeApp(App):
                 if result.pr_urls:
                     # Emit per-repo pr_created events with repo_id
                     for rid, url in result.pr_urls.items():
-                        self._state.apply_event("pipeline:pr_created", {"pr_url": url, "repo_id": rid})
+                        self._state.apply_event(
+                            "pipeline:pr_created", {"pr_url": url, "repo_id": rid}
+                        )
                         # Show PR URL on the FinalApprovalScreen per-repo
                         try:
                             screen = self.screen
@@ -461,12 +489,12 @@ class ForgeApp(App):
                         except Exception:
                             pass
                     # Show all URLs in notification
-                    url_lines = ", ".join(
-                        f"{rid}: {url}" for rid, url in result.pr_urls.items()
-                    )
+                    url_lines = ", ".join(f"{rid}: {url}" for rid, url in result.pr_urls.items())
                     self.notify(f"PRs created: {url_lines}", severity="information")
                 else:
-                    self._state.apply_event("pipeline:pr_failed", {"error": "All repo PR creations failed"})
+                    self._state.apply_event(
+                        "pipeline:pr_failed", {"error": "All repo PR creations failed"}
+                    )
                     if self._db and self._pipeline_id:
                         try:
                             await self._db.update_pipeline_status(self._pipeline_id, "error")
@@ -645,7 +673,10 @@ class ForgeApp(App):
         # Fallback: detect from git (only correct if user is on the pipeline branch)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--abbrev-ref", "HEAD",
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
                 cwd=self._project_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -701,7 +732,9 @@ class ForgeApp(App):
         except Exception:
             logger.debug("Command palette not mounted", exc_info=True)
 
-    async def on_command_palette_action_selected(self, event: CommandPalette.ActionSelected) -> None:
+    async def on_command_palette_action_selected(
+        self, event: CommandPalette.ActionSelected
+    ) -> None:
         """Execute the action selected from the command palette."""
         action = event.action
         callback_name = action.callback_name
@@ -718,12 +751,15 @@ class ForgeApp(App):
         if method:
             try:
                 import inspect
+
                 if inspect.iscoroutinefunction(method):
                     await method()
                 else:
                     method()
             except Exception as e:
-                logger.error("Command palette action %s failed: %s", callback_name, e, exc_info=True)
+                logger.error(
+                    "Command palette action %s failed: %s", callback_name, e, exc_info=True
+                )
                 self.notify(f"Action failed: {_escape_markup(e)}", severity="error")
         else:
             self.notify(f"Action '{action.name}' not available", severity="warning")
@@ -769,8 +805,10 @@ class ForgeApp(App):
         self._source.connect()
 
         for evt_type in TUI_EVENT_TYPES:
+
             async def _handler(data, _type=evt_type):
                 self._state.apply_event(_type, data)
+
             self._bus.subscribe(evt_type, _handler)
 
         repos = self._resolve_repos()
@@ -802,13 +840,22 @@ class ForgeApp(App):
 
         try:
             self._graph = await self._daemon.plan(
-                task, self._db, pipeline_id=self._pipeline_id,
+                task,
+                self._db,
+                pipeline_id=self._pipeline_id,
                 deep_plan=True,
             )
             plan_tasks = [
-                {"id": t.id, "title": t.title, "description": t.description,
-                 "files": t.files, "depends_on": t.depends_on,
-                 "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity}
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "description": t.description,
+                    "files": t.files,
+                    "depends_on": t.depends_on,
+                    "complexity": t.complexity.value
+                    if hasattr(t.complexity, "value")
+                    else t.complexity,
+                }
                 for t in self._graph.tasks
             ]
             self.push_screen(PlanApprovalScreen(plan_tasks))
@@ -838,10 +885,13 @@ class ForgeApp(App):
         """Generate contracts then execute — runs as background task."""
         try:
             self._state.apply_event(
-                "pipeline:phase_changed", {"phase": "contracts"},
+                "pipeline:phase_changed",
+                {"phase": "contracts"},
             )
             self._daemon._contracts = await self._daemon.generate_contracts(
-                self._graph, self._db, self._pipeline_id,
+                self._graph,
+                self._db,
+                self._pipeline_id,
             )
         except Exception as e:
             logger.error("Contract generation failed: %s", e, exc_info=True)
@@ -886,7 +936,9 @@ class ForgeApp(App):
             logger.debug("Could not resolve base branch", exc_info=True)
         try:
             await self._daemon.execute(
-                self._graph, self._db, pipeline_id=self._pipeline_id,
+                self._graph,
+                self._db,
+                pipeline_id=self._pipeline_id,
             )
         except Exception as e:
             logger.error("Execution failed: %s", e, exc_info=True)
@@ -904,7 +956,9 @@ class ForgeApp(App):
 
     def _tick_elapsed(self) -> None:
         if self._pipeline_start_time:
-            self._state.elapsed_seconds = asyncio.get_event_loop().time() - self._pipeline_start_time
+            self._state.elapsed_seconds = (
+                asyncio.get_event_loop().time() - self._pipeline_start_time
+            )
             self._state._notify("elapsed")
 
     def action_reset_for_new_task(self) -> None:
@@ -989,7 +1043,10 @@ class ForgeApp(App):
             if getattr(self, "_force_quit", False):
                 safe_create_task(self._graceful_quit(), logger=logger, name="graceful-quit")
             else:
-                self.notify("Pipeline running. Press q again to quit (tasks will be saved).", severity="warning")
+                self.notify(
+                    "Pipeline running. Press q again to quit (tasks will be saved).",
+                    severity="warning",
+                )
                 self._force_quit = True
         else:
             self.exit()
@@ -1006,7 +1063,13 @@ class ForgeApp(App):
 
         if self._db and self._pipeline_id:
             tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
-            non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
+            non_terminal = (
+                "in_progress",
+                "in_review",
+                "merging",
+                "awaiting_input",
+                "awaiting_approval",
+            )
             for t in tasks:
                 if t.state in non_terminal:
                     await self._db.update_task_state(t.id, "todo")
@@ -1024,9 +1087,14 @@ class ForgeApp(App):
             tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
 
             try:
-                await self._daemon._emit("pipeline:interrupted", {
-                    "summary": {t.id: t.state for t in tasks},
-                }, db=self._db, pipeline_id=self._pipeline_id)
+                await self._daemon._emit(
+                    "pipeline:interrupted",
+                    {
+                        "summary": {t.id: t.state for t in tasks},
+                    },
+                    db=self._db,
+                    pipeline_id=self._pipeline_id,
+                )
             except Exception:
                 pass
 
@@ -1042,6 +1110,7 @@ class ForgeApp(App):
             return
         # Check for FollowUpTextArea (import lazily to avoid circular imports)
         from forge.tui.widgets.followup_input import FollowUpTextArea
+
         if isinstance(focused, FollowUpTextArea):
             focused.action_clear_input()
             return
@@ -1069,12 +1138,18 @@ class ForgeApp(App):
             # Resume a planned pipeline — show plan approval screen
             if pipeline.status == "planned" and pipeline.task_graph_json:
                 import json
+
                 graph_data = json.loads(pipeline.task_graph_json)
                 tasks_dict = graph_data.get("tasks", {})
                 plan_tasks = [
-                    {"id": tid, "title": t.get("title", ""), "description": t.get("description", ""),
-                     "files": t.get("files", []), "depends_on": t.get("depends_on", []),
-                     "complexity": t.get("complexity", "medium")}
+                    {
+                        "id": tid,
+                        "title": t.get("title", ""),
+                        "description": t.get("description", ""),
+                        "files": t.get("files", []),
+                        "depends_on": t.get("depends_on", []),
+                        "complexity": t.get("complexity", "medium"),
+                    }
                     for tid, t in tasks_dict.items()
                 ]
                 if plan_tasks:
@@ -1090,6 +1165,7 @@ class ForgeApp(App):
                     pipeline_screen = PipelineScreen(self._state)
                     self.push_screen(pipeline_screen)
                     from forge.tui.screens.plan_approval import PlanApprovalScreen
+
                     self.push_screen(PlanApprovalScreen(plan_tasks))
                     return
 
@@ -1109,6 +1185,7 @@ class ForgeApp(App):
                     import json
 
                     from forge.core.models import TaskGraph
+
                     self._graph = TaskGraph.model_validate_json(graph_json)
 
                 from forge.config.project_config import ProjectConfig, apply_project_config
@@ -1126,8 +1203,10 @@ class ForgeApp(App):
                 self._source.connect()
 
                 for evt_type in TUI_EVENT_TYPES:
+
                     async def _handler(data, _type=evt_type):
                         self._state.apply_event(_type, data)
+
                     self._bus.subscribe(evt_type, _handler)
 
                 self._daemon = ForgeDaemon(
@@ -1140,7 +1219,13 @@ class ForgeApp(App):
 
                 if pipeline.status == "interrupted":
                     tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
-                    non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
+                    non_terminal = (
+                        "in_progress",
+                        "in_review",
+                        "merging",
+                        "awaiting_input",
+                        "awaiting_approval",
+                    )
                     for t in tasks:
                         if t.state in non_terminal:
                             await self._db.update_task_state(t.id, "todo")
@@ -1148,7 +1233,10 @@ class ForgeApp(App):
 
                     await self._db.update_pipeline_status(pipeline_id, "executing")
                     await self._resume_execution()
-                    self.notify(f"Resumed pipeline — {sum(1 for t in tasks if t.state == 'done')}/{len(tasks)} tasks done", severity="information")
+                    self.notify(
+                        f"Resumed pipeline — {sum(1 for t in tasks if t.state == 'done')}/{len(tasks)} tasks done",
+                        severity="information",
+                    )
 
                 elif pipeline.status == "partial_success":
                     self._final_approval_pushed = True

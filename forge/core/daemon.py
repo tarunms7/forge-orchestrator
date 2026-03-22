@@ -76,8 +76,7 @@ def _detect_excluded_repos(user_input: str, repo_ids: set[str]) -> set[str]:
     # Pre-compile word-boundary patterns for each repo id to avoid
     # substring false positives (e.g. "web" matching "webutils").
     repo_patterns = {
-        repo_id: re.compile(r"\b" + re.escape(repo_id.lower()) + r"\b")
-        for repo_id in repo_ids
+        repo_id: re.compile(r"\b" + re.escape(repo_id.lower()) + r"\b") for repo_id in repo_ids
     }
     # Split by sentence boundaries (., !, newlines, commas with spaces)
     sentences = re.split(r"[.!\n]+|,\s+", user_input)
@@ -156,7 +155,7 @@ async def _generate_branch_name(description: str) -> str:
             # Remove any prefix the LLM might add
             for prefix in ("forge/", "feature/", "fix/", "feat/"):
                 if candidate.lower().startswith(prefix):
-                    candidate = candidate[len(prefix):]
+                    candidate = candidate[len(prefix) :]
             # Sanitize what the LLM gave us
             sanitized = _sanitize_branch_name(candidate)
             if sanitized != "forge/pipeline-task":
@@ -259,7 +258,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 payload=data,
             )
         except Exception:
-            logger.warning("Failed to persist event %s to DB (non-fatal)", event_type, exc_info=True)
+            logger.warning(
+                "Failed to persist event %s to DB (non-fatal)", event_type, exc_info=True
+            )
 
     # ── Multi-repo initialization & infrastructure ─────────────────────
 
@@ -323,7 +324,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         for repo_id, rc in self._repos.items():
             branch_name = self._pipeline_branches[repo_id]
             result = await asyncio.create_subprocess_exec(
-                "git", "branch", "-f", branch_name, rc.base_branch,
+                "git",
+                "branch",
+                "-f",
+                branch_name,
+                rc.base_branch,
                 cwd=rc.path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -346,7 +351,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             if rc is None:
                 logger.error(
                     "repo_id '%s' not found in configured repos: %s",
-                    repo_id, sorted(self._repos.keys()),
+                    repo_id,
+                    sorted(self._repos.keys()),
                 )
                 raise ValueError(
                     f"repo_id '{repo_id}' not found in configured repos: "
@@ -394,12 +400,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             return None
         data: list[dict] = []
         for repo_id, rc in self._repos.items():
-            data.append({
-                "id": repo_id,
-                "path": rc.path,
-                "base_branch": rc.base_branch,
-                "branch_name": self._pipeline_branches.get(repo_id, ""),
-            })
+            data.append(
+                {
+                    "id": repo_id,
+                    "path": rc.path,
+                    "base_branch": rc.base_branch,
+                    "branch_name": self._pipeline_branches.get(repo_id, ""),
+                }
+            )
         return json.dumps(data)
 
     async def _cleanup_pipeline_branches(self) -> None:
@@ -423,17 +431,21 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if result.returncode == 0:
                     logger.info(
                         "Cleaned up pipeline branch '%s' in repo '%s'",
-                        branch_name, repo_id,
+                        branch_name,
+                        repo_id,
                     )
                 else:
                     logger.debug(
                         "Pipeline branch '%s' already removed or doesn't exist in '%s'",
-                        branch_name, repo_id,
+                        branch_name,
+                        repo_id,
                     )
             except Exception as exc:
                 logger.warning(
                     "Failed to clean up pipeline branch '%s' in repo '%s': %s",
-                    branch_name, repo_id, exc,
+                    branch_name,
+                    repo_id,
+                    exc,
                 )
 
     def _auto_detect_commands(self, project_dir: str) -> None:
@@ -495,7 +507,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         # Ensure at least one commit exists (worktrees need valid HEAD)
         has_commits_result = await async_subprocess(
-            ["git", "rev-parse", "HEAD"], cwd=project_dir,
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
         )
         if has_commits_result.returncode != 0:
             console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
@@ -506,25 +519,41 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         # Git remote (warning only)
         result = await async_subprocess(
-            ["git", "remote"], cwd=project_dir,
+            ["git", "remote"],
+            cwd=project_dir,
         )
         if not result.stdout.strip():
-            console.print("[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]")
+            console.print(
+                "[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]"
+            )
 
         # gh CLI auth (optional)
         if shutil.which("gh"):
             result = await async_subprocess(["gh", "auth", "status"], cwd=project_dir)
             if result.returncode != 0:
-                console.print("[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]")
+                console.print(
+                    "[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]"
+                )
 
         if errors:
             console.print(f"[bold red]Pre-flight failed: {'; '.join(errors)}[/bold red]")
-            await self._emit("pipeline:preflight_failed", {"errors": errors}, db=db, pipeline_id=pipeline_id)
+            await self._emit(
+                "pipeline:preflight_failed", {"errors": errors}, db=db, pipeline_id=pipeline_id
+            )
             await db.update_pipeline_status(pipeline_id, "error")
             return False
         return True
 
-    async def plan(self, user_input: str, db: Database, *, emit_plan_ready: bool = True, pipeline_id: str | None = None, spec_path: str | None = None, deep_plan: bool = False) -> TaskGraph:
+    async def plan(
+        self,
+        user_input: str,
+        db: Database,
+        *,
+        emit_plan_ready: bool = True,
+        pipeline_id: str | None = None,
+        spec_path: str | None = None,
+        deep_plan: bool = False,
+    ) -> TaskGraph:
         """Run planning only. Returns the TaskGraph for user approval.
 
         Args:
@@ -533,7 +562,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 before emitting the event with the correct prefixed IDs.
         """
         if pipeline_id:
-            await self._emit("pipeline:phase_changed", {"phase": "planning"}, db=db, pipeline_id=pipeline_id)
+            await self._emit(
+                "pipeline:phase_changed", {"phase": "planning"}, db=db, pipeline_id=pipeline_id
+            )
         else:
             await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
 
@@ -545,27 +576,39 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         planner_prompt_modifier = ""
         if pipeline_id:
             pipeline_rec = await db.get_pipeline(pipeline_id)
-            template_config_json = getattr(pipeline_rec, "template_config_json", None) if pipeline_rec else None
+            template_config_json = (
+                getattr(pipeline_rec, "template_config_json", None) if pipeline_rec else None
+            )
             if template_config_json:
                 try:
                     self._template_config = json.loads(template_config_json)
-                    planner_prompt_modifier = self._template_config.get("planner_prompt_modifier", "")
+                    planner_prompt_modifier = self._template_config.get(
+                        "planner_prompt_modifier", ""
+                    )
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning("Failed to parse template_config_json for pipeline %s", pipeline_id)
+                    logger.warning(
+                        "Failed to parse template_config_json for pipeline %s", pipeline_id
+                    )
                     self._template_config = None
             else:
                 self._template_config = None
         else:
             self._template_config = None
 
-        planner_llm = ClaudePlannerLLM(model=planner_model, cwd=self._project_dir, system_prompt_modifier=planner_prompt_modifier)
+        planner_llm = ClaudePlannerLLM(
+            model=planner_model,
+            cwd=self._project_dir,
+            system_prompt_modifier=planner_prompt_modifier,
+        )
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
         async def _on_planner_msg(msg):
             text = _extract_activity(msg)
             if text:
                 if pipeline_id:
-                    await self._emit("planner:output", {"line": text}, db=db, pipeline_id=pipeline_id)
+                    await self._emit(
+                        "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
+                    )
                 else:
                     await self._events.emit("planner:output", {"line": text})
 
@@ -584,7 +627,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if result.returncode != 0:
                     logger.warning(
                         "Could not checkout %s in repo %s: %s",
-                        rc.base_branch, repo_id, result.stderr.strip(),
+                        rc.base_branch,
+                        repo_id,
+                        result.stderr.strip(),
                     )
 
         # Filter out repos the user asked to exclude — before gathering
@@ -601,12 +646,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if len(planning_repos) == 1:
             repo = next(iter(planning_repos.values()))
             self._snapshot = await asyncio.get_event_loop().run_in_executor(
-                None, gather_project_snapshot, repo.path,
+                None,
+                gather_project_snapshot,
+                repo.path,
             )
-            snapshot_text = self._snapshot.format_for_planner() if self._snapshot else ''
+            snapshot_text = self._snapshot.format_for_planner() if self._snapshot else ""
             repo_ids = None
         else:
             from forge.core.context import format_multi_repo_snapshot, gather_multi_repo_snapshots
+
             snapshots = await gather_multi_repo_snapshots(planning_repos)
             snapshot_text = format_multi_repo_snapshot(snapshots, planning_repos)
             repo_ids = set(planning_repos.keys())
@@ -645,7 +693,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if not text:
                     return
                 if pipeline_id:
-                    await self._emit("planner:output", {"line": text}, db=db, pipeline_id=pipeline_id)
+                    await self._emit(
+                        "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
+                    )
                 else:
                     await self._events.emit("planner:output", {"line": text})
 
@@ -664,15 +714,23 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     stage="planning",
                 )
                 if pipeline_id:
-                    await self._emit("planning:question", {
-                        "question_id": q.id,
-                        "question": question_data,
-                    }, db=db, pipeline_id=pipeline_id)
+                    await self._emit(
+                        "planning:question",
+                        {
+                            "question_id": q.id,
+                            "question": question_data,
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
                 else:
-                    await self._events.emit("planning:question", {
-                        "question_id": q.id,
-                        "question": question_data,
-                    })
+                    await self._events.emit(
+                        "planning:question",
+                        {
+                            "question_id": q.id,
+                            "question": question_data,
+                        },
+                    )
 
                 event = asyncio.Event()
                 pending_planning_answer[q.id] = event
@@ -708,7 +766,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     categories=["review_failure", "code_pattern"],
                     max_count=20,
                 )
-                planner_lessons_block = format_lessons_block([row_to_lesson(r) for r in lesson_rows])
+                planner_lessons_block = format_lessons_block(
+                    [row_to_lesson(r) for r in lesson_rows]
+                )
             except Exception as exc:
                 logger.warning("Failed to retrieve lessons for planner: %s", exc)
                 planner_lessons_block = ""
@@ -739,14 +799,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             if len(self._repos) > 1 and excluded_repos:
                 before = len(graph.tasks)
                 graph.tasks = [
-                    t for t in graph.tasks
-                    if getattr(t, "repo", None) not in excluded_repos
+                    t for t in graph.tasks if getattr(t, "repo", None) not in excluded_repos
                 ]
                 dropped = before - len(graph.tasks)
                 if dropped:
                     logger.info(
                         "Dropped %d tasks for excluded repos: %s",
-                        dropped, ", ".join(sorted(excluded_repos)),
+                        dropped,
+                        ", ".join(sorted(excluded_repos)),
                     )
 
             # Track costs
@@ -754,14 +814,21 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await db.add_pipeline_cost(pipeline_id, planning_result.total_cost_usd)
                 await db.set_pipeline_planner_cost(pipeline_id, planning_result.total_cost_usd)
                 total_cost = await db.get_pipeline_cost(pipeline_id)
-                await self._emit("pipeline:cost_update", {
-                    "planner_cost_usd": planning_result.total_cost_usd,
-                    "total_cost_usd": total_cost,
-                    "cost_breakdown": planning_result.cost_breakdown,
-                }, db=db, pipeline_id=pipeline_id)
+                await self._emit(
+                    "pipeline:cost_update",
+                    {
+                        "planner_cost_usd": planning_result.total_cost_usd,
+                        "total_cost_usd": total_cost,
+                        "cost_breakdown": planning_result.cost_breakdown,
+                    },
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
         else:
             # Existing simple planner path
-            graph = await planner.plan(user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg)
+            graph = await planner.plan(
+                user_input, context=self._snapshot.format_for_planner(), on_message=_on_planner_msg
+            )
 
             # Persist planner-discovered conventions
             if pipeline_id and graph.conventions is not None:
@@ -774,31 +841,55 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
                     await db.set_pipeline_planner_cost(pipeline_id, sdk_result.cost_usd)
                     total_cost = await db.get_pipeline_cost(pipeline_id)
-                    await self._emit("pipeline:cost_update", {
-                        "planner_cost_usd": sdk_result.cost_usd,
-                        "total_cost_usd": total_cost,
-                    }, db=db, pipeline_id=pipeline_id)
+                    await self._emit(
+                        "pipeline:cost_update",
+                        {
+                            "planner_cost_usd": sdk_result.cost_usd,
+                            "total_cost_usd": total_cost,
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
 
         # Emit pipeline cost estimate
         if pipeline_id and graph.tasks:
             estimated = await estimate_pipeline_cost(
-                len(graph.tasks), self._settings, strategy,
+                len(graph.tasks),
+                self._settings,
+                strategy,
             )
-            await self._emit("pipeline:cost_estimate", {
-                "estimated_cost_usd": estimated,
-                "task_count": len(graph.tasks),
-            }, db=db, pipeline_id=pipeline_id)
+            await self._emit(
+                "pipeline:cost_estimate",
+                {
+                    "estimated_cost_usd": estimated,
+                    "task_count": len(graph.tasks),
+                },
+                db=db,
+                pipeline_id=pipeline_id,
+            )
 
         console.print(f"[green]Plan: {len(graph.tasks)} tasks[/green]")
         for task_def in graph.tasks:
-            console.print(f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value if hasattr(task_def.complexity, 'value') else task_def.complexity}]")
+            console.print(
+                f"  - {task_def.id}: {task_def.title} [{task_def.complexity.value if hasattr(task_def.complexity, 'value') else task_def.complexity}]"
+            )
 
         if emit_plan_ready:
-            plan_data = {"tasks": [
-                {"id": t.id, "title": t.title, "description": t.description,
-                 "files": t.files, "depends_on": t.depends_on, "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity}
-                for t in graph.tasks
-            ]}
+            plan_data = {
+                "tasks": [
+                    {
+                        "id": t.id,
+                        "title": t.title,
+                        "description": t.description,
+                        "files": t.files,
+                        "depends_on": t.depends_on,
+                        "complexity": t.complexity.value
+                        if hasattr(t.complexity, "value")
+                        else t.complexity,
+                    }
+                    for t in graph.tasks
+                ]
+            }
             if pipeline_id:
                 await self._emit("pipeline:plan_ready", plan_data, db=db, pipeline_id=pipeline_id)
             else:
@@ -809,7 +900,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # changes.  This must run regardless of emit_plan_ready — the
         # phase still transitions even when plan_ready is suppressed.
         if pipeline_id:
-            await self._emit("pipeline:phase_changed", {"phase": "planned"}, db=db, pipeline_id=pipeline_id)
+            await self._emit(
+                "pipeline:phase_changed", {"phase": "planned"}, db=db, pipeline_id=pipeline_id
+            )
         else:
             await self._events.emit("pipeline:phase_changed", {"phase": "planned"})
         return graph
@@ -855,7 +948,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         context = self._snapshot.format_for_planner() if self._snapshot else ""
         try:
             contract_set = await builder.build(
-                graph, hints, project_context=context, on_message=_on_contract_msg,
+                graph,
+                hints,
+                project_context=context,
+                on_message=_on_contract_msg,
             )
         except Exception as exc:
             logger.error("Contract builder failed: %s", exc)
@@ -866,7 +962,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 pipeline_id=pipeline_id,
             )
             if self._settings.contracts_required:
-                raise RuntimeError(f"Contract generation failed (contracts_required=True): {exc}") from exc
+                raise RuntimeError(
+                    f"Contract generation failed (contracts_required=True): {exc}"
+                ) from exc
             return ContractSet()
 
         # Track cost
@@ -878,7 +976,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Persist contracts
         if contract_set.has_contracts():
             await db.set_pipeline_contracts(
-                pipeline_id, contract_set.model_dump_json(),
+                pipeline_id,
+                contract_set.model_dump_json(),
             )
             console.print(
                 f"[green]Contracts: {len(contract_set.api_contracts)} API, "
@@ -899,14 +998,21 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         return contract_set
 
-    async def execute(self, graph: TaskGraph, db: Database, pipeline_id: str | None = None, *, resume: bool = False) -> None:
+    async def execute(
+        self,
+        graph: TaskGraph,
+        db: Database,
+        pipeline_id: str | None = None,
+        *,
+        resume: bool = False,
+    ) -> None:
         """Execute a previously approved TaskGraph.
 
         Args:
             resume: If True, skip task/agent creation (they already exist
                 from the original run). Used by the resume endpoint.
         """
-        pid = pipeline_id or getattr(self, '_pipeline_id', None) or str(uuid.uuid4())
+        pid = pipeline_id or getattr(self, "_pipeline_id", None) or str(uuid.uuid4())
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
         prefix = pid[:8]
 
@@ -930,24 +1036,47 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if contract_set and contract_set.has_contracts():
                     self._contracts = contract_set.remap_task_ids(id_map)
                     await db.set_pipeline_contracts(
-                        pid, self._contracts.model_dump_json(),
+                        pid,
+                        self._contracts.model_dump_json(),
                     )
 
                 # Re-emit plan_ready with prefixed IDs so TUI/subscribers
                 # have the correct task keys for state_changed events
-                await self._emit("pipeline:plan_ready", {"tasks": [
-                    {"id": t.id, "title": t.title, "description": t.description,
-                     "files": t.files, "depends_on": t.depends_on,
-                     "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity if hasattr(t.complexity, 'value') else t.complexity}
-                    for t in graph.tasks
-                ]}, db=db, pipeline_id=pid)
+                await self._emit(
+                    "pipeline:plan_ready",
+                    {
+                        "tasks": [
+                            {
+                                "id": t.id,
+                                "title": t.title,
+                                "description": t.description,
+                                "files": t.files,
+                                "depends_on": t.depends_on,
+                                "complexity": t.complexity.value
+                                if hasattr(t.complexity, "value")
+                                else t.complexity
+                                if hasattr(t.complexity, "value")
+                                else t.complexity,
+                            }
+                            for t in graph.tasks
+                        ]
+                    },
+                    db=db,
+                    pipeline_id=pid,
+                )
 
             for task_def in graph.tasks:
                 task_repo = getattr(task_def, "repo", None) or "default"
                 await db.create_task(
-                    id=task_def.id, title=task_def.title, description=task_def.description,
-                    files=task_def.files, depends_on=task_def.depends_on,
-                    complexity=task_def.complexity.value if hasattr(task_def.complexity, 'value') else task_def.complexity, pipeline_id=pid,
+                    id=task_def.id,
+                    title=task_def.title,
+                    description=task_def.description,
+                    files=task_def.files,
+                    depends_on=task_def.depends_on,
+                    complexity=task_def.complexity.value
+                    if hasattr(task_def.complexity, "value")
+                    else task_def.complexity,
+                    pipeline_id=pid,
                     repo_id=task_repo,
                 )
             # Auto-scale agent pool: create enough agents to saturate
@@ -955,9 +1084,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # or all deps satisfied at t=0) determines how many agents
             # can usefully run in parallel.  We cap at max_agents to
             # respect the user's resource budget.
-            independent_count = sum(
-                1 for t in graph.tasks if not t.depends_on
-            )
+            independent_count = sum(1 for t in graph.tasks if not t.depends_on)
             self._effective_max_agents = min(
                 max(independent_count, self._settings.max_agents),
                 len(graph.tasks),  # never more agents than tasks
@@ -982,17 +1109,25 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # has checked out NOW, which may be different from the original base.
         # Use the base branch stored by the TUI (user's explicit choice).
         # Fall back to detecting the current checkout only if not stored.
-        base_branch = getattr(pipeline_record, "base_branch", None) or await _get_current_branch(self._project_dir)
+        base_branch = getattr(pipeline_record, "base_branch", None) or await _get_current_branch(
+            self._project_dir
+        )
         custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
         if custom_branch and custom_branch.strip():
             pipeline_branch = custom_branch.strip()
         else:
             description = pipeline_record.description if pipeline_record else ""
-            pipeline_branch = (await _generate_branch_name(description)) if description else f"forge/pipeline-{pid[:8]}"
+            pipeline_branch = (
+                (await _generate_branch_name(description))
+                if description
+                else f"forge/pipeline-{pid[:8]}"
+            )
         # Persist the final computed branch name so the PR creation endpoint can use it
         await db.set_pipeline_branch_name(pid, pipeline_branch)
         # Notify TUI so diff views can resolve the branch immediately
-        await self._emit("pipeline:branch_resolved", {"branch": pipeline_branch}, db=db, pipeline_id=pid)
+        await self._emit(
+            "pipeline:branch_resolved", {"branch": pipeline_branch}, db=db, pipeline_id=pid
+        )
 
         # Isolated pipeline branch — code reaches main only through a PR.
         # On resume/retry the branch already exists and may contain merged
@@ -1006,7 +1141,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 raise subprocess.CalledProcessError(
                     result.returncode,
                     ["git", "branch", "-f", pipeline_branch, base_branch],
-                    result.stdout, result.stderr,
+                    result.stdout,
+                    result.stderr,
                 )
             await db.set_pipeline_base_branch(pid, base_branch)
         else:
@@ -1017,7 +1153,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             if branch_check.returncode != 0:
                 # Branch was deleted — recreate it from base
-                console.print(f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]")
+                console.print(
+                    f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]"
+                )
                 result = await async_subprocess(
                     ["git", "branch", "-f", pipeline_branch, base_branch],
                     cwd=self._project_dir,
@@ -1026,7 +1164,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     raise subprocess.CalledProcessError(
                         result.returncode,
                         ["git", "branch", "-f", pipeline_branch, base_branch],
-                        result.stdout, result.stderr,
+                        result.stdout,
+                        result.stderr,
                     )
         console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
 
@@ -1047,7 +1186,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await update_repos_json_branches(db, pid, self._pipeline_branches)
 
         # For backward compat, keep single-object references for _execution_loop
-        worktree_mgr = self._worktree_managers.get("default", next(iter(self._worktree_managers.values())))
+        worktree_mgr = self._worktree_managers.get(
+            "default", next(iter(self._worktree_managers.values()))
+        )
         merge_worker = self._merge_workers.get("default", next(iter(self._merge_workers.values())))
 
         # ── Integration baseline capture ────────────────────────────
@@ -1065,44 +1206,70 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         if pm_enabled or fg_enabled:
             await self._emit(
-                "integration:baseline_started", {},
-                db=db, pipeline_id=pid,
+                "integration:baseline_started",
+                {},
+                db=db,
+                pipeline_id=pid,
             )
             # Use post_merge cmd for baseline; fall back to final_gate if only that is enabled
             baseline_cfg = (
-                integration_config.post_merge if pm_enabled
-                else integration_config.final_gate
+                integration_config.post_merge if pm_enabled else integration_config.final_gate
             )
             baseline_exit = await capture_baseline(
-                baseline_cfg, self._project_dir, base_branch,
+                baseline_cfg,
+                self._project_dir,
+                base_branch,
             )
 
             if baseline_exit is not None and baseline_exit != 0:
                 # Baseline is red — ask user: ignore or cancel
-                await self._emit("integration:baseline_failed_prompt", {
-                    "exit_code": baseline_exit,
-                }, db=db, pipeline_id=pid)
+                await self._emit(
+                    "integration:baseline_failed_prompt",
+                    {
+                        "exit_code": baseline_exit,
+                    },
+                    db=db,
+                    pipeline_id=pid,
+                )
 
                 action = await self._wait_for_integration_response(
-                    db, pid, "baseline",
+                    db,
+                    pid,
+                    "baseline",
                 )
                 if action == "cancel_pipeline":
-                    await self._emit("pipeline:phase_changed", {
-                        "phase": "cancelled",
-                    }, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "pipeline:phase_changed",
+                        {
+                            "phase": "cancelled",
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
                     return
 
-                await self._emit("integration:baseline_response", {
-                    "action": "ignore_and_continue",
-                }, db=db, pipeline_id=pid)
+                await self._emit(
+                    "integration:baseline_response",
+                    {
+                        "action": "ignore_and_continue",
+                    },
+                    db=db,
+                    pipeline_id=pid,
+                )
 
-            await self._emit("integration:baseline_result", {
-                "status": (
-                    "passed" if baseline_exit == 0
-                    else ("failed" if baseline_exit is not None else "skipped")
-                ),
-                "exit_code": baseline_exit,
-            }, db=db, pipeline_id=pid)
+            await self._emit(
+                "integration:baseline_result",
+                {
+                    "status": (
+                        "passed"
+                        if baseline_exit == 0
+                        else ("failed" if baseline_exit is not None else "skipped")
+                    ),
+                    "exit_code": baseline_exit,
+                },
+                db=db,
+                pipeline_id=pid,
+            )
 
             await db.set_baseline_exit_code(pid, baseline_exit)
             self._integration_config = integration_config
@@ -1116,11 +1283,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Auto-update conventions file after all tasks complete successfully
         if self._settings.auto_update_conventions:
             pipeline_rec = await db.get_pipeline(pid)
-            conventions_json_str = getattr(pipeline_rec, "conventions_json", None) if pipeline_rec else None
+            conventions_json_str = (
+                getattr(pipeline_rec, "conventions_json", None) if pipeline_rec else None
+            )
             if conventions_json_str:
                 try:
                     conventions = json.loads(conventions_json_str)
                     from forge.core.conventions import update_conventions_file
+
                     update_conventions_file(self._project_dir, conventions)
                 except (json.JSONDecodeError, TypeError):
                     logger.warning("Failed to parse conventions_json for auto-update")
@@ -1128,29 +1298,45 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # ── Integration final gate ──────────────────────────────────
         if self._integration_config and fg_enabled:
             await self._emit(
-                "integration:final_gate_started", {},
-                db=db, pipeline_id=pid,
+                "integration:final_gate_started",
+                {},
+                db=db,
+                pipeline_id=pid,
             )
             fg_result = await run_final_gate(
                 self._integration_config.final_gate,
                 self._project_dir,
                 pipeline_branch,
             )
-            await self._emit("integration:final_gate_result", {
-                "status": fg_result.status,
-                "exit_code": fg_result.exit_code,
-                "stderr": fg_result.stderr[-2000:] if fg_result.stderr else "",
-            }, db=db, pipeline_id=pid)
+            await self._emit(
+                "integration:final_gate_result",
+                {
+                    "status": fg_result.status,
+                    "exit_code": fg_result.exit_code,
+                    "stderr": fg_result.stderr[-2000:] if fg_result.stderr else "",
+                },
+                db=db,
+                pipeline_id=pid,
+            )
 
             if fg_result.status in ("failed", "timeout"):
                 action = await self._resolve_integration_failure(
                     self._integration_config.final_gate,
-                    fg_result, db, pid, task_id=None, phase="final_gate",
+                    fg_result,
+                    db,
+                    pid,
+                    task_id=None,
+                    phase="final_gate",
                 )
                 if action == "stop_pipeline":
-                    await self._emit("pipeline:phase_changed", {
-                        "phase": "error",
-                    }, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "pipeline:phase_changed",
+                        {
+                            "phase": "error",
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
                     return
             elif fg_result.status == "infra_error":
                 logger.warning(
@@ -1171,7 +1357,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if task_row and task_row.state not in ("error", "cancelled"):
             logger.warning(
                 "Cannot retry task %s: current state '%s' is not error or cancelled",
-                task_id, task_row.state,
+                task_id,
+                task_row.state,
             )
             return
 
@@ -1203,7 +1390,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     # ── Integration health check helpers ─────────────────────────────
 
     async def _wait_for_integration_response(
-        self, db: Database, pipeline_id: str, phase: str,
+        self,
+        db: Database,
+        pipeline_id: str,
+        phase: str,
     ) -> str:
         """Block until the user responds to an integration prompt.
 
@@ -1218,8 +1408,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         response_value: dict[str, str | None] = {"action": None}
 
         event_type = (
-            "integration:baseline_response" if phase == "baseline"
-            else "integration:check_response"
+            "integration:baseline_response" if phase == "baseline" else "integration:check_response"
         )
 
         async def _handler(data: dict) -> None:
@@ -1264,24 +1453,34 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             return "stop_pipeline"
 
         # on_failure == "ask" — emit prompt and wait for user
-        await self._emit("integration:check_prompt", {
-            "task_id": task_id,
-            "cmd": config.cmd,
-            "exit_code": result.exit_code,
-            "stderr": result.stderr[-2000:] if result.stderr else "",
-            "is_regression": result.is_regression,
-            "baseline_was_red": (getattr(self, "_baseline_exit_code", None) or 0) != 0,
-            "options": ["ignore_and_continue", "stop_pipeline"],
-            "phase": phase,
-        }, db=db, pipeline_id=pipeline_id)
-
-        return await self._wait_for_integration_response(
-            db, pipeline_id, "check",
+        await self._emit(
+            "integration:check_prompt",
+            {
+                "task_id": task_id,
+                "cmd": config.cmd,
+                "exit_code": result.exit_code,
+                "stderr": result.stderr[-2000:] if result.stderr else "",
+                "is_regression": result.is_regression,
+                "baseline_was_red": (getattr(self, "_baseline_exit_code", None) or 0) != 0,
+                "options": ["ignore_and_continue", "stop_pipeline"],
+                "phase": phase,
+            },
+            db=db,
+            pipeline_id=pipeline_id,
         )
 
-    async def run(self, user_input: str, spec_path: str | None = None, deep_plan: bool = False) -> None:
+        return await self._wait_for_integration_response(
+            db,
+            pipeline_id,
+            "check",
+        )
+
+    async def run(
+        self, user_input: str, spec_path: str | None = None, deep_plan: bool = False
+    ) -> None:
         """Full pipeline for CLI: plan + execute. Maintains backward compat."""
         from forge.core.paths import forge_db_url
+
         db = Database(forge_db_url())
         await db.initialize()
         try:
@@ -1293,22 +1492,35 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         try:
             self._pipeline_id = str(uuid.uuid4())
             await db.create_pipeline(
-                id=self._pipeline_id, description=user_input,
-                project_dir=self._project_dir, model_strategy=self._strategy,
+                id=self._pipeline_id,
+                description=user_input,
+                project_dir=self._project_dir,
+                model_strategy=self._strategy,
                 budget_limit_usd=self._settings.budget_limit_usd,
                 project_path=self._project_dir,
                 project_name=os.path.basename(self._project_dir),
             )
-            graph = await self.plan(user_input, db, pipeline_id=self._pipeline_id, spec_path=spec_path, deep_plan=deep_plan)
+            graph = await self.plan(
+                user_input,
+                db,
+                pipeline_id=self._pipeline_id,
+                spec_path=spec_path,
+                deep_plan=deep_plan,
+            )
             # Contract generation phase
             self._contracts = await self.generate_contracts(graph, db, self._pipeline_id)
             try:
                 await check_budget(db, self._pipeline_id, self._settings)
             except BudgetExceededError as exc:
-                await self._emit("pipeline:budget_exceeded", {
-                    "spent": exc.spent,
-                    "limit": exc.limit,
-                }, db=db, pipeline_id=self._pipeline_id)
+                await self._emit(
+                    "pipeline:budget_exceeded",
+                    {
+                        "spent": exc.spent,
+                        "limit": exc.limit,
+                    },
+                    db=db,
+                    pipeline_id=self._pipeline_id,
+                )
                 await db.update_pipeline_status(self._pipeline_id, "error")
                 raise
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
@@ -1337,9 +1549,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     db=db,
                     pipeline_id=pipeline_id,
                 )
-                logger.info(
-                    "Auto-answered timed-out question %s for task %s", q.id, q.task_id
-                )
+                logger.info("Auto-answered timed-out question %s for task %s", q.id, q.task_id)
                 # Resume the task now that it has an answer
                 await self._on_task_answered(
                     data={
@@ -1350,9 +1560,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     db=db,
                 )
             except Exception:
-                logger.exception(
-                    "Failed to auto-answer question %s for task %s", q.id, q.task_id
-                )
+                logger.exception("Failed to auto-answer question %s for task %s", q.id, q.task_id)
 
     async def _recover_answered_questions(self, db, pipeline_id: str) -> None:
         """Resume tasks that were answered while daemon was down.
@@ -1385,15 +1593,26 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 logger.exception("Failed to recover task %s", task.id)
 
     async def _safe_execute_task(
-        self, db, runtime, worktree_mgr, merge_worker,
-        task_id: str, agent_id: str, pipeline_id: str | None = None,
+        self,
+        db,
+        runtime,
+        worktree_mgr,
+        merge_worker,
+        task_id: str,
+        agent_id: str,
+        pipeline_id: str | None = None,
         repo_id: str | None = None,
     ) -> None:
         """Wrapper ensuring cleanup on cancellation or crash."""
         try:
             await self._execute_task(
-                db, runtime, worktree_mgr, merge_worker,
-                task_id, agent_id, pipeline_id=pipeline_id,
+                db,
+                runtime,
+                worktree_mgr,
+                merge_worker,
+                task_id,
+                agent_id,
+                pipeline_id=pipeline_id,
                 repo_id=repo_id,
             )
         except asyncio.CancelledError:
@@ -1408,27 +1627,31 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     break
                 except Exception:
                     if attempt < 2:
-                        await asyncio.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s
+                        await asyncio.sleep(0.5 * (2**attempt))  # 0.5s, 1s
                         logger.warning(
                             "Failed to release agent %s (attempt %d/3), retrying...",
-                            agent_id, attempt + 1,
+                            agent_id,
+                            attempt + 1,
                         )
                     else:
                         logger.error(
                             "All retries exhausted releasing agent %s for task %s",
-                            agent_id, task_id,
+                            agent_id,
+                            task_id,
                         )
             if not released:
                 try:
                     await db.force_release_agent(agent_id)
                 except Exception:
-                    logger.critical(
-                        "SLOT LEAK: Cannot release agent %s by any means", agent_id
-                    )
+                    logger.critical("SLOT LEAK: Cannot release agent %s by any means", agent_id)
 
     async def _handle_task_exception(
-        self, task_id: str, exc: BaseException,
-        db, worktree_mgr, pipeline_id: str | None,
+        self,
+        task_id: str,
+        exc: BaseException,
+        db,
+        worktree_mgr,
+        pipeline_id: str | None,
     ) -> None:
         """Handle a task that raised an unhandled exception in the pool.
 
@@ -1458,23 +1681,37 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
                 logger.warning(
                     "Task %s crashed, retrying (%d/%d): %s",
-                    task_id, task_rec.retry_count + 1, self._settings.max_retries, exc,
+                    task_id,
+                    task_rec.retry_count + 1,
+                    self._settings.max_retries,
+                    exc,
                 )
                 await self._handle_retry(
-                    db, task_id, worktree_mgr,
+                    db,
+                    task_id,
+                    worktree_mgr,
                     review_feedback=crash_feedback,
                     pipeline_id=pipeline_id,
                 )
                 return  # Retry scheduled — do NOT mark as permanent error
         except Exception:
-            logger.exception("Failed to schedule retry for crashed task %s, falling back to ERROR", task_id)
+            logger.exception(
+                "Failed to schedule retry for crashed task %s, falling back to ERROR", task_id
+            )
 
         # Retry not possible (max retries exceeded or retry itself failed) — permanent ERROR.
         try:
             await db.update_task_state(task_id, TaskState.ERROR.value)
-            await self._emit("task:state_changed", {
-                "task_id": task_id, "state": "error", "error": str(exc),
-            }, db=db, pipeline_id=pipeline_id or "")
+            await self._emit(
+                "task:state_changed",
+                {
+                    "task_id": task_id,
+                    "state": "error",
+                    "error": str(exc),
+                },
+                db=db,
+                pipeline_id=pipeline_id or "",
+            )
         except Exception:
             logger.exception("Failed to mark crashed task %s as error", task_id)
         try:
@@ -1486,9 +1723,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 remaining = await db.list_tasks_by_pipeline(pipeline_id)
                 terminal = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
                 if all(t.state in terminal for t in remaining):
-                    await self._emit("pipeline:error", {
-                        "error": f"Pipeline failed: task {task_id} crashed",
-                    }, db=db, pipeline_id=pipeline_id)
+                    await self._emit(
+                        "pipeline:error",
+                        {
+                            "error": f"Pipeline failed: task {task_id} crashed",
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
             except Exception:
                 logger.exception("Failed to check pipeline state after task %s crash", task_id)
 
@@ -1502,17 +1744,34 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         active.clear()
 
     async def _execution_loop(
-        self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
-        merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
+        self,
+        db: Database,
+        runtime: AgentRuntime,
+        worktree_mgr: WorktreeManager,
+        merge_worker: MergeWorker,
+        monitor: ResourceMonitor,
+        pipeline_id: str | None = None,
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
         try:
-            await self._execution_loop_inner(db, runtime, worktree_mgr, merge_worker, monitor, pipeline_id)
+            await self._execution_loop_inner(
+                db, runtime, worktree_mgr, merge_worker, monitor, pipeline_id
+            )
         except Exception as e:
             logger.error("Execution loop crashed: %s", e, exc_info=True)
             try:
-                await self._emit("pipeline:error", {"error": f"Pipeline crashed: {e}"}, db=db, pipeline_id=pipeline_id or "")
-                await self._emit("pipeline:phase_changed", {"phase": "error"}, db=db, pipeline_id=pipeline_id or "")
+                await self._emit(
+                    "pipeline:error",
+                    {"error": f"Pipeline crashed: {e}"},
+                    db=db,
+                    pipeline_id=pipeline_id or "",
+                )
+                await self._emit(
+                    "pipeline:phase_changed",
+                    {"phase": "error"},
+                    db=db,
+                    pipeline_id=pipeline_id or "",
+                )
             except Exception:
                 logger.exception("Failed to emit pipeline:error event after execution loop crash")
             raise
@@ -1533,11 +1792,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             self._current_answer_handler = None
 
     async def _execution_loop_inner(
-        self, db: Database, runtime: AgentRuntime, worktree_mgr: WorktreeManager,
-        merge_worker: MergeWorker, monitor: ResourceMonitor, pipeline_id: str | None = None,
+        self,
+        db: Database,
+        runtime: AgentRuntime,
+        worktree_mgr: WorktreeManager,
+        merge_worker: MergeWorker,
+        monitor: ResourceMonitor,
+        pipeline_id: str | None = None,
     ) -> None:
         """Inner execution loop body — wrapped by _execution_loop for error handling."""
         import uuid as _uuid_mod
+
         prefix = pipeline_id[:8] if pipeline_id else None
         start_time = asyncio.get_event_loop().time()
         timeout = self._settings.pipeline_timeout_seconds
@@ -1584,14 +1849,26 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             elapsed = asyncio.get_event_loop().time() - start_time
             if timeout > 0 and elapsed > timeout:
                 logger.error("Pipeline timeout exceeded (%ds > %ds)", int(elapsed), timeout)
-                all_tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
+                all_tasks = await (
+                    db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
+                )
                 for t in all_tasks:
-                    if t.state not in (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value):
+                    if t.state not in (
+                        TaskState.DONE.value,
+                        TaskState.ERROR.value,
+                        TaskState.CANCELLED.value,
+                    ):
                         await db.update_task_state(t.id, TaskState.ERROR.value)
-                        await self._emit("task:state_changed", {
-                            "task_id": t.id, "state": "error",
-                            "error": "Pipeline timeout exceeded",
-                        }, db=db, pipeline_id=pipeline_id or "")
+                        await self._emit(
+                            "task:state_changed",
+                            {
+                                "task_id": t.id,
+                                "state": "error",
+                                "error": "Pipeline timeout exceeded",
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id or "",
+                        )
                 break
 
             # Check pause flag — don't dispatch new tasks while paused
@@ -1602,7 +1879,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
 
-            tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
+            tasks = await (
+                db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
+            )
             _print_status_table(tasks)
 
             # Periodic question-timeout checker (every 30 s)
@@ -1613,7 +1892,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await self._check_question_timeouts(db, pipeline_id)
 
             # AWAITING_APPROVAL, BLOCKED, and CANCELLED count as "parked" — not blocking the loop
-            parked_states = (TaskState.DONE.value, TaskState.ERROR.value, TaskState.AWAITING_APPROVAL.value, TaskState.CANCELLED.value, TaskState.BLOCKED.value)
+            parked_states = (
+                TaskState.DONE.value,
+                TaskState.ERROR.value,
+                TaskState.AWAITING_APPROVAL.value,
+                TaskState.CANCELLED.value,
+                TaskState.BLOCKED.value,
+            )
             all_parked = all(t.state in parked_states for t in tasks)
             if all_parked:
                 # If any tasks are still awaiting approval, sleep and poll
@@ -1631,7 +1916,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
                 result = _classify_pipeline_result([t.state for t in tasks])
                 if result == "complete":
-                    console.print(f"\n[bold green]Complete: {done_count}/{total_count} done[/bold green]")
+                    console.print(
+                        f"\n[bold green]Complete: {done_count}/{total_count} done[/bold green]"
+                    )
                 elif result == "partial_success":
                     console.print(
                         f"\n[bold yellow]Partial: {done_count} done, {error_count} errors, "
@@ -1648,23 +1935,30 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
                         await db.set_pipeline_paused_at(pipeline_id, None)
                     await db.update_pipeline_status(pipeline_id, result)
-                    await self._emit("pipeline:all_tasks_done", {
-                        "summary": {
-                            "done": done_count,
-                            "error": error_count,
-                            "blocked": blocked_count,
-                            "cancelled": cancelled_count,
-                            "total": total_count,
-                            "result": result,
+                    await self._emit(
+                        "pipeline:all_tasks_done",
+                        {
+                            "summary": {
+                                "done": done_count,
+                                "error": error_count,
+                                "blocked": blocked_count,
+                                "cancelled": cancelled_count,
+                                "total": total_count,
+                                "result": result,
+                            },
                         },
-                    }, db=db, pipeline_id=pipeline_id)
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
                 break
 
             # Pipeline pause tracking: detect when ALL non-terminal active tasks are awaiting_input
             if pipeline_id:
                 non_terminal = [
-                    t for t in tasks
-                    if t.state not in (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
+                    t
+                    for t in tasks
+                    if t.state
+                    not in (TaskState.DONE.value, TaskState.ERROR.value, TaskState.CANCELLED.value)
                 ]
                 all_awaiting_input = bool(non_terminal) and all(
                     t.state == TaskState.AWAITING_INPUT.value for t in non_terminal
@@ -1675,13 +1969,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         _all_paused_since = asyncio.get_event_loop().time()
                         paused_at_iso = datetime.now(UTC).isoformat()
                         await db.set_pipeline_paused_at(pipeline_id, paused_at_iso)
-                        await self._emit("pipeline:paused", {
-                            "reason": "awaiting_input",
-                            "task_count": len(non_terminal),
-                        }, db=db, pipeline_id=pipeline_id)
+                        await self._emit(
+                            "pipeline:paused",
+                            {
+                                "reason": "awaiting_input",
+                                "task_count": len(non_terminal),
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id,
+                        )
                         logger.info(
                             "Pipeline %s paused — all %d tasks are awaiting_input",
-                            pipeline_id, len(non_terminal),
+                            pipeline_id,
+                            len(non_terminal),
                         )
                 else:
                     if _all_paused_since is not None:
@@ -1692,33 +1992,51 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         await db.set_pipeline_paused_at(pipeline_id, None)
                         logger.info(
                             "Pipeline %s resumed after %.1fs pause",
-                            pipeline_id, paused_elapsed,
+                            pipeline_id,
+                            paused_elapsed,
                         )
 
             snapshot = await monitor.take_snapshot()
             if not monitor.can_dispatch(snapshot):
-                console.print(f"[yellow]Backpressure: {', '.join(monitor.blocked_reasons(snapshot))}[/yellow]")
+                console.print(
+                    f"[yellow]Backpressure: {', '.join(monitor.blocked_reasons(snapshot))}[/yellow]"
+                )
                 await asyncio.sleep(self._settings.scheduler_poll_interval)
                 continue
 
             if pipeline_id:
                 pipeline_rec = await db.get_pipeline(pipeline_id)
-                if pipeline_rec and pipeline_rec.executor_token and pipeline_rec.executor_token != self._executor_token:
-                    console.print("[yellow]Pipeline taken over by another session. Exiting.[/yellow]")
+                if (
+                    pipeline_rec
+                    and pipeline_rec.executor_token
+                    and pipeline_rec.executor_token != self._executor_token
+                ):
+                    console.print(
+                        "[yellow]Pipeline taken over by another session. Exiting.[/yellow]"
+                    )
                     break
 
             task_records = [row_to_record(t) for t in tasks]
             agents = await db.list_agents(prefix=prefix)
             from forge.core.models import row_to_agent
+
             agent_records = [row_to_agent(a) for a in agents]
-            dispatch_plan = Scheduler.dispatch_plan(task_records, agent_records, self._effective_max_agents)
+            dispatch_plan = Scheduler.dispatch_plan(
+                task_records, agent_records, self._effective_max_agents
+            )
 
             if not dispatch_plan:
                 if not self._active_tasks:
-                    if any(t.state in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value) for t in tasks):
+                    if any(
+                        t.state
+                        in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value)
+                        for t in tasks
+                    ):
                         await asyncio.sleep(self._settings.scheduler_poll_interval)
                         continue
-                    console.print("[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]")
+                    console.print(
+                        "[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]"
+                    )
                     break
                 _done, _pending = await asyncio.wait(
                     self._active_tasks.values(),
@@ -1729,8 +2047,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Guard: skip tasks already in pool
             dispatch_plan = [
-                (tid, aid) for tid, aid in dispatch_plan
-                if tid not in self._active_tasks
+                (tid, aid) for tid, aid in dispatch_plan if tid not in self._active_tasks
             ]
 
             # Cap to actual free slots (pool is authoritative)
@@ -1750,7 +2067,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 # use the first non-excluded repo as the target
                 if repo_id == "default" and len(self._repos) > 1 and "default" not in self._repos:
                     repo_id = next(iter(self._repos.keys()))
-                    logger.warning("Task %s has repo_id='default' in workspace mode, falling back to '%s'", task_id, repo_id)
+                    logger.warning(
+                        "Task %s has repo_id='default' in workspace mode, falling back to '%s'",
+                        task_id,
+                        repo_id,
+                    )
 
                 try:
                     wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
@@ -1758,9 +2079,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     wt_mgr, mw = worktree_mgr, merge_worker
 
                 atask = asyncio.create_task(
-                    self._safe_execute_task(db, runtime, wt_mgr, mw,
-                                            task_id, agent_id, pipeline_id=pipeline_id,
-                                            repo_id=repo_id),
+                    self._safe_execute_task(
+                        db,
+                        runtime,
+                        wt_mgr,
+                        mw,
+                        task_id,
+                        agent_id,
+                        pipeline_id=pipeline_id,
+                        repo_id=repo_id,
+                    ),
                     name=f"forge-task-{task_id}",
                 )
                 async with self._active_tasks_lock:

@@ -61,6 +61,7 @@ def _check_rate_limit(request: Request) -> None:
 
 # ── Request / response schemas ──────────────────────────────────────
 
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
@@ -85,6 +86,7 @@ class AuthResponse(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+
 def _set_refresh_cookie(response: JSONResponse, refresh_token: str) -> None:
     """Set the refresh token as an httpOnly cookie on the response."""
     response.set_cookie(
@@ -101,7 +103,9 @@ def _set_refresh_cookie(response: JSONResponse, refresh_token: str) -> None:
 def _build_auth_response(user, jwt_secret: str, *, status_code: int = 200) -> JSONResponse:
     """Build a JSONResponse with access_token in body, refresh_token in cookie."""
     access = create_access_token(subject=user.id, secret=jwt_secret, display_name=user.display_name)
-    refresh = create_refresh_token(subject=user.id, secret=jwt_secret, display_name=user.display_name)
+    refresh = create_refresh_token(
+        subject=user.id, secret=jwt_secret, display_name=user.display_name
+    )
     body = {
         "access_token": access,
         "user": {
@@ -116,6 +120,7 @@ def _build_auth_response(user, jwt_secret: str, *, status_code: int = 200) -> JS
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
+
 
 @router.post("/register", status_code=201)
 async def register(body: RegisterRequest, request: Request) -> JSONResponse:
@@ -171,7 +176,8 @@ async def refresh(request: Request) -> dict:
         if payload.get("exp", 0) < time.time():
             raise HTTPException(status_code=401, detail="Refresh token expired")
         new_access = create_access_token(
-            subject=payload["sub"], secret=request.app.state.jwt_secret,
+            subject=payload["sub"],
+            secret=request.app.state.jwt_secret,
             display_name=payload.get("dn"),
         )
         return {"access_token": new_access}

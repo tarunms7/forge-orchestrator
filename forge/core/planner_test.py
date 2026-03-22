@@ -7,47 +7,51 @@ from forge.core.errors import SdkCallError, ValidationError
 from forge.core.models import TaskGraph
 from forge.core.planner import Planner, PlannerLLM
 
-VALID_GRAPH_JSON = json.dumps({
-    "tasks": [
-        {
-            "id": "task-1",
-            "title": "Create model",
-            "description": "Build user model",
-            "files": ["src/models/user.py"],
-            "depends_on": [],
-            "complexity": "low",
-        },
-        {
-            "id": "task-2",
-            "title": "Build API",
-            "description": "Build auth endpoints",
-            "files": ["src/api/auth.py"],
-            "depends_on": ["task-1"],
-            "complexity": "medium",
-        },
-    ]
-})
+VALID_GRAPH_JSON = json.dumps(
+    {
+        "tasks": [
+            {
+                "id": "task-1",
+                "title": "Create model",
+                "description": "Build user model",
+                "files": ["src/models/user.py"],
+                "depends_on": [],
+                "complexity": "low",
+            },
+            {
+                "id": "task-2",
+                "title": "Build API",
+                "description": "Build auth endpoints",
+                "files": ["src/api/auth.py"],
+                "depends_on": ["task-1"],
+                "complexity": "medium",
+            },
+        ]
+    }
+)
 
-CYCLIC_GRAPH_JSON = json.dumps({
-    "tasks": [
-        {
-            "id": "task-1",
-            "title": "A",
-            "description": "A",
-            "files": ["a.py"],
-            "depends_on": ["task-2"],
-            "complexity": "low",
-        },
-        {
-            "id": "task-2",
-            "title": "B",
-            "description": "B",
-            "files": ["b.py"],
-            "depends_on": ["task-1"],
-            "complexity": "low",
-        },
-    ]
-})
+CYCLIC_GRAPH_JSON = json.dumps(
+    {
+        "tasks": [
+            {
+                "id": "task-1",
+                "title": "A",
+                "description": "A",
+                "files": ["a.py"],
+                "depends_on": ["task-2"],
+                "complexity": "low",
+            },
+            {
+                "id": "task-2",
+                "title": "B",
+                "description": "B",
+                "files": ["b.py"],
+                "depends_on": ["task-1"],
+                "complexity": "low",
+            },
+        ]
+    }
+)
 
 
 @pytest.fixture

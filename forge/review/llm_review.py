@@ -117,9 +117,14 @@ async def gate2_llm_review(
         )
 
     prompt = _build_review_prompt(
-        task_title, task_description, diff, prior_feedback,
-        prior_diff=prior_diff, project_context=project_context,
-        allowed_files=allowed_files, delta_diff=delta_diff,
+        task_title,
+        task_description,
+        diff,
+        prior_feedback,
+        prior_diff=prior_diff,
+        project_context=project_context,
+        allowed_files=allowed_files,
+        delta_diff=delta_diff,
         sibling_context=sibling_context,
     )
 
@@ -153,11 +158,17 @@ async def gate2_llm_review(
                 timeout=review_timeout_seconds,
             )
         except TimeoutError:
-            logger.warning("L2 review timed out after %ds (attempt %d/%d)", review_timeout_seconds, attempt, max_review_attempts)
+            logger.warning(
+                "L2 review timed out after %ds (attempt %d/%d)",
+                review_timeout_seconds,
+                attempt,
+                max_review_attempts,
+            )
             if attempt == max_review_attempts:
                 return (
                     GateResult(
-                        passed=False, gate="gate2_llm_review",
+                        passed=False,
+                        gate="gate2_llm_review",
                         details=f"Review timed out after {max_review_attempts} attempts",
                         retriable=True,
                     ),
@@ -165,11 +176,14 @@ async def gate2_llm_review(
                 )
             continue
         except Exception as e:
-            logger.warning("L2 review SDK call failed (attempt %d/%d): %s", attempt, max_review_attempts, e)
+            logger.warning(
+                "L2 review SDK call failed (attempt %d/%d): %s", attempt, max_review_attempts, e
+            )
             if attempt == max_review_attempts:
                 return (
                     GateResult(
-                        passed=False, gate="gate2_llm_review",
+                        passed=False,
+                        gate="gate2_llm_review",
                         details=f"SDK error during review after {max_review_attempts} attempts: {e}",
                         retriable=True,
                     ),
@@ -188,7 +202,9 @@ async def gate2_llm_review(
             return (_parse_review_result(result_text), cost_info)
 
         logger.warning(
-            "L2 review returned empty result (attempt %d/%d)", attempt, max_review_attempts,
+            "L2 review returned empty result (attempt %d/%d)",
+            attempt,
+            max_review_attempts,
         )
         if attempt < max_review_attempts:
             await asyncio.sleep(2)  # Brief pause before retrying
@@ -203,7 +219,8 @@ async def gate2_llm_review(
     )
     return (
         GateResult(
-            passed=True, gate="gate2_llm_review",
+            passed=True,
+            gate="gate2_llm_review",
             details=f"Review auto-passed: empty response after {max_review_attempts} attempts (likely transient SDK issue)",
         ),
         cost_info,
@@ -211,7 +228,9 @@ async def gate2_llm_review(
 
 
 def _build_review_prompt(
-    title: str, description: str, diff: str,
+    title: str,
+    description: str,
+    diff: str,
     prior_feedback: str | None = None,
     *,
     prior_diff: str | None = None,
@@ -249,8 +268,7 @@ def _build_review_prompt(
         if prior_diff:
             prior_diff_snippet = prior_diff[:6000]
             parts.append(
-                "=== PRIOR DIFF (what was rejected) ===\n"
-                f"```diff\n{prior_diff_snippet}\n```\n\n"
+                f"=== PRIOR DIFF (what was rejected) ===\n```diff\n{prior_diff_snippet}\n```\n\n"
             )
         parts.append(
             "The developer has attempted to fix these issues.\n"

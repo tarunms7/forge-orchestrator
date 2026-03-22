@@ -24,6 +24,7 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 # Helper: HMAC-SHA256 signature verification
 # ---------------------------------------------------------------------------
 
+
 def _verify_signature(payload_body: bytes, signature_header: str, secret: str) -> bool:
     """Verify GitHub webhook HMAC-SHA256 signature.
 
@@ -37,11 +38,14 @@ def _verify_signature(payload_body: bytes, signature_header: str, secret: str) -
     """
     if not signature_header or not signature_header.startswith("sha256="):
         return False
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        payload_body,
-        hashlib.sha256,
-    ).hexdigest()
+    expected = (
+        "sha256="
+        + hmac.new(
+            secret.encode("utf-8"),
+            payload_body,
+            hashlib.sha256,
+        ).hexdigest()
+    )
     return hmac.compare_digest(expected, signature_header)
 
 
@@ -66,6 +70,7 @@ def _is_collaborator(payload: dict) -> bool:
 # Helper: parse /forge command from comment body
 # ---------------------------------------------------------------------------
 
+
 def _extract_forge_command(comment_body: str) -> str | None:
     """Extract the task description from a ``/forge`` comment.
 
@@ -76,12 +81,13 @@ def _extract_forge_command(comment_body: str) -> str | None:
     body = comment_body.strip()
     if not body.startswith("/forge"):
         return None
-    return body[len("/forge"):].strip()
+    return body[len("/forge") :].strip()
 
 
 # ---------------------------------------------------------------------------
 # Helper: build task description from issue + comment
 # ---------------------------------------------------------------------------
+
 
 def _build_task_description(payload: dict, extra_instruction: str) -> str:
     """Combine issue title + body + comment text into planner input."""
@@ -142,6 +148,7 @@ def _check_rate_limit(repo: str, issue_number: int) -> bool:
 # POST /webhooks/github
 # ---------------------------------------------------------------------------
 
+
 @router.post("/github")
 async def github_webhook(request: Request) -> Response:
     """Receive GitHub webhook events and trigger pipelines.
@@ -170,7 +177,9 @@ async def github_webhook(request: Request) -> Response:
         return Response(content=json.dumps({"status": "pong"}), status_code=200)
     if event_type != "issue_comment":
         return Response(
-            content=json.dumps({"status": "ignored", "reason": f"Event type '{event_type}' not handled"}),
+            content=json.dumps(
+                {"status": "ignored", "reason": f"Event type '{event_type}' not handled"}
+            ),
             status_code=200,
         )
 
@@ -179,7 +188,9 @@ async def github_webhook(request: Request) -> Response:
 
     if payload.get("action") != "created":
         return Response(
-            content=json.dumps({"status": "ignored", "reason": "Only 'created' actions are processed"}),
+            content=json.dumps(
+                {"status": "ignored", "reason": "Only 'created' actions are processed"}
+            ),
             status_code=200,
         )
 
@@ -188,7 +199,9 @@ async def github_webhook(request: Request) -> Response:
     extra_instruction = _extract_forge_command(comment_body)
     if extra_instruction is None:
         return Response(
-            content=json.dumps({"status": "ignored", "reason": "Comment does not start with /forge"}),
+            content=json.dumps(
+                {"status": "ignored", "reason": "Comment does not start with /forge"}
+            ),
             status_code=200,
         )
 
@@ -221,7 +234,9 @@ async def github_webhook(request: Request) -> Response:
     issue_url = payload.get("issue", {}).get("html_url", "")
 
     # 10. Create pipeline in DB
-    forge_db = getattr(request.app.state, "db", None) or getattr(request.app.state, "forge_db", None)
+    forge_db = getattr(request.app.state, "db", None) or getattr(
+        request.app.state, "forge_db", None
+    )
     if forge_db is None:
         raise HTTPException(status_code=500, detail="Database not available")
 
@@ -257,11 +272,13 @@ async def github_webhook(request: Request) -> Response:
     )
 
     return Response(
-        content=json.dumps({
-            "status": "accepted",
-            "pipeline_id": pipeline_id,
-            "issue_number": issue_number,
-        }),
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "pipeline_id": pipeline_id,
+                "issue_number": issue_number,
+            }
+        ),
         status_code=202,
     )
 
@@ -270,14 +287,23 @@ async def github_webhook(request: Request) -> Response:
 # Helper: post issue comment via gh CLI
 # ---------------------------------------------------------------------------
 
+
 async def _post_issue_comment(
-    repo_full_name: str, issue_number: int, body: str, cwd: str,
+    repo_full_name: str,
+    issue_number: int,
+    body: str,
+    cwd: str,
 ) -> None:
     """Post a comment on a GitHub issue using ``gh issue comment``."""
     proc = await asyncio.create_subprocess_exec(
-        "gh", "issue", "comment", str(issue_number),
-        "--repo", repo_full_name,
-        "--body", body,
+        "gh",
+        "issue",
+        "comment",
+        str(issue_number),
+        "--repo",
+        repo_full_name,
+        "--body",
+        body,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -286,13 +312,16 @@ async def _post_issue_comment(
     if proc.returncode != 0:
         logger.warning(
             "Failed to post issue comment on %s#%d: %s",
-            repo_full_name, issue_number, stderr.decode().strip(),
+            repo_full_name,
+            issue_number,
+            stderr.decode().strip(),
         )
 
 
 # ---------------------------------------------------------------------------
 # Background pipeline orchestration
 # ---------------------------------------------------------------------------
+
 
 async def _run_webhook_pipeline(
     *,
@@ -314,7 +343,8 @@ async def _run_webhook_pipeline(
 
         # Phase 1: Planning
         await _post_issue_comment(
-            repo_full_name, issue_number,
+            repo_full_name,
+            issue_number,
             f"🔧 **Forge pipeline started** (`{pipeline_id[:8]}`)\n\nPlanning task decomposition...",
             project_dir,
         )
@@ -322,10 +352,12 @@ async def _run_webhook_pipeline(
         graph = await daemon.plan(task_description, forge_db, pipeline_id=pipeline_id)
 
         task_list_md = "\n".join(
-            f"- **{t.title}** ({t.complexity.value if hasattr(t.complexity, 'value') else t.complexity})" for t in graph.tasks
+            f"- **{t.title}** ({t.complexity.value if hasattr(t.complexity, 'value') else t.complexity})"
+            for t in graph.tasks
         )
         await _post_issue_comment(
-            repo_full_name, issue_number,
+            repo_full_name,
+            issue_number,
             f"📋 **Plan ready: {len(graph.tasks)} tasks**\n\n{task_list_md}",
             project_dir,
         )
@@ -341,7 +373,8 @@ async def _run_webhook_pipeline(
         try:
             pr_url = await _auto_create_pr(forge_db, pipeline_id, issue_number=issue_number)
             await _post_issue_comment(
-                repo_full_name, issue_number,
+                repo_full_name,
+                issue_number,
                 f"✅ **Pipeline complete!** PR: {pr_url}\n\n"
                 f"This PR will automatically close this issue when merged.",
                 project_dir,
@@ -349,7 +382,8 @@ async def _run_webhook_pipeline(
         except Exception as pr_exc:
             logger.warning("Auto-PR failed for webhook pipeline %s: %s", pipeline_id, pr_exc)
             await _post_issue_comment(
-                repo_full_name, issue_number,
+                repo_full_name,
+                issue_number,
                 "✅ **Pipeline complete!** (PR creation failed. Check server logs for details.)",
                 project_dir,
             )
@@ -361,7 +395,8 @@ async def _run_webhook_pipeline(
         except Exception:
             pass
         await _post_issue_comment(
-            repo_full_name, issue_number,
+            repo_full_name,
+            issue_number,
             f"❌ **Pipeline failed** (`{type(exc).__name__}`). Check server logs for details.",
             project_dir,
         )

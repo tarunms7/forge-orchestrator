@@ -1,4 +1,5 @@
 """Tests for forge.core.async_utils."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +21,7 @@ def event_loop_policy():
 # safe_create_task: logs exceptions from failed tasks
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_safe_create_task_logs_exception(caplog):
     """Failed background tasks should log an error with the exception."""
@@ -39,6 +41,7 @@ async def test_safe_create_task_logs_exception(caplog):
 # ---------------------------------------------------------------------------
 # safe_create_task: handles cancelled tasks without logging
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_safe_create_task_cancelled_no_log(caplog):
@@ -63,6 +66,7 @@ async def test_safe_create_task_cancelled_no_log(caplog):
 # Successful tasks don't trigger error logging
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_safe_create_task_success_no_log(caplog):
     """Successful tasks should not produce any error logs."""
@@ -82,6 +86,7 @@ async def test_safe_create_task_success_no_log(caplog):
 # ---------------------------------------------------------------------------
 # Custom logger is used when provided
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_safe_create_task_custom_logger():
@@ -105,6 +110,7 @@ async def test_safe_create_task_custom_logger():
 # Name parameter is passed through
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_safe_create_task_name_passthrough():
     """The name parameter should be forwarded to asyncio.create_task."""
@@ -120,6 +126,7 @@ async def test_safe_create_task_name_passthrough():
 # ---------------------------------------------------------------------------
 # _log_task_exception: unit tests for the callback directly
 # ---------------------------------------------------------------------------
+
 
 def test_log_task_exception_cancelled():
     """Cancelled tasks should return immediately without logging."""

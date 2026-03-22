@@ -43,9 +43,21 @@ async def test_review_screen_status_bar_text():
 async def test_review_screen_j_k_scrolls_diff_viewer():
     """j/k keys should call scroll_relative on DiffViewer without error."""
     state = TuiState()
-    state.apply_event("pipeline:plan_ready", {
-        "tasks": [{"id": "t1", "title": "Test", "description": "", "files": ["f"], "depends_on": [], "complexity": "low"}]
-    })
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Test",
+                    "description": "",
+                    "files": ["f"],
+                    "depends_on": [],
+                    "complexity": "low",
+                }
+            ]
+        },
+    )
     state.selected_task_id = "t1"
 
     class ReviewTestAppWithState(App):

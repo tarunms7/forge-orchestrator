@@ -58,7 +58,11 @@ class MergeWorker:
             elif e.stderr:
                 conflict_desc = f"(stderr) {e.stderr[:200]}"
             else:
-                conflict_desc = f"unknown files (raw: {e.stderr[:150]})" if e.stderr else "unknown files (no stderr)"
+                conflict_desc = (
+                    f"unknown files (raw: {e.stderr[:150]})"
+                    if e.stderr
+                    else "unknown files (no stderr)"
+                )
             return MergeResult(
                 success=False,
                 conflicting_files=e.files,
@@ -100,7 +104,11 @@ class MergeWorker:
             elif e.stderr:
                 conflict_desc = f"(stderr) {e.stderr[:200]}"
             else:
-                conflict_desc = f"unknown files (raw: {e.stderr[:150]})" if e.stderr else "unknown files (no stderr)"
+                conflict_desc = (
+                    f"unknown files (raw: {e.stderr[:150]})"
+                    if e.stderr
+                    else "unknown files (no stderr)"
+                )
             return MergeResult(
                 success=False,
                 conflicting_files=e.files,
@@ -115,13 +123,17 @@ class MergeWorker:
     async def _rebase(self, branch: str, worktree_path: str | None = None) -> None:
         if worktree_path:
             result = await _run_git(
-                ["rebase", self._main], cwd=worktree_path,
-                check=False, description="rebase in worktree",
+                ["rebase", self._main],
+                cwd=worktree_path,
+                check=False,
+                description="rebase in worktree",
             )
         else:
             result = await _run_git(
-                ["rebase", self._main, branch], cwd=self._repo,
-                check=False, description="rebase branch",
+                ["rebase", self._main, branch],
+                cwd=self._repo,
+                check=False,
+                description="rebase branch",
             )
         if result.returncode != 0:
             conflicts = await self._find_conflicts(worktree_path)
@@ -131,7 +143,8 @@ class MergeWorker:
                 conflicts = _parse_conflict_files_from_stderr(result.stderr)
             stderr_snippet = result.stderr.strip()[:300] if result.stderr else ""
             raise _RebaseConflict(
-                files=conflicts, stderr=stderr_snippet,
+                files=conflicts,
+                stderr=stderr_snippet,
             )
 
     async def _abort_rebase(self, worktree_path: str | None = None) -> None:
@@ -145,20 +158,27 @@ class MergeWorker:
         user's working directory is never mutated.  This only works for
         fast-forward merges — which is guaranteed after a successful rebase.
         """
-        task_sha = (await _run_git(
-            ["rev-parse", branch], cwd=self._repo,
-            check=True, description="resolve branch SHA",
-        )).stdout.strip()
+        task_sha = (
+            await _run_git(
+                ["rev-parse", branch],
+                cwd=self._repo,
+                check=True,
+                description="resolve branch SHA",
+            )
+        ).stdout.strip()
         await _run_git(
             ["update-ref", f"refs/heads/{self._main}", task_sha],
-            cwd=self._repo, check=True, description="fast-forward merge target",
+            cwd=self._repo,
+            check=True,
+            description="fast-forward merge target",
         )
 
     async def _find_conflicts(self, worktree_path: str | None = None) -> list[str]:
         result = await _run_git(
             ["diff", "--name-only", "--diff-filter=U"],
             cwd=worktree_path or self._repo,
-            check=False, description="find conflict files",
+            check=False,
+            description="find conflict files",
         )
         return [f for f in result.stdout.strip().split("\n") if f]
 

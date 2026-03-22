@@ -90,22 +90,22 @@ class TestClassifyError:
         assert "check the output log" in result.root_cause
 
     def test_traceback_extraction(self):
-        error = '''Traceback (most recent call last):
+        error = """Traceback (most recent call last):
   File "/app/src/main.py", line 42, in run
     do_stuff()
   File "/app/src/utils.py", line 17, in do_stuff
     raise ValueError("bad")
-ValueError: bad'''
+ValueError: bad"""
         result = classify_error(error)
         # Should extract the last file/line from traceback
         assert result.file_path == "/app/src/utils.py"
         assert result.line_number == 17
 
     def test_traceback_with_syntax_error(self):
-        error = '''  File "forge/core/engine.py", line 55
+        error = """  File "forge/core/engine.py", line 55
     def broken(
               ^
-SyntaxError: unexpected EOF while parsing'''
+SyntaxError: unexpected EOF while parsing"""
         result = classify_error(error)
         assert result.category == "syntax_error"
         assert result.file_path == "forge/core/engine.py"
@@ -284,6 +284,7 @@ class TestFormatErrorPanel:
 
 
 # ── TuiState error_history integration tests ─────────────────────────
+
 
 class TestTuiStateErrorHistory:
     def _make_state_with_task(self, task_id: str = "t1") -> TuiState:

@@ -1,4 +1,5 @@
 """Tests for agent release retry logic in _safe_execute_task."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,21 +31,22 @@ def _make_task(state: str, task_id: str = "task-1") -> MagicMock:
 
 @pytest.mark.asyncio
 class TestAgentReleaseRetry:
-
     async def test_release_retries_on_db_error(self, tmp_path):
         """release_agent fails twice then succeeds on the third call."""
         daemon = _make_daemon(tmp_path)
         db = MagicMock()
-        db.release_agent = AsyncMock(
-            side_effect=[Exception("fail-1"), Exception("fail-2"), None]
-        )
+        db.release_agent = AsyncMock(side_effect=[Exception("fail-1"), Exception("fail-2"), None])
         db.force_release_agent = AsyncMock()
         daemon._execute_task = AsyncMock(return_value=None)
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             await daemon._safe_execute_task(
-                db, MagicMock(), MagicMock(), MagicMock(),
-                "task-1", "agent-1",
+                db,
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                "task-1",
+                "agent-1",
             )
 
         assert db.release_agent.call_count == 3
@@ -60,8 +62,12 @@ class TestAgentReleaseRetry:
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             await daemon._safe_execute_task(
-                db, MagicMock(), MagicMock(), MagicMock(),
-                "task-1", "agent-1",
+                db,
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                "task-1",
+                "agent-1",
             )
 
         assert db.release_agent.call_count == 3
@@ -76,8 +82,12 @@ class TestAgentReleaseRetry:
         daemon._execute_task = AsyncMock(return_value=None)
 
         await daemon._safe_execute_task(
-            db, MagicMock(), MagicMock(), MagicMock(),
-            "task-1", "agent-1",
+            db,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            "task-1",
+            "agent-1",
         )
 
         db.release_agent.assert_called_once_with("agent-1")
@@ -94,8 +104,12 @@ class TestAgentReleaseRetry:
         with patch("asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(RuntimeError, match="task crash"):
                 await daemon._safe_execute_task(
-                    db, MagicMock(), MagicMock(), MagicMock(),
-                    "task-1", "agent-1",
+                    db,
+                    MagicMock(),
+                    MagicMock(),
+                    MagicMock(),
+                    "task-1",
+                    "agent-1",
                 )
 
     async def test_slot_leak_logged_when_all_release_methods_fail(self, tmp_path):
@@ -109,8 +123,12 @@ class TestAgentReleaseRetry:
         with patch("asyncio.sleep", new_callable=AsyncMock):
             with patch("forge.core.daemon.logger") as mock_logger:
                 await daemon._safe_execute_task(
-                    db, MagicMock(), MagicMock(), MagicMock(),
-                    "task-1", "agent-1",
+                    db,
+                    MagicMock(),
+                    MagicMock(),
+                    MagicMock(),
+                    "task-1",
+                    "agent-1",
                 )
 
                 mock_logger.critical.assert_called_once()

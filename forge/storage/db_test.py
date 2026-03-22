@@ -47,12 +47,20 @@ async def test_update_task_state(db: Database):
 
 async def test_list_tasks_by_state(db: Database):
     await db.create_task(
-        id="t1", title="T1", description="D", files=["a.py"],
-        depends_on=[], complexity="low",
+        id="t1",
+        title="T1",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
     )
     await db.create_task(
-        id="t2", title="T2", description="D", files=["b.py"],
-        depends_on=[], complexity="low",
+        id="t2",
+        title="T2",
+        description="D",
+        files=["b.py"],
+        depends_on=[],
+        complexity="low",
     )
     await db.update_task_state("t1", "in_progress")
     in_progress = await db.list_tasks(state="in_progress")
@@ -69,8 +77,12 @@ async def test_create_and_get_agent(db: Database):
 
 async def test_assign_task_to_agent(db: Database):
     await db.create_task(
-        id="task-1", title="T", description="D", files=["a.py"],
-        depends_on=[], complexity="low",
+        id="task-1",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
     )
     await db.create_agent(id="agent-1")
     await db.assign_task("task-1", "agent-1")
@@ -84,8 +96,12 @@ async def test_assign_task_to_agent(db: Database):
 async def test_force_release_agent(db: Database):
     """force_release_agent resets agent to idle via raw SQL."""
     await db.create_task(
-        id="task-1", title="T", description="D", files=["a.py"],
-        depends_on=[], complexity="low",
+        id="task-1",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
     )
     await db.create_agent(id="agent-1")
     await db.assign_task("task-1", "agent-1")
@@ -99,15 +115,20 @@ async def test_force_release_agent(db: Database):
     assert agent.current_task is None
 
 
-
 async def test_create_task_with_pipeline_id(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="Test pipeline",
-        project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="Test pipeline",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.create_task(
-        id="task-1", title="Test task", description="A test",
-        files=["a.py"], depends_on=[], complexity="low",
+        id="task-1",
+        title="Test task",
+        description="A test",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
         pipeline_id="pipe-1",
     )
     task = await db.get_task("task-1")
@@ -117,18 +138,34 @@ async def test_create_task_with_pipeline_id(db: Database):
 
 async def test_list_tasks_by_pipeline(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="P1", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="P1",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.create_pipeline(
-        id="pipe-2", description="P2", project_dir="/tmp", model_strategy="auto",
+        id="pipe-2",
+        description="P2",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.create_task(
-        id="t1", title="T1", description="D", files=["a.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-1",
+        id="t1",
+        title="T1",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-1",
     )
     await db.create_task(
-        id="t2", title="T2", description="D", files=["b.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-2",
+        id="t2",
+        title="T2",
+        description="D",
+        files=["b.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-2",
     )
     tasks = await db.list_tasks_by_pipeline("pipe-1")
     assert len(tasks) == 1
@@ -143,46 +180,62 @@ async def test_migrate_adds_missing_columns():
     # Step 1: create a DB with old schema (no pipeline_id on tasks, no pr_url on pipelines)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.execute(text(
-            "CREATE TABLE tasks ("
-            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
-            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
-            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
-            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE pipelines ("
-            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
-            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
-            "  task_graph_json VARCHAR, user_id VARCHAR,"
-            "  created_at VARCHAR, completed_at VARCHAR"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE agents ("
-            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
-            ")"
-        ))
+        await conn.execute(
+            text(
+                "CREATE TABLE tasks ("
+                "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+                "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+                "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+                "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE pipelines ("
+                "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+                "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+                "  task_graph_json VARCHAR, user_id VARCHAR,"
+                "  created_at VARCHAR, completed_at VARCHAR"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE agents ("
+                "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+                ")"
+            )
+        )
 
     # Step 2: wrap in Database and call initialize() — should add missing columns
     from forge.storage.db import Database as DB
+
     db = DB.__new__(DB)
     db._engine = engine
     from sqlalchemy.ext.asyncio import async_sessionmaker
+
     db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
     await db.initialize()
 
     # Step 3: operations that touch new columns should work
     await db.create_task(
-        id="t1", title="T", description="D", files=[], depends_on=[],
-        complexity="low", pipeline_id="pipe-1",
+        id="t1",
+        title="T",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-1",
     )
     task = await db.get_task("t1")
     assert task.pipeline_id == "pipe-1"
 
     await db.create_pipeline(
-        id="pipe-1", description="P", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="P",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.set_pipeline_pr_url("pipe-1", "https://github.com/pull/1")
     pipeline = await db.get_pipeline("pipe-1")
@@ -199,53 +252,63 @@ async def test_migrate_adds_project_columns():
     # Create a DB with old schema (no project_path/project_name on pipelines)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.execute(text(
-            "CREATE TABLE pipelines ("
-            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
-            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
-            "  task_graph_json VARCHAR, user_id VARCHAR,"
-            "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
-            "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
-            "  build_cmd VARCHAR, test_cmd VARCHAR,"
-            "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
-            "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
-            "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
-            "  github_issue_url VARCHAR, github_issue_number INTEGER,"
-            "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
-            "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0"
-            ")"
-        ))
+        await conn.execute(
+            text(
+                "CREATE TABLE pipelines ("
+                "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+                "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+                "  task_graph_json VARCHAR, user_id VARCHAR,"
+                "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
+                "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
+                "  build_cmd VARCHAR, test_cmd VARCHAR,"
+                "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
+                "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
+                "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
+                "  github_issue_url VARCHAR, github_issue_number INTEGER,"
+                "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
+                "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0"
+                ")"
+            )
+        )
         # Insert a row with old schema (no project columns)
-        await conn.execute(text(
-            "INSERT INTO pipelines (id, description, project_dir, created_at) "
-            "VALUES ('old-pipe', 'Old pipeline', '/tmp/old', '2025-01-01T00:00:00+00:00')"
-        ))
+        await conn.execute(
+            text(
+                "INSERT INTO pipelines (id, description, project_dir, created_at) "
+                "VALUES ('old-pipe', 'Old pipeline', '/tmp/old', '2025-01-01T00:00:00+00:00')"
+            )
+        )
         # Also create minimal tasks/agents tables to avoid errors
-        await conn.execute(text(
-            "CREATE TABLE tasks ("
-            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
-            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
-            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
-            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
-            "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
-            "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
-            "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
-            "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
-            "  implementation_summary VARCHAR, session_id VARCHAR,"
-            "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE agents ("
-            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
-            ")"
-        ))
+        await conn.execute(
+            text(
+                "CREATE TABLE tasks ("
+                "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+                "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+                "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+                "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
+                "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
+                "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
+                "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
+                "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
+                "  implementation_summary VARCHAR, session_id VARCHAR,"
+                "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE agents ("
+                "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+                ")"
+            )
+        )
 
     # Wrap in Database and call initialize() — should add project_path/project_name columns
     from forge.storage.db import Database as DB
+
     db = DB.__new__(DB)
     db._engine = engine
     from sqlalchemy.ext.asyncio import async_sessionmaker
+
     db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
     await db.initialize()
 
@@ -258,8 +321,11 @@ async def test_migrate_adds_project_columns():
 
     # New pipeline with project columns should work
     await db.create_pipeline(
-        id="new-pipe", description="New pipeline", project_dir="/tmp/new",
-        project_path="/Users/tarun/my-project", project_name="my-project",
+        id="new-pipe",
+        description="New pipeline",
+        project_dir="/tmp/new",
+        project_path="/Users/tarun/my-project",
+        project_name="my-project",
     )
     new = await db.get_pipeline("new-pipe")
     assert new.project_path == "/Users/tarun/my-project"
@@ -270,7 +336,10 @@ async def test_migrate_adds_project_columns():
 
 async def test_set_pipeline_pr_url(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.set_pipeline_pr_url("pipe-1", "https://github.com/user/repo/pull/42")
     pipeline = await db.get_pipeline("pipe-1")
@@ -279,7 +348,10 @@ async def test_set_pipeline_pr_url(db: Database):
 
 async def test_log_event(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.log_event(
         pipeline_id="pipe-1",
@@ -295,7 +367,10 @@ async def test_log_event(db: Database):
 
 async def test_list_events_ordered_by_created_at(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     for i in range(5):
         await db.log_event(
@@ -312,10 +387,17 @@ async def test_list_events_ordered_by_created_at(db: Database):
 
 async def test_list_events_by_task(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
-    await db.log_event(pipeline_id="pipe-1", task_id="t1", event_type="agent_output", payload={"line": "a"})
-    await db.log_event(pipeline_id="pipe-1", task_id="t2", event_type="agent_output", payload={"line": "b"})
+    await db.log_event(
+        pipeline_id="pipe-1", task_id="t1", event_type="agent_output", payload={"line": "a"}
+    )
+    await db.log_event(
+        pipeline_id="pipe-1", task_id="t2", event_type="agent_output", payload={"line": "b"}
+    )
     events = await db.list_events("pipe-1", task_id="t1")
     assert len(events) == 1
     assert events[0].payload["line"] == "a"
@@ -323,7 +405,12 @@ async def test_list_events_by_task(db: Database):
 
 async def test_add_task_cost(db: Database):
     await db.create_task(
-        id="t1", title="T", description="D", files=[], depends_on=[], complexity="low",
+        id="t1",
+        title="T",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
     )
     await db.add_task_cost("t1", 0.05)
     await db.add_task_cost("t1", 0.03)
@@ -333,7 +420,10 @@ async def test_add_task_cost(db: Database):
 
 async def test_list_events_by_type(db: Database):
     await db.create_pipeline(
-        id="pipe-1", description="Test", project_dir="/tmp", model_strategy="auto",
+        id="pipe-1",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
     )
     await db.log_event(pipeline_id="pipe-1", task_id=None, event_type="phase_change", payload={})
     await db.log_event(pipeline_id="pipe-1", task_id="t1", event_type="review_update", payload={})
@@ -347,8 +437,11 @@ async def test_list_events_by_type(db: Database):
 async def test_create_pipeline_with_branch_name(db: Database):
     """create_pipeline should store branch_name."""
     await db.create_pipeline(
-        id="pipe-bn", description="Branch test", project_dir="/tmp",
-        model_strategy="auto", branch_name="feat/my-feature",
+        id="pipe-bn",
+        description="Branch test",
+        project_dir="/tmp",
+        model_strategy="auto",
+        branch_name="feat/my-feature",
     )
     pipeline = await db.get_pipeline("pipe-bn")
     assert pipeline is not None
@@ -358,7 +451,9 @@ async def test_create_pipeline_with_branch_name(db: Database):
 async def test_create_pipeline_branch_name_defaults_to_none(db: Database):
     """create_pipeline without branch_name should default to None."""
     await db.create_pipeline(
-        id="pipe-no-bn", description="No branch", project_dir="/tmp",
+        id="pipe-no-bn",
+        description="No branch",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     pipeline = await db.get_pipeline("pipe-no-bn")
@@ -372,26 +467,42 @@ async def test_restart_pipeline_resets_state(db: Database):
     """restart_pipeline should reset pipeline and tasks, delete events."""
     # Setup: create pipeline with tasks and events
     await db.create_pipeline(
-        id="pipe-r1", description="Restart test", project_dir="/tmp",
+        id="pipe-r1",
+        description="Restart test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.set_pipeline_plan("pipe-r1", '{"tasks": []}')
     await db.update_pipeline_status("pipe-r1", "executing")
 
     await db.create_task(
-        id="t1", title="T1", description="D", files=["a.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-r1",
+        id="t1",
+        title="T1",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-r1",
     )
     await db.create_task(
-        id="t2", title="T2", description="D", files=["b.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-r1",
+        id="t2",
+        title="T2",
+        description="D",
+        files=["b.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-r1",
     )
     await db.update_task_state("t1", "done")
     await db.update_task_state("t2", "in_progress")
 
     # Add some events
-    await db.log_event(pipeline_id="pipe-r1", task_id="t1", event_type="agent_output", payload={"line": "hi"})
-    await db.log_event(pipeline_id="pipe-r1", task_id="t2", event_type="agent_output", payload={"line": "bye"})
+    await db.log_event(
+        pipeline_id="pipe-r1", task_id="t1", event_type="agent_output", payload={"line": "hi"}
+    )
+    await db.log_event(
+        pipeline_id="pipe-r1", task_id="t2", event_type="agent_output", payload={"line": "bye"}
+    )
 
     # Act
     result = await db.restart_pipeline("pipe-r1")
@@ -426,20 +537,37 @@ async def test_restart_pipeline_nonexistent_returns_zeros(db: Database):
 async def test_cancel_pipeline_hard_marks_cancelled(db: Database):
     """cancel_pipeline_hard should cancel pipeline and non-terminal tasks."""
     await db.create_pipeline(
-        id="pipe-c1", description="Cancel test", project_dir="/tmp",
+        id="pipe-c1",
+        description="Cancel test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.create_task(
-        id="t1", title="T1", description="D", files=["a.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-c1",
+        id="t1",
+        title="T1",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-c1",
     )
     await db.create_task(
-        id="t2", title="T2", description="D", files=["b.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-c1",
+        id="t2",
+        title="T2",
+        description="D",
+        files=["b.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-c1",
     )
     await db.create_task(
-        id="t3", title="T3", description="D", files=["c.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-c1",
+        id="t3",
+        title="T3",
+        description="D",
+        files=["c.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-c1",
     )
     # t1 is in progress, t2 is done, t3 is todo
     await db.update_task_state("t1", "in_progress")
@@ -472,12 +600,19 @@ async def test_cancel_pipeline_hard_nonexistent_returns_zero(db: Database):
 async def test_cancel_pipeline_hard_skips_error_tasks(db: Database):
     """cancel_pipeline_hard should not cancel tasks in 'error' state."""
     await db.create_pipeline(
-        id="pipe-c2", description="Cancel skip error", project_dir="/tmp",
+        id="pipe-c2",
+        description="Cancel skip error",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.create_task(
-        id="te1", title="T1", description="D", files=[],
-        depends_on=[], complexity="low", pipeline_id="pipe-c2",
+        id="te1",
+        title="T1",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-c2",
     )
     await db.update_task_state("te1", "error")
 
@@ -494,12 +629,19 @@ async def test_cancel_pipeline_hard_skips_error_tasks(db: Database):
 async def test_approve_task_atomically_success(db: Database):
     """approve_task_atomically transitions awaiting_approval -> merging."""
     await db.create_pipeline(
-        id="pipe-ap", description="Approve test", project_dir="/tmp",
+        id="pipe-ap",
+        description="Approve test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.create_task(
-        id="t-ap", title="T", description="D", files=["a.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-ap",
+        id="t-ap",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-ap",
     )
     await db.update_task_state("t-ap", "awaiting_approval")
 
@@ -515,12 +657,19 @@ async def test_approve_task_atomically_success(db: Database):
 async def test_approve_task_atomically_wrong_state_raises(db: Database):
     """approve_task_atomically raises ValueError if task not awaiting_approval."""
     await db.create_pipeline(
-        id="pipe-ap2", description="Approve test", project_dir="/tmp",
+        id="pipe-ap2",
+        description="Approve test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.create_task(
-        id="t-ap2", title="T", description="D", files=["a.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-ap2",
+        id="t-ap2",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-ap2",
     )
     await db.update_task_state("t-ap2", "done")
 
@@ -537,12 +686,19 @@ async def test_approve_task_atomically_not_found_returns_none(db: Database):
 async def test_approve_task_atomically_wrong_pipeline_returns_none(db: Database):
     """approve_task_atomically returns None if pipeline_id doesn't match."""
     await db.create_pipeline(
-        id="pipe-ap3", description="Test", project_dir="/tmp",
+        id="pipe-ap3",
+        description="Test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.create_task(
-        id="t-ap3", title="T", description="D", files=["a.py"],
-        depends_on=[], complexity="low", pipeline_id="pipe-ap3",
+        id="t-ap3",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-ap3",
     )
     await db.update_task_state("t-ap3", "awaiting_approval")
 
@@ -556,7 +712,12 @@ async def test_approve_task_atomically_wrong_pipeline_returns_none(db: Database)
 async def test_add_task_agent_cost_accumulates(db: Database):
     """add_task_agent_cost should atomically accumulate cost and tokens."""
     await db.create_task(
-        id="t-ac", title="T", description="D", files=[], depends_on=[], complexity="low",
+        id="t-ac",
+        title="T",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
     )
     await db.add_task_agent_cost("t-ac", 0.10, 100, 50)
     await db.add_task_agent_cost("t-ac", 0.05, 200, 100)
@@ -571,7 +732,12 @@ async def test_add_task_agent_cost_accumulates(db: Database):
 async def test_add_task_review_cost_accumulates(db: Database):
     """add_task_review_cost should atomically accumulate review cost."""
     await db.create_task(
-        id="t-rc", title="T", description="D", files=[], depends_on=[], complexity="low",
+        id="t-rc",
+        title="T",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
     )
     await db.add_task_review_cost("t-rc", 0.02)
     await db.add_task_review_cost("t-rc", 0.03)
@@ -584,7 +750,9 @@ async def test_add_task_review_cost_accumulates(db: Database):
 async def test_add_pipeline_cost_accumulates(db: Database):
     """add_pipeline_cost should atomically accumulate pipeline total cost."""
     await db.create_pipeline(
-        id="pipe-cost", description="Cost test", project_dir="/tmp",
+        id="pipe-cost",
+        description="Cost test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     await db.add_pipeline_cost("pipe-cost", 0.10)
@@ -597,8 +765,11 @@ async def test_add_pipeline_cost_accumulates(db: Database):
 async def test_executor_tracking_columns(db: Database):
     """executor_pid and executor_token can be set and cleared on a pipeline."""
     await db.create_pipeline(
-        id="pipe-exec", description="test", project_dir="/tmp",
-        model_strategy="balanced", budget_limit_usd=10,
+        id="pipe-exec",
+        description="test",
+        project_dir="/tmp",
+        model_strategy="balanced",
+        budget_limit_usd=10,
     )
     await db.set_executor_info("pipe-exec", pid=12345, token="abc-123")
     p = await db.get_pipeline("pipe-exec")
@@ -669,8 +840,12 @@ async def test_database_async_context_manager():
     async with Database("sqlite+aiosqlite:///:memory:") as db:
         # Should be initialized — create a task to verify
         await db.create_task(
-            id="t-ctx", title="Context test", description="D",
-            files=["a.py"], depends_on=[], complexity="low",
+            id="t-ctx",
+            title="Context test",
+            description="D",
+            files=["a.py"],
+            depends_on=[],
+            complexity="low",
         )
         task = await db.get_task("t-ctx")
         assert task is not None
@@ -715,8 +890,12 @@ async def test_mark_interjection_delivered(db):
 async def test_task_repo_id_defaults_to_default(db: Database):
     """create_task without repo_id should default to 'default'."""
     await db.create_task(
-        id="t-repo-def", title="T", description="D",
-        files=["a.py"], depends_on=[], complexity="low",
+        id="t-repo-def",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
     )
     task = await db.get_task("t-repo-def")
     assert task.repo_id == "default"
@@ -725,8 +904,12 @@ async def test_task_repo_id_defaults_to_default(db: Database):
 async def test_task_repo_id_custom(db: Database):
     """create_task with repo_id='backend' should store it."""
     await db.create_task(
-        id="t-repo-be", title="T", description="D",
-        files=["a.py"], depends_on=[], complexity="low",
+        id="t-repo-be",
+        title="T",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
         repo_id="backend",
     )
     task = await db.get_task("t-repo-be")
@@ -736,7 +919,9 @@ async def test_task_repo_id_custom(db: Database):
 async def test_pipeline_repos_json_defaults_to_none(db: Database):
     """create_pipeline without repos_json should default to None."""
     await db.create_pipeline(
-        id="pipe-rj-def", description="Test", project_dir="/tmp",
+        id="pipe-rj-def",
+        description="Test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     pipeline = await db.get_pipeline("pipe-rj-def")
@@ -746,11 +931,15 @@ async def test_pipeline_repos_json_defaults_to_none(db: Database):
 async def test_pipeline_repos_json_stored(db: Database):
     """create_pipeline with repos_json should store the JSON string."""
     import json
+
     repos = [{"id": "backend", "path": "/tmp/be", "base_branch": "main", "branch_name": "feat/x"}]
     repos_str = json.dumps(repos)
     await db.create_pipeline(
-        id="pipe-rj-set", description="Test", project_dir="/tmp",
-        model_strategy="auto", repos_json=repos_str,
+        id="pipe-rj-set",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
+        repos_json=repos_str,
     )
     pipeline = await db.get_pipeline("pipe-rj-set")
     assert pipeline.repos_json == repos_str
@@ -759,8 +948,12 @@ async def test_pipeline_repos_json_stored(db: Database):
 async def test_pipeline_get_repos_single_repo(db: Database):
     """get_repos() with no repos_json returns synthetic default entry."""
     await db.create_pipeline(
-        id="pipe-gr-single", description="Test", project_dir="/tmp/project",
-        model_strategy="auto", base_branch="main", branch_name="feat/test",
+        id="pipe-gr-single",
+        description="Test",
+        project_dir="/tmp/project",
+        model_strategy="auto",
+        base_branch="main",
+        branch_name="feat/test",
     )
     pipeline = await db.get_pipeline("pipe-gr-single")
     repos = pipeline.get_repos()
@@ -774,13 +967,17 @@ async def test_pipeline_get_repos_single_repo(db: Database):
 async def test_pipeline_get_repos_multi_repo(db: Database):
     """get_repos() with repos_json parses and returns the list."""
     import json
+
     repos = [
         {"id": "backend", "path": "/tmp/be", "base_branch": "main", "branch_name": "feat/x"},
         {"id": "frontend", "path": "/tmp/fe", "base_branch": "develop", "branch_name": "feat/y"},
     ]
     await db.create_pipeline(
-        id="pipe-gr-multi", description="Test", project_dir="/tmp",
-        model_strategy="auto", repos_json=json.dumps(repos),
+        id="pipe-gr-multi",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
+        repos_json=json.dumps(repos),
     )
     pipeline = await db.get_pipeline("pipe-gr-multi")
     result = pipeline.get_repos()
@@ -793,7 +990,9 @@ async def test_pipeline_get_repos_multi_repo(db: Database):
 async def test_pipeline_get_repos_no_base_branch_raises(db: Database):
     """get_repos() without base_branch or repos_json should raise ValueError."""
     await db.create_pipeline(
-        id="pipe-gr-err", description="Test", project_dir="/tmp",
+        id="pipe-gr-err",
+        description="Test",
+        project_dir="/tmp",
         model_strategy="auto",
     )
     pipeline = await db.get_pipeline("pipe-gr-err")
@@ -809,54 +1008,63 @@ async def test_migrate_adds_repo_id_column():
     # Create a DB with old schema (no repo_id on tasks)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.execute(text(
-            "CREATE TABLE tasks ("
-            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
-            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
-            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
-            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
-            "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
-            "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
-            "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
-            "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
-            "  implementation_summary VARCHAR, session_id VARCHAR,"
-            "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3,"
-            "  review_diff TEXT"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE pipelines ("
-            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
-            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
-            "  task_graph_json VARCHAR, user_id VARCHAR,"
-            "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
-            "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
-            "  build_cmd VARCHAR, test_cmd VARCHAR,"
-            "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
-            "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
-            "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
-            "  github_issue_url VARCHAR, github_issue_number INTEGER,"
-            "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
-            "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0,"
-            "  project_path VARCHAR, project_name VARCHAR,"
-            "  executor_pid INTEGER, executor_token VARCHAR,"
-            "  baseline_exit_code INTEGER, integration_status VARCHAR,"
-            "  repos_json TEXT"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE agents ("
-            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
-            ")"
-        ))
+        await conn.execute(
+            text(
+                "CREATE TABLE tasks ("
+                "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+                "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+                "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+                "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
+                "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
+                "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
+                "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
+                "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
+                "  implementation_summary VARCHAR, session_id VARCHAR,"
+                "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3,"
+                "  review_diff TEXT"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE pipelines ("
+                "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+                "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+                "  task_graph_json VARCHAR, user_id VARCHAR,"
+                "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
+                "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
+                "  build_cmd VARCHAR, test_cmd VARCHAR,"
+                "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
+                "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
+                "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
+                "  github_issue_url VARCHAR, github_issue_number INTEGER,"
+                "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
+                "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0,"
+                "  project_path VARCHAR, project_name VARCHAR,"
+                "  executor_pid INTEGER, executor_token VARCHAR,"
+                "  baseline_exit_code INTEGER, integration_status VARCHAR,"
+                "  repos_json TEXT"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE agents ("
+                "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+                ")"
+            )
+        )
         # Insert a task with old schema (no repo_id)
-        await conn.execute(text(
-            "INSERT INTO tasks (id, title, description, files, depends_on, complexity) "
-            "VALUES ('old-task', 'Old', 'Old task', '[]', '[]', 'low')"
-        ))
+        await conn.execute(
+            text(
+                "INSERT INTO tasks (id, title, description, files, depends_on, complexity) "
+                "VALUES ('old-task', 'Old', 'Old task', '[]', '[]', 'low')"
+            )
+        )
 
     # Wrap in Database and call initialize() — should add repo_id column
     from forge.storage.db import Database as DB
+
     db = DB.__new__(DB)
     db._engine = engine
     db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -869,8 +1077,12 @@ async def test_migrate_adds_repo_id_column():
 
     # New task with repo_id should work
     await db.create_task(
-        id="new-task", title="New", description="D",
-        files=[], depends_on=[], complexity="low",
+        id="new-task",
+        title="New",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
         repo_id="backend",
     )
     new = await db.get_task("new-task")
@@ -887,55 +1099,64 @@ async def test_migrate_adds_repos_json_column():
     # Create a DB with old schema (no repos_json on pipelines)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.execute(text(
-            "CREATE TABLE tasks ("
-            "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
-            "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
-            "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
-            "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
-            "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
-            "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
-            "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
-            "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
-            "  implementation_summary VARCHAR, session_id VARCHAR,"
-            "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3,"
-            "  review_diff TEXT, repo_id VARCHAR DEFAULT 'default'"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE pipelines ("
-            "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
-            "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
-            "  task_graph_json VARCHAR, user_id VARCHAR,"
-            "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
-            "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
-            "  build_cmd VARCHAR, test_cmd VARCHAR,"
-            "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
-            "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
-            "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
-            "  github_issue_url VARCHAR, github_issue_number INTEGER,"
-            "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
-            "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0,"
-            "  project_path VARCHAR, project_name VARCHAR,"
-            "  executor_pid INTEGER, executor_token VARCHAR,"
-            "  baseline_exit_code INTEGER, integration_status VARCHAR"
-            ")"
-        ))
-        await conn.execute(text(
-            "CREATE TABLE agents ("
-            "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
-            ")"
-        ))
+        await conn.execute(
+            text(
+                "CREATE TABLE tasks ("
+                "  id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, description VARCHAR NOT NULL,"
+                "  files JSON NOT NULL, depends_on JSON NOT NULL, complexity VARCHAR NOT NULL,"
+                "  state VARCHAR NOT NULL DEFAULT 'todo', assigned_agent VARCHAR,"
+                "  retry_count INTEGER NOT NULL DEFAULT 0, branch_name VARCHAR, worktree_path VARCHAR,"
+                "  pipeline_id VARCHAR, review_feedback VARCHAR, retry_reason VARCHAR,"
+                "  cost_usd FLOAT DEFAULT 0.0, agent_cost_usd FLOAT DEFAULT 0.0,"
+                "  review_cost_usd FLOAT DEFAULT 0.0, input_tokens INTEGER DEFAULT 0,"
+                "  output_tokens INTEGER DEFAULT 0, approval_context VARCHAR, prior_diff VARCHAR,"
+                "  implementation_summary VARCHAR, session_id VARCHAR,"
+                "  questions_asked INTEGER DEFAULT 0, questions_limit INTEGER DEFAULT 3,"
+                "  review_diff TEXT, repo_id VARCHAR DEFAULT 'default'"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE pipelines ("
+                "  id VARCHAR PRIMARY KEY, description VARCHAR NOT NULL, project_dir VARCHAR NOT NULL,"
+                "  status VARCHAR NOT NULL DEFAULT 'planning', model_strategy VARCHAR NOT NULL DEFAULT 'auto',"
+                "  task_graph_json VARCHAR, user_id VARCHAR,"
+                "  created_at VARCHAR, completed_at VARCHAR, pr_url VARCHAR,"
+                "  base_branch VARCHAR, branch_name VARCHAR, cancelled_at VARCHAR,"
+                "  build_cmd VARCHAR, test_cmd VARCHAR,"
+                "  planner_cost_usd FLOAT DEFAULT 0.0, total_cost_usd FLOAT DEFAULT 0.0,"
+                "  budget_limit_usd FLOAT DEFAULT 0.0, estimated_cost_usd FLOAT DEFAULT 0.0,"
+                "  paused BOOLEAN DEFAULT 0, conventions_json TEXT, require_approval BOOLEAN DEFAULT 0,"
+                "  github_issue_url VARCHAR, github_issue_number INTEGER,"
+                "  template_id VARCHAR, template_config_json TEXT, contracts_json TEXT,"
+                "  paused_at VARCHAR, paused_duration FLOAT DEFAULT 0.0,"
+                "  project_path VARCHAR, project_name VARCHAR,"
+                "  executor_pid INTEGER, executor_token VARCHAR,"
+                "  baseline_exit_code INTEGER, integration_status VARCHAR"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE agents ("
+                "  id VARCHAR PRIMARY KEY, state VARCHAR NOT NULL DEFAULT 'idle', current_task VARCHAR"
+                ")"
+            )
+        )
         # Insert a pipeline with old schema (no repos_json)
-        await conn.execute(text(
-            "INSERT INTO pipelines (id, description, project_dir, created_at) "
-            "VALUES ('old-pipe', 'Old', '/tmp/old', '2025-01-01T00:00:00+00:00')"
-        ))
+        await conn.execute(
+            text(
+                "INSERT INTO pipelines (id, description, project_dir, created_at) "
+                "VALUES ('old-pipe', 'Old', '/tmp/old', '2025-01-01T00:00:00+00:00')"
+            )
+        )
 
     # Wrap in Database and call initialize() — should add repos_json column
     import json
 
     from forge.storage.db import Database as DB
+
     db = DB.__new__(DB)
     db._engine = engine
     db._session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -949,7 +1170,9 @@ async def test_migrate_adds_repos_json_column():
     # New pipeline with repos_json should work
     repos = [{"id": "backend", "path": "/tmp/be", "base_branch": "main", "branch_name": ""}]
     await db.create_pipeline(
-        id="new-pipe", description="New", project_dir="/tmp/new",
+        id="new-pipe",
+        description="New",
+        project_dir="/tmp/new",
         repos_json=json.dumps(repos),
     )
     new = await db.get_pipeline("new-pipe")
@@ -965,9 +1188,12 @@ async def test_migrate_adds_repos_json_column():
 async def test_add_lesson_returns_id(db: Database):
     """add_lesson should return a lesson ID."""
     lid = await db.add_lesson(
-        scope="global", category="command_failure",
-        title="Always check exit code", content="Check exit code",
-        trigger="exit code", resolution="Use set -e",
+        scope="global",
+        category="command_failure",
+        title="Always check exit code",
+        content="Check exit code",
+        trigger="exit code",
+        resolution="Use set -e",
     )
     assert lid is not None
     assert len(lid) == 36  # UUID
@@ -981,9 +1207,12 @@ async def test_add_lesson_pruning(db: Database):
         ids = []
         for i in range(7):
             lid = await db.add_lesson(
-                scope="global", category="command_failure",
-                title=f"Lesson {i}", content=f"Content {i}",
-                trigger=f"trigger-{i}", resolution=f"Resolution {i}",
+                scope="global",
+                category="command_failure",
+                title=f"Lesson {i}",
+                content=f"Content {i}",
+                trigger=f"trigger-{i}",
+                resolution=f"Resolution {i}",
             )
             ids.append(lid)
 
@@ -1006,26 +1235,42 @@ async def test_add_lesson_pruning_respects_hit_count(db: Database):
     try:
         # Add 3 lessons
         lid1 = await db.add_lesson(
-            scope="global", category="command_failure",
-            title="Low hits", content="c", trigger="t1", resolution="r",
+            scope="global",
+            category="command_failure",
+            title="Low hits",
+            content="c",
+            trigger="t1",
+            resolution="r",
         )
         lid2 = await db.add_lesson(
-            scope="global", category="command_failure",
-            title="High hits", content="c", trigger="t2", resolution="r",
+            scope="global",
+            category="command_failure",
+            title="High hits",
+            content="c",
+            trigger="t2",
+            resolution="r",
         )
         # Bump hit count on lid2 so it's more valuable
         await db.bump_lesson_hit(lid2)
         await db.bump_lesson_hit(lid2)
 
         await db.add_lesson(
-            scope="global", category="command_failure",
-            title="Medium hits", content="c", trigger="t3", resolution="r",
+            scope="global",
+            category="command_failure",
+            title="Medium hits",
+            content="c",
+            trigger="t3",
+            resolution="r",
         )
 
         # Adding a 4th should prune the lowest hit_count (lid1)
         await db.add_lesson(
-            scope="global", category="command_failure",
-            title="New lesson", content="c", trigger="t4", resolution="r",
+            scope="global",
+            category="command_failure",
+            title="New lesson",
+            content="c",
+            trigger="t4",
+            resolution="r",
         )
 
         all_lessons = await db.list_all_lessons()
@@ -1040,9 +1285,12 @@ async def test_add_lesson_pruning_respects_hit_count(db: Database):
 async def test_find_matching_lesson_normalized(db: Database):
     """find_matching_lesson should match case-insensitively with normalized whitespace."""
     await db.add_lesson(
-        scope="global", category="command_failure",
-        title="Exit Code Check", content="c",
-        trigger="always check  EXIT  code", resolution="r",
+        scope="global",
+        category="command_failure",
+        title="Exit Code Check",
+        content="c",
+        trigger="always check  EXIT  code",
+        resolution="r",
     )
 
     # Should match with different casing and whitespace
@@ -1062,9 +1310,12 @@ async def test_find_matching_lesson_normalized(db: Database):
 async def test_find_matching_lesson_reverse_contains(db: Database):
     """find_matching_lesson should match when stored trigger is substring of query."""
     await db.add_lesson(
-        scope="global", category="code_pattern",
-        title="Use set -e", content="c",
-        trigger="set -e", resolution="r",
+        scope="global",
+        category="code_pattern",
+        title="Use set -e",
+        content="c",
+        trigger="set -e",
+        resolution="r",
     )
 
     # Query contains the stored trigger

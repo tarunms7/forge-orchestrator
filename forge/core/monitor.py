@@ -38,7 +38,7 @@ class ResourceMonitor:
             return ResourceSnapshot(
                 cpu_percent=psutil.cpu_percent(interval=0.1),
                 memory_available_pct=mem.available / mem.total * 100,
-                disk_free_gb=disk.free / (1024 ** 3),
+                disk_free_gb=disk.free / (1024**3),
             )
         except (OSError, RuntimeError) as exc:
             logger.warning("Resource snapshot failed: %s — returning safe defaults", exc)

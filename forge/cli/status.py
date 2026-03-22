@@ -11,7 +11,8 @@ from rich.table import Table
 
 
 async def _fetch_pipelines(
-    db_url: str, project_path: str | None = None,
+    db_url: str,
+    project_path: str | None = None,
 ) -> list[dict]:
     """Open the DB, fetch pipelines with task counts, and return dicts.
 
@@ -55,7 +56,10 @@ _STATUS_COLORS = {
 @click.command("status")
 @click.option("--project-dir", default=".", help="Project root directory")
 @click.option(
-    "--all", "show_all", is_flag=True, default=False,
+    "--all",
+    "show_all",
+    is_flag=True,
+    default=False,
     help="Show pipelines from all projects",
 )
 def status(project_dir: str, show_all: bool) -> None:
@@ -95,12 +99,14 @@ def status(project_dir: str, show_all: bool) -> None:
         row = [p["id"]]
         if show_all:
             row.append(p["project_name"])
-        row.extend([
-            description_text,
-            f"[{color}]{status_text}[/{color}]",
-            str(p["task_count"]),
-            p["created_at"],
-        ])
+        row.extend(
+            [
+                description_text,
+                f"[{color}]{status_text}[/{color}]",
+                str(p["task_count"]),
+                p["created_at"],
+            ]
+        )
         table.add_row(*row)
 
     console.print(table)

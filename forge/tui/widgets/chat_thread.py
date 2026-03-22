@@ -98,7 +98,9 @@ class ChatThread(Widget):
 
         scroll.scroll_end(animate=False)
 
-    def update_question(self, question: dict, work_lines: list[str], history: list[dict] | None = None) -> None:
+    def update_question(
+        self, question: dict, work_lines: list[str], history: list[dict] | None = None
+    ) -> None:
         self._question = question
         self._work_lines = work_lines
         self._history = history or []

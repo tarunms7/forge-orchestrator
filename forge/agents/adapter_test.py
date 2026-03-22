@@ -210,7 +210,8 @@ def test_build_options_includes_conventions():
     adapter = ClaudeAdapter()
     conventions_md = "## Code Style\n\nUse black."
     options = adapter._build_options(
-        "/tmp/wt", [],
+        "/tmp/wt",
+        [],
         conventions_md=conventions_md,
     )
     assert "## Project Conventions" in options.system_prompt
@@ -228,7 +229,8 @@ def test_build_options_includes_dependency_context():
         }
     ]
     options = adapter._build_options(
-        "/tmp/wt", [],
+        "/tmp/wt",
+        [],
         completed_deps=deps,
     )
     assert "## Completed Dependencies" in options.system_prompt
@@ -285,7 +287,9 @@ async def test_claude_adapter_passes_on_message_to_sdk_query():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=["a.py"]):
+        with patch(
+            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=["a.py"]
+        ):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -315,11 +319,20 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
 
     conventions_md = "## Lint\n\nUse ruff."
     conventions_json = json.dumps({"Testing": "pytest"})
-    deps = [{"task_id": "t1", "title": "Setup", "implementation_summary": "Init", "files_changed": ["a.py"]}]
+    deps = [
+        {
+            "task_id": "t1",
+            "title": "Setup",
+            "implementation_summary": "Init",
+            "files_changed": ["a.py"],
+        }
+    ]
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]):
+        with patch(
+            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]
+        ):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -346,7 +359,8 @@ def test_build_options_autonomy_settings():
     """_build_options should forward autonomy and questions_remaining to system prompt."""
     adapter = ClaudeAdapter()
     options = adapter._build_options(
-        "/tmp/wt", [],
+        "/tmp/wt",
+        [],
         autonomy="full",
         questions_remaining=0,
     )
@@ -359,7 +373,8 @@ def test_build_options_supervised_autonomy():
     """_build_options with supervised autonomy should include supervised protocol."""
     adapter = ClaudeAdapter()
     options = adapter._build_options(
-        "/tmp/wt", [],
+        "/tmp/wt",
+        [],
         autonomy="supervised",
         questions_remaining=5,
     )
@@ -378,7 +393,9 @@ async def test_claude_adapter_run_forwards_autonomy():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]):
+        with patch(
+            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]
+        ):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -407,7 +424,9 @@ async def test_claude_adapter_error_includes_cost():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch("forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]):
+        with patch(
+            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]
+        ):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -577,11 +596,13 @@ class TestAgentPermissions:
     def test_allowed_tools_contains_git(self):
         """Git commands are in the allowed tools list."""
         from forge.agents.adapter import AGENT_ALLOWED_TOOLS
+
         assert "Bash(git *)" in AGENT_ALLOWED_TOOLS
 
     def test_allowed_tools_contains_file_ops(self):
         """rm, mv, cp, mkdir are allowed for refactoring."""
         from forge.agents.adapter import AGENT_ALLOWED_TOOLS
+
         assert "Bash(rm *)" in AGENT_ALLOWED_TOOLS
         assert "Bash(mv *)" in AGENT_ALLOWED_TOOLS
         assert "Bash(mkdir *)" in AGENT_ALLOWED_TOOLS
@@ -589,6 +610,7 @@ class TestAgentPermissions:
     def test_allowed_tools_contains_build_tools(self):
         """Common build/test tools are allowed."""
         from forge.agents.adapter import AGENT_ALLOWED_TOOLS
+
         assert "Bash(pytest *)" in AGENT_ALLOWED_TOOLS
         assert "Bash(npm *)" in AGENT_ALLOWED_TOOLS
         assert "Bash(make *)" in AGENT_ALLOWED_TOOLS
@@ -597,6 +619,7 @@ class TestAgentPermissions:
     def test_disallowed_tools_blocks_network(self):
         """Network commands are blocked."""
         from forge.agents.adapter import AGENT_DISALLOWED_TOOLS
+
         assert "Bash(curl *)" in AGENT_DISALLOWED_TOOLS
         assert "Bash(wget *)" in AGENT_DISALLOWED_TOOLS
         assert "Bash(ssh *)" in AGENT_DISALLOWED_TOOLS
@@ -604,6 +627,7 @@ class TestAgentPermissions:
     def test_disallowed_tools_blocks_privilege_escalation(self):
         """sudo and friends are blocked."""
         from forge.agents.adapter import AGENT_DISALLOWED_TOOLS
+
         assert "Bash(sudo *)" in AGENT_DISALLOWED_TOOLS
         assert "Bash(chmod *)" in AGENT_DISALLOWED_TOOLS
 
@@ -612,7 +636,8 @@ class TestAgentPermissions:
         # Build options and verify no file is created
         adapter = ClaudeAdapter()
         options = adapter._build_options(
-            str(tmp_path), [],
+            str(tmp_path),
+            [],
             model="sonnet",
             project_context="",
         )
@@ -624,7 +649,8 @@ class TestAgentPermissions:
         """_build_options includes allowed_tools and disallowed_tools."""
         adapter = ClaudeAdapter()
         options = adapter._build_options(
-            "/tmp/test", [],
+            "/tmp/test",
+            [],
             model="sonnet",
             project_context="",
         )

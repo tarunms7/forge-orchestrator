@@ -4,9 +4,25 @@ from forge.core.errors import ForgeError
 from forge.core.models import TaskState
 
 _TRANSITIONS: dict[TaskState, set[TaskState]] = {
-    TaskState.TODO: {TaskState.IN_PROGRESS, TaskState.BLOCKED, TaskState.CANCELLED, TaskState.ERROR},
-    TaskState.IN_PROGRESS: {TaskState.IN_REVIEW, TaskState.AWAITING_INPUT, TaskState.CANCELLED, TaskState.ERROR},
-    TaskState.IN_REVIEW: {TaskState.MERGING, TaskState.IN_PROGRESS, TaskState.AWAITING_APPROVAL, TaskState.CANCELLED, TaskState.ERROR},
+    TaskState.TODO: {
+        TaskState.IN_PROGRESS,
+        TaskState.BLOCKED,
+        TaskState.CANCELLED,
+        TaskState.ERROR,
+    },
+    TaskState.IN_PROGRESS: {
+        TaskState.IN_REVIEW,
+        TaskState.AWAITING_INPUT,
+        TaskState.CANCELLED,
+        TaskState.ERROR,
+    },
+    TaskState.IN_REVIEW: {
+        TaskState.MERGING,
+        TaskState.IN_PROGRESS,
+        TaskState.AWAITING_APPROVAL,
+        TaskState.CANCELLED,
+        TaskState.ERROR,
+    },
     TaskState.AWAITING_APPROVAL: {TaskState.MERGING, TaskState.CANCELLED, TaskState.ERROR},
     TaskState.AWAITING_INPUT: {TaskState.IN_PROGRESS, TaskState.CANCELLED, TaskState.ERROR},
     TaskState.BLOCKED: {TaskState.TODO, TaskState.CANCELLED, TaskState.ERROR},
@@ -27,7 +43,5 @@ class TaskStateMachine:
     @staticmethod
     def transition(current: TaskState, target: TaskState) -> TaskState:
         if not TaskStateMachine.can_transition(current, target):
-            raise ForgeError(
-                f"Invalid transition: {current.value} -> {target.value}"
-            )
+            raise ForgeError(f"Invalid transition: {current.value} -> {target.value}")
         return target

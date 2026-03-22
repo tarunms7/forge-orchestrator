@@ -7,6 +7,7 @@ def test_format_work_log():
     assert "auth.py" in result
     assert "middleware" in result
 
+
 def test_format_question_card():
     question = {"question": "Which ORM?", "suggestions": ["A", "B"], "context": "Found 2 patterns"}
     result = format_question_card(question)

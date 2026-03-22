@@ -71,6 +71,7 @@ def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False) ->
     suffix_visible_len = 0
     if suffix:
         import re
+
         suffix_visible_len = len(re.sub(r"\[.*?\]", "", suffix)) + 1  # +1 for space before suffix
 
     available = MAX_WIDTH - 3 - repo_width - suffix_visible_len  # 3 = " X " icon prefix
@@ -113,7 +114,14 @@ class TaskList(Widget):
         self._phase: str = ""
         self._multi_repo: bool = False
 
-    def update_tasks(self, tasks: list[dict], selected_id: str | None = None, *, phase: str = "", multi_repo: bool = False) -> None:
+    def update_tasks(
+        self,
+        tasks: list[dict],
+        selected_id: str | None = None,
+        *,
+        phase: str = "",
+        multi_repo: bool = False,
+    ) -> None:
         self._multi_repo = multi_repo
         self._tasks = tasks
         self._phase = phase
@@ -138,7 +146,11 @@ class TaskList(Widget):
             return "[#8b949e]No tasks yet[/]"
         lines = []
         for i, task in enumerate(self._tasks):
-            lines.append(format_task_line(task, selected=(i == self._selected_index), multi_repo=self._multi_repo))
+            lines.append(
+                format_task_line(
+                    task, selected=(i == self._selected_index), multi_repo=self._multi_repo
+                )
+            )
         return "\n".join(lines)
 
     def action_cursor_down(self) -> None:

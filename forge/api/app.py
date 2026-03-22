@@ -102,7 +102,8 @@ def create_app(
             # Prune pipeline_images (stored as (images, timestamp) tuples)
             pipeline_images: dict = getattr(app.state, "pipeline_images", {})
             stale_keys = [
-                k for k, v in pipeline_images.items()
+                k
+                for k, v in pipeline_images.items()
                 if (isinstance(v, tuple) and len(v) == 2 and v[1] < cutoff)
             ]
             for k in stale_keys:
@@ -116,14 +117,16 @@ def create_app(
             if lock:
                 async with lock:
                     stale_keys = [
-                        k for k, v in pending_graphs.items()
+                        k
+                        for k, v in pending_graphs.items()
                         if (isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff)
                     ]
                     for k in stale_keys:
                         pending_graphs.pop(k, None)
             else:
                 stale_keys = [
-                    k for k, v in pending_graphs.items()
+                    k
+                    for k, v in pending_graphs.items()
                     if (isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff)
                 ]
                 for k in stale_keys:
@@ -266,6 +269,7 @@ def create_app(
     frontend_dir = os.path.join(os.path.dirname(__file__), "..", "..", "web", "out")
     if os.path.isdir(frontend_dir):
         from fastapi.staticfiles import StaticFiles
+
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
     return app

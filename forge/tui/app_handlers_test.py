@@ -7,16 +7,35 @@ import pytest
 async def test_graceful_quit_resets_stuck_tasks():
     """Graceful quit should reset non-terminal tasks to TODO and mark pipeline interrupted."""
     from forge.storage.db import Database
+
     db = Database("sqlite+aiosqlite:///:memory:")
     await db.initialize()
     await db.create_pipeline(
         id="test-pipe-001",
-        description="test", project_dir="/tmp",
-        model_strategy="balanced", budget_limit_usd=10,
+        description="test",
+        project_dir="/tmp",
+        model_strategy="balanced",
+        budget_limit_usd=10,
     )
     await db.update_pipeline_status("test-pipe-001", "executing")
-    await db.create_task(id="t1", title="A", description="A", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-001")
-    await db.create_task(id="t2", title="B", description="B", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-001")
+    await db.create_task(
+        id="t1",
+        title="A",
+        description="A",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-001",
+    )
+    await db.create_task(
+        id="t2",
+        title="B",
+        description="B",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-001",
+    )
     await db.update_task_state("t1", "in_progress")
     await db.update_task_state("t2", "done")
 
@@ -39,16 +58,35 @@ async def test_graceful_quit_resets_stuck_tasks():
 async def test_rerun_resets_error_and_blocked_to_todo():
     """Re-run handler should reset error and blocked tasks to TODO."""
     from forge.storage.db import Database
+
     db = Database("sqlite+aiosqlite:///:memory:")
     await db.initialize()
     await db.create_pipeline(
         id="test-pipe-002",
-        description="test", project_dir="/tmp",
-        model_strategy="balanced", budget_limit_usd=10,
+        description="test",
+        project_dir="/tmp",
+        model_strategy="balanced",
+        budget_limit_usd=10,
     )
     await db.update_pipeline_status("test-pipe-002", "partial_success")
-    await db.create_task(id="t1", title="A", description="A", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-002")
-    await db.create_task(id="t2", title="B", description="B", files=[], depends_on=["t1"], complexity="low", pipeline_id="test-pipe-002")
+    await db.create_task(
+        id="t1",
+        title="A",
+        description="A",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-002",
+    )
+    await db.create_task(
+        id="t2",
+        title="B",
+        description="B",
+        files=[],
+        depends_on=["t1"],
+        complexity="low",
+        pipeline_id="test-pipe-002",
+    )
     await db.update_task_state("t1", "error")
     await db.update_task_state("t2", "blocked")
 
@@ -70,16 +108,35 @@ async def test_rerun_resets_error_and_blocked_to_todo():
 async def test_skip_failed_cancels_error_blocked_tasks():
     """Skip handler should cancel error/blocked tasks and mark pipeline complete."""
     from forge.storage.db import Database
+
     db = Database("sqlite+aiosqlite:///:memory:")
     await db.initialize()
     await db.create_pipeline(
         id="test-pipe-003",
-        description="test", project_dir="/tmp",
-        model_strategy="balanced", budget_limit_usd=10,
+        description="test",
+        project_dir="/tmp",
+        model_strategy="balanced",
+        budget_limit_usd=10,
     )
     await db.update_pipeline_status("test-pipe-003", "partial_success")
-    await db.create_task(id="t1", title="A", description="A", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-003")
-    await db.create_task(id="t2", title="B", description="B", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-003")
+    await db.create_task(
+        id="t1",
+        title="A",
+        description="A",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-003",
+    )
+    await db.create_task(
+        id="t2",
+        title="B",
+        description="B",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-003",
+    )
     await db.update_task_state("t1", "error")
     await db.update_task_state("t2", "blocked")
 
@@ -101,16 +158,35 @@ async def test_skip_failed_cancels_error_blocked_tasks():
 async def test_resume_refetches_tasks_after_reset():
     """Resume should re-fetch tasks after resetting stuck ones so counts are accurate."""
     from forge.storage.db import Database
+
     db = Database("sqlite+aiosqlite:///:memory:")
     await db.initialize()
     await db.create_pipeline(
         id="test-pipe-004",
-        description="test", project_dir="/tmp",
-        model_strategy="balanced", budget_limit_usd=10,
+        description="test",
+        project_dir="/tmp",
+        model_strategy="balanced",
+        budget_limit_usd=10,
     )
     await db.update_pipeline_status("test-pipe-004", "interrupted")
-    await db.create_task(id="t1", title="A", description="A", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-004")
-    await db.create_task(id="t2", title="B", description="B", files=[], depends_on=[], complexity="low", pipeline_id="test-pipe-004")
+    await db.create_task(
+        id="t1",
+        title="A",
+        description="A",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-004",
+    )
+    await db.create_task(
+        id="t2",
+        title="B",
+        description="B",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="test-pipe-004",
+    )
     await db.update_task_state("t1", "done")
     await db.update_task_state("t2", "in_progress")
 
@@ -147,9 +223,9 @@ async def test_answer_submission_emits_to_daemon_events():
 
     app = ForgeApp.__new__(ForgeApp)
     app._db = AsyncMock()
-    app._db.get_pending_questions = AsyncMock(return_value=[
-        MagicMock(task_id="t1", answer=None, id="q1")
-    ])
+    app._db.get_pending_questions = AsyncMock(
+        return_value=[MagicMock(task_id="t1", answer=None, id="q1")]
+    )
     app._db.answer_question = AsyncMock()
     app._pipeline_id = "pipe1"
     app._daemon = FakeDaemon()
@@ -184,9 +260,9 @@ async def test_planning_answer_emits_planning_answer_event():
 
     app = ForgeApp.__new__(ForgeApp)
     app._db = AsyncMock()
-    app._db.get_pending_questions = AsyncMock(return_value=[
-        MagicMock(task_id="__planning__", answer=None, id="q1")
-    ])
+    app._db.get_pending_questions = AsyncMock(
+        return_value=[MagicMock(task_id="__planning__", answer=None, id="q1")]
+    )
     app._db.answer_question = AsyncMock()
     app._pipeline_id = "pipe1"
     app._daemon = FakeDaemon()
@@ -241,9 +317,9 @@ async def test_task_answer_does_not_emit_planning_event():
 
     app = ForgeApp.__new__(ForgeApp)
     app._db = AsyncMock()
-    app._db.get_pending_questions = AsyncMock(return_value=[
-        MagicMock(task_id="t1", answer=None, id="q1")
-    ])
+    app._db.get_pending_questions = AsyncMock(
+        return_value=[MagicMock(task_id="t1", answer=None, id="q1")]
+    )
     app._db.answer_question = AsyncMock()
     app._pipeline_id = "pipe1"
     app._daemon = FakeDaemon()
@@ -278,10 +354,13 @@ async def test_interjection_creates_db_record():
         pipeline_id="pipe1",
         message="Use factory pattern",
     )
-    app._state.apply_event.assert_called_once_with("task:interjection", {
-        "task_id": "t1",
-        "message": "Use factory pattern",
-    })
+    app._state.apply_event.assert_called_once_with(
+        "task:interjection",
+        {
+            "task_id": "t1",
+            "message": "Use factory pattern",
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -306,6 +385,7 @@ async def test_interjection_skipped_without_db():
 def test_chat_thread_interjection_mode():
     """ChatThread in interjection mode should have correct mode."""
     from forge.tui.widgets.chat_thread import ChatThread
+
     chat = ChatThread(task_id="t1", mode="interjection")
     assert chat._mode == "interjection"
     assert chat.task_id == "t1"
@@ -314,6 +394,7 @@ def test_chat_thread_interjection_mode():
 def test_chat_thread_default_mode():
     """ChatThread should default to answer mode."""
     from forge.tui.widgets.chat_thread import ChatThread
+
     chat = ChatThread(task_id="t2")
     assert chat._mode == "answer"
     assert chat.task_id == "t2"
@@ -322,4 +403,5 @@ def test_chat_thread_default_mode():
 def test_chat_thread_interjection_event_type():
     """task:interjection should be in TUI_EVENT_TYPES."""
     from forge.tui.bus import TUI_EVENT_TYPES
+
     assert "task:interjection" in TUI_EVENT_TYPES

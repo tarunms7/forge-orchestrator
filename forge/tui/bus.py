@@ -118,8 +118,10 @@ class EmbeddedSource:
         if self._connected:
             return
         for event_type in TUI_EVENT_TYPES:
+
             async def _bridge(data: Any, _type: str = event_type) -> None:
                 await self._bus.emit(_type, data)
+
             self._bridge_handlers[event_type] = _bridge
             self._emitter.on(event_type, _bridge)
         self._connected = True
@@ -170,6 +172,7 @@ class ClientSource:
         """WebSocket listen loop."""
         try:
             import websockets
+
             async with websockets.connect(self._ws_url) as ws:
                 self._connected = True
                 await ws.send(json.dumps({"token": self._token}))

@@ -33,8 +33,6 @@ class AutoCheck:
             failures.append("Build failed")
 
         if file_conflicts:
-            failures.append(
-                f"File conflicts with other agents: {', '.join(file_conflicts)}"
-            )
+            failures.append(f"File conflicts with other agents: {', '.join(file_conflicts)}")
 
         return CheckResult(passed=len(failures) == 0, failures=failures)

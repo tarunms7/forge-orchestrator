@@ -1,4 +1,5 @@
 """ExecutorMixin — decomposed _execute_task extracted from ForgeDaemon."""
+
 from __future__ import annotations
 
 import asyncio
@@ -68,8 +69,14 @@ class ExecutorMixin:
     # -- orchestrator ----------------------------------------------------
 
     async def _execute_task(
-        self, db, runtime, worktree_mgr, merge_worker,
-        task_id: str, agent_id: str, pipeline_id: str | None = None,
+        self,
+        db,
+        runtime,
+        worktree_mgr,
+        merge_worker,
+        task_id: str,
+        agent_id: str,
+        pipeline_id: str | None = None,
         repo_id: str = "default",
     ) -> None:
         """Execute a single task: worktree → agent → review → merge."""
@@ -78,16 +85,32 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
         pid = pipeline_id or ""
-        console.print(f"\n[cyan]{'='*50}[/cyan]")
+        console.print(f"\n[cyan]{'=' * 50}[/cyan]")
         console.print(f"[cyan]Starting {task_id}: {task.title}[/cyan]")
-        console.print(f"[cyan]{'='*50}[/cyan]")
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_progress"}, db=db, pipeline_id=pid)
+        console.print(f"[cyan]{'=' * 50}[/cyan]")
+        await self._emit(
+            "task:state_changed",
+            {"task_id": task_id, "state": "in_progress"},
+            db=db,
+            pipeline_id=pid,
+        )
         # Use repo_id from DB task row if available, else use parameter default.
         repo_id = getattr(task, "repo_id", repo_id) or repo_id
         if getattr(task, "retry_reason", None) == "merge_failed":
-            await self._handle_merge_fast_path(db, merge_worker, worktree_mgr, task, task_id, agent_id, pipeline_id, repo_id=repo_id)
+            await self._handle_merge_fast_path(
+                db,
+                merge_worker,
+                worktree_mgr,
+                task,
+                task_id,
+                agent_id,
+                pipeline_id,
+                repo_id=repo_id,
+            )
             return
-        worktree_path = await self._prepare_worktree(worktree_mgr, task_id, pid, db, base_ref=merge_worker._main, repo_id=repo_id)
+        worktree_path = await self._prepare_worktree(
+            worktree_mgr, task_id, pid, db, base_ref=merge_worker._main, repo_id=repo_id
+        )
         if worktree_path is None:
             await db.release_agent(agent_id)
             return
@@ -97,12 +120,24 @@ class ExecutorMixin:
         pre_retry_ref = None
         if task.retry_count > 0:
             snap = await _run_git(
-                ["rev-parse", "HEAD"], cwd=worktree_path,
-                check=False, description="snapshot pre-retry ref",
+                ["rev-parse", "HEAD"],
+                cwd=worktree_path,
+                check=False,
+                description="snapshot pre-retry ref",
             )
             if snap.returncode == 0:
                 pre_retry_ref = snap.stdout.strip()
-        agent_result = await self._run_agent(db, runtime, worktree_mgr, task, task_id, agent_id, worktree_path, pid, pipeline_branch=pipeline_branch)
+        agent_result = await self._run_agent(
+            db,
+            runtime,
+            worktree_mgr,
+            task,
+            task_id,
+            agent_id,
+            worktree_path,
+            pid,
+            pipeline_branch=pipeline_branch,
+        )
         if agent_result is None:
             await db.release_agent(agent_id)
             return
@@ -111,7 +146,10 @@ class ExecutorMixin:
         question_data = _parse_forge_question(agent_result.summary)
         if question_data:
             await self._handle_agent_question(
-                db, task_id, agent_id, pipeline_id=pid,
+                db,
+                task_id,
+                agent_id,
+                pipeline_id=pid,
                 question_data=question_data,
                 session_id=agent_result.session_id,
             )
@@ -119,9 +157,14 @@ class ExecutorMixin:
 
         # Check for pending human interjections before review
         interjection_delivered, final_session = await self._deliver_interjections(
-            db=db, runtime=runtime, worktree_mgr=worktree_mgr,
-            task_id=task_id, task=task, agent_id=agent_id,
-            worktree_path=worktree_path, pipeline_id=pid,
+            db=db,
+            runtime=runtime,
+            worktree_mgr=worktree_mgr,
+            task_id=task_id,
+            task=task,
+            agent_id=agent_id,
+            worktree_path=worktree_path,
+            pipeline_id=pid,
             session_id=agent_result.session_id,
             pipeline_branch=pipeline_branch,
         )
@@ -134,22 +177,33 @@ class ExecutorMixin:
 
         # Strip out-of-scope changes before review
         has_in_scope_changes, reverted_files = await self._enforce_file_scope(
-            task, worktree_path, pipeline_branch,
+            task,
+            worktree_path,
+            pipeline_branch,
         )
         if not has_in_scope_changes:
             if not reverted_files:
                 # Agent made zero changes and nothing was reverted —
                 # the task legitimately required no modifications.
                 # Mark done directly (skip review and merge).
-                console.print(f"[bold green]{task_id}: no changes needed — marking done[/bold green]")
+                console.print(
+                    f"[bold green]{task_id}: no changes needed — marking done[/bold green]"
+                )
                 await db.update_task_state(task_id, TaskState.DONE.value)
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                await self._emit(
+                    "task:state_changed",
+                    {"task_id": task_id, "state": "done"},
+                    db=db,
+                    pipeline_id=pid,
+                )
                 await db.release_agent(agent_id)
                 return
             console.print(f"[red]{task_id}: all changes were outside file scope[/red]")
             reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
-                db, task_id, worktree_mgr,
+                db,
+                task_id,
+                worktree_mgr,
                 review_feedback=(
                     "ALL your changes were to files outside your allowed scope "
                     "and have been REVERTED by the system.\n\n"
@@ -164,8 +218,15 @@ class ExecutorMixin:
             return
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         await self._attempt_merge(
-            db, merge_worker, worktree_mgr, task, task_id, worktree_path,
-            agent_model, pid, pipeline_branch=pipeline_branch,
+            db,
+            merge_worker,
+            worktree_mgr,
+            task,
+            task_id,
+            worktree_path,
+            agent_model,
+            pid,
+            pipeline_branch=pipeline_branch,
             pre_retry_ref=pre_retry_ref,
             agent_summary=agent_result.summary if agent_result else "",
         )
@@ -174,8 +235,14 @@ class ExecutorMixin:
     # -- merge-only fast path -------------------------------------------
 
     async def _handle_merge_fast_path(
-        self, db, merge_worker, worktree_mgr, task,
-        task_id: str, agent_id: str, pipeline_id: str | None,
+        self,
+        db,
+        merge_worker,
+        worktree_mgr,
+        task,
+        task_id: str,
+        agent_id: str,
+        pipeline_id: str | None,
         repo_id: str = "default",
     ) -> None:
         """Skip agent+review when only the merge previously failed."""
@@ -189,7 +256,9 @@ class ExecutorMixin:
             return
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         await db.update_task_state(task_id, TaskState.MERGING.value)
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
+        )
         branch = f"forge/{validate_task_id(task_id)}"
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
@@ -199,18 +268,36 @@ class ExecutorMixin:
         async with self._merge_lock:
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
+            await self._emit_merge_success(
+                db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref
+            )
         else:
             await self._emit_merge_failure(db, task_id, merge_result.error, pid)
             await self._attempt_merge_with_resolution(
-                db, merge_worker, worktree_mgr, merge_result, task_id, worktree_path, branch, agent_model, pid,
+                db,
+                merge_worker,
+                worktree_mgr,
+                merge_result,
+                task_id,
+                worktree_path,
+                branch,
+                agent_model,
+                pid,
                 pre_merge_ref=pre_merge_ref,
             )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
     # -- worktree creation ----------------------------------------------
 
-    async def _prepare_worktree(self, worktree_mgr, task_id: str, pid: str, db, base_ref: str | None = None, repo_id: str = "default") -> str | None:
+    async def _prepare_worktree(
+        self,
+        worktree_mgr,
+        task_id: str,
+        pid: str,
+        db,
+        base_ref: str | None = None,
+        repo_id: str = "default",
+    ) -> str | None:
         """Create or reuse a worktree. Returns path or ``None`` on failure."""
         try:
             return worktree_mgr.create(task_id, base_ref=base_ref)
@@ -221,7 +308,9 @@ class ExecutorMixin:
                 # out-of-scope changes on the previous run, so only the
                 # agent's in-scope work remains.  The retry agent can patch
                 # the review issues on top instead of rewriting everything.
-                console.print(f"[yellow]{task_id}: reusing worktree for retry (in-scope changes preserved)[/yellow]")
+                console.print(
+                    f"[yellow]{task_id}: reusing worktree for retry (in-scope changes preserved)[/yellow]"
+                )
                 # Rebase onto latest pipeline branch to pick up changes
                 # merged by sibling tasks since this worktree was created.
                 # This eliminates "ghost diffs" where the diff shows
@@ -233,7 +322,9 @@ class ExecutorMixin:
         except Exception as exc:
             console.print(f"[red]Worktree creation failed for {task_id}: {exc}[/red]")
         await db.update_task_state(task_id, TaskState.ERROR.value)
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid
+        )
         return None
 
     async def _rebase_worktree(self, worktree_path: str, base_ref: str, task_id: str) -> None:
@@ -247,16 +338,20 @@ class ExecutorMixin:
         await self._ensure_clean_for_rebase(worktree_path, task_id)
 
         result = await _run_git(
-            ["rebase", base_ref], cwd=worktree_path,
-            check=False, description="rebase worktree",
+            ["rebase", base_ref],
+            cwd=worktree_path,
+            check=False,
+            description="rebase worktree",
         )
         if result.returncode == 0:
             console.print(f"[green]  {task_id}: worktree rebased onto {base_ref}[/green]")
         else:
             # Abort the failed rebase so the worktree is usable
             await _run_git(
-                ["rebase", "--abort"], cwd=worktree_path,
-                check=False, description="abort rebase",
+                ["rebase", "--abort"],
+                cwd=worktree_path,
+                check=False,
+                description="abort rebase",
             )
             console.print(
                 f"[yellow]  {task_id}: rebase onto {base_ref} had conflicts — "
@@ -266,9 +361,19 @@ class ExecutorMixin:
     # -- agent execution + streaming + cost -----------------------------
 
     async def _run_agent(
-        self, db, runtime, worktree_mgr, task, task_id: str, agent_id: str,
-        worktree_path: str, pid: str, *, pipeline_branch: str | None = None,
-        resume: str | None = None, prompt_override: str | None = None,
+        self,
+        db,
+        runtime,
+        worktree_mgr,
+        task,
+        task_id: str,
+        agent_id: str,
+        worktree_path: str,
+        pid: str,
+        *,
+        pipeline_branch: str | None = None,
+        resume: str | None = None,
+        prompt_override: str | None = None,
     ):
         """Run the agent, stream output, track cost.
 
@@ -286,20 +391,43 @@ class ExecutorMixin:
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
-        result = await self._stream_agent(runtime, agent_id, prompt, worktree_path, task, task_id, pid, db, agent_model, resume=resume)
+        result = await self._stream_agent(
+            runtime,
+            agent_id,
+            prompt,
+            worktree_path,
+            task,
+            task_id,
+            pid,
+            db,
+            agent_model,
+            resume=resume,
+        )
         if hasattr(result, "cost_usd") and result.cost_usd > 0:
-            await db.add_task_agent_cost(task_id, result.cost_usd, result.input_tokens, result.output_tokens)
+            await db.add_task_agent_cost(
+                task_id, result.cost_usd, result.input_tokens, result.output_tokens
+            )
             await db.add_pipeline_cost(pid, result.cost_usd)
-            await self._emit("task:cost_update", {
-                "task_id": task_id,
-                "agent_cost_usd": result.cost_usd,
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
-            }, db=db, pipeline_id=pid)
+            await self._emit(
+                "task:cost_update",
+                {
+                    "task_id": task_id,
+                    "agent_cost_usd": result.cost_usd,
+                    "input_tokens": result.input_tokens,
+                    "output_tokens": result.output_tokens,
+                },
+                db=db,
+                pipeline_id=pid,
+            )
             total_cost = await db.get_pipeline_cost(pid)
-            await self._emit("pipeline:cost_update", {
-                "total_cost_usd": total_cost,
-            }, db=db, pipeline_id=pid)
+            await self._emit(
+                "pipeline:cost_update",
+                {
+                    "total_cost_usd": total_cost,
+                },
+                db=db,
+                pipeline_id=pid,
+            )
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
@@ -309,7 +437,9 @@ class ExecutorMixin:
         # The agent is instructed to commit, but may fail to do so if the
         # SDK session was sandboxed or the agent simply forgot. Without
         # this, uncommitted changes are invisible to the merge pipeline.
-        await self._auto_commit_if_needed(worktree_path, task_id, task_title=getattr(task, 'title', ''))
+        await self._auto_commit_if_needed(
+            worktree_path, task_id, task_title=getattr(task, "title", "")
+        )
 
         diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         if not diff.strip():
@@ -320,9 +450,16 @@ class ExecutorMixin:
                 console.print(f"[red]{task_id} agent produced no changes[/red]")
                 await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
                 return None
-        console.print(f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]")
+        console.print(
+            f"[green]{task_id} agent completed ({len(diff.splitlines())} diff lines)[/green]"
+        )
         if result.files_changed:
-            await self._emit("task:files_changed", {"task_id": task_id, "files": result.files_changed}, db=db, pipeline_id=pid)
+            await self._emit(
+                "task:files_changed",
+                {"task_id": task_id, "files": result.files_changed},
+                db=db,
+                pipeline_id=pid,
+            )
         return result
 
     # -- infrastructure file cleanup --------------------------------------
@@ -350,35 +487,46 @@ class ExecutorMixin:
         # 1. If anything is staged, commit it (agent work that wasn't committed)
         staged = await _run_git(
             ["diff", "--cached", "--quiet"],
-            cwd=worktree_path, check=False,
+            cwd=worktree_path,
+            check=False,
             description="check staged changes",
         )
         if staged.returncode != 0:
             # There are staged changes — commit them
             logger.info("%s: committing leftover staged changes before rebase", task_id)
             await _run_git(
-                ["commit", "--no-verify", "-m", f"chore({task_id}): commit staged changes before merge"],
-                cwd=worktree_path, check=False,
+                [
+                    "commit",
+                    "--no-verify",
+                    "-m",
+                    f"chore({task_id}): commit staged changes before merge",
+                ],
+                cwd=worktree_path,
+                check=False,
                 description="commit staged before rebase",
             )
 
         # 2. Stash any remaining working tree dirt (untracked files, modifications)
         status = await _run_git(
             ["status", "--porcelain"],
-            cwd=worktree_path, check=False,
+            cwd=worktree_path,
+            check=False,
             description="check working tree",
         )
         if status.stdout.strip():
             await _run_git(
                 ["stash", "push", "--include-untracked", "-m", "forge-pre-rebase-cleanup"],
-                cwd=worktree_path, check=False,
+                cwd=worktree_path,
+                check=False,
                 description="stash working tree before rebase",
             )
 
     # -- auto-commit safety net -------------------------------------------
 
     @staticmethod
-    async def _auto_commit_if_needed(worktree_path: str, task_id: str, task_title: str = "") -> bool:
+    async def _auto_commit_if_needed(
+        worktree_path: str, task_id: str, task_title: str = ""
+    ) -> bool:
         """Commit any uncommitted agent changes as a safety net.
 
         The agent is instructed to commit its own work, but may fail to if:
@@ -395,7 +543,8 @@ class ExecutorMixin:
         # Check for uncommitted changes (staged + unstaged + untracked new files)
         status = await _run_git(
             ["status", "--porcelain"],
-            cwd=worktree_path, check=False,
+            cwd=worktree_path,
+            check=False,
             description="check uncommitted changes",
         )
         if status.returncode != 0 or not status.stdout.strip():
@@ -403,7 +552,8 @@ class ExecutorMixin:
 
         # There are uncommitted changes — commit them
         logger.info(
-            "%s: agent left uncommitted changes, auto-committing", task_id,
+            "%s: agent left uncommitted changes, auto-committing",
+            task_id,
         )
         console.print(
             f"[yellow]{task_id}: auto-committing uncommitted agent changes[/yellow]",
@@ -412,13 +562,15 @@ class ExecutorMixin:
         # Stage everything (including new files the agent created)
         add_result = await _run_git(
             ["add", "-A"],
-            cwd=worktree_path, check=False,
+            cwd=worktree_path,
+            check=False,
             description="auto-stage agent changes",
         )
         if add_result.returncode != 0:
             logger.warning(
                 "%s: git add failed during auto-commit: %s",
-                task_id, add_result.stderr.strip(),
+                task_id,
+                add_result.stderr.strip(),
             )
             return False
 
@@ -432,13 +584,15 @@ class ExecutorMixin:
 
         commit_result = await _run_git(
             ["commit", "--no-verify", "-m", commit_msg],
-            cwd=worktree_path, check=False,
+            cwd=worktree_path,
+            check=False,
             description="auto-commit agent changes",
         )
         if commit_result.returncode != 0:
             logger.warning(
                 "%s: git commit failed during auto-commit: %s",
-                task_id, commit_result.stderr.strip(),
+                task_id,
+                commit_result.stderr.strip(),
             )
             return False
 
@@ -448,8 +602,12 @@ class ExecutorMixin:
     # -- question handling (pause / resume) --------------------------------
 
     async def _handle_agent_question(
-        self, db, task_id: str, agent_id: str,
-        question_data: dict, session_id: str | None,
+        self,
+        db,
+        task_id: str,
+        agent_id: str,
+        question_data: dict,
+        session_id: str | None,
         pipeline_id: str | None = None,
     ) -> None:
         """Persist a FORGE_QUESTION and transition the task to awaiting_input.
@@ -473,6 +631,7 @@ class ExecutorMixin:
         if session_id:
             async with db._session_factory() as session:
                 from forge.storage.db import TaskRow
+
                 task_row = await session.get(TaskRow, task_id)
                 if task_row:
                     task_row.session_id = session_id
@@ -482,6 +641,7 @@ class ExecutorMixin:
             # No session_id: still increment the counter
             async with db._session_factory() as session:
                 from forge.storage.db import TaskRow
+
                 task_row = await session.get(TaskRow, task_id)
                 if task_row:
                     task_row.questions_asked = (task_row.questions_asked or 0) + 1
@@ -489,20 +649,31 @@ class ExecutorMixin:
 
         # Transition state
         await db.update_task_state(task_id, TaskState.AWAITING_INPUT.value)
-        await self._emit("task:state_changed", {
-            "task_id": task_id, "state": "awaiting_input",
-        }, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:state_changed",
+            {
+                "task_id": task_id,
+                "state": "awaiting_input",
+            },
+            db=db,
+            pipeline_id=pid,
+        )
 
         # Emit the question event for the UI / API consumers
-        await self._emit("task:question", {
-            "task_id": task_id,
-            "question": {
-                "id": q.id,
-                "question": q.question,
-                "suggestions": question_data.get("suggestions", []),
-                "context": question_data.get("context"),
+        await self._emit(
+            "task:question",
+            {
+                "task_id": task_id,
+                "question": {
+                    "id": q.id,
+                    "question": q.question,
+                    "suggestions": question_data.get("suggestions", []),
+                    "context": question_data.get("context"),
+                },
             },
-        }, db=db, pipeline_id=pid)
+            db=db,
+            pipeline_id=pid,
+        )
 
         # Release the agent slot — no subprocess running while paused
         await db.release_agent(agent_id)
@@ -510,8 +681,16 @@ class ExecutorMixin:
     # -- interjection delivery --------------------------------------------
 
     async def _deliver_interjections(
-        self, db, runtime, worktree_mgr, task_id: str, task, agent_id: str,
-        worktree_path: str, pipeline_id: str, session_id: str | None,
+        self,
+        db,
+        runtime,
+        worktree_mgr,
+        task_id: str,
+        task,
+        agent_id: str,
+        worktree_path: str,
+        pipeline_id: str,
+        session_id: str | None,
         pipeline_branch: str | None = None,
     ) -> tuple[bool, str | None]:
         """Check for and deliver pending interjections to a running agent.
@@ -528,9 +707,7 @@ class ExecutorMixin:
             if not interjections:
                 break
 
-            combined = "\n\n".join(
-                f"Human message: {ij.message}" for ij in interjections
-            )
+            combined = "\n\n".join(f"Human message: {ij.message}" for ij in interjections)
             prompt = (
                 f"The human has sent you a message while you were working:\n\n"
                 f"{combined}\n\n"
@@ -542,9 +719,17 @@ class ExecutorMixin:
                 await db.mark_interjection_delivered(ij.id)
 
             agent_result = await self._run_agent(
-                db, runtime, worktree_mgr, task, task_id, agent_id,
-                worktree_path, pipeline_id, pipeline_branch=pipeline_branch,
-                resume=current_session, prompt_override=prompt,
+                db,
+                runtime,
+                worktree_mgr,
+                task,
+                task_id,
+                agent_id,
+                worktree_path,
+                pipeline_id,
+                pipeline_branch=pipeline_branch,
+                resume=current_session,
+                prompt_override=prompt,
             )
 
             if agent_result is None:
@@ -557,7 +742,10 @@ class ExecutorMixin:
             question_data = _parse_forge_question(agent_result.summary)
             if question_data:
                 await self._handle_agent_question(
-                    db, task_id, agent_id, pipeline_id=pipeline_id,
+                    db,
+                    task_id,
+                    agent_id,
+                    pipeline_id=pipeline_id,
                     question_data=question_data,
                     session_id=agent_result.session_id,
                 )
@@ -566,8 +754,15 @@ class ExecutorMixin:
         return delivered_any, current_session
 
     async def _resume_task(
-        self, db, runtime, worktree_mgr, merge_worker,
-        task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+        self,
+        db,
+        runtime,
+        worktree_mgr,
+        merge_worker,
+        task_id: str,
+        agent_id: str,
+        answer: str,
+        pipeline_id: str | None = None,
         repo_id: str = "default",
     ) -> None:
         """Resume a task after a human answered a FORGE_QUESTION.
@@ -580,22 +775,34 @@ class ExecutorMixin:
         pid = pipeline_id or ""
         task = await db.get_task(task_id)
         if not task or task.state != TaskState.AWAITING_INPUT.value:
-            logger.warning("_resume_task: task %s not in awaiting_input (got %s)", task_id, getattr(task, "state", None))
+            logger.warning(
+                "_resume_task: task %s not in awaiting_input (got %s)",
+                task_id,
+                getattr(task, "state", None),
+            )
             return
 
         session_id = getattr(task, "session_id", None)
 
         # Transition back to in_progress
         await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
-        await self._emit("task:state_changed", {
-            "task_id": task_id, "state": "in_progress",
-        }, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:state_changed",
+            {
+                "task_id": task_id,
+                "state": "in_progress",
+            },
+            db=db,
+            pipeline_id=pid,
+        )
         await self._emit("task:resumed", {"task_id": task_id}, db=db, pipeline_id=pid)
 
         # Resolve worktree path (reuse existing — the agent's code is still there)
         worktree_path = self._worktree_path(repo_id, task_id)
         if not os.path.isdir(worktree_path):
-            console.print(f"[red]{task_id}: worktree missing on resume — scheduling full retry[/red]")
+            console.print(
+                f"[red]{task_id}: worktree missing on resume — scheduling full retry[/red]"
+            )
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             await db.release_agent(agent_id)
             return
@@ -605,9 +812,17 @@ class ExecutorMixin:
         # Re-run the agent: the human's answer becomes the new user message,
         # and resume=session_id restores the prior conversation context.
         agent_result = await self._run_agent(
-            db, runtime, worktree_mgr, task, task_id, agent_id,
-            worktree_path, pid, pipeline_branch=pipeline_branch,
-            resume=session_id, prompt_override=answer,
+            db,
+            runtime,
+            worktree_mgr,
+            task,
+            task_id,
+            agent_id,
+            worktree_path,
+            pid,
+            pipeline_branch=pipeline_branch,
+            resume=session_id,
+            prompt_override=answer,
         )
 
         if agent_result is None:
@@ -618,7 +833,10 @@ class ExecutorMixin:
         question_data = _parse_forge_question(agent_result.summary)
         if question_data:
             await self._handle_agent_question(
-                db, task_id, agent_id, pipeline_id=pid,
+                db,
+                task_id,
+                agent_id,
+                pipeline_id=pid,
                 question_data=question_data,
                 session_id=agent_result.session_id,
             )
@@ -626,9 +844,14 @@ class ExecutorMixin:
 
         # Check for pending human interjections before review
         interjection_delivered, final_session = await self._deliver_interjections(
-            db=db, runtime=runtime, worktree_mgr=worktree_mgr,
-            task_id=task_id, task=task, agent_id=agent_id,
-            worktree_path=worktree_path, pipeline_id=pid,
+            db=db,
+            runtime=runtime,
+            worktree_mgr=worktree_mgr,
+            task_id=task_id,
+            task=task,
+            agent_id=agent_id,
+            worktree_path=worktree_path,
+            pipeline_id=pid,
             session_id=agent_result.session_id,
             pipeline_branch=pipeline_branch,
         )
@@ -639,21 +862,34 @@ class ExecutorMixin:
 
         # Agent finished — proceed to review
         has_in_scope_changes, reverted_files = await self._enforce_file_scope(
-            task, worktree_path, pipeline_branch,
+            task,
+            worktree_path,
+            pipeline_branch,
         )
         if not has_in_scope_changes:
             if not reverted_files:
                 # Agent made zero changes and nothing was reverted —
                 # the task legitimately required no modifications.
-                console.print(f"[bold green]{task_id}: no changes needed — marking done (after resume)[/bold green]")
+                console.print(
+                    f"[bold green]{task_id}: no changes needed — marking done (after resume)[/bold green]"
+                )
                 await db.update_task_state(task_id, TaskState.DONE.value)
-                await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+                await self._emit(
+                    "task:state_changed",
+                    {"task_id": task_id, "state": "done"},
+                    db=db,
+                    pipeline_id=pid,
+                )
                 await db.release_agent(agent_id)
                 return
-            console.print(f"[red]{task_id}: all changes were outside file scope (after resume)[/red]")
+            console.print(
+                f"[red]{task_id}: all changes were outside file scope (after resume)[/red]"
+            )
             reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
-                db, task_id, worktree_mgr,
+                db,
+                task_id,
+                worktree_mgr,
                 review_feedback=(
                     "ALL your changes were to files outside your allowed scope "
                     "and have been REVERTED by the system.\n\n"
@@ -669,8 +905,15 @@ class ExecutorMixin:
 
         agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
         await self._attempt_merge(
-            db, merge_worker, worktree_mgr, task, task_id, worktree_path,
-            agent_model, pid, pipeline_branch=pipeline_branch,
+            db,
+            merge_worker,
+            worktree_mgr,
+            task,
+            task_id,
+            worktree_path,
+            agent_model,
+            pid,
+            pipeline_branch=pipeline_branch,
             agent_summary=agent_result.summary if agent_result else "",
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
@@ -678,7 +921,9 @@ class ExecutorMixin:
     # -- event-driven resume ------------------------------------------------
 
     async def _on_task_answered(
-        self, data: dict, db,
+        self,
+        data: dict,
+        db,
     ) -> None:
         """Handle task:answer event -- resume a task after human answers a question."""
         task_id = data.get("task_id")
@@ -691,7 +936,8 @@ class ExecutorMixin:
         if not task or task.state != TaskState.AWAITING_INPUT.value:
             logger.debug(
                 "_on_task_answered: task %s not awaiting_input (state=%s)",
-                task_id, getattr(task, "state", None),
+                task_id,
+                getattr(task, "state", None),
             )
             return
 
@@ -708,12 +954,12 @@ class ExecutorMixin:
         prefix = pipeline_id[:8] if pipeline_id else None
         agents = await db.list_agents(prefix=prefix)
         agent_records = [row_to_agent(a) for a in agents]
-        tasks = await (
-            db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
-        )
+        tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
         task_records = [row_to_record(t) for t in tasks]
         dispatch_plan = Scheduler.dispatch_plan(
-            task_records, agent_records, self._effective_max_agents,
+            task_records,
+            agent_records,
+            self._effective_max_agents,
         )
 
         agent_id = None
@@ -734,8 +980,14 @@ class ExecutorMixin:
 
         atask = asyncio.create_task(
             self._safe_execute_resume(
-                db, self._runtime, self._worktree_mgr, self._merge_worker,
-                task_id, agent_id, answer, pipeline_id,
+                db,
+                self._runtime,
+                self._worktree_mgr,
+                self._merge_worker,
+                task_id,
+                agent_id,
+                answer,
+                pipeline_id,
             ),
             name=f"forge-resume-{task_id}",
         )
@@ -743,15 +995,28 @@ class ExecutorMixin:
             self._active_tasks[task_id] = atask
 
     async def _safe_execute_resume(
-        self, db, runtime, worktree_mgr, merge_worker,
-        task_id: str, agent_id: str, answer: str, pipeline_id: str | None = None,
+        self,
+        db,
+        runtime,
+        worktree_mgr,
+        merge_worker,
+        task_id: str,
+        agent_id: str,
+        answer: str,
+        pipeline_id: str | None = None,
         repo_id: str = "default",
     ) -> None:
         """Safe wrapper around _resume_task with cleanup on error."""
         try:
             await self._resume_task(
-                db, runtime, worktree_mgr, merge_worker,
-                task_id, agent_id, answer, pipeline_id,
+                db,
+                runtime,
+                worktree_mgr,
+                merge_worker,
+                task_id,
+                agent_id,
+                answer,
+                pipeline_id,
                 repo_id=repo_id,
             )
         except asyncio.CancelledError:
@@ -772,7 +1037,10 @@ class ExecutorMixin:
     # -- file scope enforcement -------------------------------------------
 
     async def _enforce_file_scope(
-        self, task, worktree_path: str, pipeline_branch: str | None,
+        self,
+        task,
+        worktree_path: str,
+        pipeline_branch: str | None,
     ) -> tuple[bool, list[str]]:
         """Strip changes to files outside the task's allowed scope.
 
@@ -794,21 +1062,22 @@ class ExecutorMixin:
         # Get all files changed by the agent vs pipeline branch
         result = await _run_git(
             ["diff", "--name-only", pipeline_branch, "HEAD"],
-            cwd=worktree_path, check=False, description="scope diff",
+            cwd=worktree_path,
+            check=False,
+            description="scope diff",
         )
         changed = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
 
         # Exempt test files that are related to in-scope source files.
         # Agents often need to create/modify test files for the source files
         # they're working on — those shouldn't be reverted.
-        related_tests = set(
-            await _find_related_test_files(worktree_path, list(allowed))
-        )
+        related_tests = set(await _find_related_test_files(worktree_path, list(allowed)))
         # Always exempt .claude/ and .forge/ — these are Forge infrastructure
         # files (e.g. agent permissions), not agent work product.
         infra_prefixes = (".claude/", ".forge/")
         out_of_scope = [
-            f for f in changed
+            f
+            for f in changed
             if f not in allowed
             and f not in related_tests
             and not any(f.startswith(p) for p in infra_prefixes)
@@ -827,40 +1096,60 @@ class ExecutorMixin:
             # Restore file to pipeline branch state (works for modified/deleted)
             restore = await _run_git(
                 ["checkout", pipeline_branch, "--", file],
-                cwd=worktree_path, check=False, description="restore out-of-scope",
+                cwd=worktree_path,
+                check=False,
+                description="restore out-of-scope",
             )
             if restore.returncode != 0:
                 # File was newly created (doesn't exist in base) — remove it
                 await _run_git(
                     ["rm", "-f", file],
-                    cwd=worktree_path, check=False, description="rm out-of-scope",
+                    cwd=worktree_path,
+                    check=False,
+                    description="rm out-of-scope",
                 )
 
         # Stage and commit the reverts
-        await _run_git(["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts")
+        await _run_git(
+            ["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts"
+        )
         staged = await _run_git(
             ["diff", "--cached", "--name-only"],
-            cwd=worktree_path, check=False, description="check staged",
+            cwd=worktree_path,
+            check=False,
+            description="check staged",
         )
         if staged.stdout.strip():
             await _run_git(
                 ["commit", "--no-verify", "-m", "chore: revert out-of-scope file changes"],
-                cwd=worktree_path, check=False, description="commit scope reverts",
+                cwd=worktree_path,
+                check=False,
+                description="commit scope reverts",
             )
 
         # Check if any in-scope changes remain
         remaining = await _run_git(
             ["diff", "--name-only", pipeline_branch, "HEAD"],
-            cwd=worktree_path, check=False, description="check remaining",
+            cwd=worktree_path,
+            check=False,
+            description="check remaining",
         )
         return bool(remaining.stdout.strip()), out_of_scope
 
     # -- post-review merge with Tier 1/Tier 2 --------------------------
 
     async def _attempt_merge(
-        self, db, merge_worker, worktree_mgr, task,
-        task_id: str, worktree_path: str, agent_model: str, pid: str,
-        *, pipeline_branch: str | None = None,
+        self,
+        db,
+        merge_worker,
+        worktree_mgr,
+        task,
+        task_id: str,
+        worktree_path: str,
+        agent_model: str,
+        pid: str,
+        *,
+        pipeline_branch: str | None = None,
         pre_retry_ref: str | None = None,
         agent_summary: str = "",
     ) -> None:
@@ -874,7 +1163,9 @@ class ExecutorMixin:
         if pre_retry_ref and task.retry_count > 0:
             delta_result = await _run_git(
                 ["diff", pre_retry_ref, "HEAD"],
-                cwd=worktree_path, check=False, description="delta diff",
+                cwd=worktree_path,
+                check=False,
+                description="delta diff",
             )
             if delta_result.returncode == 0 and delta_result.stdout.strip():
                 delta_diff = delta_result.stdout
@@ -889,29 +1180,38 @@ class ExecutorMixin:
                     logger.info(
                         "Task %s retry %d: no delta changes AND no diff vs base "
                         "— auto-passing review (nothing to review)",
-                        task_id, task.retry_count,
+                        task_id,
+                        task.retry_count,
                     )
                 else:
                     # Delta is empty but full diff exists — always run full review.
                     logger.info(
                         "Task %s retry %d: no delta changes but full diff exists "
                         "— running full LLM review",
-                        task_id, task.retry_count,
+                        task_id,
+                        task.retry_count,
                     )
         await db.update_task_state(task_id, TaskState.IN_REVIEW.value)
         # Store and emit the diff so the TUI can display it immediately.
         # This is the diff computed from the worktree (task's actual changes)
         # rather than from the pipeline branch (which doesn't have them yet).
         await db.set_task_review_diff(task_id, diff)
-        await self._emit("task:review_diff", {
-            "task_id": task_id,
-            "diff": diff,
-        }, db=db, pipeline_id=pid)
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:review_diff",
+            {
+                "task_id": task_id,
+                "diff": diff,
+            },
+            db=db,
+            pipeline_id=pid,
+        )
+        await self._emit(
+            "task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid
+        )
         # Resolve per-pipeline build/test commands for review gates
         pipeline = await db.get_pipeline(pid) if pid else None
-        self._pipeline_build_cmd = getattr(pipeline, 'build_cmd', None) if pipeline else None
-        self._pipeline_test_cmd = getattr(pipeline, 'test_cmd', None) if pipeline else None
+        self._pipeline_build_cmd = getattr(pipeline, "build_cmd", None) if pipeline else None
+        self._pipeline_test_cmd = getattr(pipeline, "test_cmd", None) if pipeline else None
         if no_changes_on_retry:
             console.print(f"[dim]{task_id}: no changes on retry — auto-passing review[/dim]")
             passed, feedback = True, None
@@ -922,14 +1222,21 @@ class ExecutorMixin:
             passed, feedback = False, None
             for re_review_attempt in range(max_re_reviews + 1):
                 passed, feedback = await self._run_review(
-                    task, worktree_path, diff, db=db, pipeline_id=pid,
-                    pipeline_branch=pipeline_branch, delta_diff=delta_diff,
-                    repo_id=getattr(task, 'repo_id', None),
+                    task,
+                    worktree_path,
+                    diff,
+                    db=db,
+                    pipeline_id=pid,
+                    pipeline_branch=pipeline_branch,
+                    delta_diff=delta_diff,
+                    repo_id=getattr(task, "repo_id", None),
                 )
                 if passed:
                     break
                 if feedback and "[RETRIABLE]" in feedback and re_review_attempt < max_re_reviews:
-                    console.print(f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]")
+                    console.print(
+                        f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]"
+                    )
                     continue
                 break
             if not passed:
@@ -937,7 +1244,8 @@ class ExecutorMixin:
                 # Include the diff so the retry agent can see what it wrote without re-reading every file.
                 enriched_feedback = feedback or ""
                 changed_files = await _get_changed_files_vs_main(
-                    worktree_path, base_ref=pipeline_branch,
+                    worktree_path,
+                    base_ref=pipeline_branch,
                 )
                 if changed_files:
                     files_summary = "\n".join(f"  - {f}" for f in changed_files)
@@ -957,7 +1265,9 @@ class ExecutorMixin:
                     )
                 # Store current diff so re-reviewer can compare on next attempt
                 await db.set_task_prior_diff(task_id, diff[:10000])
-                await self._handle_retry(db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid)
+                await self._handle_retry(
+                    db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid
+                )
                 return
 
         # ── Capture agent self-reported learning (success after prior failure) ──
@@ -965,6 +1275,7 @@ class ExecutorMixin:
             try:
                 from forge.core.daemon_helpers import _parse_forge_learning
                 from forge.learning.extractor import extract_from_agent_learning
+
                 learning_data = _parse_forge_learning(agent_summary)
                 if learning_data:
                     lesson = extract_from_agent_learning(
@@ -982,45 +1293,67 @@ class ExecutorMixin:
                             logger.info("Bumped existing learning: %s", existing.title)
                         else:
                             await db.add_lesson(
-                                scope=lesson.scope, category=lesson.category,
-                                title=lesson.title, content=lesson.content,
-                                trigger=lesson.trigger, resolution=lesson.resolution,
+                                scope=lesson.scope,
+                                category=lesson.category,
+                                title=lesson.title,
+                                content=lesson.content,
+                                trigger=lesson.trigger,
+                                resolution=lesson.resolution,
                                 confidence=lesson.confidence,
-                                project_dir=getattr(self, "_project_dir", None) if lesson.scope == "project" else None,
+                                project_dir=getattr(self, "_project_dir", None)
+                                if lesson.scope == "project"
+                                else None,
                             )
                             logger.info("Agent learning captured: %s", lesson.title)
             except Exception:
                 logger.debug("Failed to capture agent learning (non-fatal)", exc_info=True)
 
         # ── Approval gate ─────────────────────────────────────────────
-        require_approval = (
-            getattr(pipeline, "require_approval", False)
-            or getattr(self._settings, "require_approval", False)
+        require_approval = getattr(pipeline, "require_approval", False) or getattr(
+            self._settings, "require_approval", False
         )
         if require_approval:
             await db.update_task_state(task_id, TaskState.AWAITING_APPROVAL.value)
-            await self._emit("task:state_changed", {
-                "task_id": task_id, "state": "awaiting_approval",
-            }, db=db, pipeline_id=pid)
+            await self._emit(
+                "task:state_changed",
+                {
+                    "task_id": task_id,
+                    "state": "awaiting_approval",
+                },
+                db=db,
+                pipeline_id=pid,
+            )
             # Send diff preview (first 200 lines) via WebSocket
             diff_preview = "\n".join(diff.splitlines()[:200])
-            await self._emit("task:awaiting_approval", {
-                "task_id": task_id,
-                "diff_preview": diff_preview,
-            }, db=db, pipeline_id=pid)
+            await self._emit(
+                "task:awaiting_approval",
+                {
+                    "task_id": task_id,
+                    "diff_preview": diff_preview,
+                },
+                db=db,
+                pipeline_id=pid,
+            )
             # Store approval context so the approve endpoint can resume the merge
-            await db.set_task_approval_context(task_id, json.dumps({
-                "worktree_path": worktree_path,
-                "agent_model": agent_model,
-                "pipeline_branch": pipeline_branch,
-            }))
+            await db.set_task_approval_context(
+                task_id,
+                json.dumps(
+                    {
+                        "worktree_path": worktree_path,
+                        "agent_model": agent_model,
+                        "pipeline_branch": pipeline_branch,
+                    }
+                ),
+            )
             # Do NOT proceed to merge — await human approval.
             # The /approve endpoint triggers the merge. Agent is released by
             # _cleanup_and_release in the caller.
             return
 
         await db.update_task_state(task_id, TaskState.MERGING.value)
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
+        )
         branch = f"forge/{validate_task_id(task_id)}"
 
         # Ensure worktree is clean before merge — commits staged changes,
@@ -1034,29 +1367,51 @@ class ExecutorMixin:
         async with self._merge_lock:
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
             if not merge_result.success:
-                console.print(f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]")
+                console.print(
+                    f"[yellow]{task_id}: trying Tier 1 merge retry (auto-rebase)...[/yellow]"
+                )
                 await self._emit_merge_failure(db, task_id, merge_result.error, pid)
                 await self._ensure_clean_for_rebase(worktree_path, task_id)  # clean before retry
                 retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
             else:
                 retry_result = None
         if merge_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref)
+            await self._emit_merge_success(
+                db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref
+            )
             return
         if retry_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref)
+            await self._emit_merge_success(
+                db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref
+            )
             return
         console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
         await self._attempt_tier2_resolution(
-            db, merge_worker, worktree_mgr, retry_result, task_id, worktree_path, branch, agent_model, pid,
+            db,
+            merge_worker,
+            worktree_mgr,
+            retry_result,
+            task_id,
+            worktree_path,
+            branch,
+            agent_model,
+            pid,
             pre_merge_ref=pre_merge_ref,
         )
 
     # -- Tier 2 conflict resolution -------------------------------------
 
     async def _attempt_tier2_resolution(
-        self, db, merge_worker, worktree_mgr, retry_result,
-        task_id: str, worktree_path: str, branch: str, agent_model: str, pid: str,
+        self,
+        db,
+        merge_worker,
+        worktree_mgr,
+        retry_result,
+        task_id: str,
+        worktree_path: str,
+        branch: str,
+        agent_model: str,
+        pid: str,
         pre_merge_ref: str | None = None,
     ) -> None:
         """Tier 2: agent-based conflict resolution."""
@@ -1066,14 +1421,32 @@ class ExecutorMixin:
         async with self._merge_lock:
             prep = await merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
-            await self._try_race_resolved_merge(db, merge_worker, worktree_mgr, task_id, worktree_path, branch, pid, pre_merge_ref=pre_merge_ref)
+            await self._try_race_resolved_merge(
+                db,
+                merge_worker,
+                worktree_mgr,
+                task_id,
+                worktree_path,
+                branch,
+                pid,
+                pre_merge_ref=pre_merge_ref,
+            )
             return
-        resolved = await self._resolve_conflicts(task_id, worktree_path, prep.conflicting_files, agent_model, db=db)
+        resolved = await self._resolve_conflicts(
+            task_id, worktree_path, prep.conflicting_files, agent_model, db=db
+        )
         if resolved:
             async with self._merge_lock:
                 final = await merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
-                await self._emit_merge_success(db, task_id, pid, worktree_path, label="after conflict resolution", pipeline_branch=pre_merge_ref)
+                await self._emit_merge_success(
+                    db,
+                    task_id,
+                    pid,
+                    worktree_path,
+                    label="after conflict resolution",
+                    pipeline_branch=pre_merge_ref,
+                )
                 return
             await merge_worker._abort_rebase(worktree_path)
         else:
@@ -1081,8 +1454,16 @@ class ExecutorMixin:
         await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
 
     async def _attempt_merge_with_resolution(
-        self, db, merge_worker, worktree_mgr, merge_result,
-        task_id: str, worktree_path: str, branch: str, agent_model: str, pid: str,
+        self,
+        db,
+        merge_worker,
+        worktree_mgr,
+        merge_result,
+        task_id: str,
+        worktree_path: str,
+        branch: str,
+        agent_model: str,
+        pid: str,
         pre_merge_ref: str | None = None,
     ) -> None:
         """Tier 2 for the merge-only fast path."""
@@ -1090,7 +1471,15 @@ class ExecutorMixin:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
         await self._attempt_tier2_resolution(
-            db, merge_worker, worktree_mgr, merge_result, task_id, worktree_path, branch, agent_model, pid,
+            db,
+            merge_worker,
+            worktree_mgr,
+            merge_result,
+            task_id,
+            worktree_path,
+            branch,
+            agent_model,
+            pid,
             pre_merge_ref=pre_merge_ref,
         )
 
@@ -1112,18 +1501,40 @@ class ExecutorMixin:
         """Select the correct prompt template for new or retry runs."""
         # Extract agent_prompt_modifier from template config if available
         template_config = getattr(self, "_template_config", None)
-        agent_prompt_modifier = template_config.get("agent_prompt_modifier", "") if template_config else ""
+        agent_prompt_modifier = (
+            template_config.get("agent_prompt_modifier", "") if template_config else ""
+        )
 
         if task.retry_count > 0 and getattr(task, "review_feedback", None):
-            console.print(f"[yellow]{getattr(task, 'id', '?')}: retry {task.retry_count} — including review feedback[/yellow]")
+            console.print(
+                f"[yellow]{getattr(task, 'id', '?')}: retry {task.retry_count} — including review feedback[/yellow]"
+            )
             return _build_retry_prompt(
-                task.title, task.description, task.files,
-                task.review_feedback, task.retry_count,
+                task.title,
+                task.description,
+                task.files,
+                task.review_feedback,
+                task.retry_count,
                 agent_prompt_modifier=agent_prompt_modifier,
             )
-        return _build_agent_prompt(task.title, task.description, task.files, agent_prompt_modifier=agent_prompt_modifier)
+        return _build_agent_prompt(
+            task.title, task.description, task.files, agent_prompt_modifier=agent_prompt_modifier
+        )
 
-    async def _stream_agent(self, runtime, agent_id: str, prompt: str, worktree_path: str, task, task_id: str, pid: str, db, agent_model: str, *, resume: str | None = None):
+    async def _stream_agent(
+        self,
+        runtime,
+        agent_id: str,
+        prompt: str,
+        worktree_path: str,
+        task,
+        task_id: str,
+        pid: str,
+        db,
+        agent_model: str,
+        *,
+        resume: str | None = None,
+    ):
         """Run agent with batched streaming callback."""
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
@@ -1137,7 +1548,12 @@ class ExecutorMixin:
                 result = guard.inspect(msg)
                 if result == "warning":
                     warning = guard.get_warning_message()
-                    await self._emit("task:agent_output", {"task_id": task_id, "line": warning}, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "task:agent_output",
+                        {"task_id": task_id, "line": warning},
+                        db=db,
+                        pipeline_id=pid,
+                    )
             except GuardTriggered:
                 raise  # Let it propagate to the outer try/except
 
@@ -1148,7 +1564,12 @@ class ExecutorMixin:
             now = time.monotonic()
             if now - _last_flush[0] >= 0.1:
                 for line in _batch:
-                    await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "task:agent_output",
+                        {"task_id": task_id, "line": line},
+                        db=db,
+                        pipeline_id=pid,
+                    )
                 _batch.clear()
                 _last_flush[0] = now
 
@@ -1169,12 +1590,16 @@ class ExecutorMixin:
             for dep_id in task.depends_on:
                 dep_task = await db.get_task(dep_id)
                 if dep_task and dep_task.state == TaskState.DONE.value:
-                    completed_deps.append({
-                        "task_id": dep_task.id,
-                        "title": dep_task.title,
-                        "implementation_summary": getattr(dep_task, "implementation_summary", None),
-                        "files_changed": dep_task.files or [],
-                    })
+                    completed_deps.append(
+                        {
+                            "task_id": dep_task.id,
+                            "title": dep_task.title,
+                            "implementation_summary": getattr(
+                                dep_task, "implementation_summary", None
+                            ),
+                            "files_changed": dep_task.files or [],
+                        }
+                    )
 
         # Load contracts for this task
         contracts_block = ""
@@ -1184,15 +1609,22 @@ class ExecutorMixin:
             contracts_json = await db.get_pipeline_contracts(pid)
             if contracts_json:
                 from forge.core.contracts import ContractSet as CS
+
                 try:
                     contract_set = CS.model_validate_json(contracts_json)
                 except Exception:
                     logger.warning("Failed to parse contracts_json for pipeline %s", pid)
-                    await self._emit("task:review_update", {
-                        "task_id": task_id, "gate": "contract_loading",
-                        "passed": True,
-                        "details": "Contract loading failed — executing without contract compliance checks",
-                    }, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "task:review_update",
+                        {
+                            "task_id": task_id,
+                            "gate": "contract_loading",
+                            "passed": True,
+                            "details": "Contract loading failed — executing without contract compliance checks",
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
 
         if contract_set:
             task_contracts = contract_set.contracts_for_task(task_id)
@@ -1207,7 +1639,8 @@ class ExecutorMixin:
         lessons_block = ""
         try:
             lesson_rows = await db.get_relevant_lessons(
-                project_dir=self._project_dir, max_count=20,
+                project_dir=self._project_dir,
+                max_count=20,
             )
             lessons_block = format_lessons_block([row_to_lesson(r) for r in lesson_rows])
         except Exception as exc:
@@ -1215,8 +1648,13 @@ class ExecutorMixin:
 
         try:
             result = await runtime.run_task(
-                agent_id, prompt, worktree_path, task.files,
-                allowed_dirs=self._settings.allowed_dirs, model=agent_model, on_message=_on_msg,
+                agent_id,
+                prompt,
+                worktree_path,
+                task.files,
+                allowed_dirs=self._settings.allowed_dirs,
+                model=agent_model,
+                on_message=_on_msg,
                 project_context=self._build_project_context(),
                 conventions_json=conventions_json,
                 conventions_md=conventions_md,
@@ -1232,18 +1670,28 @@ class ExecutorMixin:
             )
         except GuardTriggered as exc:
             logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)
-            await self._emit("task:agent_output", {"task_id": task_id, "line": f"Agent stopped: {exc}"}, db=db, pipeline_id=pid)
+            await self._emit(
+                "task:agent_output",
+                {"task_id": task_id, "line": f"Agent stopped: {exc}"},
+                db=db,
+                pipeline_id=pid,
+            )
             # Create lesson from failures — db is always available
             try:
                 lesson = extract_from_command_failures(exc.failures, project_dir=self._project_dir)
-                existing = await db.find_matching_lesson(lesson.trigger, project_dir=self._project_dir)
+                existing = await db.find_matching_lesson(
+                    lesson.trigger, project_dir=self._project_dir
+                )
                 if existing:
                     await db.bump_lesson_hit(existing.id)
                 else:
                     await db.add_lesson(
-                        scope=lesson.scope, category=lesson.category,
-                        title=lesson.title, content=lesson.content,
-                        trigger=lesson.trigger, resolution=lesson.resolution,
+                        scope=lesson.scope,
+                        category=lesson.category,
+                        title=lesson.title,
+                        content=lesson.content,
+                        trigger=lesson.trigger,
+                        resolution=lesson.resolution,
                         project_dir=self._project_dir if lesson.scope == "project" else None,
                         confidence=0.7,
                     )
@@ -1252,6 +1700,7 @@ class ExecutorMixin:
                 logger.warning("Failed to capture lesson: %s", le)
             # Return a failure result
             from forge.agents.adapter import AgentResult
+
             return AgentResult(
                 success=False,
                 files_changed=[],
@@ -1263,19 +1712,35 @@ class ExecutorMixin:
             )
 
         for line in _batch:
-            await self._emit("task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid)
+            await self._emit(
+                "task:agent_output", {"task_id": task_id, "line": line}, db=db, pipeline_id=pid
+            )
         _batch.clear()
         return result
 
     async def _try_race_resolved_merge(
-        self, db, merge_worker, worktree_mgr, task_id: str, worktree_path: str,
-        branch: str, pid: str, pre_merge_ref: str | None = None,
+        self,
+        db,
+        merge_worker,
+        worktree_mgr,
+        task_id: str,
+        worktree_path: str,
+        branch: str,
+        pid: str,
+        pre_merge_ref: str | None = None,
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
         async with self._merge_lock:
             ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
-            await self._emit_merge_success(db, task_id, pid, worktree_path, label="Tier 2 prep resolved race", pipeline_branch=pre_merge_ref)
+            await self._emit_merge_success(
+                db,
+                task_id,
+                pid,
+                worktree_path,
+                label="Tier 2 prep resolved race",
+                pipeline_branch=pre_merge_ref,
+            )
         else:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
 
@@ -1317,9 +1782,14 @@ class ExecutorMixin:
                 mw = getattr(self, "_merge_worker", None)
                 actual_pb = mw._main if mw else (pipeline_branch or "HEAD")
 
-                await self._emit("integration:check_started", {
-                    "task_id": task_id,
-                }, db=db, pipeline_id=pid)
+                await self._emit(
+                    "integration:check_started",
+                    {
+                        "task_id": task_id,
+                    },
+                    db=db,
+                    pipeline_id=pid,
+                )
 
                 check_result = await run_post_merge_check(
                     integration_config.post_merge,
@@ -1332,40 +1802,69 @@ class ExecutorMixin:
                 if check_result.status == "infra_error":
                     logger.warning(
                         "Post-merge integration check infra error for %s: %s — skipping",
-                        task_id, check_result.stderr[:200],
+                        task_id,
+                        check_result.stderr[:200],
                     )
-                    await self._emit("integration:check_result", {
-                        "task_id": task_id,
-                        "status": "infra_error",
-                    }, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "integration:check_result",
+                        {
+                            "task_id": task_id,
+                            "status": "infra_error",
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
                 elif check_result.status in ("failed", "timeout"):
                     action = await self._resolve_integration_failure(
                         integration_config.post_merge,
-                        check_result, db, pid,
-                        task_id=task_id, phase="post_merge",
+                        check_result,
+                        db,
+                        pid,
+                        task_id=task_id,
+                        phase="post_merge",
                     )
-                    await self._emit("integration:check_result", {
-                        "task_id": task_id,
-                        "status": check_result.status,
-                        "exit_code": check_result.exit_code,
-                        "is_regression": check_result.is_regression,
-                        "action": action,
-                    }, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "integration:check_result",
+                        {
+                            "task_id": task_id,
+                            "status": check_result.status,
+                            "exit_code": check_result.exit_code,
+                            "is_regression": check_result.is_regression,
+                            "action": action,
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
 
                     if action == "stop_pipeline":
                         # Do NOT mark task DONE — leave in MERGING state
-                        await self._emit("pipeline:error", {
-                            "error": f"Integration check failed after merging {task_id}",
-                        }, db=db, pipeline_id=pid)
-                        await self._emit("pipeline:phase_changed", {
-                            "phase": "error",
-                        }, db=db, pipeline_id=pid)
+                        await self._emit(
+                            "pipeline:error",
+                            {
+                                "error": f"Integration check failed after merging {task_id}",
+                            },
+                            db=db,
+                            pipeline_id=pid,
+                        )
+                        await self._emit(
+                            "pipeline:phase_changed",
+                            {
+                                "phase": "error",
+                            },
+                            db=db,
+                            pipeline_id=pid,
+                        )
                         return  # early return — task NOT marked done
                 else:
-                    await self._emit("integration:check_result", {
-                        "task_id": task_id,
-                        "status": "passed",
-                    }, db=db, pipeline_id=pid)
+                    await self._emit(
+                        "integration:check_result",
+                        {
+                            "task_id": task_id,
+                            "status": "passed",
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
 
         # ── Mark task DONE (existing logic) ─────────────────────────
         await db.update_task_state(task_id, TaskState.DONE.value)
@@ -1375,14 +1874,28 @@ class ExecutorMixin:
         agent_summary = getattr(task, "description", "") if task else ""
         # Use the agent result summary if available (stored during agent run)
         # Fall back to task description
-        summary = await _extract_implementation_summary(worktree_path, agent_summary, pipeline_branch)
+        summary = await _extract_implementation_summary(
+            worktree_path, agent_summary, pipeline_branch
+        )
         await db.update_task_implementation_summary(task_id, summary)
 
         stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
-        await self._emit("task:merge_result", {"task_id": task_id, "success": True, "error": None, **stats}, db=db, pipeline_id=pid)
-        await self._emit("task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:merge_result",
+            {"task_id": task_id, "success": True, "error": None, **stats},
+            db=db,
+            pipeline_id=pid,
+        )
+        await self._emit(
+            "task:state_changed", {"task_id": task_id, "state": "done"}, db=db, pipeline_id=pid
+        )
 
     async def _emit_merge_failure(self, db, task_id: str, error: str | None, pid: str) -> None:
         """Emit merge-failure event (does not change task state)."""
         console.print(f"[red]{task_id} merge failed: {error}[/red]")
-        await self._emit("task:merge_result", {"task_id": task_id, "success": False, "error": error}, db=db, pipeline_id=pid)
+        await self._emit(
+            "task:merge_result",
+            {"task_id": task_id, "success": False, "error": error},
+            db=db,
+            pipeline_id=pid,
+        )

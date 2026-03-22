@@ -44,6 +44,7 @@ def _make_failure(
 
 # --- extract_from_command_failures ---
 
+
 def test_extract_from_command_failures_basic():
     failures = [
         _make_failure(attempt_number=1),
@@ -92,6 +93,7 @@ def test_extract_from_command_failures_global_scope():
 
 # --- extract_from_review_feedback ---
 
+
 def test_extract_from_review_feedback_basic():
     feedback = "Missing error handling in the retry loop. Add try/except around SDK calls."
     lesson = extract_from_review_feedback(feedback, task_title="Implement retry logic")
@@ -105,6 +107,7 @@ def test_extract_from_review_feedback_basic():
 
 
 # --- classify_scope ---
+
 
 def test_classify_scope_global():
     scope = classify_scope(command="git push origin main", error_output="rejected")
@@ -132,6 +135,7 @@ def test_classify_scope_project_config():
 
 # --- _shorten_command ---
 
+
 def test_shorten_command_short():
     assert _shorten_command("git status") == "git status"
     assert _shorten_command("pip install foo") == "pip install foo"
@@ -144,6 +148,7 @@ def test_shorten_command_long():
 
 
 # --- _resolution_for_error ---
+
 
 def test_resolution_for_error_known():
     res = _resolution_for_error("module_not_found", "pip install foo", "")
@@ -159,6 +164,7 @@ def test_resolution_for_error_unknown():
 
 # --- _summarize_feedback ---
 
+
 def test_summarize_feedback():
     short = "Fix the imports"
     assert _summarize_feedback(short) == short
@@ -170,6 +176,7 @@ def test_summarize_feedback():
 
 
 # --- _extract_feedback_theme ---
+
 
 def test_extract_feedback_theme():
     feedback = "Error in /src/main.py at line 42: missing `return` statement"
@@ -187,6 +194,7 @@ def test_extract_feedback_theme():
 
 # --- is_infra_noise ---
 
+
 class TestIsInfraNoise:
     def test_timeout(self):
         assert is_infra_noise("Command timed out after 90s") is True
@@ -202,6 +210,7 @@ class TestIsInfraNoise:
 
 
 # --- extract_from_agent_learning ---
+
 
 class TestExtractFromAgentLearning:
     def test_valid_learning(self):

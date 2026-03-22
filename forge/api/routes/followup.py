@@ -42,12 +42,14 @@ def _get_followup_store(request: Request) -> dict[str, FollowUpExecution]:
 
 class FollowUpQuestionInput(BaseModel):
     """A single follow-up question in the request body."""
+
     text: str = Field(min_length=1, description="The follow-up question or request")
     context: str | None = Field(default=None, description="Optional context for the question")
 
 
 class FollowUpRequest(BaseModel):
     """Request body for submitting follow-up questions."""
+
     questions: list[FollowUpQuestionInput] = Field(
         min_length=1,
         description="List of follow-up questions",
@@ -56,6 +58,7 @@ class FollowUpRequest(BaseModel):
 
 class FollowUpResultResponse(BaseModel):
     """Result for a single task's follow-up execution."""
+
     task_id: str
     task_title: str
     success: bool
@@ -67,6 +70,7 @@ class FollowUpResultResponse(BaseModel):
 
 class FollowUpResponse(BaseModel):
     """Response for follow-up submission."""
+
     followup_id: str
     pipeline_id: str
     status: str
@@ -75,6 +79,7 @@ class FollowUpResponse(BaseModel):
 
 class FollowUpStatusResponse(BaseModel):
     """Response for follow-up status query."""
+
     followup_id: str
     pipeline_id: str
     status: str
@@ -124,10 +129,7 @@ async def submit_followup(
         raise HTTPException(status_code=400, detail="Pipeline has no tasks to follow up on")
 
     # Convert request questions to domain objects
-    questions = [
-        FollowUpQuestion(text=q.text, context=q.context)
-        for q in body.questions
-    ]
+    questions = [FollowUpQuestion(text=q.text, context=q.context) for q in body.questions]
 
     # Create the follow-up execution record
     followup_id = str(uuid.uuid4())
@@ -158,21 +160,27 @@ async def submit_followup(
             followup.status = FollowUpStatus.CLASSIFYING
 
             if ws_manager:
-                await ws_manager.broadcast(pipeline_id, {
-                    "type": "followup:classifying",
-                    "followup_id": followup_id,
-                    "question_count": len(questions),
-                })
+                await ws_manager.broadcast(
+                    pipeline_id,
+                    {
+                        "type": "followup:classifying",
+                        "followup_id": followup_id,
+                        "question_count": len(questions),
+                    },
+                )
 
             classification = await classify_questions(questions, pipeline_tasks)
             followup.classification = classification
 
             if ws_manager:
-                await ws_manager.broadcast(pipeline_id, {
-                    "type": "followup:classified",
-                    "followup_id": followup_id,
-                    "classification": {str(k): v for k, v in classification.items()},
-                })
+                await ws_manager.broadcast(
+                    pipeline_id,
+                    {
+                        "type": "followup:classified",
+                        "followup_id": followup_id,
+                        "classification": {str(k): v for k, v in classification.items()},
+                    },
+                )
 
             # Phase 2: Execute follow-ups
             await execute_followups(
@@ -198,21 +206,24 @@ async def submit_followup(
             )
 
             if ws_manager:
-                await ws_manager.broadcast(pipeline_id, {
-                    "type": "followup:complete",
-                    "followup_id": followup_id,
-                    "status": followup.status.value,
-                    "results": [
-                        {
-                            "task_id": r.task_id,
-                            "task_title": r.task_title,
-                            "success": r.success,
-                            "summary": r.summary,
-                            "files_changed": r.files_changed,
-                        }
-                        for r in followup.results
-                    ],
-                })
+                await ws_manager.broadcast(
+                    pipeline_id,
+                    {
+                        "type": "followup:complete",
+                        "followup_id": followup_id,
+                        "status": followup.status.value,
+                        "results": [
+                            {
+                                "task_id": r.task_id,
+                                "task_title": r.task_title,
+                                "success": r.success,
+                                "summary": r.summary,
+                                "files_changed": r.files_changed,
+                            }
+                            for r in followup.results
+                        ],
+                    },
+                )
 
         except Exception as exc:
             logger.exception("Follow-up execution failed for pipeline %s", pipeline_id)
@@ -220,11 +231,14 @@ async def submit_followup(
             followup.error = str(exc)
 
             if ws_manager:
-                await ws_manager.broadcast(pipeline_id, {
-                    "type": "followup:error",
-                    "followup_id": followup_id,
-                    "error": str(exc),
-                })
+                await ws_manager.broadcast(
+                    pipeline_id,
+                    {
+                        "type": "followup:error",
+                        "followup_id": followup_id,
+                        "error": str(exc),
+                    },
+                )
 
     safe_create_task(_run_followup(), logger=logger, name="run-followup")
 
@@ -266,10 +280,7 @@ async def get_followup_status(
         followup_id=followup.id,
         pipeline_id=followup.pipeline_id,
         status=followup.status.value,
-        questions=[
-            {"text": q.text, "context": q.context}
-            for q in followup.questions
-        ],
+        questions=[{"text": q.text, "context": q.context} for q in followup.questions],
         classification={str(k): v for k, v in followup.classification.items()},
         results=[
             FollowUpResultResponse(

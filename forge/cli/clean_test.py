@@ -15,17 +15,23 @@ def git_repo(tmp_path):
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=repo, check=True, capture_output=True,
+        cwd=repo,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=repo, check=True, capture_output=True,
+        cwd=repo,
+        check=True,
+        capture_output=True,
     )
     (repo / "README.md").write_text("# Test")
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=repo, check=True, capture_output=True,
+        cwd=repo,
+        check=True,
+        capture_output=True,
     )
     return repo
 
@@ -54,11 +60,15 @@ def test_clean_missing_forge_dir(tmp_path):
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, check=True, capture_output=True,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
     )
 
     from forge.cli.main import cli
@@ -78,7 +88,9 @@ def test_clean_removes_stale_worktrees(forge_project):
     wt_path = str(worktrees_dir / "task-1")
     subprocess.run(
         ["git", "worktree", "add", "-b", "forge/task-1", wt_path],
-        cwd=forge_project, check=True, capture_output=True,
+        cwd=forge_project,
+        check=True,
+        capture_output=True,
     )
     assert os.path.isdir(wt_path)
 
@@ -101,10 +113,13 @@ def test_clean_prunes_worktree_admin(forge_project):
     wt_path = str(worktrees_dir / "task-stale")
     subprocess.run(
         ["git", "worktree", "add", "-b", "forge/task-stale", wt_path],
-        cwd=forge_project, check=True, capture_output=True,
+        cwd=forge_project,
+        check=True,
+        capture_output=True,
     )
     # Manually delete the directory (simulating a stale worktree)
     import shutil
+
     shutil.rmtree(wt_path)
 
     from forge.cli.main import cli
@@ -115,7 +130,9 @@ def test_clean_prunes_worktree_admin(forge_project):
     # git worktree prune should have run, so git worktree list should be clean
     wt_list = subprocess.run(
         ["git", "worktree", "list"],
-        cwd=forge_project, capture_output=True, text=True,
+        cwd=forge_project,
+        capture_output=True,
+        text=True,
     )
     assert "task-stale" not in wt_list.stdout
 
@@ -125,12 +142,16 @@ def test_clean_deletes_orphaned_branches(forge_project):
     # Create a forge/* branch without a worktree directory
     subprocess.run(
         ["git", "branch", "forge/orphan-task"],
-        cwd=forge_project, check=True, capture_output=True,
+        cwd=forge_project,
+        check=True,
+        capture_output=True,
     )
     # Verify branch exists
     branch_list = subprocess.run(
         ["git", "branch"],
-        cwd=forge_project, capture_output=True, text=True,
+        cwd=forge_project,
+        capture_output=True,
+        text=True,
     )
     assert "forge/orphan-task" in branch_list.stdout
 
@@ -144,7 +165,9 @@ def test_clean_deletes_orphaned_branches(forge_project):
     # Branch should be deleted
     branch_list_after = subprocess.run(
         ["git", "branch"],
-        cwd=forge_project, capture_output=True, text=True,
+        cwd=forge_project,
+        capture_output=True,
+        text=True,
     )
     assert "forge/orphan-task" not in branch_list_after.stdout
 
@@ -157,7 +180,9 @@ def test_clean_preserves_active_worktree_branches(forge_project):
     wt_path = str(worktrees_dir / "active-task")
     subprocess.run(
         ["git", "worktree", "add", "-b", "forge/active-task", wt_path],
-        cwd=forge_project, check=True, capture_output=True,
+        cwd=forge_project,
+        check=True,
+        capture_output=True,
     )
 
     from forge.cli.main import cli
@@ -180,13 +205,17 @@ def test_clean_summary_table_counts(forge_project):
         wt_path = str(worktrees_dir / task_id)
         subprocess.run(
             ["git", "worktree", "add", "-b", f"forge/{task_id}", wt_path],
-            cwd=forge_project, check=True, capture_output=True,
+            cwd=forge_project,
+            check=True,
+            capture_output=True,
         )
 
     # Create an orphaned branch (no worktree dir)
     subprocess.run(
         ["git", "branch", "forge/orphan-x"],
-        cwd=forge_project, check=True, capture_output=True,
+        cwd=forge_project,
+        check=True,
+        capture_output=True,
     )
 
     from forge.cli.main import cli

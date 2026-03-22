@@ -23,15 +23,31 @@ class CreateTaskRequest(BaseModel):
     project_path: str
     extra_dirs: list[str] = Field(default_factory=list)
     model_strategy: str = "auto"
-    images: list[str] = Field(default_factory=list, description="Base64-encoded image data URIs (e.g. data:image/png;base64,...)")
+    images: list[str] = Field(
+        default_factory=list,
+        description="Base64-encoded image data URIs (e.g. data:image/png;base64,...)",
+    )
     branch_name: str | None = None
-    build_cmd: str | None = Field(default=None, description="Shell command to verify the build after agent work")
-    test_cmd: str | None = Field(default=None, description="Shell command to run tests after agent work")
-    budget_limit_usd: float = Field(default=0.0, description="Maximum USD budget for this pipeline. 0 means unlimited.")
+    build_cmd: str | None = Field(
+        default=None, description="Shell command to verify the build after agent work"
+    )
+    test_cmd: str | None = Field(
+        default=None, description="Shell command to run tests after agent work"
+    )
+    budget_limit_usd: float = Field(
+        default=0.0, description="Maximum USD budget for this pipeline. 0 means unlimited."
+    )
     require_approval: bool | None = None
-    template_id: str | None = Field(default=None, description="Pipeline template ID (built-in or user-created)")
-    quality_preset: str | None = Field(default=None, description="Quality preset: fast, balanced, or thorough")
-    repos: list[RepoEntry] | None = Field(default=None, description="List of repositories for multi-repo workspaces. None for single-repo backward compat.")
+    template_id: str | None = Field(
+        default=None, description="Pipeline template ID (built-in or user-created)"
+    )
+    quality_preset: str | None = Field(
+        default=None, description="Quality preset: fast, balanced, or thorough"
+    )
+    repos: list[RepoEntry] | None = Field(
+        default=None,
+        description="List of repositories for multi-repo workspaces. None for single-repo backward compat.",
+    )
 
 
 class RestartPipelineRequest(BaseModel):
@@ -67,7 +83,10 @@ class PipelineResponse(BaseModel):
     """Response returned when a pipeline is created."""
 
     pipeline_id: str
-    repos: list[dict] | None = Field(default=None, description="List of repo dicts included in this pipeline. None for single-repo pipelines.")
+    repos: list[dict] | None = Field(
+        default=None,
+        description="List of repo dicts included in this pipeline. None for single-repo pipelines.",
+    )
 
 
 class TaskStatusResponse(BaseModel):
@@ -85,7 +104,9 @@ class TaskStatusResponse(BaseModel):
     estimated_cost_usd: float = 0.0
     github_issue_url: str | None = None
     github_issue_number: int | None = None
-    repo_id: str = Field(default="default", description="Repository identifier for this status context.")
+    repo_id: str = Field(
+        default="default", description="Repository identifier for this status context."
+    )
 
 
 class TaskListItem(BaseModel):
@@ -95,7 +116,9 @@ class TaskListItem(BaseModel):
     description: str
     project_path: str
     phase: str
-    repo_id: str = Field(default="default", description="Repository identifier. 'default' for single-repo pipelines.")
+    repo_id: str = Field(
+        default="default", description="Repository identifier. 'default' for single-repo pipelines."
+    )
 
 
 # ── Template schemas ──────────────────────────────────────────────────

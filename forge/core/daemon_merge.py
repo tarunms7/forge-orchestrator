@@ -53,9 +53,7 @@ class MergeMixin:
         task_context = ""
         if task:
             task_context = (
-                f"## Current Task Context\n"
-                f"Task: {task.title}\n"
-                f"Description: {task.description}\n\n"
+                f"## Current Task Context\nTask: {task.title}\nDescription: {task.description}\n\n"
             )
 
         conflict_prompt = (
@@ -99,10 +97,14 @@ class MergeMixin:
     # ------------------------------------------------------------------
 
     async def _cascade_blocked(
-        self, db: Database, failed_task_id: str, pipeline_id: str,
+        self,
+        db: Database,
+        failed_task_id: str,
+        pipeline_id: str,
     ) -> None:
         """Mark all transitive dependents of a failed task as BLOCKED."""
         from collections import deque
+
         all_tasks = await db.list_tasks_by_pipeline(pipeline_id)
         newly_blocked: set[str] = set()
         queue: deque[str] = deque([failed_task_id])
@@ -116,11 +118,16 @@ class MergeMixin:
                     continue
                 if current_id in (task.depends_on or []):
                     await db.update_task_state(task.id, "blocked")
-                    await self._emit("task:state_changed", {
-                        "task_id": task.id,
-                        "state": "blocked",
-                        "error": f"Blocked: dependency {current_id} failed",
-                    }, db=db, pipeline_id=pipeline_id)
+                    await self._emit(
+                        "task:state_changed",
+                        {
+                            "task_id": task.id,
+                            "state": "blocked",
+                            "error": f"Blocked: dependency {current_id} failed",
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
                     newly_blocked.add(task.id)
                     queue.append(task.id)
 
@@ -151,27 +158,43 @@ class MergeMixin:
                 f"[yellow]{task_id}: retry {task.retry_count + 1}/{self._settings.max_retries}"
                 f" — {'with review feedback' if review_feedback else 'clean retry'}[/yellow]"
             )
-            backoff = min(5 * (2 ** task.retry_count), 120)
-            logger.info("Retry backoff: waiting %ds before retry %d for %s", backoff, task.retry_count + 1, task_id)
+            backoff = min(5 * (2**task.retry_count), 120)
+            logger.info(
+                "Retry backoff: waiting %ds before retry %d for %s",
+                backoff,
+                task.retry_count + 1,
+                task_id,
+            )
             await asyncio.sleep(backoff)
             await db.retry_task(task_id, review_feedback=review_feedback)
             # Extract lesson from review feedback if this is a repeated failure
-            if review_feedback and task.retry_count >= 2 and not review_feedback.startswith("[INFRASTRUCTURE CRASH]"):  # 3rd+ attempt
+            if (
+                review_feedback
+                and task.retry_count >= 2
+                and not review_feedback.startswith("[INFRASTRUCTURE CRASH]")
+            ):  # 3rd+ attempt
                 try:
                     lesson = extract_from_review_feedback(
                         feedback=review_feedback,
                         task_title=getattr(task, "title", ""),
                         project_dir=getattr(self, "_project_dir", None),
                     )
-                    existing = await db.find_matching_lesson(lesson.trigger, project_dir=getattr(self, "_project_dir", None))
+                    existing = await db.find_matching_lesson(
+                        lesson.trigger, project_dir=getattr(self, "_project_dir", None)
+                    )
                     if existing:
                         await db.bump_lesson_hit(existing.id)
                     else:
                         await db.add_lesson(
-                            scope=lesson.scope, category=lesson.category,
-                            title=lesson.title, content=lesson.content,
-                            trigger=lesson.trigger, resolution=lesson.resolution,
-                            project_dir=getattr(self, "_project_dir", None) if lesson.scope == "project" else None,
+                            scope=lesson.scope,
+                            category=lesson.category,
+                            title=lesson.title,
+                            content=lesson.content,
+                            trigger=lesson.trigger,
+                            resolution=lesson.resolution,
+                            project_dir=getattr(self, "_project_dir", None)
+                            if lesson.scope == "project"
+                            else None,
                             confidence=0.3,
                         )
                     logger.info("Review lesson captured: %s", lesson.title)
@@ -192,9 +215,7 @@ class MergeMixin:
             # KEEP the worktree — the retry agent needs the existing code
             # to fix specific review issues instead of rebuilding from scratch.
         else:
-            console.print(
-                f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]"
-            )
+            console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
             if pipeline_id:
                 await self._cascade_blocked(db, task_id, pipeline_id)
@@ -246,7 +267,7 @@ class MergeMixin:
                 f"{task.retry_count + 1}/{self._settings.max_retries}"
                 f" — skipping agent + review[/yellow]"
             )
-            backoff = min(5 * (2 ** task.retry_count), 120)
+            backoff = min(5 * (2**task.retry_count), 120)
             logger.info("Merge retry backoff: waiting %ds for %s", backoff, task_id)
             await asyncio.sleep(backoff)
             await db.retry_task_for_merge(task_id)
@@ -264,9 +285,7 @@ class MergeMixin:
                 )
             # KEEP the worktree — merge needs the existing code
         else:
-            console.print(
-                f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]"
-            )
+            console.print(f"[bold red]{task_id}: max retries exceeded, marking as error[/bold red]")
             await db.update_task_state(task_id, TaskState.ERROR.value)
             if pipeline_id:
                 await self._cascade_blocked(db, task_id, pipeline_id)

@@ -11,6 +11,7 @@ logger = logging.getLogger("forge.learning")
 @dataclass
 class FailureRecord:
     """Record of a single command failure."""
+
     command: str
     normalized_command: str
     error_class: str  # categorized error type
@@ -20,6 +21,7 @@ class FailureRecord:
 
 class GuardTriggered(Exception):
     """Raised when RuntimeGuard detects a wasteful retry loop."""
+
     def __init__(self, message: str, failures: list[FailureRecord]):
         super().__init__(message)
         self.failures = failures
@@ -40,20 +42,20 @@ def normalize_command(command: str) -> str:
     """
     cmd = command.strip()
     # Strip output redirection
-    cmd = re.sub(r'\s*2>&1\s*(\|.*)?$', '', cmd)
-    cmd = re.sub(r'\s*\|\s*tail\s+-\d+$', '', cmd)
-    cmd = re.sub(r'\s*\|\s*head\s+-\d+$', '', cmd)
+    cmd = re.sub(r"\s*2>&1\s*(\|.*)?$", "", cmd)
+    cmd = re.sub(r"\s*\|\s*tail\s+-\d+$", "", cmd)
+    cmd = re.sub(r"\s*\|\s*head\s+-\d+$", "", cmd)
     # Strip temp paths
-    cmd = re.sub(r'/tmp/[^\s]+', '/tmp/TEMP', cmd)
-    cmd = re.sub(r'/var/folders/[^\s]+', '/var/TEMP', cmd)
+    cmd = re.sub(r"/tmp/[^\s]+", "/tmp/TEMP", cmd)
+    cmd = re.sub(r"/var/folders/[^\s]+", "/var/TEMP", cmd)
     # Strip UUIDs
     cmd = re.sub(
-        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
-        'UUID',
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        "UUID",
         cmd,
     )
     # Strip timestamp-like numbers (but not port numbers or small integers)
-    cmd = re.sub(r'\b\d{10,}\b', 'TIMESTAMP', cmd)
+    cmd = re.sub(r"\b\d{10,}\b", "TIMESTAMP", cmd)
     return cmd
 
 
@@ -64,25 +66,25 @@ def classify_error(error_output: str) -> str:
     'permission_denied', 'test_failure', 'syntax_error', 'timeout', 'unknown'.
     """
     err = error_output.lower()
-    if 'modulenotfounderror' in err or 'no module named' in err:
-        return 'module_not_found'
-    if 'command not found' in err or 'no such file or directory' in err:
-        return 'command_not_found'
-    if 'permission denied' in err:
-        return 'permission_denied'
-    if 'syntaxerror' in err or 'syntax error' in err:
-        return 'syntax_error'
-    if 'importerror' in err:
-        return 'import_error'
-    if 'filenotfounderror' in err:
-        return 'file_not_found'
-    if 'timeout' in err or 'timed out' in err:
-        return 'timeout'
-    if 'failed' in err and ('test' in err or 'pytest' in err or 'assert' in err):
-        return 'test_failure'
-    if 'connection refused' in err or 'connection error' in err:
-        return 'connection_error'
-    return 'unknown'
+    if "modulenotfounderror" in err or "no module named" in err:
+        return "module_not_found"
+    if "command not found" in err or "no such file or directory" in err:
+        return "command_not_found"
+    if "permission denied" in err:
+        return "permission_denied"
+    if "syntaxerror" in err or "syntax error" in err:
+        return "syntax_error"
+    if "importerror" in err:
+        return "import_error"
+    if "filenotfounderror" in err:
+        return "file_not_found"
+    if "timeout" in err or "timed out" in err:
+        return "timeout"
+    if "failed" in err and ("test" in err or "pytest" in err or "assert" in err):
+        return "test_failure"
+    if "connection refused" in err or "connection error" in err:
+        return "connection_error"
+    return "unknown"
 
 
 def approach_signature(normalized_cmd: str, error_class: str) -> str:
@@ -131,29 +133,28 @@ class RuntimeGuard:
             GuardTriggered: on 3rd failure of same approach
         """
         # Only process AssistantMessage
-        content = getattr(message, 'content', None)
+        content = getattr(message, "content", None)
         if content is None:
             return None
 
         for block in content:
             # Track Bash tool calls
-            if hasattr(block, 'name') and block.name == 'Bash':
-                tool_id = getattr(block, 'id', None)
-                cmd = (getattr(block, 'input', None) or {}).get('command', '')
+            if hasattr(block, "name") and block.name == "Bash":
+                tool_id = getattr(block, "id", None)
+                cmd = (getattr(block, "input", None) or {}).get("command", "")
                 if tool_id and cmd:
                     norm = normalize_command(cmd)
                     self._pending_bash[tool_id] = (cmd, norm)
 
             # Check tool results for failures
-            if hasattr(block, 'tool_use_id') and hasattr(block, 'is_error'):
+            if hasattr(block, "tool_use_id") and hasattr(block, "is_error"):
                 tool_id = block.tool_use_id
                 if tool_id in self._pending_bash and block.is_error is True:
                     cmd, norm = self._pending_bash.pop(tool_id)
-                    raw_content = getattr(block, 'content', '') or ''
+                    raw_content = getattr(block, "content", "") or ""
                     if isinstance(raw_content, list):
-                        error_text = ' '.join(
-                            item.get('text', '') for item in raw_content
-                            if isinstance(item, dict)
+                        error_text = " ".join(
+                            item.get("text", "") for item in raw_content if isinstance(item, dict)
                         )[:500]
                     else:
                         error_text = str(raw_content)[:500]
@@ -208,7 +209,6 @@ class RuntimeGuard:
         lines = [f"Agent failed with {len(self.failures)} command failures:"]
         for f in self.failures:
             lines.append(
-                f"  [{f.attempt_number}] `{f.command}` -> {f.error_class}: "
-                f"{f.stderr_snippet[:100]}"
+                f"  [{f.attempt_number}] `{f.command}` -> {f.error_class}: {f.stderr_snippet[:100]}"
             )
         return "\n".join(lines)

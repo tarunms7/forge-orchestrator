@@ -1,4 +1,5 @@
 """Tests for question detection and pause/resume in daemon_executor."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,7 +13,9 @@ class TestQuestionDetection:
     """Tests for _parse_forge_question used by _execute_task."""
 
     def test_detects_question_in_result(self):
-        result_text = 'Analysis done.\n\nFORGE_QUESTION:\n{"question": "Which?", "suggestions": ["A", "B"]}'
+        result_text = (
+            'Analysis done.\n\nFORGE_QUESTION:\n{"question": "Which?", "suggestions": ["A", "B"]}'
+        )
         q = _parse_forge_question(result_text)
         assert q is not None
         assert q["question"] == "Which?"
@@ -64,6 +67,7 @@ class TestResumeTaskSdkOptions:
     def test_resume_task_calls_sdk_with_resume(self):
         """Verify ClaudeCodeOptions accepts resume=session_id."""
         from claude_code_sdk import ClaudeCodeOptions
+
         opts = ClaudeCodeOptions(
             resume="sess_123",
             permission_mode="acceptEdits",
@@ -74,6 +78,7 @@ class TestResumeTaskSdkOptions:
     def test_resume_none_by_default(self):
         """ClaudeCodeOptions resume defaults to None."""
         from claude_code_sdk import ClaudeCodeOptions
+
         opts = ClaudeCodeOptions(
             permission_mode="acceptEdits",
         )
@@ -85,6 +90,7 @@ class TestAgentResultSessionId:
 
     def test_agent_result_has_session_id(self):
         from forge.agents.adapter import AgentResult
+
         result = AgentResult(
             success=True,
             files_changed=[],
@@ -95,6 +101,7 @@ class TestAgentResultSessionId:
 
     def test_agent_result_session_id_defaults_none(self):
         from forge.agents.adapter import AgentResult
+
         result = AgentResult(success=False, files_changed=[], summary="fail")
         assert result.session_id is None
 
@@ -106,6 +113,7 @@ class TestExecuteTaskQuestionDetection:
     def _make_mixin(self):
         """Return an ExecutorMixin with the required host-class attributes mocked."""
         from forge.core.daemon_executor import ExecutorMixin
+
         mixin = ExecutorMixin()
         mixin._project_dir = "/fake/project"
         mixin._strategy = "auto"
@@ -126,21 +134,23 @@ class TestExecuteTaskQuestionDetection:
 
         # DB mock
         db = MagicMock()
-        db.get_task = AsyncMock(return_value=MagicMock(
-            title="Test Task",
-            retry_count=0,
-            retry_reason=None,
-            files=["foo.py"],
-            complexity="medium",
-            depends_on=[],
-            review_feedback=None,
-            questions_asked=0,
-        ))
+        db.get_task = AsyncMock(
+            return_value=MagicMock(
+                title="Test Task",
+                retry_count=0,
+                retry_reason=None,
+                files=["foo.py"],
+                complexity="medium",
+                depends_on=[],
+                review_feedback=None,
+                questions_asked=0,
+            )
+        )
         db.update_task_state = AsyncMock()
         db.release_agent = AsyncMock()
-        db.create_task_question = AsyncMock(return_value=MagicMock(
-            id="q-1", question="Which strategy?"
-        ))
+        db.create_task_question = AsyncMock(
+            return_value=MagicMock(id="q-1", question="Which strategy?")
+        )
         db.update_task_field = AsyncMock()
         db.get_pipeline = AsyncMock(return_value=None)
         db.get_pipeline_contracts = AsyncMock(return_value=None)
@@ -188,11 +198,19 @@ class TestExecuteTaskQuestionDetection:
         mixin._stream_agent = fake_stream_agent
 
         with patch("forge.core.daemon_executor._get_diff_vs_main", return_value="diff content"):
-            with patch("forge.core.daemon_executor._run_git", return_value=MagicMock(returncode=0, stdout="")):
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                return_value=MagicMock(returncode=0, stdout=""),
+            ):
                 with patch("forge.core.budget.check_budget", AsyncMock()):
                     await mixin._execute_task(
-                        db, runtime, worktree_mgr, merge_worker,
-                        task_id="task-1", agent_id="agent-1", pipeline_id="pipe-1",
+                        db,
+                        runtime,
+                        worktree_mgr,
+                        merge_worker,
+                        task_id="task-1",
+                        agent_id="agent-1",
+                        pipeline_id="pipe-1",
                     )
 
         # Should have emitted task:question
@@ -200,10 +218,7 @@ class TestExecuteTaskQuestionDetection:
         assert "task:question" in event_types
 
         # Should have emitted awaiting_input state change
-        state_changes = [
-            e[1]["state"] for e in emitted_events
-            if e[0] == "task:state_changed"
-        ]
+        state_changes = [e[1]["state"] for e in emitted_events if e[0] == "task:state_changed"]
         assert "awaiting_input" in state_changes
 
         # Should have released the agent

@@ -69,11 +69,17 @@ async def _prune_stale_pending_graphs(app_state: object) -> None:
     lock = getattr(app_state, "pending_graphs_lock", None)
     if lock:
         async with lock:
-            stale = [k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff]
+            stale = [
+                k
+                for k, v in pending.items()
+                if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff
+            ]
             for k in stale:
                 pending.pop(k, None)
     else:
-        stale = [k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff]
+        stale = [
+            k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff
+        ]
         for k in stale:
             pending.pop(k, None)
 
@@ -81,6 +87,7 @@ async def _prune_stale_pending_graphs(app_state: object) -> None:
 # ---------------------------------------------------------------------------
 # Error helpers — never leak internal details to clients
 # ---------------------------------------------------------------------------
+
 
 def _safe_error(exc: BaseException, prefix: str) -> str:
     """Log the full exception with traceback, return only the safe prefix to callers.
@@ -96,6 +103,7 @@ def _safe_error(exc: BaseException, prefix: str) -> str:
 # ---------------------------------------------------------------------------
 # Worktree cleanup helpers
 # ---------------------------------------------------------------------------
+
 
 def _cleanup_worktree(project_dir: str, task_id: str, repo_id: str | None = None) -> bool:
     """Remove a single task's worktree + branch. Returns True if cleaned."""
@@ -114,7 +122,9 @@ def _cleanup_worktree(project_dir: str, task_id: str, repo_id: str | None = None
 
 
 async def _cleanup_all_pipeline_worktrees(
-    forge_db, pipeline_id: str, project_dir: str,
+    forge_db,
+    pipeline_id: str,
+    project_dir: str,
 ) -> int:
     """Remove worktrees for all tasks in a pipeline. Returns count cleaned."""
     tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
@@ -126,10 +136,11 @@ async def _cleanup_all_pipeline_worktrees(
     await asyncio.to_thread(
         subprocess.run,
         ["git", "worktree", "prune"],
-        cwd=project_dir, capture_output=True, timeout=30,
+        cwd=project_dir,
+        capture_output=True,
+        timeout=30,
     )
     return cleaned
-
 
 
 def _get_forge_db(request: Request):
@@ -147,9 +158,7 @@ async def _set_pipeline_require_approval(forge_db, pipeline_id: str, value: bool
     from forge.storage.db import PipelineRow
 
     async with forge_db._session_factory() as session:
-        result = await session.execute(
-            select(PipelineRow).where(PipelineRow.id == pipeline_id)
-        )
+        result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
         row = result.scalar_one_or_none()
         if row:
             row.require_approval = value
@@ -168,18 +177,18 @@ def _sanitize_pr_title(description: str) -> str:
     # Take the first line / first sentence
     text = description.strip()
     # Split on common sentence boundaries and list starters
-    first_sentence = re.split(r'[.!?\n]|(?:\d+[.)]\s)', text)[0].strip()
+    first_sentence = re.split(r"[.!?\n]|(?:\d+[.)]\s)", text)[0].strip()
     # Strip leading list markers like "- ", "* ", "1. ", etc.
-    first_sentence = re.sub(r'^[\-\*•]\s*', '', first_sentence).strip()
+    first_sentence = re.sub(r"^[\-\*•]\s*", "", first_sentence).strip()
     # Remove question marks and trailing punctuation
-    first_sentence = first_sentence.rstrip('?!.:;,')
+    first_sentence = first_sentence.rstrip("?!.:;,")
     # Lowercase the first character for conventional commit style
     if first_sentence:
         first_sentence = first_sentence[0].lower() + first_sentence[1:]
     # Truncate to ~50 chars to keep total title (with "forge: " prefix) under ~60
     if len(first_sentence) > 50:
         # Cut at last word boundary
-        truncated = first_sentence[:50].rsplit(' ', 1)[0]
+        truncated = first_sentence[:50].rsplit(" ", 1)[0]
         first_sentence = truncated
     return first_sentence or description[:50]
 
@@ -217,7 +226,7 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
             ),
         )
         if result and result.result:
-            title = result.result.strip().strip('"\'').strip()
+            title = result.result.strip().strip("\"'").strip()
             # Remove any "forge: " prefix the LLM might add (we add it ourselves)
             if title.lower().startswith("forge:"):
                 title = title[6:].strip()
@@ -256,22 +265,32 @@ async def _resolve_pipeline_config(body: CreateTaskRequest, db: Database | None)
             if row is not None:
                 user_config = json.loads(row.config_json) if row.config_json else {}
                 # Merge user template fields into config
-                config.update({
-                    "id": row.id,
-                    "name": row.name,
-                    "is_builtin": False,
-                    "user_id": row.user_id,
-                })
+                config.update(
+                    {
+                        "id": row.id,
+                        "name": row.name,
+                        "is_builtin": False,
+                        "user_id": row.user_id,
+                    }
+                )
                 for key in (
-                    "description", "icon", "model_strategy",
-                    "planner_prompt_modifier", "agent_prompt_modifier",
-                    "review_config", "build_cmd", "test_cmd",
-                    "max_tasks", "default_complexity",
+                    "description",
+                    "icon",
+                    "model_strategy",
+                    "planner_prompt_modifier",
+                    "agent_prompt_modifier",
+                    "review_config",
+                    "build_cmd",
+                    "test_cmd",
+                    "max_tasks",
+                    "default_complexity",
                 ):
                     if key in user_config:
                         config[key] = user_config[key]
             else:
-                raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Template '{body.template_id}' not found"
+                )
 
     # 3. Overlay quality preset if specified
     if body.quality_preset:
@@ -327,10 +346,10 @@ async def create_task(
 
     # Magic bytes for supported image formats
     _IMAGE_MAGIC = {
-        b"\x89PNG": "png",       # 89504E47
+        b"\x89PNG": "png",  # 89504E47
         b"\xff\xd8\xff": "jpg",  # FFD8FF
-        b"GIF": "gif",           # 474946
-        b"RIFF": "webp",         # 52494646 (needs WEBP check at offset 8)
+        b"GIF": "gif",  # 474946
+        b"RIFF": "webp",  # 52494646 (needs WEBP check at offset 8)
     }
 
     if body.images:
@@ -356,7 +375,7 @@ async def create_task(
                 # Validate magic bytes to ensure data is a real image
                 valid_image = False
                 for magic, fmt in _IMAGE_MAGIC.items():
-                    if raw[:len(magic)] == magic:
+                    if raw[: len(magic)] == magic:
                         if fmt == "webp":
                             # RIFF container must also have WEBP at offset 8
                             if len(raw) >= 12 and raw[8:12] == b"WEBP":
@@ -405,13 +424,17 @@ async def create_task(
                         f.write(raw)
                     image_paths.append(file_path)
                 except Exception:
-                    logger.warning("Failed to write image %d to disk for pipeline %s", idx, pipeline_id)
+                    logger.warning(
+                        "Failed to write image %d to disk for pipeline %s", idx, pipeline_id
+                    )
         except Exception:
             logger.warning("Failed to create images directory for pipeline %s", pipeline_id)
 
         if image_paths:
             description += "\n\n## Attached Images\n"
-            description += "The user has attached the following image files. Use the Read tool to view them:\n"
+            description += (
+                "The user has attached the following image files. Use the Read tool to view them:\n"
+            )
             for path in image_paths:
                 description += f"- {path}\n"
 
@@ -450,11 +473,14 @@ async def create_task(
         # Store resolved template config on the pipeline
         template_id = body.template_id or resolved_config.get("id", "feature")
         await forge_db.set_pipeline_template_config(
-            pipeline_id, template_id, json.dumps(resolved_config),
+            pipeline_id,
+            template_id,
+            json.dumps(resolved_config),
         )
 
         # Resolve require_approval: resolved config > per-pipeline field > env var > default False
         from forge.config.settings import ForgeSettings
+
         _settings = ForgeSettings()
         _require_approval = resolved_config.get("require_approval")
         if _require_approval is None:
@@ -476,8 +502,10 @@ async def create_task(
             async def _run_plan():
                 try:
                     graph = await daemon.plan(
-                        description, forge_db,
-                        emit_plan_ready=False, pipeline_id=pipeline_id,
+                        description,
+                        forge_db,
+                        emit_plan_ready=False,
+                        pipeline_id=pipeline_id,
                     )
 
                     # Remap task IDs to be globally unique, then emit
@@ -490,52 +518,81 @@ async def create_task(
                         t.id = id_map[t.id]
 
                     # Re-emit plan_ready with remapped IDs for the frontend
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:plan_ready",
-                        "tasks": [
-                            {
-                                "id": t.id, "title": t.title,
-                                "description": t.description,
-                                "files": t.files, "depends_on": t.depends_on,
-                                "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
-                            }
-                            for t in graph.tasks
-                        ],
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:plan_ready",
+                            "tasks": [
+                                {
+                                    "id": t.id,
+                                    "title": t.title,
+                                    "description": t.description,
+                                    "files": t.files,
+                                    "depends_on": t.depends_on,
+                                    "complexity": t.complexity.value
+                                    if hasattr(t.complexity, "value")
+                                    else t.complexity,
+                                }
+                                for t in graph.tasks
+                            ],
+                        },
+                    )
 
                     await forge_db.set_pipeline_plan(
                         pipeline_id,
-                        json.dumps({
-                            "tasks": [
-                                {
-                                    "id": t.id, "title": t.title,
-                                    "description": t.description,
-                                    "files": t.files, "depends_on": t.depends_on,
-                                    "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
-                                }
-                                for t in graph.tasks
-                            ]
-                        }),
+                        json.dumps(
+                            {
+                                "tasks": [
+                                    {
+                                        "id": t.id,
+                                        "title": t.title,
+                                        "description": t.description,
+                                        "files": t.files,
+                                        "depends_on": t.depends_on,
+                                        "complexity": t.complexity.value
+                                        if hasattr(t.complexity, "value")
+                                        else t.complexity,
+                                    }
+                                    for t in graph.tasks
+                                ]
+                            }
+                        ),
                     )
                     # Update DB status so REST hydration returns correct phase
                     await forge_db.update_pipeline_status(pipeline_id, "planned")
                     # Broadcast phase transition so frontend updates pipeline phase
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:phase_changed", "phase": "planned",
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:phase_changed",
+                            "phase": "planned",
+                        },
+                    )
                     # Store graph for later execution (lock protects concurrent access)
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
                     if lock:
                         async with lock:
-                            request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+                            request.app.state.pending_graphs[pipeline_id] = (
+                                graph,
+                                daemon,
+                                time.monotonic(),
+                            )
                     else:
-                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+                        request.app.state.pending_graphs[pipeline_id] = (
+                            graph,
+                            daemon,
+                            time.monotonic(),
+                        )
                 except Exception:
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:error", "error": "Task execution failed",
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:error",
+                            "error": "Task execution failed",
+                        },
+                    )
 
             safe_create_task(_run_plan(), logger=logger, name="plan-pipeline")
     else:
@@ -567,7 +624,14 @@ async def get_stats(
     """Return dashboard statistics for the authenticated user."""
     forge_db = _get_forge_db(request)
     if forge_db is None:
-        return {"total_runs": 0, "active": 0, "completed": 0, "failed": 0, "avg_duration_secs": None, "total_spend_usd": None}
+        return {
+            "total_runs": 0,
+            "active": 0,
+            "completed": 0,
+            "failed": 0,
+            "avg_duration_secs": None,
+            "total_spend_usd": None,
+        }
 
     pipelines = await forge_db.list_pipelines(user_id=user_id)
     total = len(pipelines)
@@ -585,7 +649,9 @@ async def get_stats(
                 durations.append((end - start).total_seconds())
             except (ValueError, TypeError):
                 pass
-    avg_duration_secs: float | None = round(sum(durations) / len(durations), 1) if durations else None
+    avg_duration_secs: float | None = (
+        round(sum(durations) / len(durations), 1) if durations else None
+    )
 
     # Compute total spend by aggregating task:cost_update events across all pipelines.
     total_spend: float = 0.0
@@ -655,8 +721,11 @@ async def execute_pipeline(
     if body is not None and body.tasks is not None:
         task_defs = [
             TaskDefinition(
-                id=t.id, title=t.title, description=t.description,
-                files=t.files, depends_on=t.depends_on,
+                id=t.id,
+                title=t.title,
+                description=t.description,
+                files=t.files,
+                depends_on=t.depends_on,
                 complexity=Complexity(t.complexity),
             )
             for t in body.tasks
@@ -677,9 +746,9 @@ async def execute_pipeline(
             request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
 
         # Update stored plan in DB
-        await forge_db.set_pipeline_plan(pipeline_id, json.dumps({
-            "tasks": [t.model_dump() for t in body.tasks]
-        }))
+        await forge_db.set_pipeline_plan(
+            pipeline_id, json.dumps({"tasks": [t.model_dump() for t in body.tasks]})
+        )
 
     ws_manager = request.app.state.ws_manager
 
@@ -697,32 +766,51 @@ async def execute_pipeline(
             if errored:
                 logger.info(
                     "Skipping auto-PR for %s: %d task(s) in error state",
-                    pipeline_id, len(errored),
+                    pipeline_id,
+                    len(errored),
                 )
-                await ws_manager.broadcast(pipeline_id, {
-                    "type": "pipeline:pr_failed",
-                    "error": f"{len(errored)} task(s) failed — fix before creating PR",
-                })
+                await ws_manager.broadcast(
+                    pipeline_id,
+                    {
+                        "type": "pipeline:pr_failed",
+                        "error": f"{len(errored)} task(s) failed — fix before creating PR",
+                    },
+                )
             else:
-                await ws_manager.broadcast(pipeline_id, {
-                    "type": "pipeline:pr_creating",
-                })
+                await ws_manager.broadcast(
+                    pipeline_id,
+                    {
+                        "type": "pipeline:pr_creating",
+                    },
+                )
                 try:
                     pr_url = await _auto_create_pr(forge_db, pipeline_id)
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:pr_created", "pr_url": pr_url,
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:pr_created",
+                            "pr_url": pr_url,
+                        },
+                    )
                 except Exception as pr_exc:
                     logger.warning("Auto-PR failed for %s: %s", pipeline_id, pr_exc)
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:pr_failed", "error": "PR creation failed",
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:pr_failed",
+                            "error": "PR creation failed",
+                        },
+                    )
         except Exception:
             logger.exception("Pipeline %s execution failed", pipeline_id)
             await forge_db.update_pipeline_status(pipeline_id, "error")
-            await ws_manager.broadcast(pipeline_id, {
-                "type": "pipeline:error", "error": "Execution error",
-            })
+            await ws_manager.broadcast(
+                pipeline_id,
+                {
+                    "type": "pipeline:error",
+                    "error": "Execution error",
+                },
+            )
 
     safe_create_task(_run_execute(), logger=logger, name="execute-pipeline")
 
@@ -765,7 +853,9 @@ async def create_pr(
     branch_name = getattr(pipeline, "branch_name", None)
     if not branch_name:
         branch_name = f"forge/pipeline-{pipeline_id[:8]}"
-        logger.warning("Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name)
+        logger.warning(
+            "Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name
+        )
 
     # Use base_branch from DB (stored by daemon at pipeline start)
     base_branch = getattr(pipeline, "base_branch", None) or "main"
@@ -775,7 +865,10 @@ async def create_pr(
         gh_check = await asyncio.to_thread(
             subprocess.run,
             ["gh", "auth", "status"],
-            cwd=project_dir, capture_output=True, text=True, timeout=30,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if gh_check.returncode != 0:
             raise HTTPException(
@@ -787,7 +880,10 @@ async def create_pr(
         remote_result = await asyncio.to_thread(
             subprocess.run,
             ["git", "remote"],
-            cwd=project_dir, capture_output=True, text=True, timeout=30,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         remotes = remote_result.stdout.strip()
         if not remotes:
@@ -802,10 +898,15 @@ async def create_pr(
         push_result = await asyncio.to_thread(
             subprocess.run,
             ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
-            cwd=project_dir, capture_output=True, text=True, timeout=30,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if push_result.returncode != 0:
-            error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
+            error_msg = (
+                push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"git push failed: {error_msg}. Check that remote '{remote_name}' is accessible.",
@@ -815,7 +916,10 @@ async def create_pr(
         existing_pr = await asyncio.to_thread(
             subprocess.run,
             ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
-            cwd=project_dir, capture_output=True, text=True, timeout=30,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if existing_pr.returncode == 0 and existing_pr.stdout.strip():
             pr_url = existing_pr.stdout.strip()
@@ -823,7 +927,9 @@ async def create_pr(
             return {"pr_url": pr_url, "already_existed": True}
 
         # Build a PR body with task summary
-        tasks_json = json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else {"tasks": []}
+        tasks_json = (
+            json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else {"tasks": []}
+        )
         task_list = tasks_json.get("tasks", [])
         task_summary = "\n".join(f"- {t.get('title', t.get('id', ''))}" for t in task_list)
 
@@ -844,12 +950,23 @@ async def create_pr(
         # Create PR — base_branch from DB, head is the pipeline branch
         pr_result = await asyncio.to_thread(
             subprocess.run,
-            ["gh", "pr", "create",
-             "--base", base_branch,
-             "--head", branch_name,
-             "--title", pr_title,
-             "--body", pr_body],
-            cwd=project_dir, capture_output=True, text=True, timeout=30,
+            [
+                "gh",
+                "pr",
+                "create",
+                "--base",
+                base_branch,
+                "--head",
+                branch_name,
+                "--title",
+                pr_title,
+                "--body",
+                pr_body,
+            ],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
         if pr_result.returncode != 0:
@@ -938,12 +1055,15 @@ async def approve_task(
     # Broadcast state change
     ws_manager = getattr(request.app.state, "ws_manager", None)
     if ws_manager:
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "task:state_changed",
-            "task_id": task_id,
-            "state": "merging",
-            "repo_id": getattr(task, "repo_id", "default"),
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "task:state_changed",
+                "task_id": task_id,
+                "state": "merging",
+                "repo_id": getattr(task, "repo_id", "default"),
+            },
+        )
 
     # Launch merge in background
     ctx = json.loads(task.approval_context) if task.approval_context else {}
@@ -962,6 +1082,7 @@ async def approve_task(
             # making the diff zero.
             from forge.core.daemon_helpers import _get_diff_stats
             from forge.merge.worker import MergeWorker
+
             project_dir = pipeline.project_dir
             # Use _get_diff_stats (camelCase keys: linesAdded/linesRemoved)
             # to match the frontend's TaskState.mergeResult interface.
@@ -989,12 +1110,15 @@ async def approve_task(
                 )
                 if ws_manager:
                     await ws_manager.broadcast(pipeline_id, merge_event)
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "task:state_changed",
-                        "task_id": task_id,
-                        "state": "done",
-                        "repo_id": getattr(task, "repo_id", "default"),
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "task:state_changed",
+                            "task_id": task_id,
+                            "state": "done",
+                            "repo_id": getattr(task, "repo_id", "default"),
+                        },
+                    )
             else:
                 logger.error("Merge failed for task %s: %s", task_id, merge_result.error)
                 await forge_db.update_task_state(task_id, "error")
@@ -1012,12 +1136,15 @@ async def approve_task(
                 )
                 if ws_manager:
                     await ws_manager.broadcast(pipeline_id, fail_event)
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "task:state_changed",
-                        "task_id": task_id,
-                        "state": "error",
-                        "repo_id": getattr(task, "repo_id", "default"),
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "task:state_changed",
+                            "task_id": task_id,
+                            "state": "error",
+                            "repo_id": getattr(task, "repo_id", "default"),
+                        },
+                    )
 
             # Clear approval context after merge completes
             await forge_db.clear_task_approval_context(task_id)
@@ -1028,7 +1155,9 @@ async def approve_task(
             logger.exception("Merge failed for approved task %s: %s", task_id, exc)
             await forge_db.update_task_state(task_id, "error")
             # Still try to clean up the worktree on error
-            _cleanup_worktree(pipeline.project_dir, task_id, repo_id=getattr(task, "repo_id", "default"))
+            _cleanup_worktree(
+                pipeline.project_dir, task_id, repo_id=getattr(task, "repo_id", "default")
+            )
 
     def _on_done(t: asyncio.Task) -> None:
         if not t.cancelled() and t.exception():
@@ -1078,12 +1207,15 @@ async def reject_task(
     # Broadcast state change via WebSocket
     ws_manager = getattr(request.app.state, "ws_manager", None)
     if ws_manager:
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "task:state_changed",
-            "task_id": task_id,
-            "state": "todo",
-            "repo_id": getattr(task, "repo_id", "default"),
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "task:state_changed",
+                "task_id": task_id,
+                "state": "todo",
+                "repo_id": getattr(task, "repo_id", "default"),
+            },
+        )
 
     return {"status": "retrying", "task_id": task_id}
 
@@ -1115,17 +1247,22 @@ async def cleanup_pipeline_worktrees(
         result = await asyncio.to_thread(
             subprocess.run,
             ["git", "branch", "-D", branch],
-            cwd=project_dir, capture_output=True, timeout=30,
+            cwd=project_dir,
+            capture_output=True,
+            timeout=30,
         )
         if result.returncode == 0:
             branches_deleted += 1
 
     ws_manager = getattr(request.app.state, "ws_manager", None)
     if ws_manager and cleaned > 0:
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "pipeline:worktrees_cleaned",
-            "cleaned": cleaned,
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "pipeline:worktrees_cleaned",
+                "cleaned": cleaned,
+            },
+        )
 
     return {"cleaned": cleaned, "branches_deleted": branches_deleted}
 
@@ -1155,10 +1292,13 @@ async def pause_pipeline(
 
     ws_manager = getattr(request.app.state, "ws_manager", None)
     if ws_manager:
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "pipeline:paused",
-            "paused_by": "user",
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "pipeline:paused",
+                "paused_by": "user",
+            },
+        )
 
     return {"status": "paused"}
 
@@ -1189,9 +1329,12 @@ async def resume_pipeline(
 
         ws_manager = getattr(request.app.state, "ws_manager", None)
         if ws_manager:
-            await ws_manager.broadcast(pipeline_id, {
-                "type": "pipeline:resumed",
-            })
+            await ws_manager.broadcast(
+                pipeline_id,
+                {
+                    "type": "pipeline:resumed",
+                },
+            )
 
         return {"status": "executing"}
 
@@ -1205,11 +1348,16 @@ async def resume_pipeline(
 
     task_defs = []
     for t in graph_json.get("tasks", []):
-        task_defs.append(TaskDefinition(
-            id=t["id"], title=t["title"], description=t["description"],
-            files=t["files"], depends_on=t.get("depends_on", []),
-            complexity=Complexity(t.get("complexity", "medium")),
-        ))
+        task_defs.append(
+            TaskDefinition(
+                id=t["id"],
+                title=t["title"],
+                description=t["description"],
+                files=t["files"],
+                depends_on=t.get("depends_on", []),
+                complexity=Complexity(t.get("complexity", "medium")),
+            )
+        )
     graph = TaskGraph(tasks=task_defs)
 
     # Check if task rows exist in DB (they may not if preflight failed before creation)
@@ -1265,7 +1413,12 @@ async def resume_pipeline(
 
     safe_create_task(_run(), logger=logger, name="resume-pipeline")
 
-    return {"status": "resumed", "pipeline_id": pipeline_id, "tasks_reset": reset_count, "fresh_start": needs_fresh_start}
+    return {
+        "status": "resumed",
+        "pipeline_id": pipeline_id,
+        "tasks_reset": reset_count,
+        "fresh_start": needs_fresh_start,
+    }
 
 
 @router.post("/{pipeline_id}/cancel")
@@ -1313,11 +1466,14 @@ async def cancel_pipeline(
     # Emit WebSocket event so frontend updates immediately
     ws_manager = getattr(request.app.state, "ws_manager", None)
     if ws_manager:
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "pipeline:cancelled",
-            "pipeline_id": pipeline_id,
-            "tasks_cancelled": cancelled_task_ids,
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "pipeline:cancelled",
+                "pipeline_id": pipeline_id,
+                "tasks_cancelled": cancelled_task_ids,
+            },
+        )
 
     return {
         "status": "cancelled",
@@ -1359,7 +1515,9 @@ async def restart_pipeline(
     if clean_worktrees:
         try:
             cleaned = await _cleanup_all_pipeline_worktrees(
-                forge_db, pipeline_id, project_dir,
+                forge_db,
+                pipeline_id,
+                project_dir,
             )
             if cleaned:
                 logger.info("Restart: cleaned %d worktree(s) for %s", cleaned, pipeline_id)
@@ -1384,10 +1542,13 @@ async def restart_pipeline(
     # Emit WebSocket event
     ws_manager = getattr(request.app.state, "ws_manager", None)
     if ws_manager:
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "pipeline:restarted",
-            "pipeline_id": pipeline_id,
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "pipeline:restarted",
+                "pipeline_id": pipeline_id,
+            },
+        )
 
     # Re-invoke daemon factory to start fresh planning
     daemon_factory = getattr(request.app.state, "daemon_factory", None)
@@ -1399,8 +1560,10 @@ async def restart_pipeline(
         async def _run_restart_plan():
             try:
                 graph = await daemon.plan(
-                    original_description, forge_db,
-                    emit_plan_ready=False, pipeline_id=pipeline_id,
+                    original_description,
+                    forge_db,
+                    emit_plan_ready=False,
+                    pipeline_id=pipeline_id,
                 )
 
                 # Remap task IDs to be globally unique
@@ -1412,32 +1575,45 @@ async def restart_pipeline(
 
                 # Re-emit plan_ready with remapped IDs
                 if ws_manager:
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:plan_ready",
-                        "tasks": [
-                            {
-                                "id": t.id, "title": t.title,
-                                "description": t.description,
-                                "files": t.files, "depends_on": t.depends_on,
-                                "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
-                            }
-                            for t in graph.tasks
-                        ],
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:plan_ready",
+                            "tasks": [
+                                {
+                                    "id": t.id,
+                                    "title": t.title,
+                                    "description": t.description,
+                                    "files": t.files,
+                                    "depends_on": t.depends_on,
+                                    "complexity": t.complexity.value
+                                    if hasattr(t.complexity, "value")
+                                    else t.complexity,
+                                }
+                                for t in graph.tasks
+                            ],
+                        },
+                    )
 
                 await forge_db.set_pipeline_plan(
                     pipeline_id,
-                    json.dumps({
-                        "tasks": [
-                            {
-                                "id": t.id, "title": t.title,
-                                "description": t.description,
-                                "files": t.files, "depends_on": t.depends_on,
-                                "complexity": t.complexity.value if hasattr(t.complexity, 'value') else t.complexity,
-                            }
-                            for t in graph.tasks
-                        ]
-                    }),
+                    json.dumps(
+                        {
+                            "tasks": [
+                                {
+                                    "id": t.id,
+                                    "title": t.title,
+                                    "description": t.description,
+                                    "files": t.files,
+                                    "depends_on": t.depends_on,
+                                    "complexity": t.complexity.value
+                                    if hasattr(t.complexity, "value")
+                                    else t.complexity,
+                                }
+                                for t in graph.tasks
+                            ]
+                        }
+                    ),
                 )
                 await forge_db.update_pipeline_status(pipeline_id, "planned")
 
@@ -1445,16 +1621,28 @@ async def restart_pipeline(
                 graph_lock = getattr(request.app.state, "pending_graphs_lock", None)
                 if graph_lock:
                     async with graph_lock:
-                        request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+                        request.app.state.pending_graphs[pipeline_id] = (
+                            graph,
+                            daemon,
+                            time.monotonic(),
+                        )
                 else:
-                    request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+                    request.app.state.pending_graphs[pipeline_id] = (
+                        graph,
+                        daemon,
+                        time.monotonic(),
+                    )
             except Exception:
                 logger.exception("Restart planning failed for pipeline %s", pipeline_id)
                 await forge_db.update_pipeline_status(pipeline_id, "error")
                 if ws_manager:
-                    await ws_manager.broadcast(pipeline_id, {
-                        "type": "pipeline:error", "error": "Task execution failed",
-                    })
+                    await ws_manager.broadcast(
+                        pipeline_id,
+                        {
+                            "type": "pipeline:error",
+                            "error": "Task execution failed",
+                        },
+                    )
 
         safe_create_task(_run_restart_plan(), logger=logger, name="restart-pipeline")
 
@@ -1506,11 +1694,16 @@ async def retry_task(
 
             task_defs = []
             for t in graph_json.get("tasks", []):
-                task_defs.append(TaskDefinition(
-                    id=t["id"], title=t["title"], description=t["description"],
-                    files=t["files"], depends_on=t.get("depends_on", []),
-                    complexity=Complexity(t.get("complexity", "medium")),
-                ))
+                task_defs.append(
+                    TaskDefinition(
+                        id=t["id"],
+                        title=t["title"],
+                        description=t["description"],
+                        files=t["files"],
+                        depends_on=t.get("depends_on", []),
+                        complexity=Complexity(t.get("complexity", "medium")),
+                    )
+                )
             graph = TaskGraph(tasks=task_defs)
 
             settings = ForgeSettings()
@@ -1593,12 +1786,14 @@ async def get_task_status(
         planner_output_lines: list[str] = []
         timeline = []
         for ev in events:
-            timeline.append({
-                "type": ev.event_type,
-                "task_id": ev.task_id,
-                "payload": ev.payload,
-                "timestamp": ev.created_at,
-            })
+            timeline.append(
+                {
+                    "type": ev.event_type,
+                    "task_id": ev.task_id,
+                    "payload": ev.payload,
+                    "timestamp": ev.created_at,
+                }
+            )
             # Collect planner output lines (pipeline-level, no task_id)
             if ev.event_type == "planner:output":
                 line = ev.payload.get("line", "")
@@ -1606,21 +1801,32 @@ async def get_task_status(
                     planner_output_lines.append(line)
 
             if ev.task_id:
-                te = task_events.setdefault(ev.task_id, {
-                    "output": [], "reviewGates": [], "mergeResult": None, "cost_usd": 0, "files_changed": [],
-                })
+                te = task_events.setdefault(
+                    ev.task_id,
+                    {
+                        "output": [],
+                        "reviewGates": [],
+                        "mergeResult": None,
+                        "cost_usd": 0,
+                        "files_changed": [],
+                    },
+                )
                 if ev.event_type == "task:agent_output":
                     te["output"].append(ev.payload.get("line", ""))
                 elif ev.event_type == "task:review_update":
-                    te["reviewGates"].append({
-                        "gate": ev.payload.get("gate"),
-                        "result": "pass" if ev.payload.get("passed") else "fail",
-                        "details": ev.payload.get("details"),
-                    })
+                    te["reviewGates"].append(
+                        {
+                            "gate": ev.payload.get("gate"),
+                            "result": "pass" if ev.payload.get("passed") else "fail",
+                            "details": ev.payload.get("details"),
+                        }
+                    )
                 elif ev.event_type == "task:merge_result":
                     te["mergeResult"] = ev.payload
                 elif ev.event_type == "task:cost_update":
-                    te["cost_usd"] = (te["cost_usd"] or 0) + (ev.payload.get("agent_cost_usd") or ev.payload.get("review_cost_usd") or 0)
+                    te["cost_usd"] = (te["cost_usd"] or 0) + (
+                        ev.payload.get("agent_cost_usd") or ev.payload.get("review_cost_usd") or 0
+                    )
                 elif ev.event_type == "task:files_changed":
                     te["files_changed"] = ev.payload.get("files", [])
                 elif ev.event_type == "task:state_changed":
@@ -1740,19 +1946,23 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     branch_name = getattr(pipeline, "branch_name", None)
     if not branch_name:
         branch_name = f"forge/pipeline-{pipeline_id[:8]}"
-        logger.warning("Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name)
+        logger.warning(
+            "Pipeline %s missing branch_name in DB, using fallback: %s", pipeline_id, branch_name
+        )
 
     # Detect remote name — fail early if no remote configured
     remote_result = await asyncio.to_thread(
         subprocess.run,
         ["git", "remote"],
-        cwd=project_dir, capture_output=True, text=True, timeout=30,
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     remotes = remote_result.stdout.strip()
     if not remotes:
         raise RuntimeError(
-            "No git remote configured. Add a remote first: "
-            "git remote add origin <repo-url>"
+            "No git remote configured. Add a remote first: git remote add origin <repo-url>"
         )
     remote_name = remotes.split("\n")[0]
 
@@ -1760,12 +1970,13 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     gh_check = await asyncio.to_thread(
         subprocess.run,
         ["gh", "auth", "status"],
-        cwd=project_dir, capture_output=True, text=True, timeout=30,
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if gh_check.returncode != 0:
-        raise RuntimeError(
-            "GitHub CLI not authenticated. Run: gh auth login"
-        )
+        raise RuntimeError("GitHub CLI not authenticated. Run: gh auth login")
 
     # Use stored base_branch from pipeline record (set by daemon at pipeline start).
     # Falls back to detecting current branch for backward compatibility.
@@ -1774,7 +1985,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         base_branch_result = await asyncio.to_thread(
             subprocess.run,
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_dir, capture_output=True, text=True, timeout=30,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         base_branch = base_branch_result.stdout.strip() or "main"
 
@@ -1783,7 +1997,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     push_result = await asyncio.to_thread(
         subprocess.run,
         ["git", "push", "-u", "--force-with-lease", remote_name, branch_name],
-        cwd=project_dir, capture_output=True, text=True, timeout=30,
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if push_result.returncode != 0:
         error_msg = push_result.stderr.strip() or push_result.stdout.strip() or "Unknown push error"
@@ -1796,7 +2013,10 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
     existing_pr = await asyncio.to_thread(
         subprocess.run,
         ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
-        cwd=project_dir, capture_output=True, text=True, timeout=30,
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if existing_pr.returncode == 0 and existing_pr.stdout.strip():
         pr_url = existing_pr.stdout.strip()
@@ -1826,12 +2046,23 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
 
     pr_result = await asyncio.to_thread(
         subprocess.run,
-        ["gh", "pr", "create",
-         "--base", base_branch,
-         "--head", branch_name,
-         "--title", pr_title,
-         "--body", pr_body],
-        cwd=project_dir, capture_output=True, text=True, timeout=30,
+        [
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            base_branch,
+            "--head",
+            branch_name,
+            "--title",
+            pr_title,
+            "--body",
+            pr_body,
+        ],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
     if pr_result.returncode != 0:

@@ -295,7 +295,9 @@ class TestExecuteFollowups:
             classification={0: "task-1", 1: "task-1"},
         )
 
-        pipeline_tasks = [{"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"]}]
+        pipeline_tasks = [
+            {"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"]}
+        ]
         mock_pipeline = MagicMock(project_dir="/proj", id="pipe-1")
         mock_db = AsyncMock()
 
@@ -316,6 +318,7 @@ class TestExecuteFollowups:
     @patch("forge.core.followup._execute_task_followup")
     async def test_executes_per_unique_task(self, mock_execute):
         """Questions mapped to different tasks should trigger separate executions."""
+
         async def fake_execute(**kwargs):
             return FollowUpResult(
                 task_id=kwargs["task_id"],
@@ -370,7 +373,9 @@ class TestExecuteFollowups:
             classification={0: "task-1"},
         )
 
-        pipeline_tasks = [{"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"]}]
+        pipeline_tasks = [
+            {"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"]}
+        ]
         mock_pipeline = MagicMock(project_dir="/proj", id="pipe-1")
         mock_db = AsyncMock()
 
@@ -409,7 +414,9 @@ class TestExecuteFollowups:
             classification={0: "task-1"},
         )
 
-        pipeline_tasks = [{"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"]}]
+        pipeline_tasks = [
+            {"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"]}
+        ]
         mock_pipeline = MagicMock(project_dir="/proj", id="pipe-1")
         mock_db = AsyncMock()
 
@@ -526,7 +533,11 @@ class TestFollowupWorktreeMultiRepo:
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
-            success=True, summary="Done", files_changed=[], error=None, cost_usd=0.0,
+            success=True,
+            summary="Done",
+            files_changed=[],
+            error=None,
+            cost_usd=0.0,
         )
         mock_runtime = AsyncMock()
         mock_runtime.run_task.return_value = mock_agent_result
@@ -534,8 +545,18 @@ class TestFollowupWorktreeMultiRepo:
 
         # Pipeline with repos_json set (multi-repo)
         repos = [
-            {"id": "backend", "path": "/workspace/backend", "base_branch": "main", "branch_name": "forge/pipe-123"},
-            {"id": "frontend", "path": "/workspace/frontend", "base_branch": "main", "branch_name": "forge/pipe-123"},
+            {
+                "id": "backend",
+                "path": "/workspace/backend",
+                "base_branch": "main",
+                "branch_name": "forge/pipe-123",
+            },
+            {
+                "id": "frontend",
+                "path": "/workspace/frontend",
+                "base_branch": "main",
+                "branch_name": "forge/pipe-123",
+            },
         ]
         mock_pipeline = MagicMock()
         mock_pipeline.repos_json = json.dumps(repos)
@@ -545,7 +566,13 @@ class TestFollowupWorktreeMultiRepo:
         mock_db.get_pipeline.return_value = mock_pipeline
 
         # Task in the "backend" repo
-        task_info = {"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"], "repo_id": "backend"}
+        task_info = {
+            "id": "task-1",
+            "title": "Auth",
+            "description": "D",
+            "files": ["auth.py"],
+            "repo_id": "backend",
+        }
         db_task = MagicMock(repo_id="backend")
 
         result = await _execute_task_followup(
@@ -566,7 +593,9 @@ class TestFollowupWorktreeMultiRepo:
         setup_call = mock_setup.call_args
         worktree_dir = setup_call[0][1]  # second positional arg
         assert "/backend/" in worktree_dir
-        assert worktree_dir == os.path.join("/workspace", ".forge", "worktrees", "backend", "followup-fu-12345-task-1")
+        assert worktree_dir == os.path.join(
+            "/workspace", ".forge", "worktrees", "backend", "followup-fu-12345-task-1"
+        )
         # repo_dir should be the backend repo path
         repo_dir = setup_call[0][0]  # first positional arg
         assert repo_dir == "/workspace/backend"
@@ -583,7 +612,11 @@ class TestFollowupWorktreeMultiRepo:
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
-            success=True, summary="Done", files_changed=[], error=None, cost_usd=0.0,
+            success=True,
+            summary="Done",
+            files_changed=[],
+            error=None,
+            cost_usd=0.0,
         )
         mock_runtime = AsyncMock()
         mock_runtime.run_task.return_value = mock_agent_result
@@ -596,7 +629,12 @@ class TestFollowupWorktreeMultiRepo:
         mock_pipeline.base_branch = "main"
         mock_pipeline.branch_name = "forge/pipe-abc"
         mock_pipeline.get_repos.return_value = [
-            {"id": "default", "path": "/myproject", "base_branch": "main", "branch_name": "forge/pipe-abc"},
+            {
+                "id": "default",
+                "path": "/myproject",
+                "base_branch": "main",
+                "branch_name": "forge/pipe-abc",
+            },
         ]
 
         mock_db = AsyncMock()
@@ -622,7 +660,9 @@ class TestFollowupWorktreeMultiRepo:
         setup_call = mock_setup.call_args
         worktree_dir = setup_call[0][1]
         # Single-repo: no repo_id segment
-        assert worktree_dir == os.path.join("/myproject", ".forge", "worktrees", "followup-fu-abcde-task-1")
+        assert worktree_dir == os.path.join(
+            "/myproject", ".forge", "worktrees", "followup-fu-abcde-task-1"
+        )
         # repo_dir should be project_dir
         repo_dir = setup_call[0][0]
         assert repo_dir == "/myproject"
@@ -689,14 +729,23 @@ class TestFollowupCleanupMultiRepo:
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
-            success=True, summary="Done", files_changed=[], error=None, cost_usd=0.0,
+            success=True,
+            summary="Done",
+            files_changed=[],
+            error=None,
+            cost_usd=0.0,
         )
         mock_runtime = AsyncMock()
         mock_runtime.run_task.return_value = mock_agent_result
         mock_runtime_cls.return_value = mock_runtime
 
         repos = [
-            {"id": "backend", "path": "/ws/backend", "base_branch": "main", "branch_name": "forge/p1"},
+            {
+                "id": "backend",
+                "path": "/ws/backend",
+                "base_branch": "main",
+                "branch_name": "forge/p1",
+            },
         ]
         mock_pipeline = MagicMock()
         mock_pipeline.repos_json = json.dumps(repos)
@@ -705,7 +754,13 @@ class TestFollowupCleanupMultiRepo:
         mock_db = AsyncMock()
         mock_db.get_pipeline.return_value = mock_pipeline
 
-        task_info = {"id": "task-1", "title": "T", "description": "D", "files": [], "repo_id": "backend"}
+        task_info = {
+            "id": "task-1",
+            "title": "T",
+            "description": "D",
+            "files": [],
+            "repo_id": "backend",
+        }
 
         await _execute_task_followup(
             task_id="task-1",
@@ -742,14 +797,23 @@ class TestFollowupPushCorrectRepo:
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
-            success=True, summary="Done", files_changed=["auth.py"], error=None, cost_usd=0.0,
+            success=True,
+            summary="Done",
+            files_changed=["auth.py"],
+            error=None,
+            cost_usd=0.0,
         )
         mock_runtime = AsyncMock()
         mock_runtime.run_task.return_value = mock_agent_result
         mock_runtime_cls.return_value = mock_runtime
 
         repos = [
-            {"id": "backend", "path": "/ws/backend", "base_branch": "main", "branch_name": "forge/p1"},
+            {
+                "id": "backend",
+                "path": "/ws/backend",
+                "base_branch": "main",
+                "branch_name": "forge/p1",
+            },
         ]
         mock_pipeline = MagicMock()
         mock_pipeline.repos_json = json.dumps(repos)
@@ -758,7 +822,13 @@ class TestFollowupPushCorrectRepo:
         mock_db = AsyncMock()
         mock_db.get_pipeline.return_value = mock_pipeline
 
-        task_info = {"id": "task-1", "title": "Auth", "description": "D", "files": ["auth.py"], "repo_id": "backend"}
+        task_info = {
+            "id": "task-1",
+            "title": "Auth",
+            "description": "D",
+            "files": ["auth.py"],
+            "repo_id": "backend",
+        }
 
         await _execute_task_followup(
             task_id="task-1",
@@ -795,7 +865,11 @@ class TestFollowupMissingRepoIdFallback:
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
-            success=True, summary="Done", files_changed=[], error=None, cost_usd=0.0,
+            success=True,
+            summary="Done",
+            files_changed=[],
+            error=None,
+            cost_usd=0.0,
         )
         mock_runtime = AsyncMock()
         mock_runtime.run_task.return_value = mock_agent_result
@@ -808,7 +882,12 @@ class TestFollowupMissingRepoIdFallback:
         mock_pipeline.base_branch = "main"
         mock_pipeline.branch_name = "forge/pipe-1"
         mock_pipeline.get_repos.return_value = [
-            {"id": "default", "path": "/proj", "base_branch": "main", "branch_name": "forge/pipe-1"},
+            {
+                "id": "default",
+                "path": "/proj",
+                "base_branch": "main",
+                "branch_name": "forge/pipe-1",
+            },
         ]
 
         mock_db = AsyncMock()
@@ -835,7 +914,9 @@ class TestFollowupMissingRepoIdFallback:
         # Should use single-repo worktree path (no repo_id segment)
         setup_call = mock_setup.call_args
         worktree_dir = setup_call[0][1]
-        assert worktree_dir == os.path.join("/proj", ".forge", "worktrees", "followup-fu-abcde-task-1")
+        assert worktree_dir == os.path.join(
+            "/proj", ".forge", "worktrees", "followup-fu-abcde-task-1"
+        )
 
 
 class TestFollowupUnknownRepoId:
@@ -853,7 +934,11 @@ class TestFollowupUnknownRepoId:
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
-            success=True, summary="Done", files_changed=[], error=None, cost_usd=0.0,
+            success=True,
+            summary="Done",
+            files_changed=[],
+            error=None,
+            cost_usd=0.0,
         )
         mock_runtime = AsyncMock()
         mock_runtime.run_task.return_value = mock_agent_result
@@ -861,7 +946,12 @@ class TestFollowupUnknownRepoId:
 
         # Multi-repo pipeline but task references unknown repo_id
         repos = [
-            {"id": "backend", "path": "/ws/backend", "base_branch": "main", "branch_name": "forge/p1"},
+            {
+                "id": "backend",
+                "path": "/ws/backend",
+                "base_branch": "main",
+                "branch_name": "forge/p1",
+            },
         ]
         mock_pipeline = MagicMock()
         mock_pipeline.repos_json = json.dumps(repos)
@@ -871,7 +961,13 @@ class TestFollowupUnknownRepoId:
         mock_db.get_pipeline.return_value = mock_pipeline
 
         # Task references "unknown-repo" which doesn't exist in repos
-        task_info = {"id": "task-1", "title": "T", "description": "D", "files": [], "repo_id": "unknown-repo"}
+        task_info = {
+            "id": "task-1",
+            "title": "T",
+            "description": "D",
+            "files": [],
+            "repo_id": "unknown-repo",
+        }
 
         with caplog.at_level(logging.WARNING, logger="forge.followup"):
             result = await _execute_task_followup(
@@ -889,7 +985,10 @@ class TestFollowupUnknownRepoId:
 
         assert result.success is True
         # Should have logged a warning about unknown repo_id
-        assert any("unknown-repo" in record.message and "not found" in record.message for record in caplog.records)
+        assert any(
+            "unknown-repo" in record.message and "not found" in record.message
+            for record in caplog.records
+        )
         # Should fall back to project_dir
         setup_call = mock_setup.call_args
         repo_dir = setup_call[0][0]

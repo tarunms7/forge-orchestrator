@@ -97,12 +97,15 @@ class TestWebSocketBroadcastRepoId:
         manager.active_connections["pipe-repo"].append(mock_ws)
 
         # Broadcast a task:state_changed event with repo_id
-        await manager.broadcast("pipe-repo", {
-            "type": "task:state_changed",
-            "task_id": "t1",
-            "state": "merging",
-            "repo_id": "backend",
-        })
+        await manager.broadcast(
+            "pipe-repo",
+            {
+                "type": "task:state_changed",
+                "task_id": "t1",
+                "state": "merging",
+                "repo_id": "backend",
+            },
+        )
 
         assert len(sent_messages) == 1
         received = json.loads(sent_messages[0])
@@ -130,11 +133,14 @@ class TestWebSocketBroadcastRepoId:
         manager.active_connections["pipe-single"].append(mock_ws)
 
         # Broadcast without repo_id (single-repo backward compat)
-        await manager.broadcast("pipe-single", {
-            "type": "task:state_changed",
-            "task_id": "t2",
-            "state": "merged",
-        })
+        await manager.broadcast(
+            "pipe-single",
+            {
+                "type": "task:state_changed",
+                "task_id": "t2",
+                "state": "merged",
+            },
+        )
 
         assert len(sent_messages) == 1
         received = json.loads(sent_messages[0])

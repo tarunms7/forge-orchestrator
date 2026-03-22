@@ -28,6 +28,7 @@ WEBHOOK_SECRET = "test-webhook-secret"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _sign(body: bytes, secret: str = WEBHOOK_SECRET) -> str:
     """Compute sha256=<hex> signature for *body* using *secret*."""
     sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
@@ -134,7 +135,9 @@ class TestIsCollaborator:
         payload = _make_payload(author_association=assoc)
         assert _is_collaborator(payload) is True
 
-    @pytest.mark.parametrize("assoc", ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", ""])
+    @pytest.mark.parametrize(
+        "assoc", ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", ""]
+    )
     def test_untrusted_associations(self, assoc: str):
         payload = _make_payload(author_association=assoc)
         assert _is_collaborator(payload) is False
@@ -168,7 +171,9 @@ class TestBuildTaskDescription:
 
     def test_full_description(self):
         payload = _make_payload(
-            issue_title="Add auth", issue_body="Need JWT auth.", comment_body="/forge also add tests",
+            issue_title="Add auth",
+            issue_body="Need JWT auth.",
+            comment_body="/forge also add tests",
         )
         result = _build_task_description(payload, "also add tests")
         assert "# Add auth" in result
@@ -376,7 +381,9 @@ class TestPostIssueComment:
         mock_proc.communicate.return_value = (b"", b"")
         mock_proc.returncode = 0
 
-        with patch("forge.api.routes.webhooks.asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        with patch(
+            "forge.api.routes.webhooks.asyncio.create_subprocess_exec", return_value=mock_proc
+        ) as mock_exec:
             await _post_issue_comment("owner/repo", 42, "Hello!", "/tmp/proj")
 
             mock_exec.assert_called_once()
@@ -398,7 +405,9 @@ class TestPostIssueComment:
         mock_proc.returncode = 1
 
         with (
-            patch("forge.api.routes.webhooks.asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch(
+                "forge.api.routes.webhooks.asyncio.create_subprocess_exec", return_value=mock_proc
+            ),
             patch("forge.api.routes.webhooks.logger") as mock_logger,
         ):
             await _post_issue_comment("owner/repo", 42, "Hello!", "/tmp/proj")
@@ -435,8 +444,14 @@ class TestRunWebhookPipeline:
         mock_db.update_pipeline_status = AsyncMock()
 
         with (
-            patch("forge.api.routes.webhooks._post_issue_comment", new_callable=AsyncMock) as mock_comment,
-            patch("forge.api.routes.tasks._auto_create_pr", new_callable=AsyncMock, return_value="https://github.com/owner/repo/pull/99"),
+            patch(
+                "forge.api.routes.webhooks._post_issue_comment", new_callable=AsyncMock
+            ) as mock_comment,
+            patch(
+                "forge.api.routes.tasks._auto_create_pr",
+                new_callable=AsyncMock,
+                return_value="https://github.com/owner/repo/pull/99",
+            ),
         ):
             await _run_webhook_pipeline(
                 forge_db=mock_db,
@@ -471,7 +486,9 @@ class TestRunWebhookPipeline:
 
         mock_db = AsyncMock()
 
-        with patch("forge.api.routes.webhooks._post_issue_comment", new_callable=AsyncMock) as mock_comment:
+        with patch(
+            "forge.api.routes.webhooks._post_issue_comment", new_callable=AsyncMock
+        ) as mock_comment:
             await _run_webhook_pipeline(
                 forge_db=mock_db,
                 daemon_factory=daemon_factory,
@@ -505,8 +522,14 @@ class TestRunWebhookPipeline:
         mock_db = AsyncMock()
 
         with (
-            patch("forge.api.routes.webhooks._post_issue_comment", new_callable=AsyncMock) as mock_comment,
-            patch("forge.api.routes.tasks._auto_create_pr", new_callable=AsyncMock, side_effect=RuntimeError("push failed")),
+            patch(
+                "forge.api.routes.webhooks._post_issue_comment", new_callable=AsyncMock
+            ) as mock_comment,
+            patch(
+                "forge.api.routes.tasks._auto_create_pr",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("push failed"),
+            ),
         ):
             await _run_webhook_pipeline(
                 forge_db=mock_db,

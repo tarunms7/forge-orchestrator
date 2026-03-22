@@ -34,20 +34,25 @@ def fetch_issue(number: int, repo: str | None = None) -> GitHubIssue:
         ``gh`` output could not be parsed as JSON.
     """
     cmd = [
-        "gh", "issue", "view", str(number),
-        "--json", "title,body,comments,labels,assignees,milestone",
+        "gh",
+        "issue",
+        "view",
+        str(number),
+        "--json",
+        "title,body,comments,labels,assignees,milestone",
     ]
     if repo is not None:
         cmd += ["--repo", repo]
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except FileNotFoundError:
-        raise FileNotFoundError(
-            "gh CLI is not installed or not found on PATH"
-        )
+        raise FileNotFoundError("gh CLI is not installed or not found on PATH")
 
     if result.returncode != 0:
         stderr = result.stderr.lower()
@@ -62,9 +67,7 @@ def fetch_issue(number: int, repo: str | None = None) -> GitHubIssue:
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"Failed to parse gh JSON output: {exc}"
-        ) from exc
+        raise ValueError(f"Failed to parse gh JSON output: {exc}") from exc
 
     # Normalise labels from list-of-dicts to list-of-strings
     raw_labels = data.get("labels")
@@ -82,7 +85,9 @@ def fetch_issue(number: int, repo: str | None = None) -> GitHubIssue:
     raw_milestone = data.get("milestone")
     milestone: str | None = None
     if raw_milestone:
-        milestone = raw_milestone.get("title") if isinstance(raw_milestone, dict) else str(raw_milestone)
+        milestone = (
+            raw_milestone.get("title") if isinstance(raw_milestone, dict) else str(raw_milestone)
+        )
 
     # Comments — keep as list[IssueComment] or None
     raw_comments = data.get("comments")
@@ -109,7 +114,9 @@ def check_gh_auth() -> bool:
     try:
         result = subprocess.run(
             ["gh", "auth", "status"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except FileNotFoundError:
         raise FileNotFoundError("gh CLI is not installed or not found on PATH")
@@ -124,7 +131,9 @@ def get_current_repo() -> str | None:
     try:
         result = subprocess.run(
             ["gh", "repo", "view", "--json", "nameWithOwner"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             return None

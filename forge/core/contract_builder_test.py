@@ -11,17 +11,26 @@ from forge.core.models import Complexity, TaskDefinition, TaskGraph
 
 # -- Helpers ---------------------------------------------------------------
 
+
 def _sample_graph() -> TaskGraph:
-    return TaskGraph(tasks=[
-        TaskDefinition(
-            id="task-1", title="Build API", description="REST endpoints",
-            files=["api.py"], complexity=Complexity.MEDIUM,
-        ),
-        TaskDefinition(
-            id="task-2", title="Build UI", description="React components",
-            files=["ui.tsx"], complexity=Complexity.MEDIUM,
-        ),
-    ])
+    return TaskGraph(
+        tasks=[
+            TaskDefinition(
+                id="task-1",
+                title="Build API",
+                description="REST endpoints",
+                files=["api.py"],
+                complexity=Complexity.MEDIUM,
+            ),
+            TaskDefinition(
+                id="task-2",
+                title="Build UI",
+                description="React components",
+                files=["ui.tsx"],
+                complexity=Complexity.MEDIUM,
+            ),
+        ]
+    )
 
 
 def _sample_hints() -> list[IntegrationHint]:
@@ -37,30 +46,36 @@ def _sample_hints() -> list[IntegrationHint]:
 
 
 def _valid_contract_json() -> str:
-    return json.dumps({
-        "api_contracts": [{
-            "id": "contract-api-1",
-            "method": "GET",
-            "path": "/api/templates",
-            "description": "List templates",
-            "request_body": None,
-            "response_body": [
-                {"name": "items", "type": "Template[]", "required": True},
+    return json.dumps(
+        {
+            "api_contracts": [
+                {
+                    "id": "contract-api-1",
+                    "method": "GET",
+                    "path": "/api/templates",
+                    "description": "List templates",
+                    "request_body": None,
+                    "response_body": [
+                        {"name": "items", "type": "Template[]", "required": True},
+                    ],
+                    "response_example": '{"items": []}',
+                    "auth_required": True,
+                    "producer_task_id": "task-1",
+                    "consumer_task_ids": ["task-2"],
+                }
             ],
-            "response_example": '{"items": []}',
-            "auth_required": True,
-            "producer_task_id": "task-1",
-            "consumer_task_ids": ["task-2"],
-        }],
-        "type_contracts": [{
-            "name": "Template",
-            "description": "A template",
-            "field_specs": [
-                {"name": "id", "type": "string", "required": True},
+            "type_contracts": [
+                {
+                    "name": "Template",
+                    "description": "A template",
+                    "field_specs": [
+                        {"name": "id", "type": "string", "required": True},
+                    ],
+                    "used_by_tasks": ["task-1", "task-2"],
+                }
             ],
-            "used_by_tasks": ["task-1", "task-2"],
-        }],
-    })
+        }
+    )
 
 
 # -- _extract_json tests --------------------------------------------------
@@ -113,42 +128,58 @@ class TestParseAndValidate:
         assert "Invalid JSON" in err
 
     def test_unknown_producer_task(self):
-        bad_json = json.dumps({
-            "api_contracts": [{
-                "id": "c1", "method": "GET", "path": "/api/x",
-                "response_body": [{"name": "x", "type": "string"}],
-                "producer_task_id": "task-99",
-                "consumer_task_ids": ["task-2"],
-            }],
-            "type_contracts": [],
-        })
+        bad_json = json.dumps(
+            {
+                "api_contracts": [
+                    {
+                        "id": "c1",
+                        "method": "GET",
+                        "path": "/api/x",
+                        "response_body": [{"name": "x", "type": "string"}],
+                        "producer_task_id": "task-99",
+                        "consumer_task_ids": ["task-2"],
+                    }
+                ],
+                "type_contracts": [],
+            }
+        )
         cs, err = self.builder._parse_and_validate(bad_json, self.graph)
         assert cs is None
         assert "unknown producer task" in err
 
     def test_unknown_consumer_task(self):
-        bad_json = json.dumps({
-            "api_contracts": [{
-                "id": "c1", "method": "GET", "path": "/api/x",
-                "response_body": [{"name": "x", "type": "string"}],
-                "producer_task_id": "task-1",
-                "consumer_task_ids": ["task-99"],
-            }],
-            "type_contracts": [],
-        })
+        bad_json = json.dumps(
+            {
+                "api_contracts": [
+                    {
+                        "id": "c1",
+                        "method": "GET",
+                        "path": "/api/x",
+                        "response_body": [{"name": "x", "type": "string"}],
+                        "producer_task_id": "task-1",
+                        "consumer_task_ids": ["task-99"],
+                    }
+                ],
+                "type_contracts": [],
+            }
+        )
         cs, err = self.builder._parse_and_validate(bad_json, self.graph)
         assert cs is None
         assert "unknown consumer task" in err
 
     def test_unknown_type_task(self):
-        bad_json = json.dumps({
-            "api_contracts": [],
-            "type_contracts": [{
-                "name": "Foo",
-                "field_specs": [{"name": "x", "type": "string"}],
-                "used_by_tasks": ["task-99"],
-            }],
-        })
+        bad_json = json.dumps(
+            {
+                "api_contracts": [],
+                "type_contracts": [
+                    {
+                        "name": "Foo",
+                        "field_specs": [{"name": "x", "type": "string"}],
+                        "used_by_tasks": ["task-99"],
+                    }
+                ],
+            }
+        )
         cs, err = self.builder._parse_and_validate(bad_json, self.graph)
         assert cs is None
         assert "unknown task" in err
@@ -249,6 +280,6 @@ class TestExtractJsonNestedBraces:
     def test_nested_json_in_fence(self):
         """Greedy regex should capture the full JSON with nested braces."""
         nested = '{"outer": {"inner": {"deep": "value"}}}'
-        text = f'```json\n{nested}\n```'
+        text = f"```json\n{nested}\n```"
         result = _extract_json(text)
         assert result == nested

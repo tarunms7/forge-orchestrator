@@ -29,9 +29,7 @@ def validate_task_id(task_id: str) -> str:
     if not task_id:
         raise UnsafeInputError("task_id must not be empty")
     if ".." in task_id or "/" in task_id or "\\" in task_id:
-        raise UnsafeInputError(
-            f"task_id contains path traversal sequence: {task_id!r}"
-        )
+        raise UnsafeInputError(f"task_id contains path traversal sequence: {task_id!r}")
     if not _TASK_ID_RE.match(task_id):
         raise UnsafeInputError(
             f"task_id contains invalid characters or is too long (max 64): {task_id!r}"
@@ -49,11 +47,7 @@ def validate_repo_id(repo_id: str) -> str:
     if not repo_id:
         raise UnsafeInputError("repo_id must not be empty")
     if ".." in repo_id or "/" in repo_id or "\\" in repo_id:
-        raise UnsafeInputError(
-            f"repo_id contains path traversal sequence: {repo_id!r}"
-        )
+        raise UnsafeInputError(f"repo_id contains path traversal sequence: {repo_id!r}")
     if not _REPO_ID_RE.match(repo_id):
-        raise UnsafeInputError(
-            f"repo_id contains invalid characters or uppercase: {repo_id!r}"
-        )
+        raise UnsafeInputError(f"repo_id contains invalid characters or uppercase: {repo_id!r}")
     return repo_id

@@ -12,9 +12,9 @@ def format_chips(suggestions: list[str], selected: int = -1) -> str:
     parts = []
     for i, s in enumerate(suggestions):
         if i == selected:
-            parts.append(f"[bold reverse #58a6ff] {i+1}. {s} [/]")
+            parts.append(f"[bold reverse #58a6ff] {i + 1}. {s} [/]")
         else:
-            parts.append(f"[#58a6ff on #1c3a5f] {i+1}. {s} [/]")
+            parts.append(f"[#58a6ff on #1c3a5f] {i + 1}. {s} [/]")
     return "  ".join(parts)
 
 

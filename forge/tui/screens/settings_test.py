@@ -12,6 +12,7 @@ from forge.tui.screens.settings import (
 
 class MockSettings:
     """Minimal mock to avoid pydantic import issues."""
+
     model_strategy = "auto"
     max_agents = 2
     agent_timeout_seconds = 600

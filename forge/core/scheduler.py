@@ -11,9 +11,9 @@ class Scheduler:
         """Return tasks that are TODO and have all dependencies DONE."""
         done_ids = {t.id for t in tasks if t.state == TaskState.DONE}
         return [
-            t for t in tasks
-            if t.state == TaskState.TODO
-            and all(dep in done_ids for dep in (t.depends_on or []))
+            t
+            for t in tasks
+            if t.state == TaskState.TODO and all(dep in done_ids for dep in (t.depends_on or []))
         ]
 
     @staticmethod

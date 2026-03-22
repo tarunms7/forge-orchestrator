@@ -20,8 +20,8 @@ async def get_current_user(
     Raises:
         HTTPException: 401 if token is missing or invalid.
     """
-    if getattr(request.app.state, 'auth_disabled', False):
-        return 'local'
+    if getattr(request.app.state, "auth_disabled", False):
+        return "local"
     if credentials is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:

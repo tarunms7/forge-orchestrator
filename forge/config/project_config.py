@@ -143,6 +143,7 @@ enabled = false
 @dataclass
 class CheckConfig:
     """Configuration for a single pre-commit check (lint/test/build)."""
+
     enabled: bool = True
     cmd: str | None = None
     fix_cmd: str | None = None
@@ -158,6 +159,7 @@ class CheckConfig:
 @dataclass
 class ReviewConfig:
     """Configuration for LLM code review."""
+
     enabled: bool = True
     max_retries: int = 3
 
@@ -169,6 +171,7 @@ class ReviewConfig:
 @dataclass
 class AgentConfig:
     """Configuration for execution agents."""
+
     max_parallel: int = 5
     max_turns: int = 75
     model: str = "sonnet"
@@ -179,9 +182,7 @@ class AgentConfig:
         if self.model not in ("sonnet", "opus", "haiku"):
             raise ValueError("model must be 'sonnet', 'opus', or 'haiku'")
         if self.autonomy not in ("full", "balanced", "supervised"):
-            logger.warning(
-                "Invalid autonomy value %r — defaulting to 'full'", self.autonomy
-            )
+            logger.warning("Invalid autonomy value %r — defaulting to 'full'", self.autonomy)
             self.autonomy = "full"
         if self.max_parallel < 1:
             self.max_parallel = 1
@@ -198,10 +199,11 @@ class IntegrationCheckConfig:
     Unlike [checks.*] which are per-task agent pre-commit gates,
     integration checks validate the combined pipeline branch after merges.
     """
+
     enabled: bool = False
-    cmd: str | None = None          # Full shell command including venv activation
+    cmd: str | None = None  # Full shell command including venv activation
     timeout_seconds: int = 120
-    on_failure: str = "ask"         # "ask" | "ignore_and_continue" | "stop_pipeline"
+    on_failure: str = "ask"  # "ask" | "ignore_and_continue" | "stop_pipeline"
 
     def __post_init__(self):
         if self.on_failure not in ("ask", "ignore_and_continue", "stop_pipeline"):
@@ -213,6 +215,7 @@ class IntegrationCheckConfig:
 @dataclass
 class IntegrationConfig:
     """Parsed [integration] config from forge.toml."""
+
     post_merge: IntegrationCheckConfig = field(default_factory=IntegrationCheckConfig)
     final_gate: IntegrationCheckConfig = field(default_factory=IntegrationCheckConfig)
 
@@ -220,6 +223,7 @@ class IntegrationConfig:
 @dataclass
 class ProjectConfig:
     """Parsed .forge/forge.toml configuration."""
+
     lint: CheckConfig = field(default_factory=CheckConfig)
     tests: CheckConfig = field(default_factory=lambda: CheckConfig(scope="changed"))
     build: CheckConfig = field(default_factory=lambda: CheckConfig(enabled=False))
@@ -425,23 +429,17 @@ def _validate_repo_list(repos: list) -> None:
 
         # Path existence
         if not os.path.isdir(repo.path):
-            raise click.ClickException(
-                f"Repo '{repo.id}': path '{repo.path}' does not exist"
-            )
+            raise click.ClickException(f"Repo '{repo.id}': path '{repo.path}' does not exist")
 
         # Git repo check
         git_dir = os.path.join(repo.path, ".git")
         if not os.path.exists(git_dir):
-            raise click.ClickException(
-                f"Repo '{repo.id}': '{repo.path}' is not a git repo"
-            )
+            raise click.ClickException(f"Repo '{repo.id}': '{repo.path}' is not a git repo")
 
         # Duplicate path
         real_path = os.path.realpath(repo.path)
         if real_path in seen_paths:
-            raise click.ClickException(
-                f"Duplicate repo path: '{repo.path}'"
-            )
+            raise click.ClickException(f"Duplicate repo path: '{repo.path}'")
         seen_paths.add(real_path)
         abs_paths.append(real_path)
 
@@ -454,9 +452,7 @@ def _validate_repo_list(repos: list) -> None:
             )
 
 
-def parse_repo_flags(
-    repo_flags: tuple[str, ...], project_dir: str
-) -> list:
+def parse_repo_flags(repo_flags: tuple[str, ...], project_dir: str) -> list:
     """Parse --repo name=path CLI flags into RepoConfig list.
 
     Resolves relative paths against *project_dir*, auto-detects base branch.
@@ -469,9 +465,7 @@ def parse_repo_flags(
     repos = []
     for flag in repo_flags:
         if "=" not in flag:
-            raise click.ClickException(
-                f"Invalid --repo flag '{flag}' — expected name=path"
-            )
+            raise click.ClickException(f"Invalid --repo flag '{flag}' — expected name=path")
         repo_id, raw_path = flag.split("=", 1)
 
         # Resolve relative paths
@@ -483,7 +477,9 @@ def parse_repo_flags(
             RepoConfig(
                 id=repo_id,
                 path=raw_path,
-                base_branch=auto_detect_base_branch(raw_path) if os.path.isdir(raw_path) else "main",
+                base_branch=auto_detect_base_branch(raw_path)
+                if os.path.isdir(raw_path)
+                else "main",
             )
         )
 
@@ -645,9 +641,7 @@ def _write_workspace_toml(project_dir: str, repos: list) -> None:
         f.write("\n".join(lines))
 
 
-def resolve_repos(
-    repo_flags: tuple[str, ...], project_dir: str
-) -> list:
+def resolve_repos(repo_flags: tuple[str, ...], project_dir: str) -> list:
     """Resolve repository configurations.
 
     Priority: CLI flags → workspace.toml → single-repo CWD → error.
@@ -672,13 +666,13 @@ def resolve_repos(
         return auto_repos
 
     # 4. Single-repo CWD default
-    base_branch = auto_detect_base_branch(project_dir) if os.path.isdir(
-        os.path.join(project_dir, ".git")
-    ) else "main"
+    base_branch = (
+        auto_detect_base_branch(project_dir)
+        if os.path.isdir(os.path.join(project_dir, ".git"))
+        else "main"
+    )
 
-    return [
-        RepoConfig(id="default", path=project_dir, base_branch=base_branch)
-    ]
+    return [RepoConfig(id="default", path=project_dir, base_branch=base_branch)]
 
 
 def validate_repos_startup(repos: list) -> None:

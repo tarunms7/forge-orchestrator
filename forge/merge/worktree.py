@@ -69,12 +69,15 @@ class WorktreeManager:
         self._ensure_forge_gitignored()
 
         # Check if the repo has any commits — orphan worktrees needed if not
-        has_commits = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=self._repo,
-            capture_output=True,
-            timeout=60,
-        ).returncode == 0
+        has_commits = (
+            subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self._repo,
+                capture_output=True,
+                timeout=60,
+            ).returncode
+            == 0
+        )
 
         if has_commits:
             cmd = ["git", "worktree", "add", "-b", branch, path]
@@ -137,7 +140,9 @@ class WorktreeManager:
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             logger.warning(
                 "Failed to delete branch '%s' for task '%s': %s",
-                branch, task_id, exc,
+                branch,
+                task_id,
+                exc,
             )
 
     def list_active(self) -> list[str]:
@@ -145,6 +150,7 @@ class WorktreeManager:
         if not os.path.isdir(self._worktrees_dir):
             return []
         return [
-            name for name in os.listdir(self._worktrees_dir)
+            name
+            for name in os.listdir(self._worktrees_dir)
             if os.path.isdir(os.path.join(self._worktrees_dir, name))
         ]

@@ -26,7 +26,10 @@ from forge.core.daemon_helpers import (
 def _make_proc(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
     """Return a fake CompletedProcess."""
     return subprocess.CompletedProcess(
-        args=["git"], returncode=returncode, stdout=stdout, stderr="",
+        args=["git"],
+        returncode=returncode,
+        stdout=stdout,
+        stderr="",
     )
 
 
@@ -46,7 +49,8 @@ class TestAsyncSubprocess:
     async def test_success_returns_completed_process(self):
         """Successful command returns a CompletedProcess with stdout/stderr."""
         result = await async_subprocess(
-            ["echo", "hello"], cwd="/tmp",
+            ["echo", "hello"],
+            cwd="/tmp",
         )
         assert isinstance(result, subprocess.CompletedProcess)
         assert result.returncode == 0
@@ -67,14 +71,17 @@ class TestAsyncSubprocess:
         """A command exceeding the timeout is killed and TimeoutError raised."""
         with pytest.raises(asyncio.TimeoutError, match="timed out"):
             await async_subprocess(
-                ["sleep", "10"], cwd="/tmp", timeout=0.1,
+                ["sleep", "10"],
+                cwd="/tmp",
+                timeout=0.1,
             )
 
     @pytest.mark.asyncio
     async def test_completed_process_shape(self):
         """Verify the returned CompletedProcess has the expected attributes."""
         result = await async_subprocess(
-            ["echo", "test"], cwd="/tmp",
+            ["echo", "test"],
+            cwd="/tmp",
         )
         assert hasattr(result, "args")
         assert hasattr(result, "returncode")
@@ -96,8 +103,14 @@ class TestGetDiffVsMainBaseRef:
         verify_ok = _make_proc("abc123\n", returncode=0)
         diff_proc = _make_proc("diff --git a/foo.py b/foo.py\n+new line\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, diff_proc]) as mock_sub:
-            result = await _get_diff_vs_main("/repo/worktrees/task-1", base_ref="forge/pipeline-abc")
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, diff_proc],
+        ) as mock_sub:
+            result = await _get_diff_vs_main(
+                "/repo/worktrees/task-1", base_ref="forge/pipeline-abc"
+            )
 
         assert "new line" in result
         assert mock_sub.call_count == 2
@@ -118,7 +131,11 @@ class TestGetDiffVsMainBaseRef:
         heuristic_verify = _make_proc("def456\n", returncode=0)
         diff_proc = _make_proc("diff --git a/bar.py b/bar.py\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_fail, count_proc, heuristic_verify, diff_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_fail, count_proc, heuristic_verify, diff_proc],
+        ):
             result = await _get_diff_vs_main("/repo", base_ref="forge/pipeline-missing")
 
         assert result == "diff --git a/bar.py b/bar.py\n"
@@ -130,7 +147,11 @@ class TestGetDiffVsMainBaseRef:
         heuristic_verify = _make_proc("abc\n", returncode=0)
         diff_proc = _make_proc("some diff\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, heuristic_verify, diff_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[count_proc, heuristic_verify, diff_proc],
+        ):
             result = await _get_diff_vs_main("/repo", base_ref=None)
 
         assert result == "some diff\n"
@@ -145,7 +166,11 @@ class TestGetChangedFilesVsMainBaseRef:
         verify_ok = _make_proc("abc123\n", returncode=0)
         name_only_proc = _make_proc("foo.py\nbar.py\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, name_only_proc]) as mock_sub:
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, name_only_proc],
+        ) as mock_sub:
             result = await _get_changed_files_vs_main("/repo/wt", base_ref="forge/pipeline-abc")
 
         assert result == ["foo.py", "bar.py"]
@@ -162,7 +187,11 @@ class TestGetChangedFilesVsMainBaseRef:
         heuristic_verify = _make_proc("abc\n", returncode=0)
         name_only_proc = _make_proc("baz.py\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_fail, count_proc, heuristic_verify, name_only_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_fail, count_proc, heuristic_verify, name_only_proc],
+        ):
             result = await _get_changed_files_vs_main("/repo", base_ref="forge/missing")
 
         assert result == ["baz.py"]
@@ -174,7 +203,11 @@ class TestGetChangedFilesVsMainBaseRef:
         heuristic_verify = _make_proc("abc\n", returncode=0)
         name_only_proc = _make_proc("x.py\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, heuristic_verify, name_only_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[count_proc, heuristic_verify, name_only_proc],
+        ):
             result = await _get_changed_files_vs_main("/repo")
 
         assert result == ["x.py"]
@@ -189,8 +222,14 @@ class TestGetDiffStatsPipelineBranch:
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc(" 3 files changed, 42 insertions(+), 7 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]) as mock_sub:
-            result = await _get_diff_stats("/repo/worktrees/task-1", pipeline_branch="forge/pipeline-abc")
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, shortstat],
+        ) as mock_sub:
+            result = await _get_diff_stats(
+                "/repo/worktrees/task-1", pipeline_branch="forge/pipeline-abc"
+            )
 
         assert result == {"linesAdded": 42, "linesRemoved": 7, "filesChanged": 3}
         assert mock_sub.call_count == 2
@@ -206,7 +245,11 @@ class TestGetDiffStatsPipelineBranch:
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 10 insertions(+)\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, shortstat],
+        ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
         assert result == {"linesAdded": 10, "linesRemoved": 0, "filesChanged": 1}
@@ -217,7 +260,11 @@ class TestGetDiffStatsPipelineBranch:
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc(" 2 files changed, 5 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, shortstat],
+        ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
         assert result == {"linesAdded": 0, "linesRemoved": 5, "filesChanged": 2}
@@ -228,7 +275,11 @@ class TestGetDiffStatsPipelineBranch:
         verify_ok = _make_proc("abc123\n", returncode=0)
         shortstat = _make_proc("")  # empty = no diff
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, shortstat]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, shortstat],
+        ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
         assert result == {"linesAdded": 0, "linesRemoved": 0, "filesChanged": 0}
@@ -240,13 +291,17 @@ class TestGetDiffStatsFallback:
     @pytest.mark.asyncio
     async def test_falls_back_when_pipeline_branch_not_found(self):
         """When git rev-parse --verify fails, falls back to HEAD~N approach."""
-        verify_fail = _make_proc("", returncode=128)   # branch not found
-        count_proc = _make_proc("2\n")                  # 2 local commits
+        verify_fail = _make_proc("", returncode=128)  # branch not found
+        count_proc = _make_proc("2\n")  # 2 local commits
         base_verify = _make_proc("def456\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 15 insertions(+), 3 deletions(-)\n")
 
         side_effects = [verify_fail, count_proc, base_verify, shortstat]
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=side_effects):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=side_effects,
+        ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-missing")
 
         assert result == {"linesAdded": 15, "linesRemoved": 3, "filesChanged": 1}
@@ -258,7 +313,11 @@ class TestGetDiffStatsFallback:
         base_verify = _make_proc("abc\n", returncode=0)
         shortstat = _make_proc(" 2 files changed, 100 insertions(+), 20 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, base_verify, shortstat]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[count_proc, base_verify, shortstat],
+        ):
             result = await _get_diff_stats("/repo", pipeline_branch=None)
 
         assert result == {"linesAdded": 100, "linesRemoved": 20, "filesChanged": 2}
@@ -267,12 +326,16 @@ class TestGetDiffStatsFallback:
     async def test_root_commit_uses_empty_tree(self):
         """Fallback handles root commits by diffing against the empty tree."""
         count_proc = _make_proc("1\n")
-        base_verify = _make_proc("", returncode=128)          # HEAD~1 doesn't exist
+        base_verify = _make_proc("", returncode=128)  # HEAD~1 doesn't exist
         empty_tree_proc = _make_proc("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n")
         shortstat = _make_proc(" 1 file changed, 50 insertions(+)\n")
 
         side_effects = [count_proc, base_verify, empty_tree_proc, shortstat]
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=side_effects):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=side_effects,
+        ):
             result = await _get_diff_stats("/repo", pipeline_branch=None)
 
         assert result == {"linesAdded": 50, "linesRemoved": 0, "filesChanged": 1}
@@ -284,7 +347,11 @@ class TestGetDiffStatsFallback:
         base_verify = _make_proc("abc\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 5 insertions(+)\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, base_verify, shortstat]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[count_proc, base_verify, shortstat],
+        ):
             result = await _get_diff_stats("/repo")
 
         assert result == {"linesAdded": 5, "linesRemoved": 0, "filesChanged": 1}
@@ -296,7 +363,11 @@ class TestGetDiffStatsFallback:
         base_verify = _make_proc("abc\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 8 insertions(+), 2 deletions(-)\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[count_proc, base_verify, shortstat]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[count_proc, base_verify, shortstat],
+        ):
             result = await _get_diff_stats("/repo")
 
         assert result == {"linesAdded": 8, "linesRemoved": 2, "filesChanged": 1}
@@ -343,9 +414,15 @@ class TestExtractImplementationSummary:
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc("feat: add auth\nfix: handle edge case\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, log_proc],
+        ):
             result = await _extract_implementation_summary(
-                "/repo/wt", "Added authentication module", pipeline_branch="forge/pipeline-abc",
+                "/repo/wt",
+                "Added authentication module",
+                pipeline_branch="forge/pipeline-abc",
             )
 
         assert "feat: add auth; fix: handle edge case" in result
@@ -358,9 +435,15 @@ class TestExtractImplementationSummary:
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc("feat: add new endpoint\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, log_proc],
+        ):
             result = await _extract_implementation_summary(
-                "/repo/wt", "Task completed", pipeline_branch="forge/pipeline-abc",
+                "/repo/wt",
+                "Task completed",
+                pipeline_branch="forge/pipeline-abc",
             )
 
         assert "feat: add new endpoint" in result
@@ -372,7 +455,11 @@ class TestExtractImplementationSummary:
         """Falls back to --not --remotes when pipeline_branch is None."""
         log_proc = _make_proc("chore: initial setup\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[log_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[log_proc],
+        ):
             result = await _extract_implementation_summary("/repo/wt", "Task completed")
 
         assert "chore: initial setup" in result
@@ -383,9 +470,15 @@ class TestExtractImplementationSummary:
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc("feat: add login\nfeat: add logout\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, log_proc],
+        ):
             result = await _extract_implementation_summary(
-                "/repo/wt", "Task completed", pipeline_branch="forge/pipeline-abc",
+                "/repo/wt",
+                "Task completed",
+                pipeline_branch="forge/pipeline-abc",
             )
 
         assert "feat: add login; feat: add logout" in result
@@ -396,9 +489,15 @@ class TestExtractImplementationSummary:
         verify_fail = _make_proc("", returncode=128)
         log_fallback = _make_proc("fix: something\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_fail, log_fallback]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_fail, log_fallback],
+        ):
             result = await _extract_implementation_summary(
-                "/repo/wt", "Fixed the thing", pipeline_branch="forge/missing",
+                "/repo/wt",
+                "Fixed the thing",
+                pipeline_branch="forge/missing",
             )
 
         assert "fix: something" in result
@@ -409,7 +508,11 @@ class TestExtractImplementationSummary:
         """Returns generic fallback when no commit messages and no agent summary."""
         log_proc = _make_proc("", returncode=0)
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[log_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[log_proc],
+        ):
             result = await _extract_implementation_summary("/repo/wt", "Task completed")
 
         assert "no detailed summary" in result.lower()
@@ -421,9 +524,14 @@ class TestExtractImplementationSummary:
         verify_ok = _make_proc("abc123\n", returncode=0)
         log_proc = _make_proc(long_messages + "\n")
 
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[verify_ok, log_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[verify_ok, log_proc],
+        ):
             result = await _extract_implementation_summary(
-                "/repo/wt", "A very detailed agent summary that goes on and on",
+                "/repo/wt",
+                "A very detailed agent summary that goes on and on",
                 pipeline_branch="forge/pipeline-abc",
             )
 
@@ -460,7 +568,8 @@ class TestFindRelatedTestFiles:
         (tmp_path / "forge" / "core" / "foo_test.py").touch()
 
         result = await _find_related_test_files(
-            str(tmp_path), ["forge/core/foo.py"],
+            str(tmp_path),
+            ["forge/core/foo.py"],
         )
         assert result == ["forge/core/foo_test.py"]
 
@@ -473,7 +582,8 @@ class TestFindRelatedTestFiles:
         (tmp_path / "src" / "tests" / "test_foo.py").touch()
 
         result = await _find_related_test_files(
-            str(tmp_path), ["src/foo.py"],
+            str(tmp_path),
+            ["src/foo.py"],
         )
         assert result == ["src/tests/test_foo.py"]
 
@@ -486,7 +596,8 @@ class TestFindRelatedTestFiles:
         (tmp_path / "tests" / "test_foo.py").touch()
 
         result = await _find_related_test_files(
-            str(tmp_path), ["src/foo.py"],
+            str(tmp_path),
+            ["src/foo.py"],
         )
         assert result == ["tests/test_foo.py"]
 
@@ -497,7 +608,8 @@ class TestFindRelatedTestFiles:
         (tmp_path / "forge" / "core" / "foo_test.py").touch()
 
         result = await _find_related_test_files(
-            str(tmp_path), ["forge/core/foo_test.py"],
+            str(tmp_path),
+            ["forge/core/foo_test.py"],
         )
         assert result == ["forge/core/foo_test.py"]
 
@@ -508,7 +620,8 @@ class TestFindRelatedTestFiles:
         (tmp_path / "tests" / "test_bar.py").touch()
 
         result = await _find_related_test_files(
-            str(tmp_path), ["tests/test_bar.py"],
+            str(tmp_path),
+            ["tests/test_bar.py"],
         )
         assert result == ["tests/test_bar.py"]
 
@@ -520,7 +633,8 @@ class TestFindRelatedTestFiles:
         # No test files anywhere
 
         result = await _find_related_test_files(
-            str(tmp_path), ["src/foo.py"],
+            str(tmp_path),
+            ["src/foo.py"],
         )
         assert result == []
 
@@ -528,7 +642,8 @@ class TestFindRelatedTestFiles:
     async def test_non_python_files_ignored(self, tmp_path):
         """Non-.py files are skipped."""
         result = await _find_related_test_files(
-            str(tmp_path), ["README.md", "package.json"],
+            str(tmp_path),
+            ["README.md", "package.json"],
         )
         assert result == []
 
@@ -542,7 +657,8 @@ class TestFindRelatedTestFiles:
         (tmp_path / "forge" / "core" / "bar_test.py").touch()
 
         result = await _find_related_test_files(
-            str(tmp_path), ["forge/core/foo.py", "forge/core/bar.py"],
+            str(tmp_path),
+            ["forge/core/foo.py", "forge/core/bar.py"],
         )
         assert result == ["forge/core/bar_test.py", "forge/core/foo_test.py"]
 
@@ -564,7 +680,7 @@ class TestParseForgeQuestion:
     """_parse_forge_question() extracts structured question data from agent output."""
 
     def test_valid_question_at_end(self):
-        text = "I analyzed the code.\n\nFORGE_QUESTION:\n{\"question\": \"Which pattern?\", \"suggestions\": [\"A\", \"B\"], \"impact\": \"high\"}"
+        text = 'I analyzed the code.\n\nFORGE_QUESTION:\n{"question": "Which pattern?", "suggestions": ["A", "B"], "impact": "high"}'
         result = _parse_forge_question(text)
         assert result is not None
         assert result["question"] == "Which pattern?"
@@ -578,7 +694,9 @@ class TestParseForgeQuestion:
         assert result["context"] == "Found 2"
 
     def test_question_in_markdown_fence(self):
-        text = "Done.\n\nFORGE_QUESTION:\n```json\n{\"question\": \"Which?\", \"suggestions\": [\"A\"]}\n```"
+        text = (
+            'Done.\n\nFORGE_QUESTION:\n```json\n{"question": "Which?", "suggestions": ["A"]}\n```'
+        )
         result = _parse_forge_question(text)
         assert result is not None
         assert result["question"] == "Which?"
@@ -614,7 +732,7 @@ class TestParseForgeQuestion:
     def test_braces_inside_json_strings_ignored(self):
         """Braces inside JSON string values should not confuse the brace counter."""
         text = (
-            'Some output.\n\nFORGE_QUESTION:\n'
+            "Some output.\n\nFORGE_QUESTION:\n"
             '{"question": "How to handle {braces} in strings?", '
             '"suggestions": ["Option {A}", "Option {B}"], "impact": "high"}'
         )
@@ -624,10 +742,7 @@ class TestParseForgeQuestion:
 
     def test_escaped_quotes_in_json_strings(self):
         """Escaped quotes inside JSON strings should not break parsing."""
-        text = (
-            'FORGE_QUESTION:\n'
-            '{"question": "Use \\"quoted\\" pattern?", "suggestions": ["A"]}'
-        )
+        text = 'FORGE_QUESTION:\n{"question": "Use \\"quoted\\" pattern?", "suggestions": ["A"]}'
         result = _parse_forge_question(text)
         assert result is not None
         assert "quoted" in result["question"]
@@ -640,7 +755,9 @@ class TestRunGit:
     async def test_success_returns_result(self):
         """On exit 0, returns the CompletedProcess without raising."""
         proc = _make_proc("abc123\n", returncode=0)
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc) as mock_sub:
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc
+        ) as mock_sub:
             result = await _run_git(["rev-parse", "HEAD"], cwd="/repo")
 
         assert result is proc
@@ -658,7 +775,9 @@ class TestRunGit:
             stdout="",
             stderr="fatal: not a git repository",
         )
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc
+        ):
             with pytest.raises(subprocess.CalledProcessError) as exc_info:
                 await _run_git(["rev-parse", "HEAD"], cwd="/bad")
 
@@ -673,7 +792,9 @@ class TestRunGit:
             stdout="",
             stderr="error: something went wrong",
         )
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc
+        ):
             with caplog.at_level(logging.WARNING, logger="forge"):
                 result = await _run_git(["status"], cwd="/repo", check=False)
 
@@ -737,9 +858,13 @@ class TestFindRelatedTestFilesScoped:
         """A test file created by the agent (not on base branch) is in-scope."""
         # Set up a git repo to simulate new file detection
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True
+        )
         subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
-        subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, capture_output=True
+        )
 
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_new.py").write_text("# new test")
@@ -767,8 +892,11 @@ class TestResolveRef:
     async def test_resolves_valid_ref(self):
         """Returns commit SHA for a valid ref."""
         proc = _make_proc("abc123def456\n", returncode=0)
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc
+        ):
             from forge.core.daemon_helpers import _resolve_ref
+
             result = await _resolve_ref("/repo", "main")
         assert result == "abc123def456"
 
@@ -776,8 +904,11 @@ class TestResolveRef:
     async def test_returns_none_for_invalid_ref(self):
         """Returns None when ref doesn't resolve."""
         proc = _make_proc("", returncode=128)
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc
+        ):
             from forge.core.daemon_helpers import _resolve_ref
+
             result = await _resolve_ref("/repo", "nonexistent")
         assert result is None
 
@@ -789,8 +920,11 @@ class TestGetCurrentBranch:
     async def test_returns_branch_name(self):
         """Returns branch name from git rev-parse."""
         proc = _make_proc("feature-branch\n", returncode=0)
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, return_value=proc
+        ):
             from forge.core.daemon_helpers import _get_current_branch
+
             result = await _get_current_branch("/repo")
         assert result == "feature-branch"
 
@@ -799,8 +933,13 @@ class TestGetCurrentBranch:
         """When rev-parse returns HEAD, falls back to symbolic-ref."""
         head_proc = _make_proc("HEAD\n", returncode=0)
         sym_proc = _make_proc("main\n", returncode=0)
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[head_proc, sym_proc]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[head_proc, sym_proc],
+        ):
             from forge.core.daemon_helpers import _get_current_branch
+
             result = await _get_current_branch("/repo")
         assert result == "main"
 
@@ -809,8 +948,13 @@ class TestGetCurrentBranch:
         """When both commands fail, returns 'main'."""
         fail_proc = _make_proc("", returncode=128)
         sym_fail = _make_proc("", returncode=128)
-        with patch("forge.core.daemon_helpers.async_subprocess", new_callable=AsyncMock, side_effect=[fail_proc, sym_fail]):
+        with patch(
+            "forge.core.daemon_helpers.async_subprocess",
+            new_callable=AsyncMock,
+            side_effect=[fail_proc, sym_fail],
+        ):
             from forge.core.daemon_helpers import _get_current_branch
+
             result = await _get_current_branch("/repo")
         assert result == "main"
 
@@ -826,21 +970,30 @@ class TestComputeWorktreePath:
     def test_compute_worktree_path_multi_repo(self):
         """Multi-repo (repo_count > 1) returns nested path with repo_id."""
         result = compute_worktree_path(
-            "/Users/dev/myproject", "backend", "task-1", repo_count=2,
+            "/Users/dev/myproject",
+            "backend",
+            "task-1",
+            repo_count=2,
         )
         assert result == "/Users/dev/myproject/.forge/worktrees/backend/task-1"
 
     def test_compute_worktree_path_default_with_high_count(self):
         """repo_id='default' but repo_count > 1 still produces a nested path."""
         result = compute_worktree_path(
-            "/Users/dev/myproject", "default", "task-1", repo_count=3,
+            "/Users/dev/myproject",
+            "default",
+            "task-1",
+            repo_count=3,
         )
         assert result == "/Users/dev/myproject/.forge/worktrees/default/task-1"
 
     def test_compute_worktree_path_explicit_single_repo(self):
         """repo_count=1 with non-default repo_id nests the path."""
         result = compute_worktree_path(
-            "/Users/dev/myproject", "frontend", "task-2", repo_count=1,
+            "/Users/dev/myproject",
+            "frontend",
+            "task-2",
+            repo_count=1,
         )
         assert result == "/Users/dev/myproject/.forge/worktrees/frontend/task-2"
 
@@ -884,9 +1037,9 @@ class TestParseForgeLearning:
     def test_with_trailing_text(self):
         """Agent text after the learning block should not prevent parsing."""
         text = (
-            'Some output\nFORGE_LEARNING:\n'
+            "Some output\nFORGE_LEARNING:\n"
             '{"trigger": "bad import", "resolution": "fixed import path", "files": ["a.py"]}\n'
-            'And then the agent kept talking about other stuff here.'
+            "And then the agent kept talking about other stuff here."
         )
         result = _parse_forge_learning(text)
         assert result is not None

@@ -55,9 +55,9 @@ def apply_highlights(text: str, pattern: str, use_regex: bool = False) -> tuple[
             last = 0
             parts: list[str] = []
             for m in rx.finditer(seg):
-                parts.append(seg[last:m.start()])
+                parts.append(seg[last : m.start()])
                 parts.append(_HIGHLIGHT_OPEN)
-                parts.append(seg[m.start():m.end()])
+                parts.append(seg[m.start() : m.end()])
                 parts.append(_HIGHLIGHT_CLOSE)
                 count += 1
                 last = m.end()
@@ -125,6 +125,7 @@ class SearchOverlay(Widget):
 
     class SearchChanged(Message):
         """Emitted when the search pattern changes."""
+
         def __init__(self, pattern: str | None, use_regex: bool = False) -> None:
             self.pattern = pattern
             self.use_regex = use_regex
@@ -132,6 +133,7 @@ class SearchOverlay(Widget):
 
     class SearchNavigate(Message):
         """Emitted when user presses n/N to navigate matches."""
+
         def __init__(self, direction: int) -> None:
             # direction: +1 = next, -1 = previous
             self.direction = direction
@@ -139,6 +141,7 @@ class SearchOverlay(Widget):
 
     class SearchDismissed(Message):
         """Emitted when the search overlay is dismissed."""
+
         pass
 
     def __init__(self) -> None:
@@ -218,9 +221,7 @@ class SearchOverlay(Widget):
         try:
             status = self.query_one("#search-status", Static)
             if self._match_count > 0:
-                status.update(
-                    f"[#c9d1d9]{self._current_match}/{self._match_count} matches[/]"
-                )
+                status.update(f"[#c9d1d9]{self._current_match}/{self._match_count} matches[/]")
             elif self._pattern:
                 status.update("[#f85149]no matches[/]")
             else:

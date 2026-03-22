@@ -182,10 +182,9 @@ async def gather_multi_repo_snapshots(
             logger.warning("Snapshot gathering failed for repo '%s': %s", repo_id, e)
             return repo_id, ProjectSnapshot()
 
-    results = await asyncio.gather(*(
-        _gather_one(repo_id, rc.path)
-        for repo_id, rc in repos.items()
-    ))
+    results = await asyncio.gather(
+        *(_gather_one(repo_id, rc.path) for repo_id, rc in repos.items())
+    )
     return dict(results)
 
 
@@ -365,9 +364,7 @@ def _read_config(project_dir: str) -> str:
     return "".join(section_lines).strip()
 
 
-def _build_module_index(
-    project_dir: str, files: list[str]
-) -> dict[str, str]:
+def _build_module_index(project_dir: str, files: list[str]) -> dict[str, str]:
     """Find top-level ``__init__.py`` files and extract their docstrings.
 
     A "top-level" ``__init__.py`` is one that sits exactly one directory
@@ -494,5 +491,7 @@ def _truncate_file_tree(tree: str, total_files: int, max_depth: int = 3) -> str:
         if indent_count < max_depth:
             truncated_lines.append(line)
 
-    truncated_lines.append(f"  ... ({total_files} files total, tree truncated to depth {max_depth})")
+    truncated_lines.append(
+        f"  ... ({total_files} files total, tree truncated to depth {max_depth})"
+    )
     return "\n".join(truncated_lines)

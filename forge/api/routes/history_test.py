@@ -57,9 +57,7 @@ async def _get_user_id(client: AsyncClient, email: str) -> str:
     app = client._transport.app
     db = app.state.db
     async with db._session_factory() as session:
-        result = await session.execute(
-            select(UserRow).where(UserRow.email == email)
-        )
+        result = await session.execute(select(UserRow).where(UserRow.email == email))
         return result.scalar_one().id
 
 
@@ -322,7 +320,7 @@ class TestListHistoryProjectPath:
                 client,
                 user_id=user_id,
                 description=f"Pipeline {i}",
-                created_at=f"2026-01-0{i+1}T00:00:00+00:00",
+                created_at=f"2026-01-0{i + 1}T00:00:00+00:00",
             )
 
         resp = await client.get("/api/history", headers=headers)

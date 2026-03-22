@@ -4,7 +4,16 @@ from forge.tui.widgets.task_list import STATE_ICONS, format_task_line
 
 
 def test_state_icons_all_states():
-    expected = ["todo", "in_progress", "in_review", "awaiting_approval", "merging", "done", "cancelled", "error"]
+    expected = [
+        "todo",
+        "in_progress",
+        "in_review",
+        "awaiting_approval",
+        "merging",
+        "done",
+        "cancelled",
+        "error",
+    ]
     for state in expected:
         assert state in STATE_ICONS, f"Missing icon for {state}"
 
@@ -174,7 +183,11 @@ class TestFormatTaskLineMultiRepo:
         """When multi_repo=True but task has no repo field, no prefix."""
         task = {"id": "t1", "title": "Add auth endpoint", "state": "in_progress"}
         line = format_task_line(task, selected=False, multi_repo=True)
-        assert "#79c0ff" not in line or "79c0ff" not in line.split("\\[")[0] if "\\[" in line else "#79c0ff" not in line
+        assert (
+            "#79c0ff" not in line or "79c0ff" not in line.split("\\[")[0]
+            if "\\[" in line
+            else "#79c0ff" not in line
+        )
         assert "Add auth endpoint" in line
 
     def test_format_task_line_multi_repo_selected(self):
@@ -207,4 +220,6 @@ class TestFormatTaskLineMultiRepo:
         # Count A's in each line
         no_repo_as = line_no_repo.count("A")
         with_repo_as = line_with_repo.count("A")
-        assert with_repo_as < no_repo_as, f"Expected fewer As with repo prefix: {with_repo_as} vs {no_repo_as}"
+        assert with_repo_as < no_repo_as, (
+            f"Expected fewer As with repo prefix: {with_repo_as} vs {no_repo_as}"
+        )

@@ -141,54 +141,74 @@ class TestPipelineListWidget:
     def test_status_icons_used(self):
         """Pipeline statuses should use status icons from task_list."""
         pl = PipelineList()
-        pl.update_pipelines([
-            {"id": "x", "description": "test", "status": "complete",
-             "created_at": "", "task_count": 0, "total_cost_usd": 0},
-        ])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "test",
+                    "status": "complete",
+                    "created_at": "",
+                    "task_count": 0,
+                    "total_cost_usd": 0,
+                },
+            ]
+        )
         rendered = pl.render()
         assert "✔" in rendered
 
     def test_cost_fallback_to_cost_key(self):
         """Should fall back to 'cost' key if 'total_cost_usd' not present."""
         pl = PipelineList()
-        pl.update_pipelines([
-            {"id": "x", "description": "test", "status": "complete",
-             "created_at": "", "task_count": 0, "cost": 1.23},
-        ])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "test",
+                    "status": "complete",
+                    "created_at": "",
+                    "task_count": 0,
+                    "cost": 1.23,
+                },
+            ]
+        )
         rendered = pl.render()
         assert "$1.23" in rendered
 
     def test_render_shows_project_folder(self):
         """Folder basename from project_dir should appear as a dim tag."""
         pl = PipelineList()
-        pl.update_pipelines([
-            {
-                "id": "x",
-                "description": "Test task",
-                "status": "complete",
-                "created_at": "2026-03-10T12:00:00",
-                "task_count": 1,
-                "total_cost_usd": 0.0,
-                "project_dir": "/Users/foo/my-project",
-            }
-        ])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "Test task",
+                    "status": "complete",
+                    "created_at": "2026-03-10T12:00:00",
+                    "task_count": 1,
+                    "total_cost_usd": 0.0,
+                    "project_dir": "/Users/foo/my-project",
+                }
+            ]
+        )
         rendered = pl.render()
         assert "my-project" in rendered
 
     def test_render_no_project_tag_when_empty(self):
         """No project tag should appear when project_dir is empty."""
         pl = PipelineList()
-        pl.update_pipelines([
-            {
-                "id": "x",
-                "description": "Test task",
-                "status": "complete",
-                "created_at": "2026-03-10T12:00:00",
-                "task_count": 1,
-                "total_cost_usd": 0.0,
-                "project_dir": "",
-            }
-        ])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "Test task",
+                    "status": "complete",
+                    "created_at": "2026-03-10T12:00:00",
+                    "task_count": 1,
+                    "total_cost_usd": 0.0,
+                    "project_dir": "",
+                }
+            ]
+        )
         rendered = pl.render()
         # Should render description and cost but no extraneous folder name
         assert "Test task" in rendered

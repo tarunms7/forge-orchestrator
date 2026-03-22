@@ -46,6 +46,7 @@ class SdkResult:
             duration_ms=msg.duration_ms,
         )
 
+
 # Patch the SDK's message parser to gracefully skip unknown message types
 # (e.g. rate_limit_event) instead of crashing the entire query.
 # We patch BOTH the module AND the client's local reference.
