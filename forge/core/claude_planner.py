@@ -180,7 +180,7 @@ class ClaudePlannerLLM(PlannerLLM):
         conventions_path = os.path.join(self._cwd or ".", ".forge", "conventions.md")
         try:
             if os.path.isfile(conventions_path):
-                with open(conventions_path) as f:
+                with open(conventions_path, encoding="utf-8") as f:
                     content = f.read().strip()
                 if content:
                     parts.append(

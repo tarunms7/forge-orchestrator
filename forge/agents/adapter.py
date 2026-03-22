@@ -143,7 +143,7 @@ def _load_claude_md(project_dir: str) -> str | None:
         full_path = os.path.join(project_dir, rel_path)
         if os.path.isfile(full_path):
             try:
-                with open(full_path, "r") as f:
+                with open(full_path, "r", encoding="utf-8") as f:
                     return f.read()
             except OSError:
                 continue
