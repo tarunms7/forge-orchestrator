@@ -990,7 +990,7 @@ async def test_add_lesson_pruning(db: Database):
         assert len(all_lessons) == 5
 
         # The first 2 (lowest hit_count=1, oldest) should have been pruned
-        remaining_ids = {l.id for l in all_lessons}
+        remaining_ids = {lesson.id for lesson in all_lessons}
         assert ids[0] not in remaining_ids
         assert ids[1] not in remaining_ids
     finally:
@@ -1015,20 +1015,20 @@ async def test_add_lesson_pruning_respects_hit_count(db: Database):
         await db.bump_lesson_hit(lid2)
         await db.bump_lesson_hit(lid2)
 
-        lid3 = await db.add_lesson(
+        await db.add_lesson(
             scope="global", category="command_failure",
             title="Medium hits", content="c", trigger="t3", resolution="r",
         )
 
         # Adding a 4th should prune the lowest hit_count (lid1)
-        lid4 = await db.add_lesson(
+        await db.add_lesson(
             scope="global", category="command_failure",
             title="New lesson", content="c", trigger="t4", resolution="r",
         )
 
         all_lessons = await db.list_all_lessons()
         assert len(all_lessons) == 3
-        remaining_ids = {l.id for l in all_lessons}
+        remaining_ids = {lesson.id for lesson in all_lessons}
         assert lid1 not in remaining_ids  # lowest hit_count, pruned
         assert lid2 in remaining_ids  # high hits, kept
     finally:
