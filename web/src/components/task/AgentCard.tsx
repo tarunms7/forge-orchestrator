@@ -140,10 +140,6 @@ const COLLAPSED_LINE_LIMIT = 6;
 export default function AgentCard({ taskId, onClick }: { taskId: string; onClick?: () => void }) {
   const task = useTask(taskId);
   const outputRef = useRef<HTMLDivElement>(null);
-
-  if (!task) return null;
-
-  const stateInfo = STATE_CLASS[task.state];
   const [showModal, setShowModal] = useState(false);
   const pipelineId = useTaskStore((s) => s.pipelineId);
   const token = useAuthStore((s) => s.token);
@@ -153,7 +149,11 @@ export default function AgentCard({ taskId, onClick }: { taskId: string; onClick
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [task.output]);
+  }, [task?.output]);
+
+  if (!task) return null;
+
+  const stateInfo = STATE_CLASS[task.state];
 
   const showExpand = task.output.length > COLLAPSED_LINE_LIMIT;
   const visibleLines = task.output.slice(-COLLAPSED_LINE_LIMIT);
