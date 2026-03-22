@@ -513,13 +513,7 @@ function TaskExecutionPageInner() {
   const [cancelLoading, setCancelLoading] = useState(false);
   const [restartLoading, setRestartLoading] = useState(false);
   const hydrated = useRef(false);
-
-  // Request browser notification permission on mount
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }, []);
+  const [notifDismissed, setNotifDismissed] = useState(false);
 
   // Reset store when navigating to a different pipeline
   useEffect(() => {
@@ -696,6 +690,32 @@ function TaskExecutionPageInner() {
               </div>
             )}
           </div>
+          {/* Notification opt-in — only shown when permission is 'default' */}
+          {!notifDismissed && typeof window !== "undefined" && "Notification" in window && Notification.permission === "default" && (
+            <button
+              type="button"
+              onClick={() => {
+                Notification.requestPermission().then(() => {
+                  // Force re-render so button disappears after grant/deny
+                  setNotifDismissed(true);
+                });
+              }}
+              className="btn btn-sm"
+              style={{
+                marginLeft: "auto",
+                flexShrink: 0,
+                background: "var(--accent-glow)",
+                border: "1px solid rgba(59,130,246,0.3)",
+                color: "var(--accent)",
+                fontSize: 12,
+                padding: "4px 12px",
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+              }}
+            >
+              Enable notifications
+            </button>
+          )}
         </div>
         {/* Progress track inside header */}
         <PipelineProgress phase={phase} />

@@ -17,9 +17,13 @@ export function useWebSocket(
   const maxRetries = 10;
   const [status, setStatus] = useState<WsStatus>("connecting");
   const authenticatedRef = useRef(false);
+  const tokenRef = useRef(token);
 
   // Increment this to force a reconnect (used by the retry() callback)
   const [retryTrigger, setRetryTrigger] = useState(0);
+
+  // Keep tokenRef in sync so reconnects use the latest token
+  tokenRef.current = token;
 
   useEffect(() => {
     if (!pipelineId || !token) return;
@@ -96,7 +100,7 @@ export function useWebSocket(
       clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
-  }, [pipelineId, token, retryTrigger]);
+  }, [pipelineId, retryTrigger]); // eslint-disable-line react-hooks/exhaustive-deps -- token accessed via tokenRef to avoid reconnect on refresh
 
   const send = useCallback((data: unknown) => {
     wsRef.current?.send(JSON.stringify(data));

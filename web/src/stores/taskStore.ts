@@ -623,7 +623,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
               ...state.tasks,
               [taskId]: {
                 ...existing,
-                costUsd: (existing.costUsd || 0) + ((data.agent_cost_usd as number) || (data.review_cost_usd as number) || 0),
+                costUsd: (data.agent_cost_usd as number) || (data.review_cost_usd as number) || existing.costUsd,
                 agentCostUsd: data.agent_cost_usd != null
                   ? (data.agent_cost_usd as number)
                   : existing.agentCostUsd,
