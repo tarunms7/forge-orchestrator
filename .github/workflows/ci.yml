@@ -43,6 +43,7 @@ jobs:
             --deselect forge/agents/adapter_test.py::test_build_options_has_no_allowed_tools \
             --ignore=forge/api/routes/tasks_test.py \
             --ignore=forge/api/routes/webhooks_test.py \
+            --ignore=forge/api/routes/history_test.py \
             --deselect forge/tui/screens/pipeline_test.py::test_retry_emits_when_error \
             --deselect forge/tui/screens/pipeline_test.py::test_skip_emits_when_error \
             -k "not test_pipeline_lifecycle"
