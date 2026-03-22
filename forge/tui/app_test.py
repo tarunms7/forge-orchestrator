@@ -1,6 +1,5 @@
 """Tests for _build_task_summaries multi-repo fields."""
 
-import pytest
 
 from forge.tui.app import _build_task_summaries
 
