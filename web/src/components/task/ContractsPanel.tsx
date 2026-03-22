@@ -186,12 +186,18 @@ export default function ContractsPanel({
 
   useEffect(() => {
     if (!pipelineId || !token) return;
-    setLoading(true);
-    setError(null);
-    fetchContracts(pipelineId, token)
-      .then((res: ContractSetData) => setData(res))
-      .catch((err: Error) => setError(err.message || "Failed to load contracts"))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchContracts(pipelineId, token);
+        if (!cancelled) setData(res);
+      } catch (err: unknown) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load contracts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [pipelineId, token]);
 
   // Loading state
