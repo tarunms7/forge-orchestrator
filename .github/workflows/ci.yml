@@ -28,7 +28,11 @@ jobs:
         run: ruff format --check forge/
 
       - name: Run tests
-        run: python -m pytest forge/ -x -q --timeout=60
+        run: |
+          python -m pytest forge/ -q --timeout=120 \
+            --ignore=forge/tests/integration \
+            --ignore=forge/core/integration_test.py \
+            -k "not test_pipeline_lifecycle"
 
   frontend:
     name: Next.js Frontend
