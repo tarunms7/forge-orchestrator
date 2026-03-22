@@ -27,6 +27,7 @@ class Lesson:
     created_at: str = ""
     last_hit_at: str = ""
     project_dir: str | None = None
+    confidence: float = 0.5
 
 
 def row_to_lesson(row) -> Lesson:
@@ -43,6 +44,7 @@ def row_to_lesson(row) -> Lesson:
         created_at=getattr(row, "created_at", ""),
         last_hit_at=getattr(row, "last_hit_at", ""),
         project_dir=getattr(row, "project_dir", None),
+        confidence=getattr(row, "confidence", 0.5),
     )
 
 
@@ -59,6 +61,7 @@ def format_lessons_block(lessons: list[Lesson]) -> str:
         "command_failure": "Command Failures",
         "review_failure": "Review Patterns",
         "code_pattern": "Code Patterns",
+        "infra_timeout": "Infrastructure",
     }
 
     lines = ["## Lessons Learned (DO NOT repeat these mistakes)\n"]
@@ -66,7 +69,12 @@ def format_lessons_block(lessons: list[Lesson]) -> str:
         title = category_titles.get(cat, cat.replace("_", " ").title())
         lines.append(f"### {title}")
         for lesson in cat_lessons:
-            lines.append(f"- **{lesson.title}**: {lesson.resolution}")
+            confidence_tag = ""
+            if lesson.confidence >= 0.8:
+                confidence_tag = " (proven)"
+            elif lesson.confidence < 0.4:
+                confidence_tag = " (tentative)"
+            lines.append(f"- **{lesson.title}**{confidence_tag}: {lesson.resolution}")
         lines.append("")
 
     return "\n".join(lines)

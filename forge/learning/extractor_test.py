@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from forge.learning.extractor import (
     extract_from_command_failures,
     extract_from_review_feedback,
+    extract_from_agent_learning,
+    is_infra_noise,
     classify_scope,
     _shorten_command,
     _resolution_for_error,
@@ -180,3 +182,66 @@ def test_extract_feedback_theme():
     # Core words remain
     assert "error" in theme
     assert "missing" in theme
+
+
+# --- is_infra_noise ---
+
+class TestIsInfraNoise:
+    def test_timeout(self):
+        assert is_infra_noise("Command timed out after 90s") is True
+
+    def test_connection_refused(self):
+        assert is_infra_noise("ECONNREFUSED on port 8080") is True
+
+    def test_real_code_change(self):
+        assert is_infra_noise("Changed import path from foo to bar") is False
+
+    def test_infra_crash_marker(self):
+        assert is_infra_noise("[INFRASTRUCTURE CRASH] Task crashed") is True
+
+
+# --- extract_from_agent_learning ---
+
+class TestExtractFromAgentLearning:
+    def test_valid_learning(self):
+        data = {
+            "trigger": "import path was wrong for the venv package",
+            "resolution": "changed from 'import foo' to 'from foo.bar import baz' in utils.py",
+            "files": ["utils.py"],
+        }
+        lesson = extract_from_agent_learning(data, task_title="Fix imports")
+        assert lesson is not None
+        assert lesson.category == "code_pattern"
+        assert lesson.confidence == 0.5
+
+    def test_rejects_missing_trigger(self):
+        data = {"resolution": "did something useful here", "files": ["a.py"]}
+        assert extract_from_agent_learning(data) is None
+
+    def test_rejects_short_resolution(self):
+        data = {"trigger": "something broke badly", "resolution": "fixed", "files": ["a.py"]}
+        assert extract_from_agent_learning(data) is None
+
+    def test_rejects_infra_noise(self):
+        data = {
+            "trigger": "connection refused when calling API",
+            "resolution": "retried and the server came back after timeout",
+            "files": ["api.py"],
+        }
+        assert extract_from_agent_learning(data) is None
+
+    def test_rejects_no_action_verb(self):
+        data = {
+            "trigger": "the module was not available somehow",
+            "resolution": "the package needs to be installed in the venv first",
+            "files": ["setup.py"],
+        }
+        assert extract_from_agent_learning(data) is None
+
+    def test_rejects_empty_files(self):
+        data = {
+            "trigger": "import path was wrong for package",
+            "resolution": "changed the import path in the module file",
+            "files": [],
+        }
+        assert extract_from_agent_learning(data) is None

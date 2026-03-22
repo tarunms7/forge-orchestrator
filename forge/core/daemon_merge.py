@@ -156,7 +156,7 @@ class MergeMixin:
             await asyncio.sleep(backoff)
             await db.retry_task(task_id, review_feedback=review_feedback)
             # Extract lesson from review feedback if this is a repeated failure
-            if review_feedback and task.retry_count >= 2:  # 3rd+ attempt
+            if review_feedback and task.retry_count >= 2 and not review_feedback.startswith("[INFRASTRUCTURE CRASH]"):  # 3rd+ attempt
                 try:
                     lesson = extract_from_review_feedback(
                         feedback=review_feedback,
@@ -172,6 +172,7 @@ class MergeMixin:
                             title=lesson.title, content=lesson.content,
                             trigger=lesson.trigger, resolution=lesson.resolution,
                             project_dir=getattr(self, "_project_dir", None) if lesson.scope == "project" else None,
+                            confidence=0.3,
                         )
                     logger.info("Review lesson captured: %s", lesson.title)
                 except Exception as exc:
