@@ -58,6 +58,13 @@ def get_all_actions() -> list[CommandPaletteAction]:
             category="Navigation",
             callback_name="switch_settings",
         ),
+        CommandPaletteAction(
+            name="Stats",
+            description="View pipeline stats and metrics",
+            shortcut="5",
+            category="Navigation",
+            callback_name="switch_stats",
+        ),
         # Pipeline
         CommandPaletteAction(
             name="New Task",
