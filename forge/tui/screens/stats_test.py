@@ -277,6 +277,6 @@ async def test_stats_screen_refresh_without_db():
     """Refresh action when no DB is available doesn't crash."""
     app = StatsPushApp()
     async with app.run_test() as pilot:
-        screen: StatsScreen = app.screen  # type: ignore[assignment]
+        _ = app.screen  # ensure screen is mounted
         await pilot.press("r")
         # Should not crash — just a no-op when DB is unavailable
