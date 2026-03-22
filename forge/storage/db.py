@@ -101,6 +101,16 @@ class TaskRow(Base):
     questions_limit: Mapped[int] = mapped_column(default=3)
     review_diff: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     repo_id: Mapped[str] = mapped_column(String, default="default")
+    # Timing and metrics columns
+    started_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    agent_duration_s: Mapped[float] = mapped_column(default=0.0)
+    review_duration_s: Mapped[float] = mapped_column(default=0.0)
+    lint_duration_s: Mapped[float] = mapped_column(default=0.0)
+    merge_duration_s: Mapped[float] = mapped_column(default=0.0)
+    num_turns: Mapped[int] = mapped_column(default=0)
+    max_turns: Mapped[int] = mapped_column(default=0)
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AgentRow(Base):
@@ -144,6 +154,13 @@ class PipelineRow(Base):
     contracts_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     paused_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     paused_duration: Mapped[float] = mapped_column(default=0.0)
+    # Pipeline metrics columns
+    duration_s: Mapped[float] = mapped_column(default=0.0)
+    total_input_tokens: Mapped[int] = mapped_column(default=0)
+    total_output_tokens: Mapped[int] = mapped_column(default=0)
+    tasks_succeeded: Mapped[int] = mapped_column(default=0)
+    tasks_failed: Mapped[int] = mapped_column(default=0)
+    total_retries: Mapped[int] = mapped_column(default=0)
     # Cross-project tracking
     project_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     project_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
@@ -1526,3 +1543,207 @@ class Database:
             await session.execute(del_q)
             await session.commit()
             return count
+
+    # ── Analytics / Metrics ────────────────────────────────────────────
+
+    async def set_task_timing(
+        self,
+        task_id: str,
+        *,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        agent_duration_s: float | None = None,
+        review_duration_s: float | None = None,
+        lint_duration_s: float | None = None,
+        merge_duration_s: float | None = None,
+    ) -> None:
+        """Update timing fields on a TaskRow. Only non-None kwargs are written."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                if started_at is not None:
+                    task.started_at = started_at
+                if completed_at is not None:
+                    task.completed_at = completed_at
+                if agent_duration_s is not None:
+                    task.agent_duration_s = agent_duration_s
+                if review_duration_s is not None:
+                    task.review_duration_s = review_duration_s
+                if lint_duration_s is not None:
+                    task.lint_duration_s = lint_duration_s
+                if merge_duration_s is not None:
+                    task.merge_duration_s = merge_duration_s
+                await session.commit()
+
+    async def set_task_turns(self, task_id: str, num_turns: int, max_turns: int) -> None:
+        """Store agent conversation turn counts for a task."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.num_turns = num_turns
+                task.max_turns = max_turns
+                await session.commit()
+
+    async def set_task_error(self, task_id: str, error_message: str) -> None:
+        """Store the last error message on a task."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.error_message = error_message
+                await session.commit()
+
+    async def finalize_pipeline_metrics(self, pipeline_id: str) -> None:
+        """Compute and store aggregated pipeline metrics by summing task rows.
+
+        Updates PipelineRow fields: duration_s, total_input_tokens,
+        total_output_tokens, tasks_succeeded, tasks_failed, total_retries.
+        Duration is computed from pipeline created_at to now minus paused_duration.
+        """
+        async with self._session_factory() as session:
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if not pipeline:
+                return
+
+            # Compute duration from created_at to now minus paused_duration
+            if pipeline.created_at:
+                try:
+                    created = datetime.fromisoformat(pipeline.created_at)
+                    now = datetime.now(UTC)
+                    wall_seconds = (now - created).total_seconds()
+                    paused = pipeline.paused_duration or 0.0
+                    pipeline.duration_s = max(0.0, wall_seconds - paused)
+                except (ValueError, TypeError):
+                    pipeline.duration_s = 0.0
+            else:
+                pipeline.duration_s = 0.0
+
+            # Sum task-level metrics
+            result = await session.execute(
+                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            )
+            tasks = list(result.scalars().all())
+
+            pipeline.total_input_tokens = sum(t.input_tokens or 0 for t in tasks)
+            pipeline.total_output_tokens = sum(t.output_tokens or 0 for t in tasks)
+            pipeline.tasks_succeeded = sum(1 for t in tasks if t.state == "done")
+            pipeline.tasks_failed = sum(1 for t in tasks if t.state == "error")
+            pipeline.total_retries = sum(t.retry_count or 0 for t in tasks)
+
+            await session.commit()
+
+    async def get_pipeline_stats(self, pipeline_id: str) -> dict:
+        """Return full pipeline + per-task metrics dict for the stats command."""
+        async with self._session_factory() as session:
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if not pipeline:
+                return {}
+
+            result = await session.execute(
+                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            )
+            tasks = list(result.scalars().all())
+
+            task_metrics = []
+            for t in tasks:
+                task_metrics.append(
+                    {
+                        "id": t.id,
+                        "title": t.title,
+                        "state": t.state,
+                        "started_at": t.started_at,
+                        "completed_at": t.completed_at,
+                        "agent_duration_s": t.agent_duration_s or 0.0,
+                        "review_duration_s": t.review_duration_s or 0.0,
+                        "lint_duration_s": t.lint_duration_s or 0.0,
+                        "merge_duration_s": t.merge_duration_s or 0.0,
+                        "cost_usd": t.cost_usd or 0.0,
+                        "agent_cost_usd": t.agent_cost_usd or 0.0,
+                        "review_cost_usd": t.review_cost_usd or 0.0,
+                        "input_tokens": t.input_tokens or 0,
+                        "output_tokens": t.output_tokens or 0,
+                        "retry_count": t.retry_count or 0,
+                        "num_turns": t.num_turns or 0,
+                        "max_turns": t.max_turns or 0,
+                        "error_message": t.error_message,
+                    }
+                )
+
+            return {
+                "id": pipeline.id,
+                "description": pipeline.description,
+                "status": pipeline.status,
+                "created_at": pipeline.created_at,
+                "completed_at": pipeline.completed_at,
+                "duration_s": pipeline.duration_s or 0.0,
+                "total_cost_usd": pipeline.total_cost_usd or 0.0,
+                "planner_cost_usd": pipeline.planner_cost_usd or 0.0,
+                "total_input_tokens": pipeline.total_input_tokens or 0,
+                "total_output_tokens": pipeline.total_output_tokens or 0,
+                "tasks_succeeded": pipeline.tasks_succeeded or 0,
+                "tasks_failed": pipeline.tasks_failed or 0,
+                "total_retries": pipeline.total_retries or 0,
+                "tasks": task_metrics,
+            }
+
+    async def get_pipeline_trends(
+        self, project_path: str | None = None, limit: int = 20
+    ) -> list[dict]:
+        """Return recent pipeline metrics for trend analysis, ordered by created_at descending."""
+        async with self._session_factory() as session:
+            stmt = select(PipelineRow).order_by(PipelineRow.created_at.desc())
+            if project_path is not None:
+                stmt = stmt.where(PipelineRow.project_path == project_path)
+            stmt = stmt.limit(limit)
+            result = await session.execute(stmt)
+            pipelines = list(result.scalars().all())
+
+            return [
+                {
+                    "id": p.id,
+                    "description": p.description,
+                    "status": p.status,
+                    "duration_s": p.duration_s or 0.0,
+                    "total_cost_usd": p.total_cost_usd or 0.0,
+                    "total_input_tokens": p.total_input_tokens or 0,
+                    "total_output_tokens": p.total_output_tokens or 0,
+                    "tasks_succeeded": p.tasks_succeeded or 0,
+                    "tasks_failed": p.tasks_failed or 0,
+                    "total_retries": p.total_retries or 0,
+                    "created_at": p.created_at,
+                }
+                for p in pipelines
+            ]
+
+    async def get_retry_summary(self, pipeline_id: str | None = None) -> list[dict]:
+        """Aggregate retry counts and error messages across tasks, grouped by error pattern.
+
+        Returns list sorted by total_retries descending.
+        """
+        async with self._session_factory() as session:
+            stmt = select(TaskRow).where(TaskRow.retry_count > 0)
+            if pipeline_id is not None:
+                stmt = stmt.where(TaskRow.pipeline_id == pipeline_id)
+            result = await session.execute(stmt)
+            tasks = list(result.scalars().all())
+
+            # Group by normalized error pattern
+            patterns: dict[str, dict] = {}
+            for t in tasks:
+                raw = t.error_message or "unknown error"
+                # Normalize: first 120 chars, lowercased, whitespace-collapsed
+                import re as _re
+
+                pattern = _re.sub(r"\s+", " ", raw[:120].lower()).strip()
+                if pattern not in patterns:
+                    patterns[pattern] = {
+                        "error_pattern": pattern,
+                        "total_retries": 0,
+                        "task_count": 0,
+                        "task_ids": [],
+                    }
+                patterns[pattern]["total_retries"] += t.retry_count or 0
+                patterns[pattern]["task_count"] += 1
+                patterns[pattern]["task_ids"].append(t.id)
+
+            # Sort by total_retries descending
+            return sorted(patterns.values(), key=lambda x: x["total_retries"], reverse=True)
