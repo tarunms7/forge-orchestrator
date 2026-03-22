@@ -139,6 +139,15 @@ class ForgeApp(App):
             self.notify(f"Database initialization failed: {_escape_markup(e)}", severity="error")
             self._db = None
 
+    def _resolve_repos(self) -> list:
+        """Resolve repos for HomeScreen display."""
+        try:
+            from forge.config.project_config import resolve_repos
+            return resolve_repos(repo_flags=(), project_dir=self._project_dir)
+        except Exception:
+            logger.debug("Failed to resolve repos", exc_info=True)
+            return []
+
     async def _load_recent_pipelines(self) -> list[dict]:
         """Load recent pipelines from DB for HomeScreen."""
         if not self._db:
@@ -168,7 +177,8 @@ class ForgeApp(App):
         # Mount the command palette overlay at the app level so it's available on all screens
         await self.mount(CommandPalette())
         recent = await self._load_recent_pipelines()
-        self.push_screen(HomeScreen(recent_pipelines=recent))
+        repos = self._resolve_repos()
+        self.push_screen(HomeScreen(recent_pipelines=recent, repos=repos))
         self._state.on_change(self._on_state_change)
 
     def _on_state_change(self, field: str) -> None:
@@ -919,7 +929,8 @@ class ForgeApp(App):
     async def _push_fresh_home(self) -> None:
         """Load recent pipelines and push a fresh HomeScreen."""
         recent = await self._load_recent_pipelines()
-        home = HomeScreen(recent_pipelines=recent)
+        repos = self._resolve_repos()
+        home = HomeScreen(recent_pipelines=recent, repos=repos)
         self.push_screen(home)
         # Focus the prompt input
         try:
