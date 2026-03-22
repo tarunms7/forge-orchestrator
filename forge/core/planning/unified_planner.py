@@ -345,7 +345,12 @@ This workspace contains multiple repositories: {repo_list}
 - Create any tasks for that repo
 - Read or browse files in that repo
 - Reference that repo in any task description
+- Mention that repo in any task's description, title, or instructions to the agent
 Violating this rule will cause the pipeline to fail. Only create tasks for repos the user explicitly wants changed.
+
+Additionally, in the task descriptions you write for agents, include a clear note:
+"Do NOT read, modify, or reference files in [excluded repo]. It is out of scope for this pipeline."
+This ensures agents also respect the exclusion even if they are tempted to look at other repos.
 
 ### Repo Assignment Rules
 - Every task MUST have a `"repo"` field set to one of the available repos.
