@@ -12,7 +12,7 @@ export function useWebSocket(
 ) {
   const wsRef = useRef<WebSocket | null>(null);
   const onMessageRef = useRef(onMessage);
-  onMessageRef.current = onMessage;
+  useEffect(() => { onMessageRef.current = onMessage; });
   const retriesRef = useRef(0);
   const maxRetries = 10;
   const [status, setStatus] = useState<WsStatus>("connecting");
@@ -23,7 +23,7 @@ export function useWebSocket(
   const [retryTrigger, setRetryTrigger] = useState(0);
 
   // Keep tokenRef in sync so reconnects use the latest token
-  tokenRef.current = token;
+  useEffect(() => { tokenRef.current = token; }, [token]);
 
   useEffect(() => {
     if (!pipelineId || !token) return;
