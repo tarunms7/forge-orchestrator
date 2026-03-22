@@ -401,7 +401,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         self._settings.build_cmd = "npm run build"
                         logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
                 except (json.JSONDecodeError, OSError):
-                    pass
+                    logger.debug("Failed to read package.json for build_cmd auto-detection")
 
         # --- test_cmd ---
         if self._settings.test_cmd is None:
@@ -414,7 +414,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         self._settings.test_cmd = "python -m pytest"
                         logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
                 except OSError:
-                    pass
+                    logger.debug("Failed to read pyproject.toml for test_cmd auto-detection")
 
         if self._settings.test_cmd is None:
             makefile = os.path.join(project_dir, "Makefile")
@@ -426,7 +426,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         self._settings.test_cmd = "make test"
                         logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
                 except OSError:
-                    pass
+                    logger.debug("Failed to read Makefile for test_cmd auto-detection")
 
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
@@ -1423,6 +1423,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         except Exception:
             logger.exception("Failed to mark crashed task %s as error", task_id)
         try:
+<<<<<<< HEAD
+=======
+            task_rec = await db.get_task(task_id)
+            if task_rec and task_rec.assigned_agent:
+                await db.release_agent(task_rec.assigned_agent)
+        except Exception:
+            logger.exception("Failed to release agent for crashed task %s", task_id)
+        try:
+>>>>>>> ea7a1dd (fix: replace silent except-pass blocks with logger calls in daemon modules)
             worktree_mgr.remove(task_id)
         except Exception as cleanup_err:
             logger.warning("Failed to clean up worktree for task %s: %s", task_id, cleanup_err)
