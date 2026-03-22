@@ -955,3 +955,124 @@ async def test_migrate_adds_repos_json_column():
     assert json.loads(new.repos_json) == repos
 
     await engine.dispose()
+
+
+# ── Lesson tests ─────────────────────────────────────────────────────
+
+
+async def test_add_lesson_returns_id(db: Database):
+    """add_lesson should return a lesson ID."""
+    lid = await db.add_lesson(
+        scope="global", category="command_failure",
+        title="Always check exit code", content="Check exit code",
+        trigger="exit code", resolution="Use set -e",
+    )
+    assert lid is not None
+    assert len(lid) == 36  # UUID
+
+
+async def test_add_lesson_pruning(db: Database):
+    """add_lesson should prune excess lessons beyond MAX_LESSONS."""
+    original_max = Database.MAX_LESSONS
+    Database.MAX_LESSONS = 5
+    try:
+        ids = []
+        for i in range(7):
+            lid = await db.add_lesson(
+                scope="global", category="command_failure",
+                title=f"Lesson {i}", content=f"Content {i}",
+                trigger=f"trigger-{i}", resolution=f"Resolution {i}",
+            )
+            ids.append(lid)
+
+        # Should have pruned down to 5
+        all_lessons = await db.list_all_lessons()
+        assert len(all_lessons) == 5
+
+        # The first 2 (lowest hit_count=1, oldest) should have been pruned
+        remaining_ids = {l.id for l in all_lessons}
+        assert ids[0] not in remaining_ids
+        assert ids[1] not in remaining_ids
+    finally:
+        Database.MAX_LESSONS = original_max
+
+
+async def test_add_lesson_pruning_respects_hit_count(db: Database):
+    """Pruning should remove lowest hit_count lessons first."""
+    original_max = Database.MAX_LESSONS
+    Database.MAX_LESSONS = 3
+    try:
+        # Add 3 lessons
+        lid1 = await db.add_lesson(
+            scope="global", category="command_failure",
+            title="Low hits", content="c", trigger="t1", resolution="r",
+        )
+        lid2 = await db.add_lesson(
+            scope="global", category="command_failure",
+            title="High hits", content="c", trigger="t2", resolution="r",
+        )
+        # Bump hit count on lid2 so it's more valuable
+        await db.bump_lesson_hit(lid2)
+        await db.bump_lesson_hit(lid2)
+
+        lid3 = await db.add_lesson(
+            scope="global", category="command_failure",
+            title="Medium hits", content="c", trigger="t3", resolution="r",
+        )
+
+        # Adding a 4th should prune the lowest hit_count (lid1)
+        lid4 = await db.add_lesson(
+            scope="global", category="command_failure",
+            title="New lesson", content="c", trigger="t4", resolution="r",
+        )
+
+        all_lessons = await db.list_all_lessons()
+        assert len(all_lessons) == 3
+        remaining_ids = {l.id for l in all_lessons}
+        assert lid1 not in remaining_ids  # lowest hit_count, pruned
+        assert lid2 in remaining_ids  # high hits, kept
+    finally:
+        Database.MAX_LESSONS = original_max
+
+
+async def test_find_matching_lesson_normalized(db: Database):
+    """find_matching_lesson should match case-insensitively with normalized whitespace."""
+    await db.add_lesson(
+        scope="global", category="command_failure",
+        title="Exit Code Check", content="c",
+        trigger="always check  EXIT  code", resolution="r",
+    )
+
+    # Should match with different casing and whitespace
+    match = await db.find_matching_lesson("Always Check Exit Code")
+    assert match is not None
+    assert match.title == "Exit Code Check"
+
+    # Should match as substring
+    match2 = await db.find_matching_lesson("check exit code")
+    assert match2 is not None
+
+    # Should not match unrelated trigger
+    no_match = await db.find_matching_lesson("something completely different")
+    assert no_match is None
+
+
+async def test_find_matching_lesson_reverse_contains(db: Database):
+    """find_matching_lesson should match when stored trigger is substring of query."""
+    await db.add_lesson(
+        scope="global", category="code_pattern",
+        title="Use set -e", content="c",
+        trigger="set -e", resolution="r",
+    )
+
+    # Query contains the stored trigger
+    match = await db.find_matching_lesson("always use set -e in bash scripts")
+    assert match is not None
+    assert match.title == "Use set -e"
+
+
+async def test_normalize_trigger():
+    """_normalize_trigger should lowercase, strip, and collapse whitespace."""
+    assert Database._normalize_trigger("  Hello   World  ") == "hello world"
+    assert Database._normalize_trigger("ALL\tCAPS\n\nHERE") == "all caps here"
+    assert Database._normalize_trigger("simple") == "simple"
