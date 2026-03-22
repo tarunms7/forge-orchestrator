@@ -160,6 +160,7 @@ export default function HistoryPage() {
       </div>
 
       {/* Table */}
+      <div style={{ overflowX: 'auto' }}>
       <table className="history-table">
         <thead>
           <tr>
@@ -215,6 +216,7 @@ export default function HistoryPage() {
           )}
         </tbody>
       </table>
+      </div>
 
       {/* Pagination */}
       {filteredHistory.length > 0 && (

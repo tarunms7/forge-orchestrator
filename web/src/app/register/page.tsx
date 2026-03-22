@@ -15,11 +15,18 @@ export default function RegisterPage() {
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
+
+    if (password.length < 8) {
+      setPasswordError('Password must be at least 8 characters');
+      setLoading(false);
+      return;
+    }
 
     try {
       const data = await apiPost("/auth/register", {
@@ -90,10 +97,13 @@ export default function RegisterPage() {
               type="password"
               required
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => { setPassword(e.target.value); setPasswordError(''); }}
               className="auth-input"
               placeholder="••••••••"
             />
+            {passwordError && (
+              <div className="auth-error" style={{ marginTop: '6px', padding: '6px 10px', fontSize: '12px' }}>{passwordError}</div>
+            )}
           </div>
 
           <button type="submit" disabled={loading} className="auth-submit">

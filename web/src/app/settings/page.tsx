@@ -527,7 +527,8 @@ export default function SettingsPage() {
     fetchTemplates();
 
     // Auto-check CLI status on load (health endpoint is at /health, not under /api)
-    fetch("/health")
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    fetch(`${apiBase.replace('/api', '')}/health`)
       .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
       .catch(() => setCliStatus("error"));
   }, [token, fetchTemplates]);
@@ -558,7 +559,8 @@ export default function SettingsPage() {
 
   const checkCliStatus = () => {
     setCliStatus("checking");
-    fetch("/health")
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    fetch(`${apiBase.replace('/api', '')}/health`)
       .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
       .catch(() => setCliStatus("error"));
   };
