@@ -19,8 +19,9 @@ from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
+from forge.tui.screens.stats import StatsScreen
 from forge.tui.state import TuiState
-from forge.tui.widgets.command_palette import CommandPalette
+from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteAction, get_all_actions
 from forge.tui.widgets.pipeline_list import PipelineList
 
 logger = logging.getLogger("forge.tui.app")
@@ -96,6 +97,7 @@ class ForgeApp(App):
         Binding("2", "switch_pipeline", "Pipeline", show=True),
         Binding("3", "switch_review", "Review", show=True),
         Binding("4", "switch_settings", "Settings", show=True),
+        Binding("5", "switch_stats", "Stats", show=True),
         Binding("q", "quit_app", "Quit"),
         Binding("s", "screenshot_export", "Screenshot", show=False),
         Binding("tab", "cycle_questions", "Next", show=False, priority=True),
@@ -181,7 +183,18 @@ class ForgeApp(App):
         """Initialize DB, push home screen, wire state changes."""
         await self._init_db()
         # Mount the command palette overlay at the app level so it's available on all screens
-        await self.mount(CommandPalette())
+        # Extend default command palette actions with Stats screen entry
+        _stats_action = CommandPaletteAction(
+            name="Stats",
+            description="View pipeline stats and metrics",
+            shortcut="5",
+            category="Navigation",
+            callback_name="switch_stats",
+        )
+        palette_actions = get_all_actions()
+        # Insert after Settings (index 3) in Navigation category
+        palette_actions.insert(4, _stats_action)
+        await self.mount(CommandPalette(actions=palette_actions))
         recent = await self._load_recent_pipelines()
         repos = self._resolve_repos()
         self.push_screen(HomeScreen(recent_pipelines=recent, repos=repos))
@@ -1037,6 +1050,41 @@ class ForgeApp(App):
         if self._is_input_focused() or self._is_modal_screen():
             return
         self.push_screen(SettingsScreen(self._settings))
+
+    def action_switch_stats(self) -> None:
+        if self._is_input_focused() or self._is_modal_screen():
+            return
+        from forge.core.async_utils import safe_create_task
+
+        safe_create_task(self._push_stats_screen(), logger=logger, name="switch-stats")
+
+    async def _push_stats_screen(self) -> None:
+        """Load stats data from DB and push the StatsScreen."""
+        stats: dict = {}
+        trends: list[dict] = []
+        retry_summary: list[dict] = []
+
+        if self._db:
+            try:
+                trends = await self._db.get_pipeline_trends(limit=20)
+            except Exception:
+                logger.debug("Failed to load pipeline trends", exc_info=True)
+
+            try:
+                pipeline_id = getattr(self, "_pipeline_id", None)
+                if pipeline_id:
+                    stats = await self._db.get_pipeline_stats(pipeline_id)
+                elif trends:
+                    stats = await self._db.get_pipeline_stats(trends[0]["id"])
+            except Exception:
+                logger.debug("Failed to load pipeline stats", exc_info=True)
+
+            try:
+                retry_summary = await self._db.get_retry_summary()
+            except Exception:
+                logger.debug("Failed to load retry summary", exc_info=True)
+
+        self.push_screen(StatsScreen(stats=stats, trends=trends, retry_summary=retry_summary))
 
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():

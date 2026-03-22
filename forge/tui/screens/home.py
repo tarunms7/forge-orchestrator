@@ -182,6 +182,7 @@ class HomeScreen(Screen):
             "[#5FA8FF]Ctrl+U[/]  [#A9C7E8]Clear input[/]\n"
             "[#5FA8FF]Tab[/]     [#A9C7E8]Switch focus[/]\n"
             "[#5FA8FF]Ctrl+P[/]  [#A9C7E8]Command palette[/]\n"
+            "[#5FA8FF]5[/]       [#A9C7E8]Stats[/]\n"
             "[#5FA8FF]Esc[/]     [#A9C7E8]Quit[/]\n"
             "[#5FA8FF]?[/]       [#A9C7E8]Help[/]"
         )

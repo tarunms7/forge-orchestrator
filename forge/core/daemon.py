@@ -1935,6 +1935,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
                         await db.set_pipeline_paused_at(pipeline_id, None)
                     await db.update_pipeline_status(pipeline_id, result)
+                    # Aggregate task-level metrics into pipeline-level metrics
+                    try:
+                        await db.finalize_pipeline_metrics(pipeline_id)
+                    except Exception:
+                        logger.debug(
+                            "Failed to finalize pipeline metrics for %s",
+                            pipeline_id,
+                            exc_info=True,
+                        )
                     await self._emit(
                         "pipeline:all_tasks_done",
                         {

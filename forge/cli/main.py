@@ -295,6 +295,10 @@ from forge.cli.lessons import lessons  # noqa: E402
 
 cli.add_command(lessons)
 
+from forge.cli.stats import stats  # noqa: E402
+
+cli.add_command(stats)
+
 
 @cli.command()
 def upgrade() -> None:

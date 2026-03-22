@@ -687,6 +687,7 @@ class ReviewMixin:
         """
         feedback_parts: list[str] = []
         gate_timeout = self._settings.agent_timeout_seconds // 2
+        review_t0 = time.monotonic()
 
         # Gate 0: Build gate (skip silently if no command configured)
         build_cmd = self._resolve_build_cmd(repo_id=repo_id)
@@ -739,6 +740,12 @@ class ReviewMixin:
                 else:
                     console.print(f"[red]  Gate 0 (build) failed: {build_result.details}[/red]")
                     feedback_parts.append(f"Gate 0 (build) FAILED:\n{build_result.details}")
+                    try:
+                        await db.set_task_timing(
+                            task.id, review_duration_s=time.monotonic() - review_t0
+                        )
+                    except Exception:
+                        pass
                     return False, "\n\n".join(feedback_parts)
             else:
                 console.print("[green]  Gate 0 (build) passed[/green]")
@@ -771,9 +778,15 @@ class ReviewMixin:
             db=db,
             pipeline_id=pipeline_id,
         )
+        lint_t0 = time.monotonic()
         gate1_result = await self._run_lint_gate(
             worktree_path, pipeline_branch=pipeline_branch, repo_id=repo_id, db=db
         )
+        lint_elapsed = time.monotonic() - lint_t0
+        try:
+            await db.set_task_timing(task.id, lint_duration_s=lint_elapsed)
+        except Exception:
+            logger.debug("Failed to record lint_duration_s for %s", task.id, exc_info=True)
         await self._emit(
             "review:gate_passed" if gate1_result.passed else "review:gate_failed",
             {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details},
@@ -812,6 +825,12 @@ class ReviewMixin:
                 console.print(f"[red]  L1 failed: {gate1_result.details}[/red]")
                 prefix = "[RETRIABLE] " if gate1_result.retriable else ""
                 feedback_parts.append(f"{prefix}L1 (lint) FAILED:\n{gate1_result.details}")
+                try:
+                    await db.set_task_timing(
+                        task.id, review_duration_s=time.monotonic() - review_t0
+                    )
+                except Exception:
+                    pass
                 return False, "\n\n".join(feedback_parts)
         else:
             console.print("[green]  L1 passed[/green]")
@@ -883,6 +902,12 @@ class ReviewMixin:
                 else:
                     console.print(f"[red]  Gate 1.5 (test) failed: {test_result.details}[/red]")
                     feedback_parts.append(f"Gate 1.5 (test) FAILED:\n{test_result.details}")
+                    try:
+                        await db.set_task_timing(
+                            task.id, review_duration_s=time.monotonic() - review_t0
+                        )
+                    except Exception:
+                        pass
                     return False, "\n\n".join(feedback_parts)
             console.print("[green]  Gate 1.5 (test) passed[/green]")
         else:
@@ -1047,6 +1072,12 @@ class ReviewMixin:
                 feedback_parts.append(
                     f"{prefix}L2 (LLM code review) FAILED:\n{gate2_result.details}"
                 )
+                try:
+                    await db.set_task_timing(
+                        task.id, review_duration_s=time.monotonic() - review_t0
+                    )
+                except Exception:
+                    pass
                 return False, "\n\n".join(feedback_parts)
             console.print("[green]  L2 passed[/green]")
 
@@ -1129,12 +1160,24 @@ class ReviewMixin:
                     else:
                         console.print(f"[red]  L2 (extra pass) failed: {gate2_extra.details}[/red]")
                         feedback_parts.append(f"L2 extra pass FAILED:\n{gate2_extra.details}")
+                        try:
+                            await db.set_task_timing(
+                                task.id, review_duration_s=time.monotonic() - review_t0
+                            )
+                        except Exception:
+                            pass
                         return False, "\n\n".join(feedback_parts)
                 else:
                     console.print("[green]  L2 (extra pass) passed[/green]")
 
         # Gate 3: skip for now — merge check is handled by merge_worker
         console.print("[dim]  Gate 3 (merge readiness): deferred to merge step[/dim]")
+        # Record review duration
+        try:
+            review_elapsed = time.monotonic() - review_t0
+            await db.set_task_timing(task.id, review_duration_s=review_elapsed)
+        except Exception:
+            logger.debug("Failed to record review_duration_s for %s", task.id, exc_info=True)
         return True, None
 
     async def _run_lint_gate(

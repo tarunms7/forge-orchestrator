@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+from datetime import UTC, datetime
 
 from forge.core.budget import check_budget
 from forge.core.daemon_helpers import (
@@ -94,6 +95,11 @@ class ExecutorMixin:
             db=db,
             pipeline_id=pid,
         )
+        # Record task start time
+        try:
+            await db.set_task_timing(task_id, started_at=datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("Failed to record started_at for %s", task_id, exc_info=True)
         # Use repo_id from DB task row if available, else use parameter default.
         repo_id = getattr(task, "repo_id", repo_id) or repo_id
         if getattr(task, "retry_reason", None) == "merge_failed":
@@ -231,6 +237,11 @@ class ExecutorMixin:
             agent_summary=agent_result.summary if agent_result else "",
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+        # Record task completion time
+        try:
+            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
 
     # -- merge-only fast path -------------------------------------------
 
@@ -286,6 +297,11 @@ class ExecutorMixin:
                 pre_merge_ref=pre_merge_ref,
             )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+        # Record task completion time for merge-only fast path
+        try:
+            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
 
     # -- worktree creation ----------------------------------------------
 
@@ -391,6 +407,7 @@ class ExecutorMixin:
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
+        agent_t0 = time.monotonic()
         result = await self._stream_agent(
             runtime,
             agent_id,
@@ -403,6 +420,19 @@ class ExecutorMixin:
             agent_model,
             resume=resume,
         )
+        agent_elapsed = time.monotonic() - agent_t0
+        # Record agent duration
+        try:
+            await db.set_task_timing(task_id, agent_duration_s=agent_elapsed)
+        except Exception:
+            logger.debug("Failed to record agent_duration_s for %s", task_id, exc_info=True)
+        # Record agent turn counts if available
+        try:
+            max_turns = getattr(self._settings, "agent_max_turns", 75)
+            num_turns = getattr(result, "num_turns", 0) or 0
+            await db.set_task_turns(task_id, num_turns=num_turns, max_turns=max_turns)
+        except Exception:
+            logger.debug("Failed to record task turns for %s", task_id, exc_info=True)
         if hasattr(result, "cost_usd") and result.cost_usd > 0:
             await db.add_task_agent_cost(
                 task_id, result.cost_usd, result.input_tokens, result.output_tokens
@@ -430,6 +460,10 @@ class ExecutorMixin:
             )
         if not result.success:
             console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
+            try:
+                await db.set_task_error(task_id, str(result.error or "Agent execution failed"))
+            except Exception:
+                logger.debug("Failed to record task error for %s", task_id, exc_info=True)
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return None
 
@@ -448,6 +482,10 @@ class ExecutorMixin:
             question_data = _parse_forge_question(result.summary)
             if not question_data:
                 console.print(f"[red]{task_id} agent produced no changes[/red]")
+                try:
+                    await db.set_task_error(task_id, "Agent produced no changes")
+                except Exception:
+                    logger.debug("Failed to record task error for %s", task_id, exc_info=True)
                 await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
                 return None
         console.print(
@@ -1364,6 +1402,7 @@ class ExecutorMixin:
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         # Hold the lock for the entire first-attempt + retry sequence so no
         # other task's merge can interleave between the two attempts.
+        merge_t0 = time.monotonic()
         async with self._merge_lock:
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
             if not merge_result.success:
@@ -1375,6 +1414,11 @@ class ExecutorMixin:
                 retry_result = await merge_worker.retry_merge(branch, worktree_path=worktree_path)
             else:
                 retry_result = None
+        merge_elapsed = time.monotonic() - merge_t0
+        try:
+            await db.set_task_timing(task_id, merge_duration_s=merge_elapsed)
+        except Exception:
+            logger.debug("Failed to record merge_duration_s for %s", task_id, exc_info=True)
         if merge_result.success:
             await self._emit_merge_success(
                 db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref
