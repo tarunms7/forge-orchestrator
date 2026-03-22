@@ -143,7 +143,7 @@ def _load_claude_md(project_dir: str) -> str | None:
         full_path = os.path.join(project_dir, rel_path)
         if os.path.isfile(full_path):
             try:
-                with open(full_path, "r", encoding="utf-8") as f:
+                with open(full_path, encoding="utf-8") as f:
                     return f.read()
             except OSError:
                 continue
@@ -524,7 +524,7 @@ class ClaudeAdapter(AgentAdapter):
                 sdk_query(prompt=task_prompt, options=options, on_message=on_message),
                 timeout=timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Agent timed out after %ds for worktree %s", timeout_seconds, worktree_path)
             # Re-raise so the caller's finally block can clean up the
             # worktree via worktree_mgr.remove(task_id).  Swallowing the

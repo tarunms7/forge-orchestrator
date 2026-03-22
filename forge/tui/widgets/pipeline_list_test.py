@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-
 from forge.tui.widgets.pipeline_list import PipelineList
-
 
 SAMPLE_PIPELINES = [
     {

@@ -1,4 +1,4 @@
-from forge.tui.widgets.review_gates import format_gates, format_streaming_output, ReviewGates
+from forge.tui.widgets.review_gates import ReviewGates, format_gates, format_streaming_output
 
 
 def test_format_gates_all_passed():

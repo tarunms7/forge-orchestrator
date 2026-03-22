@@ -152,7 +152,7 @@ async def gate2_llm_review(
                 sdk_query(prompt=prompt, options=options, on_message=on_message),
                 timeout=review_timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("L2 review timed out after %ds (attempt %d/%d)", review_timeout_seconds, attempt, max_review_attempts)
             if attempt == max_review_attempts:
                 return (

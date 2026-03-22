@@ -8,7 +8,6 @@ from forge.core.sanitize import (
     validate_task_id,
 )
 
-
 # ── validate_task_id: valid inputs ──────────────────────────────────────
 
 class TestValidateTaskIdValid:

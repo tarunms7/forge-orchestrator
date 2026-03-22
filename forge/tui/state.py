@@ -606,7 +606,7 @@ class TuiState:
     def is_multi_repo(self) -> bool:
         return len(self.repos) > 1
 
-    _EVENT_MAP: dict[str, Callable[["TuiState", dict], None]] = {
+    _EVENT_MAP: dict[str, Callable[[TuiState, dict], None]] = {
         "pipeline:phase_changed": _on_phase_changed,
         "pipeline:plan_ready": _on_plan_ready,
         "pipeline:cost_update": _on_cost_update,

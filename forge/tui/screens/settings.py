@@ -7,10 +7,10 @@ import subprocess
 from typing import Any
 
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
-from textual.containers import VerticalScroll
-from textual.binding import Binding
 
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
@@ -206,13 +206,13 @@ class SettingsScreen(Screen):
         if field == "autonomy":
             modes = _AUTONOMY_MODES
             idx = modes.index(getattr(self._settings, "autonomy", "balanced"))
-            setattr(self._settings, "autonomy", modes[(idx - 1) % len(modes)])
+            self._settings.autonomy = modes[(idx - 1) % len(modes)]
         elif field in _FIELD_BOUNDS:
             lo, hi, step = _FIELD_BOUNDS[field]
             val = getattr(self._settings, field)
             setattr(self._settings, field, max(lo, val - step))
         elif field == "auto_pr":
-            setattr(self._settings, "auto_pr", False)
+            self._settings.auto_pr = False
         self._persist()
         self._refresh_autonomy()
 
@@ -221,13 +221,13 @@ class SettingsScreen(Screen):
         if field == "autonomy":
             modes = _AUTONOMY_MODES
             idx = modes.index(getattr(self._settings, "autonomy", "balanced"))
-            setattr(self._settings, "autonomy", modes[(idx + 1) % len(modes)])
+            self._settings.autonomy = modes[(idx + 1) % len(modes)]
         elif field in _FIELD_BOUNDS:
             lo, hi, step = _FIELD_BOUNDS[field]
             val = getattr(self._settings, field)
             setattr(self._settings, field, min(hi, val + step))
         elif field == "auto_pr":
-            setattr(self._settings, "auto_pr", True)
+            self._settings.auto_pr = True
         self._persist()
         self._refresh_autonomy()
 
@@ -236,14 +236,14 @@ class SettingsScreen(Screen):
         field = _AUTONOMY_FIELDS[self._selected]
         if field == "auto_pr":
             cur = getattr(self._settings, "auto_pr", False)
-            setattr(self._settings, "auto_pr", not cur)
+            self._settings.auto_pr = not cur
             self._persist()
             self._refresh_autonomy()
         elif field == "autonomy":
             # Cycle forward through modes on Enter.
             modes = _AUTONOMY_MODES
             idx = modes.index(getattr(self._settings, "autonomy", "balanced"))
-            setattr(self._settings, "autonomy", modes[(idx + 1) % len(modes)])
+            self._settings.autonomy = modes[(idx + 1) % len(modes)]
             self._persist()
             self._refresh_autonomy()
         else:

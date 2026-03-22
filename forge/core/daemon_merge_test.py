@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -84,8 +85,9 @@ async def test_handle_merge_retry_cascades_on_max_retries():
 async def test_repos_json_updated_after_merge(tmp_path):
     """update_repos_json_branches writes branch_name and pr_url into repos_json."""
     import json
-    from forge.storage.db import Database
+
     from forge.core.daemon_helpers import update_repos_json_branches
+    from forge.storage.db import Database
 
     pipeline_id = "test-pipe-001"
     initial_repos = [

@@ -23,7 +23,7 @@ class BudgetExceededError(ForgeError):
 
 
 async def check_budget(
-    db: "Database", pipeline_id: str, settings: "ForgeSettings",
+    db: Database, pipeline_id: str, settings: ForgeSettings,
 ) -> None:
     """Check whether a pipeline has exceeded its budget.
 

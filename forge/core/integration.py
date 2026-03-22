@@ -97,7 +97,7 @@ async def run_health_check(
             is_regression=False,  # caller sets this based on baseline
         )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = time.monotonic() - start
         # Kill the process if it's still running
         try:

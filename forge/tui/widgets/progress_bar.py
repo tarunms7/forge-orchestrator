@@ -46,7 +46,7 @@ def _make_segment_bar(current_phase: str) -> str:
         active_idx = -1
 
     parts: list[str] = []
-    for i, (key, label) in enumerate(_STAGES):
+    for i, (_key, label) in enumerate(_STAGES):
         if i < active_idx:
             parts.append(f"[#3fb950]{label}[/]")
         elif i == active_idx:

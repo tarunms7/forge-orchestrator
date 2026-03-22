@@ -1,9 +1,9 @@
 """Tests for daemon_executor — worktree rebase and prompt selection."""
 
 import subprocess
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 from forge.merge.worker import MergeResult

@@ -5,7 +5,6 @@ import time
 import pytest
 from jose import JWTError
 
-
 SECRET = "test-secret-key-for-jwt"
 
 

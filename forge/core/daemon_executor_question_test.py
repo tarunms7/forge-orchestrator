@@ -1,8 +1,9 @@
 """Tests for question detection and pause/resume in daemon_executor."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from forge.core.daemon_helpers import _parse_forge_question
 

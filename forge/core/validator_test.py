@@ -1,7 +1,7 @@
 import pytest
 
 from forge.core.errors import CyclicDependencyError, FileConflictError, ValidationError
-from forge.core.models import TaskDefinition, TaskGraph, Complexity
+from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.validator import validate_task_graph
 
 

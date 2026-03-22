@@ -8,7 +8,6 @@ import os
 import time
 
 from forge.core.budget import check_budget
-from forge.core.sanitize import validate_task_id
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
@@ -26,9 +25,10 @@ from forge.core.daemon_helpers import (
 from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
-from forge.learning.guard import RuntimeGuard, GuardTriggered
-from forge.learning.store import format_lessons_block, row_to_lesson
+from forge.core.sanitize import validate_task_id
 from forge.learning.extractor import extract_from_command_failures
+from forge.learning.guard import GuardTriggered, RuntimeGuard
+from forge.learning.store import format_lessons_block, row_to_lesson
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -702,8 +702,8 @@ class ExecutorMixin:
                 return
 
         # Acquire an agent slot via Scheduler
-        from forge.core.scheduler import Scheduler
         from forge.core.models import row_to_agent, row_to_record
+        from forge.core.scheduler import Scheduler
 
         prefix = pipeline_id[:8] if pipeline_id else None
         agents = await db.list_agents(prefix=prefix)

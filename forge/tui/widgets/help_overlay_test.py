@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from forge.tui.widgets.help_overlay import (
+    GLOBAL_HELP,
+    HOME_HELP,
+    HOME_TIPS,
+    PIPELINE_HELP,
+    REVIEW_HELP,
+    SCREEN_HELP,
+    SETTINGS_HELP,
     HelpEntry,
     HelpOverlay,
     format_help_entry,
     format_help_overlay,
     get_help_for_screen,
     get_tips_for_screen,
-    GLOBAL_HELP,
-    HOME_HELP,
-    HOME_TIPS,
-    PIPELINE_HELP,
-    REVIEW_HELP,
-    SETTINGS_HELP,
-    SCREEN_HELP,
 )
 
 

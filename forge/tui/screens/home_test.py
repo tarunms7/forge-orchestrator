@@ -7,7 +7,6 @@ from textual.widgets import Static
 from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
 
-
 SAMPLE_PIPELINES = [
     {"id": "abc", "description": "Build auth system", "status": "complete",
      "created_at": "2026-03-10", "cost": 2.50, "total_cost_usd": 2.50, "task_count": 3},

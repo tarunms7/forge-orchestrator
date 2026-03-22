@@ -3,12 +3,17 @@
 
 import subprocess
 import tempfile
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from forge.config.project_config import ProjectConfig, CheckConfig
-from forge.core.daemon_review import ReviewMixin, _summarize_auto_fix, LintStrategy, detect_lint_strategy
+import pytest
+
+from forge.config.project_config import CheckConfig, ProjectConfig
+from forge.core.daemon_review import (
+    LintStrategy,
+    ReviewMixin,
+    _summarize_auto_fix,
+    detect_lint_strategy,
+)
 from forge.review.pipeline import GateResult
 
 

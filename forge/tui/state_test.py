@@ -1,6 +1,7 @@
 """Tests for TuiState."""
 
 import pytest
+
 from forge.tui.state import TuiState
 
 

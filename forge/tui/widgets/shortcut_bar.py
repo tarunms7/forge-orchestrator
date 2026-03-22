@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.reactive import reactive
 from textual.widget import Widget
-from rich.text import Text
 
 
 class ShortcutBar(Widget):

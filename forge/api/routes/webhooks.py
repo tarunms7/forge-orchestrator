@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -116,7 +116,7 @@ def _check_rate_limit(repo: str, issue_number: int) -> bool:
     are evicted.
     """
     key = f"{repo}#{issue_number}"
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
 
     # Evict expired entries first
     expired_cutoff = now - WEBHOOK_RATE_LIMIT_SECONDS

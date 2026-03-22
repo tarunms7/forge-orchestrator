@@ -1,7 +1,8 @@
 import subprocess
+
 import pytest
 
-from forge.merge.worker import MergeWorker, MergeResult, _parse_conflict_files_from_stderr
+from forge.merge.worker import MergeResult, MergeWorker, _parse_conflict_files_from_stderr
 
 
 @pytest.fixture

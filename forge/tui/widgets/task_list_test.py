@@ -1,6 +1,6 @@
 """Tests for TaskList widget."""
 
-from forge.tui.widgets.task_list import format_task_line, STATE_ICONS
+from forge.tui.widgets.task_list import STATE_ICONS, format_task_line
 
 
 def test_state_icons_all_states():
@@ -38,8 +38,9 @@ def test_format_task_line_error():
 
 def test_format_task_line_selected_renders_without_markup_error():
     """Selected line markup must be valid Rich markup (no mismatched tags)."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
 
     task = {"id": "t1", "title": "Setup database", "state": "in_progress", "complexity": "low"}
     line = format_task_line(task, selected=True)
@@ -138,8 +139,9 @@ def test_format_task_line_error_badge_with_long_title_truncates():
 
 def test_format_task_line_selected_with_files_valid_markup():
     """Selected task with files_changed should produce valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
 
     task = {"id": "t1", "title": "Auth", "state": "error", "files_changed": ["a.py"]}
     line = format_task_line(task, selected=True)
@@ -177,8 +179,9 @@ class TestFormatTaskLineMultiRepo:
 
     def test_format_task_line_multi_repo_selected(self):
         """Selected task with multi_repo should include repo prefix and valid markup."""
-        from rich.console import Console
         from io import StringIO
+
+        from rich.console import Console
 
         task = {"id": "t1", "title": "Add auth endpoint", "state": "in_progress", "repo": "backend"}
         line = format_task_line(task, selected=True, multi_repo=True)

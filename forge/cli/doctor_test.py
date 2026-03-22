@@ -431,7 +431,7 @@ def test_central_data_dir_ok(central_db):
     """Central data dir exists and is writable."""
     status, label, detail = _check_central_data_dir()
     assert status == "ok"
-    assert "Central data dir" == label
+    assert label == "Central data dir"
     assert str(central_db) in detail
 
 
@@ -458,7 +458,7 @@ def test_central_db_accessible(central_db):
     """Central DB is accessible and queryable."""
     status, label, detail = _check_central_db()
     assert status == "ok"
-    assert "Central DB" == label
+    assert label == "Central DB"
     assert str(central_db) in detail
 
 

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from forge.core.async_utils import safe_create_task, _log_task_exception
+from forge.core.async_utils import _log_task_exception, safe_create_task
 
 
 @pytest.fixture

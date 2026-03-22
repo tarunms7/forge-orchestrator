@@ -1,6 +1,7 @@
 """Tests for TUI CLI integration."""
 
 from click.testing import CliRunner
+
 from forge.cli.main import cli
 
 

@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
 
 from forge.learning.store import Lesson
 
@@ -110,8 +109,6 @@ def extract_from_command_failures(
 
     # Use the first failure as the representative
     first = failures[0]
-    last = failures[-1]
-
     # Build title from the command and error
     cmd_short = _shorten_command(first.command)
     title = f"{cmd_short} fails with {first.error_class}"

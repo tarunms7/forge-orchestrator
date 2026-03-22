@@ -9,19 +9,19 @@ import time
 
 from textual.app import App
 from textual.binding import Binding
-from textual.widgets import TextArea, Input
+from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
-from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
-from forge.tui.state import TuiState
+from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
+from forge.tui.screens.final_approval import FinalApprovalScreen
 from forge.tui.screens.home import HomeScreen, PromptTextArea
 from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
-from forge.tui.screens.final_approval import FinalApprovalScreen
-from forge.tui.widgets.pipeline_list import PipelineList
+from forge.tui.state import TuiState
 from forge.tui.widgets.command_palette import CommandPalette
+from forge.tui.widgets.pipeline_list import PipelineList
 
 logger = logging.getLogger("forge.tui.app")
 
@@ -129,8 +129,8 @@ class ForgeApp(App):
 
     async def _init_db(self):
         """Initialize database connection."""
-        from forge.storage.db import Database
         from forge.core.paths import forge_db_url
+        from forge.storage.db import Database
         try:
             self._db = Database(forge_db_url())
             await self._db.initialize()
@@ -358,7 +358,12 @@ class ForgeApp(App):
 
     async def on_final_approval_screen_create_pr(self, event) -> None:
         """User confirmed PR creation from FinalApprovalScreen."""
-        from forge.tui.pr_creator import push_branch, create_pr, generate_pr_body, create_prs_multi_repo
+        from forge.tui.pr_creator import (
+            create_pr,
+            create_prs_multi_repo,
+            generate_pr_body,
+            push_branch,
+        )
 
         self._state.apply_event("pipeline:pr_creating", {})
 
@@ -748,11 +753,11 @@ class ForgeApp(App):
     async def _run_plan(self, task: str, base_branch: str = "main", branch_name: str = "") -> None:
         """Run planning phase only, then show plan for approval."""
         import uuid
-        from forge.core.events import EventEmitter
-        from forge.core.daemon import ForgeDaemon
-        from forge.config.settings import ForgeSettings
 
         from forge.config.project_config import ProjectConfig, apply_project_config
+        from forge.config.settings import ForgeSettings
+        from forge.core.daemon import ForgeDaemon
+        from forge.core.events import EventEmitter
 
         settings = self._settings or ForgeSettings()
         project_config = ProjectConfig.load(self._project_dir)
@@ -1102,14 +1107,15 @@ class ForgeApp(App):
                 graph_json = pipeline.task_graph_json
                 if graph_json:
                     import json
+
                     from forge.core.models import TaskGraph
                     self._graph = TaskGraph.model_validate_json(graph_json)
 
+                from forge.config.project_config import ProjectConfig, apply_project_config
+                from forge.config.settings import ForgeSettings
                 from forge.core.daemon import ForgeDaemon
                 from forge.core.events import EventEmitter
-                from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
-                from forge.config.settings import ForgeSettings
-                from forge.config.project_config import ProjectConfig, apply_project_config
+                from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 
                 settings = self._settings or ForgeSettings()
                 project_config = ProjectConfig.load(pipeline.project_dir)

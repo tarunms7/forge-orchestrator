@@ -7,19 +7,17 @@ import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from forge.core.followup import (
     FollowUpExecution,
     FollowUpQuestion,
     FollowUpResult,
     FollowUpStatus,
-    classify_questions,
-    execute_followups,
     _build_followup_prompt,
     _execute_task_followup,
     _gather_task_context,
+    classify_questions,
+    execute_followups,
 )
-
 
 # ── classify_questions tests ──────────────────────────────────────────
 

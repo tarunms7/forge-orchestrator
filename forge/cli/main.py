@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 # Remove CLAUDECODE immediately — before any SDK imports.
 # Claude Code sets this env var in its terminal sessions. The Claude CLI
@@ -12,9 +13,9 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 # a nested session — we're an orchestrator spawning independent agents.
 os.environ.pop("CLAUDECODE", None)
 
-from forge.core.logging_config import configure_logging
-
 import click
+
+from forge.core.logging_config import configure_logging
 
 try:
     _version = _pkg_version("forge-orchestrator")
@@ -190,6 +191,7 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
     """Start the Forge web server."""
     try:
         import uvicorn
+
         from forge.api.app import create_app
     except ImportError:
         click.echo(
@@ -326,7 +328,7 @@ def _ensure_gitignore_entries(gitignore_path: str, entries: list[str]) -> None:
     """Ensure specific entries exist in a .gitignore file."""
     existing = set()
     if os.path.exists(gitignore_path):
-        with open(gitignore_path, "r", encoding="utf-8") as f:
+        with open(gitignore_path, encoding="utf-8") as f:
             existing = {line.strip() for line in f if line.strip() and not line.startswith("#")}
 
     new_entries = [e for e in entries if e not in existing]

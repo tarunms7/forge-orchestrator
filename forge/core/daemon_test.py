@@ -12,7 +12,6 @@ from forge.core.daemon import ForgeDaemon, _classify_pipeline_result, _detect_ex
 from forge.core.errors import ForgeError
 from forge.core.models import RepoConfig, TaskState
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

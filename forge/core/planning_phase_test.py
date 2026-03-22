@@ -19,7 +19,6 @@ from forge.core.daemon import ForgeDaemon
 from forge.core.events import EventEmitter
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 
-
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------

@@ -101,7 +101,7 @@ class TaskRecord(BaseModel):
     repo: str = "default"
 
     @classmethod
-    def from_definition(cls, defn: TaskDefinition) -> "TaskRecord":
+    def from_definition(cls, defn: TaskDefinition) -> TaskRecord:
         return cls(
             id=defn.id,
             title=defn.title,

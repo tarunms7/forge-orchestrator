@@ -1,8 +1,9 @@
 """Horizontal chip selector for agent question suggestions."""
 
 from __future__ import annotations
-from textual.widget import Widget
+
 from textual.message import Message
+from textual.widget import Widget
 
 
 def format_chips(suggestions: list[str], selected: int = -1) -> str:

@@ -1,10 +1,11 @@
 """End-to-end integration test: guard triggers → lesson captured → central DB."""
 
-import pytest
 from dataclasses import dataclass
 
-from forge.learning.guard import RuntimeGuard, GuardTriggered
+import pytest
+
 from forge.learning.extractor import extract_from_command_failures
+from forge.learning.guard import GuardTriggered, RuntimeGuard
 from forge.storage.db import Database
 
 

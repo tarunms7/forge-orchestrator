@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from textual.binding import Binding
-from textual.widget import Widget
-from textual.widgets import Static, TextArea
 from textual.containers import Vertical
 from textual.message import Message
+from textual.widget import Widget
+from textual.widgets import Static, TextArea
 
 from forge.tui.widgets.suggestion_chips import SuggestionChips
-
 
 DEFAULT_SUGGESTIONS = ["Add tests", "Fix linting", "Add docs", "Refactor"]
 

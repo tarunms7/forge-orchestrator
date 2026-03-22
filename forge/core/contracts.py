@@ -1,7 +1,9 @@
 """Contract models for cross-task interface alignment."""
 
 from __future__ import annotations
+
 from enum import Enum
+
 from pydantic import BaseModel, Field
 
 
@@ -90,7 +92,7 @@ class ContractSet(BaseModel):
         """Whether any contracts exist (used to decide if phase should run)."""
         return bool(self.api_contracts or self.type_contracts)
 
-    def remap_task_ids(self, id_map: dict[str, str]) -> "ContractSet":
+    def remap_task_ids(self, id_map: dict[str, str]) -> ContractSet:
         """Return a new ContractSet with task IDs remapped via *id_map*.
 
         Used after the execute() ID-prefix step so contracts reference the

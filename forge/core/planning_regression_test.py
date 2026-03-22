@@ -17,7 +17,6 @@ from forge.core.models import TaskGraph
 from forge.merge.worktree import WorktreeManager
 from forge.storage.db import Database
 
-
 # -- Shared test data -------------------------------------------------------
 
 VALID_GRAPH = TaskGraph.model_validate({

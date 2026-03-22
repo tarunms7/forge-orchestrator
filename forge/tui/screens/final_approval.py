@@ -7,11 +7,11 @@ import logging
 import os
 from collections import OrderedDict
 
-from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Static
-from textual.containers import Vertical, VerticalScroll, Center
+from textual.containers import Center, Vertical, VerticalScroll
 from textual.message import Message
+from textual.screen import Screen
+from textual.widgets import Static
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.widgets.diff_viewer import DiffViewer
@@ -167,22 +167,21 @@ class RepoSelectorScreen(Screen):
         self._cursor = 0
 
     def compose(self):
-        with Center():
-            with Vertical(id="repo-selector-container"):
-                yield Static("[bold #58a6ff]Select Repository[/]\n")
-                for i, repo in enumerate(self._repos):
-                    repo_id = repo.get("repo_id", repo.get("id", "unknown"))
-                    # Calculate aggregate stats for this repo
-                    repo_tasks = [t for t in self._tasks if t.get("repo") == repo_id]
-                    total_added = sum(t.get("added", 0) for t in repo_tasks)
-                    total_removed = sum(t.get("removed", 0) for t in repo_tasks)
-                    marker = "▸ " if i == 0 else "  "
-                    yield Static(
-                        f"{marker}[bold]{repo_id}[/]  [#8b949e]+{total_added}/-{total_removed}[/]",
-                        id=f"repo-item-{i}",
-                        classes="repo-item repo-item--selected" if i == 0 else "repo-item",
-                    )
-                yield Static("\n[#8b949e]j/k: navigate  Enter: select  Esc: back[/]")
+        with Center(), Vertical(id="repo-selector-container"):
+            yield Static("[bold #58a6ff]Select Repository[/]\n")
+            for i, repo in enumerate(self._repos):
+                repo_id = repo.get("repo_id", repo.get("id", "unknown"))
+                # Calculate aggregate stats for this repo
+                repo_tasks = [t for t in self._tasks if t.get("repo") == repo_id]
+                total_added = sum(t.get("added", 0) for t in repo_tasks)
+                total_removed = sum(t.get("removed", 0) for t in repo_tasks)
+                marker = "▸ " if i == 0 else "  "
+                yield Static(
+                    f"{marker}[bold]{repo_id}[/]  [#8b949e]+{total_added}/-{total_removed}[/]",
+                    id=f"repo-item-{i}",
+                    classes="repo-item repo-item--selected" if i == 0 else "repo-item",
+                )
+            yield Static("\n[#8b949e]j/k: navigate  Enter: select  Esc: back[/]")
 
     def _update_cursor(self) -> None:
         """Update visual cursor state."""

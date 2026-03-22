@@ -11,7 +11,6 @@ from forge.learning.guard import (
     normalize_command,
 )
 
-
 # ---------------------------------------------------------------------------
 # Mock SDK message types
 # ---------------------------------------------------------------------------
@@ -53,7 +52,7 @@ def _result_msg(tool_id: str, content: str, is_error: bool) -> MockMessage:
 
 class TestNormalizeCommand:
     def test_strips_redirects(self):
-        assert "pytest tests/" == normalize_command("pytest tests/ 2>&1 | tail -80")
+        assert normalize_command("pytest tests/ 2>&1 | tail -80") == "pytest tests/"
 
     def test_strips_temp_paths(self):
         result = normalize_command("cat /tmp/pytest-abc123/output.log")

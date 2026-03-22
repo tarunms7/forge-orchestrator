@@ -3,14 +3,13 @@
 
 
 from forge.tui.screens.plan_approval import (
-    PlanApprovalScreen,
-    format_plan_task,
-    format_plan_summary,
-    format_cost_estimate,
-    _format_task_line,
     _COMPLEXITY_ORDER,
+    PlanApprovalScreen,
+    _format_task_line,
+    format_cost_estimate,
+    format_plan_summary,
+    format_plan_task,
 )
-
 
 # ---------------------------------------------------------------------------
 # Sample data helpers

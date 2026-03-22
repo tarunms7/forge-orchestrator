@@ -1,4 +1,5 @@
 import pytest
+
 from forge.storage.db import Database
 
 
@@ -803,7 +804,7 @@ async def test_pipeline_get_repos_no_base_branch_raises(db: Database):
 async def test_migrate_adds_repo_id_column():
     """Verify initialize() adds repo_id column to an old tasks table."""
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     # Create a DB with old schema (no repo_id on tasks)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -881,7 +882,7 @@ async def test_migrate_adds_repo_id_column():
 async def test_migrate_adds_repos_json_column():
     """Verify initialize() adds repos_json column to an old pipelines table."""
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     # Create a DB with old schema (no repos_json on pipelines)
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -933,6 +934,7 @@ async def test_migrate_adds_repos_json_column():
 
     # Wrap in Database and call initialize() — should add repos_json column
     import json
+
     from forge.storage.db import Database as DB
     db = DB.__new__(DB)
     db._engine = engine

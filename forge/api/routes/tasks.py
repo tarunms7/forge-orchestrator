@@ -27,9 +27,14 @@ from forge.api.models.schemas import (
 )
 from forge.api.security.dependencies import get_current_user
 from forge.core.async_utils import safe_create_task
-from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
-from forge.core.templates import get_template, get_quality_preset, BUILTIN_TEMPLATES, template_to_dict
+from forge.core.models import Complexity, TaskDefinition, TaskGraph
+from forge.core.templates import (
+    BUILTIN_TEMPLATES,
+    get_quality_preset,
+    get_template,
+    template_to_dict,
+)
 from forge.core.validator import validate_task_graph
 from forge.storage.db import Database
 
@@ -138,6 +143,7 @@ def _get_forge_db(request: Request):
 async def _set_pipeline_require_approval(forge_db, pipeline_id: str, value: bool) -> None:
     """Set the require_approval flag on a pipeline after creation."""
     from sqlalchemy import select
+
     from forge.storage.db import PipelineRow
 
     async with forge_db._session_factory() as session:
@@ -188,6 +194,7 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
         A short title string (without the ``forge: `` prefix).
     """
     from claude_code_sdk import ClaudeCodeOptions
+
     from forge.core.sdk_helpers import sdk_query
 
     prompt = (
@@ -953,8 +960,8 @@ async def approve_task(
             # Compute diff stats BEFORE merge — after merge the pipeline
             # branch is fast-forwarded to include this task's changes,
             # making the diff zero.
-            from forge.merge.worker import MergeWorker
             from forge.core.daemon_helpers import _get_diff_stats
+            from forge.merge.worker import MergeWorker
             project_dir = pipeline.project_dir
             # Use _get_diff_stats (camelCase keys: linesAdded/linesRemoved)
             # to match the frontend's TaskState.mergeResult interface.

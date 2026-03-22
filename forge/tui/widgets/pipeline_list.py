@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.widget import Widget
 
-from forge.tui.widgets.task_list import STATE_ICONS, STATE_COLORS
+from forge.tui.widgets.task_list import STATE_COLORS, STATE_ICONS
 
 logger = logging.getLogger("forge.tui.widgets.pipeline_list")
 

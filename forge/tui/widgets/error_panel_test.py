@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from forge.tui.state import TuiState
 from forge.tui.widgets.error_panel import (
     ErrorClassification,
@@ -11,7 +10,6 @@ from forge.tui.widgets.error_panel import (
     format_error_panel,
     get_suggestions,
 )
-
 
 # ── classify_error tests ────────────────────────────────────────────
 

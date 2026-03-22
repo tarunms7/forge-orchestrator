@@ -1,7 +1,8 @@
 """Tests for ForgeApp DB integration."""
 import os
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.fixture
@@ -121,6 +122,7 @@ async def test_action_reset_for_new_task_pushes_home(tmp_project, central_db_dir
     """action_reset_for_new_task should pop all screens and push a fresh HomeScreen."""
     import asyncio
     from unittest.mock import PropertyMock
+
     from forge.tui.app import ForgeApp
     from forge.tui.screens.home import HomeScreen
 
@@ -165,6 +167,7 @@ async def test_action_switch_home_pushes_home(tmp_project, central_db_dir):
     """action_switch_home should pop all screens and push a fresh HomeScreen."""
     import asyncio
     from unittest.mock import PropertyMock
+
     from forge.tui.app import ForgeApp
     from forge.tui.screens.home import HomeScreen
 
@@ -198,6 +201,7 @@ async def test_action_reset_state_cleanup(tmp_project, central_db_dir):
     """action_reset_for_new_task should reset all pipeline state."""
     import asyncio
     from unittest.mock import PropertyMock
+
     from forge.tui.app import ForgeApp
 
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
@@ -256,6 +260,7 @@ async def test_pipeline_replay_missing_pipeline(tmp_project, central_db_dir):
 async def test_run_plan_passes_project_path_to_create_pipeline(tmp_project, central_db_dir):
     """_run_plan should pass project_path and project_name to create_pipeline."""
     from unittest.mock import AsyncMock, MagicMock
+
     from forge.tui.app import ForgeApp
 
     with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):

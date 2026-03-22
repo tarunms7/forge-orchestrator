@@ -11,15 +11,15 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.agents.adapter import ClaudeAdapter
-from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.agents.runtime import AgentRuntime
 from forge.core.events import EventEmitter
+from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.core.sdk_helpers import sdk_query
 from forge.storage.db import Database
 
@@ -74,7 +74,7 @@ class FollowUpExecution:
     classification: dict[int, str] = field(default_factory=dict)  # question_index -> task_id
     results: list[FollowUpResult] = field(default_factory=list)
     error: str | None = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 async def classify_questions(

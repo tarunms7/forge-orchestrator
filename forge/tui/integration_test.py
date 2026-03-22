@@ -1,8 +1,9 @@
 """Integration test: event flow from EventEmitter to TuiState."""
 
 import pytest
+
 from forge.core.events import EventEmitter
-from forge.tui.bus import EventBus, EmbeddedSource, TUI_EVENT_TYPES
+from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.state import TuiState
 
 

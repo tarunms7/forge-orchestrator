@@ -572,8 +572,9 @@ class TestHistoryGithubIssueFields:
         token = resp.json()["access_token"]
 
         # Look up user_id
-        from forge.storage.db import UserRow
         from sqlalchemy import select
+
+        from forge.storage.db import UserRow
 
         app = client._transport.app
         db = app.state.db
@@ -584,8 +585,9 @@ class TestHistoryGithubIssueFields:
             user_id = result.scalar_one().id
 
         # Insert pipeline with github issue fields
-        from forge.storage.db import PipelineRow
         import uuid
+
+        from forge.storage.db import PipelineRow
 
         pipeline_id = str(uuid.uuid4())
         async with db._session_factory() as session:

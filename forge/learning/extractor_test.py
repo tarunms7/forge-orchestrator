@@ -1,18 +1,19 @@
 """Tests for forge.learning.extractor."""
 
-import pytest
 from dataclasses import dataclass
 
+import pytest
+
 from forge.learning.extractor import (
+    _extract_feedback_theme,
+    _resolution_for_error,
+    _shorten_command,
+    _summarize_feedback,
+    classify_scope,
+    extract_from_agent_learning,
     extract_from_command_failures,
     extract_from_review_feedback,
-    extract_from_agent_learning,
     is_infra_noise,
-    classify_scope,
-    _shorten_command,
-    _resolution_for_error,
-    _summarize_feedback,
-    _extract_feedback_theme,
 )
 
 

@@ -13,7 +13,6 @@ from forge.agents.adapter import (
     _load_claude_md,
 )
 
-
 # --- AgentResult tests ---
 
 

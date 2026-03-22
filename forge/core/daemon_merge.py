@@ -9,8 +9,8 @@ from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.core.logging_config import make_console
 from forge.core.models import TaskState
-from forge.merge.worktree import WorktreeManager
 from forge.learning.extractor import extract_from_review_feedback
+from forge.merge.worktree import WorktreeManager
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge")

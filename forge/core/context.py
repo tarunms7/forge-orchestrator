@@ -153,7 +153,7 @@ def gather_project_snapshot(project_dir: str) -> ProjectSnapshot:
 
 
 async def gather_multi_repo_snapshots(
-    repos: dict[str, "RepoConfig"],
+    repos: dict[str, RepoConfig],
 ) -> dict[str, ProjectSnapshot]:
     """Gather project snapshots from multiple repos in parallel.
 
@@ -191,7 +191,7 @@ async def gather_multi_repo_snapshots(
 
 def format_multi_repo_snapshot(
     snapshots: dict[str, ProjectSnapshot],
-    repos: dict[str, "RepoConfig"],
+    repos: dict[str, RepoConfig],
 ) -> str:
     """Format multiple repo snapshots into a single string for the planner.
 
@@ -302,7 +302,7 @@ def _count_loc(project_dir: str, files: list[str]) -> int:
     for filepath in files:
         full_path = os.path.join(project_dir, filepath)
         try:
-            with open(full_path, "r", encoding="utf-8", errors="ignore") as fh:
+            with open(full_path, encoding="utf-8", errors="ignore") as fh:
                 for line in fh:
                     if line.strip():
                         total += 1
@@ -322,7 +322,7 @@ def _read_readme(project_dir: str) -> str:
         readme_path = os.path.join(project_dir, name)
         if os.path.isfile(readme_path):
             try:
-                with open(readme_path, "r", encoding="utf-8", errors="ignore") as fh:
+                with open(readme_path, encoding="utf-8", errors="ignore") as fh:
                     lines = []
                     for i, line in enumerate(fh):
                         if i >= 200:
@@ -343,7 +343,7 @@ def _read_config(project_dir: str) -> str:
     if not os.path.isfile(toml_path):
         return ""
     try:
-        with open(toml_path, "r", encoding="utf-8") as fh:
+        with open(toml_path, encoding="utf-8") as fh:
             lines = fh.readlines()
     except OSError:
         return ""
@@ -393,7 +393,7 @@ def _extract_docstring(filepath: str) -> str:
     Returns the docstring content (without quotes), or empty string.
     """
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as fh:
+        with open(filepath, encoding="utf-8", errors="ignore") as fh:
             content = fh.read(2000)
     except OSError:
         return ""

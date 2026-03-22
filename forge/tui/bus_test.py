@@ -1,7 +1,8 @@
 """Tests for the TUI event bus."""
 
 import pytest
-from forge.tui.bus import EventBus, EmbeddedSource
+
+from forge.tui.bus import EmbeddedSource, EventBus
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,7 @@ class Scheduler:
         available_slots = max(0, max_agents - working_count)
 
         plan: list[tuple[str, str]] = []
-        for task, agent in zip(ready, idle):
+        for task, agent in zip(ready, idle, strict=False):
             if len(plan) >= available_slots:
                 break
             plan.append((task.id, agent.id))

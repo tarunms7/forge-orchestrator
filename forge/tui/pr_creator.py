@@ -1,6 +1,7 @@
 """PR creation utilities for TUI — push, generate, create."""
 
 from __future__ import annotations
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -177,7 +178,7 @@ async def create_prs_multi_repo(
 
         # Compute per-repo cost
         repo_tasks = tasks_by_repo.get(repo_id, [])
-        repo_failed = failed_by_repo.get(repo_id, None) or None
+        repo_failed = failed_by_repo.get(repo_id) or None
         repo_cost = sum(t.get("cost_usd", 0) for t in repo_tasks)
         if repo_failed:
             repo_cost += sum(t.get("cost_usd", 0) for t in repo_failed)

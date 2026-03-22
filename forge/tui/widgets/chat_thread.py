@@ -1,10 +1,11 @@
 """Chat thread widget for agent Q&A interaction."""
 
 from __future__ import annotations
-from textual.widget import Widget
-from textual.widgets import Input, Static
+
 from textual.containers import VerticalScroll
 from textual.message import Message
+from textual.widget import Widget
+from textual.widgets import Input, Static
 
 from forge.tui.widgets.suggestion_chips import SuggestionChips
 

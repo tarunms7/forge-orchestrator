@@ -1,8 +1,10 @@
 """Tests for ClientSource."""
 
 import json
+
 import pytest
-from forge.tui.bus import EventBus, ClientSource
+
+from forge.tui.bus import ClientSource, EventBus
 
 
 @pytest.mark.asyncio

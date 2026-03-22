@@ -1,4 +1,5 @@
-from forge.tui.widgets.chat_thread import format_work_log, format_question_card
+from forge.tui.widgets.chat_thread import format_question_card, format_work_log
+
 
 def test_format_work_log():
     lines = ["📖 Reading auth.py", "🔎 Searching for middleware"]

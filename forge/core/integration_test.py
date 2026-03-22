@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
-import tempfile
 
 import pytest
 
 from forge.config.project_config import IntegrationCheckConfig
 from forge.core.integration import (
-    IntegrationCheckResult,
     _temp_health_worktree,
     capture_baseline,
     effective_enabled,
@@ -19,7 +16,6 @@ from forge.core.integration import (
     run_health_check,
     run_post_merge_check,
 )
-
 
 # ── effective_enabled ────────────────────────────────────────────────
 

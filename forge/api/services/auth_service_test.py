@@ -1,6 +1,7 @@
 """Tests for auth methods on the unified Database class."""
 
 import pytest
+
 from forge.storage.db import Database
 
 

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from textual.widget import Widget
 from textual.message import Message
+from textual.widget import Widget
 
 STATE_ICONS: dict[str, str] = {
     "todo": "○",

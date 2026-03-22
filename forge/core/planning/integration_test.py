@@ -1,5 +1,3 @@
-import pytest
-import re
 
 from forge.core.daemon import _should_use_deep_planning
 

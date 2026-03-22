@@ -53,7 +53,7 @@ async def websocket_endpoint(
             return
         payload = decode_token(token, secret=jwt_secret)
         user_id = payload["sub"]
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await _safe_close(websocket, code=4001, reason="Auth timeout")
         return
     except WebSocketDisconnect:

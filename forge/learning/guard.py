@@ -3,7 +3,7 @@
 import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger("forge.learning")
 
@@ -190,7 +190,7 @@ class RuntimeGuard:
     def get_warning_message(self) -> str:
         """Get a warning message to inject into the agent's context."""
         # Find the approach that triggered the warning
-        for sig, attempts in self._approach_attempts.items():
+        for _sig, attempts in self._approach_attempts.items():
             if len(attempts) == self._max_attempts - 1:
                 last = attempts[-1]
                 return (

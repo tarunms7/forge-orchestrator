@@ -1,7 +1,6 @@
 """Forge daemon. Async orchestration loop: plan -> schedule -> dispatch -> review -> merge."""
 
 import asyncio
-from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -9,54 +8,52 @@ import re
 import shutil
 import subprocess
 import uuid
+from datetime import UTC, datetime
 
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
+from forge.config.project_config import load_repo_configs
 from forge.config.settings import ForgeSettings
 from forge.core.budget import BudgetExceededError, check_budget
+from forge.core.claude_planner import ClaudePlannerLLM
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
-from forge.core.cost_estimator import estimate_pipeline_cost
-from forge.core.errors import ForgeError
-from forge.core.sanitize import validate_task_id
-from forge.core.models import RepoConfig, row_to_record
-from forge.core.events import EventEmitter
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
 from forge.core.contracts import ContractSet, IntegrationHint
-from forge.core.model_router import select_model
-from forge.core.models import TaskGraph, TaskState
-from forge.core.monitor import ResourceMonitor
-from forge.core.planner import Planner
-from forge.core.claude_planner import ClaudePlannerLLM
-from forge.core.scheduler import Scheduler
-from forge.core.state import TaskStateMachine
-from forge.merge.worker import MergeWorker
-from forge.merge.worktree import WorktreeManager
-from forge.learning.store import format_lessons_block, row_to_lesson
-from forge.storage.db import Database
+from forge.core.cost_estimator import estimate_pipeline_cost
 
 # Mixin classes providing decomposed daemon functionality
 from forge.core.daemon_executor import ExecutorMixin
-from forge.core.daemon_review import ReviewMixin
-from forge.core.daemon_merge import MergeMixin
-
-from forge.config.project_config import load_repo_configs
-from forge.core.daemon_helpers import update_repos_json_branches
 
 # Re-export all helpers at module level for backward compatibility.
 from forge.core.daemon_helpers import (  # noqa: F401
-    _extract_activity,
-    _extract_text,
-    _get_current_branch,
     _build_agent_prompt,
     _build_retry_prompt,
-    _get_diff_vs_main,
-    _get_diff_stats,
+    _extract_activity,
+    _extract_text,
     _get_changed_files_vs_main,
+    _get_current_branch,
+    _get_diff_stats,
+    _get_diff_vs_main,
     _print_status_table,
     async_subprocess,
+    update_repos_json_branches,
 )
-
+from forge.core.daemon_merge import MergeMixin
+from forge.core.daemon_review import ReviewMixin
+from forge.core.errors import ForgeError
+from forge.core.events import EventEmitter
 from forge.core.logging_config import make_console
+from forge.core.model_router import select_model
+from forge.core.models import RepoConfig, TaskGraph, TaskState, row_to_record
+from forge.core.monitor import ResourceMonitor
+from forge.core.planner import Planner
+from forge.core.sanitize import validate_task_id
+from forge.core.scheduler import Scheduler
+from forge.core.state import TaskStateMachine
+from forge.learning.store import format_lessons_block, row_to_lesson
+from forge.merge.worker import MergeWorker
+from forge.merge.worktree import WorktreeManager
+from forge.storage.db import Database
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -141,8 +138,9 @@ async def _generate_branch_name(description: str) -> str:
       "Fix duplicating progress log lines in mining CLI" → "forge/fix-mining-progress-duplicates"
       "We haven't updated anything in the README, can we update it?" → "forge/update-readme"
     """
-    from forge.core.sdk_helpers import sdk_query
     from claude_code_sdk import ClaudeCodeOptions
+
+    from forge.core.sdk_helpers import sdk_query
 
     try:
         result = await sdk_query(
@@ -608,7 +606,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             snapshot_text = self._snapshot.format_for_planner() if self._snapshot else ''
             repo_ids = None
         else:
-            from forge.core.context import gather_multi_repo_snapshots, format_multi_repo_snapshot
+            from forge.core.context import format_multi_repo_snapshot, gather_multi_repo_snapshots
             snapshots = await gather_multi_repo_snapshots(planning_repos)
             snapshot_text = format_multi_repo_snapshot(snapshots, planning_repos)
             repo_ids = set(planning_repos.keys())
@@ -617,7 +615,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Decide planning mode
         spec_text = ""
         if spec_path:
-            with open(spec_path, "r", encoding="utf-8") as f:
+            with open(spec_path, encoding="utf-8") as f:
                 spec_text = f.read()
 
         use_deep = deep_plan or _should_use_deep_planning(
@@ -681,7 +679,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 try:
                     timeout = self._settings.question_timeout
                     await asyncio.wait_for(event.wait(), timeout=timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pending_planning_answer.pop(q.id, None)
                     logger.info("Planning question %s timed out after %ds", q.id, timeout)
                     return "Proceed with your best judgment."
@@ -1055,7 +1053,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # ── Integration baseline capture ────────────────────────────
         from forge.config.project_config import ProjectConfig
         from forge.core.integration import (
-            capture_baseline, effective_enabled, run_final_gate,
+            capture_baseline,
+            effective_enabled,
+            run_final_gate,
         )
 
         project_config = ProjectConfig.load(self._project_dir)
@@ -1673,7 +1673,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     if _all_paused_since is None:
                         # Transition into paused state
                         _all_paused_since = asyncio.get_event_loop().time()
-                        paused_at_iso = datetime.now(timezone.utc).isoformat()
+                        paused_at_iso = datetime.now(UTC).isoformat()
                         await db.set_pipeline_paused_at(pipeline_id, paused_at_iso)
                         await self._emit("pipeline:paused", {
                             "reason": "awaiting_input",

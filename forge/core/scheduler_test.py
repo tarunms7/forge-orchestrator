@@ -1,5 +1,5 @@
 
-from forge.core.models import TaskRecord, TaskState, Complexity, AgentRecord, AgentState
+from forge.core.models import AgentRecord, AgentState, Complexity, TaskRecord, TaskState
 from forge.core.scheduler import Scheduler
 
 

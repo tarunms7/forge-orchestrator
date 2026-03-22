@@ -1,6 +1,7 @@
 """Review gate result cards for task review status display."""
 
 from __future__ import annotations
+
 from textual.widget import Widget
 
 _GATE_NAMES = {

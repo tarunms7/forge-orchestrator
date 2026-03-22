@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 import os
 import shlex
 import shutil
 import sys
-import logging
 import time
 from dataclasses import dataclass
 
@@ -486,7 +485,7 @@ class ReviewMixin:
             try:
                 parts = shlex.split(cmd)
                 proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return GateResult(
                     passed=False,
                     gate=gate_name,
@@ -1020,7 +1019,7 @@ class ReviewMixin:
             if fix_cmd is not None:
                 try:
                     await async_subprocess(fix_cmd, cwd=lint_cwd, timeout=lint_timeout)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(
                         "Lint fix command timed out after %ds: %s",
                         lint_timeout, " ".join(fix_cmd),
@@ -1059,7 +1058,7 @@ class ReviewMixin:
             # PASS 2: Verify
             try:
                 lint_result = await async_subprocess(check_cmd, cwd=lint_cwd, timeout=lint_timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "Lint check command timed out after %ds: %s",
                     lint_timeout, " ".join(check_cmd),

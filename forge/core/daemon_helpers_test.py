@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import subprocess
-
 from unittest.mock import AsyncMock, call, patch
 
 import pytest

@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-from forge.cli.main import cli
 import forge.cli.main as _main_module
+from forge.cli.main import cli
 
 
 def test_cli_version():

@@ -1,8 +1,9 @@
 """Tests for lesson storage in the central Database."""
 
 import pytest
+
+from forge.learning.store import Lesson, format_lessons_block
 from forge.storage.db import Database
-from forge.learning.store import Lesson, format_lessons_block, row_to_lesson
 
 
 @pytest.fixture

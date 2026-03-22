@@ -1,7 +1,8 @@
 """Tests for budget enforcement."""
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.errors import ForgeError

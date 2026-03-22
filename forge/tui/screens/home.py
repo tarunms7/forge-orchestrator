@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.binding import Binding
-from textual.widgets import Static, TextArea, Input
-from textual.containers import Vertical, Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.screen import Screen
+from textual.widgets import Input, Static, TextArea
 
 from forge.tui.widgets.logo import ForgeLogo
 from forge.tui.widgets.pipeline_list import PipelineList

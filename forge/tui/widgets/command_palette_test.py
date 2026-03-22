@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from forge.tui.widgets.command_palette import (
+    COMMAND_PALETTE_BINDING_DESCRIPTION,
+    COMMAND_PALETTE_BINDING_KEY,
     CommandPalette,
     CommandPaletteAction,
-    fuzzy_match,
-    fuzzy_score,
     format_palette,
     format_result_line,
+    fuzzy_match,
+    fuzzy_score,
     get_all_actions,
-    COMMAND_PALETTE_BINDING_KEY,
-    COMMAND_PALETTE_BINDING_DESCRIPTION,
 )
-
 
 # ---------------------------------------------------------------------------
 # fuzzy_score tests

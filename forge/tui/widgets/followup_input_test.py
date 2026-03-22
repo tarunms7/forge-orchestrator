@@ -3,12 +3,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-
 from forge.tui.widgets.followup_input import (
+    DEFAULT_SUGGESTIONS,
     FollowUpInput,
     format_context_badge,
     format_followup_history,
-    DEFAULT_SUGGESTIONS,
 )
 
 

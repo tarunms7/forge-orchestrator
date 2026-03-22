@@ -5,16 +5,16 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from forge.core.models import (
+    AgentRecord,
+    AgentState,
     Complexity,
     RepoConfig,
     TaskDefinition,
     TaskGraph,
-    TaskState,
     TaskRecord,
-    AgentRecord,
-    AgentState,
-    row_to_record,
+    TaskState,
     row_to_agent,
+    row_to_record,
 )
 
 

@@ -32,7 +32,7 @@ class WorktreeManager:
         gitignore = os.path.join(self._repo, ".gitignore")
         entry = ".forge"
         if os.path.isfile(gitignore):
-            with open(gitignore, "r", encoding="utf-8") as f:
+            with open(gitignore, encoding="utf-8") as f:
                 content = f.read()
             lines = {line.strip() for line in content.splitlines()}
             if entry in lines or f"/{entry}" in lines or f"{entry}/" in lines:

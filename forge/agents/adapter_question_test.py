@@ -1,4 +1,4 @@
-from forge.agents.adapter import _build_question_protocol, AGENT_SYSTEM_PROMPT_TEMPLATE
+from forge.agents.adapter import AGENT_SYSTEM_PROMPT_TEMPLATE, _build_question_protocol
 
 
 def test_balanced_autonomy_protocol():

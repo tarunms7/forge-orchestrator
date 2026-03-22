@@ -9,7 +9,6 @@ from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM, _ex
 from forge.core.contracts import ContractType, IntegrationHint
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 
-
 # -- Helpers ---------------------------------------------------------------
 
 def _sample_graph() -> TaskGraph:

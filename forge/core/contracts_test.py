@@ -10,7 +10,6 @@ from forge.core.contracts import (
     TypeContract,
 )
 
-
 # -- Helpers ---------------------------------------------------------------
 
 def _sample_api_contract(

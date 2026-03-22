@@ -8,10 +8,10 @@ import pytest
 
 from forge.core.context import (
     ProjectSnapshot,
-    gather_project_snapshot,
-    gather_multi_repo_snapshots,
-    format_multi_repo_snapshot,
     _truncate_file_tree,
+    format_multi_repo_snapshot,
+    gather_multi_repo_snapshots,
+    gather_project_snapshot,
 )
 from forge.core.models import RepoConfig
 

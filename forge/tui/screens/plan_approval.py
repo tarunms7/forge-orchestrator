@@ -6,14 +6,13 @@ import copy
 import uuid
 
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
-from textual.containers import VerticalScroll
-from textual.binding import Binding
-from textual.message import Message
 
 from forge.tui.widgets.shortcut_bar import ShortcutBar
-
 
 _COMPLEXITY_COLORS = {
     "low": "#3fb950",

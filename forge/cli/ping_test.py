@@ -13,7 +13,6 @@ import click
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Inline definition of the ping command under test
 # ---------------------------------------------------------------------------

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-import tempfile
 import os
+import tempfile
 
 import pytest
 

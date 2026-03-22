@@ -8,11 +8,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from forge.api.security.jwt import decode_token
 
 security = HTTPBearer(auto_error=False)
+_security_dep = Depends(security)
 
 
 async def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = _security_dep,
 ) -> str:
     """Extract and verify JWT token. Returns user_id.
 

@@ -1,15 +1,15 @@
 """Tests for FinalApprovalScreen."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from forge.tui.screens.final_approval import (
+    DiffScreen,
+    FinalApprovalScreen,
     format_summary_stats,
     format_task_table,
-    FinalApprovalScreen,
-    DiffScreen,
 )
 from forge.tui.widgets.followup_input import FollowUpInput
 

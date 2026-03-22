@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static
-from textual.containers import VerticalScroll
 
 from forge.tui.widgets.search_overlay import apply_highlights
 

@@ -9,10 +9,10 @@ import subprocess
 import tempfile
 
 from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.widgets import Static
 from textual.binding import Binding
 from textual.message import Message
+from textual.screen import Screen
+from textual.widgets import Static
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState

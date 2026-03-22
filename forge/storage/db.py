@@ -10,11 +10,10 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, JSON, func, or_, select, text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import JSON, DateTime, Integer, String, Text, func, or_, select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 logger = logging.getLogger(__name__)
@@ -42,10 +41,10 @@ class UserRow(Base):
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
-    settings_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    settings_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class AuditLogRow(Base):
@@ -60,13 +59,13 @@ class AuditLogRow(Base):
     )
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False)
-    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
-    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
 
 
 # ── Pipeline models ───────────────────────────────────────────────────
@@ -82,25 +81,25 @@ class TaskRow(Base):
     depends_on: Mapped[list] = mapped_column(JSON)
     complexity: Mapped[str] = mapped_column(String)
     state: Mapped[str] = mapped_column(String, default="todo")
-    assigned_agent: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    assigned_agent: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     retry_count: Mapped[int] = mapped_column(default=0)
-    branch_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    worktree_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    pipeline_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    review_feedback: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    retry_reason: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    retry_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     cost_usd: Mapped[float] = mapped_column(default=0.0)
     agent_cost_usd: Mapped[float] = mapped_column(default=0.0)
     review_cost_usd: Mapped[float] = mapped_column(default=0.0)
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
-    approval_context: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    prior_diff: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    implementation_summary: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    session_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    approval_context: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    prior_diff: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    implementation_summary: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     questions_asked: Mapped[int] = mapped_column(default=0)
     questions_limit: Mapped[int] = mapped_column(default=3)
-    review_diff: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    review_diff: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     repo_id: Mapped[str] = mapped_column(String, default='default')
 
 
@@ -109,7 +108,7 @@ class AgentRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     state: Mapped[str] = mapped_column(String, default="idle")
-    current_task: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    current_task: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class PipelineRow(Base):
@@ -120,42 +119,42 @@ class PipelineRow(Base):
     project_dir: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="planning")
     model_strategy: Mapped[str] = mapped_column(String, default="auto")
-    task_graph_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    created_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    completed_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    pr_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    base_branch: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    branch_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    cancelled_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    build_cmd: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    test_cmd: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    task_graph_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    created_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    completed_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pr_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    base_branch: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    cancelled_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    build_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    test_cmd: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     planner_cost_usd: Mapped[float] = mapped_column(default=0.0)
     total_cost_usd: Mapped[float] = mapped_column(default=0.0)
     budget_limit_usd: Mapped[float] = mapped_column(default=0.0)
     estimated_cost_usd: Mapped[float] = mapped_column(default=0.0)
     paused: Mapped[bool] = mapped_column(default=False)
-    conventions_json: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    conventions_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     require_approval: Mapped[bool] = mapped_column(default=False)
-    github_issue_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    github_issue_number: Mapped[Optional[int]] = mapped_column(default=None)
-    template_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    template_config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    github_issue_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    github_issue_number: Mapped[int | None] = mapped_column(default=None)
+    template_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    template_config_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # Contract Builder output (JSON blob)
-    contracts_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    paused_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    contracts_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    paused_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     paused_duration: Mapped[float] = mapped_column(default=0.0)
     # Cross-project tracking
-    project_path: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    project_name: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    project_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    project_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Executor tracking for orphan detection
-    executor_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
-    executor_token: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    executor_pid: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    executor_token: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Integration health check baseline
-    baseline_exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
-    integration_status: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    baseline_exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    integration_status: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Multi-repo workspace support
-    repos_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    repos_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     def get_repos(self) -> list[dict]:
         """Return repo configurations. Single-repo returns synthetic default entry."""
@@ -186,12 +185,12 @@ class UserTemplateRow(Base):
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -201,10 +200,10 @@ class PipelineEventRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    task_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: Mapped[str] = mapped_column(String, default=lambda: datetime.now(UTC).isoformat())
 
 
 class TaskQuestionRow(Base):
@@ -218,15 +217,15 @@ class TaskQuestionRow(Base):
     task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     pipeline_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
-    suggestions: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
-    answered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    context: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    suggestions: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    answered_by: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String, default=lambda: datetime.now(UTC).isoformat(),
     )
-    answered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
-    stage: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    answered_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    stage: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class InterjectionRow(Base):
@@ -242,9 +241,9 @@ class InterjectionRow(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     delivered: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String, default=lambda: datetime.now(UTC).isoformat(),
     )
-    delivered_at: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None)
+    delivered_at: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class LessonRow(Base):
@@ -256,7 +255,7 @@ class LessonRow(Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4()),
     )
     scope: Mapped[str] = mapped_column(String, nullable=False, index=True)  # 'global' or 'project'
-    project_dir: Mapped[Optional[str]] = mapped_column(String, nullable=True, default=None, index=True)
+    project_dir: Mapped[str | None] = mapped_column(String, nullable=True, default=None, index=True)
     category: Mapped[str] = mapped_column(String, nullable=False)  # 'command_failure', 'review_failure', 'code_pattern'
     title: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -264,10 +263,10 @@ class LessonRow(Base):
     resolution: Mapped[str] = mapped_column(Text, nullable=False)
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String, default=lambda: datetime.now(UTC).isoformat(),
     )
     last_hit_at: Mapped[str] = mapped_column(
-        String, default=lambda: datetime.now(timezone.utc).isoformat(),
+        String, default=lambda: datetime.now(UTC).isoformat(),
     )
     confidence: Mapped[float] = mapped_column(default=0.5)
 
@@ -283,7 +282,7 @@ class Database:
         self._engine = create_async_engine(url)
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
-    async def __aenter__(self) -> 'Database':
+    async def __aenter__(self) -> Database:
         await self.initialize()
         return self
 
@@ -309,7 +308,8 @@ class Database:
     @staticmethod
     def _add_missing_columns(connection) -> None:
         """Add columns that exist in the ORM model but not in the DB table."""
-        from sqlalchemy import inspect as sa_inspect, text
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy import text
 
         inspector = sa_inspect(connection)
         for table_cls in _ALL_MODELS:
@@ -687,7 +687,7 @@ class Database:
                 project_path=project_path,
                 project_name=project_name,
                 repos_json=repos_json,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
             )
             session.add(row)
             await session.commit()
@@ -726,7 +726,7 @@ class Database:
             if row:
                 row.status = status
                 if status in ("complete", "error"):
-                    row.completed_at = datetime.now(timezone.utc).isoformat()
+                    row.completed_at = datetime.now(UTC).isoformat()
                 await session.commit()
 
     async def set_pipeline_plan(self, pipeline_id: str, task_graph_json: str) -> None:
@@ -909,7 +909,7 @@ class Database:
                 return {"tasks_cancelled": 0}
 
             pipeline.status = "cancelled"
-            pipeline.cancelled_at = datetime.now(timezone.utc).isoformat()
+            pipeline.cancelled_at = datetime.now(UTC).isoformat()
 
             # Cancel all non-terminal tasks
             task_result = await session.execute(
@@ -1096,7 +1096,7 @@ class Database:
                 row.name = name
             if config_json is not None:
                 row.config_json = config_json
-            row.updated_at = datetime.now(timezone.utc)
+            row.updated_at = datetime.now(UTC)
             await session.commit()
             await session.refresh(row)
             return row
@@ -1188,7 +1188,7 @@ class Database:
             if row:
                 row.answer = answer
                 row.answered_by = answered_by
-                row.answered_at = datetime.now(timezone.utc).isoformat()
+                row.answered_at = datetime.now(UTC).isoformat()
                 await session.commit()
 
     async def get_pending_questions(self, pipeline_id: str) -> list[TaskQuestionRow]:
@@ -1222,8 +1222,8 @@ class Database:
             return list(result.scalars().all())
 
     async def get_expired_questions(self, timeout_seconds: int) -> list[TaskQuestionRow]:
-        cutoff = datetime.now(timezone.utc).timestamp() - timeout_seconds
-        cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+        cutoff = datetime.now(UTC).timestamp() - timeout_seconds
+        cutoff_iso = datetime.fromtimestamp(cutoff, tz=UTC).isoformat()
         async with self._session_factory() as session:
             result = await session.execute(
                 select(TaskQuestionRow)
@@ -1261,7 +1261,7 @@ class Database:
             row = await session.get(InterjectionRow, interjection_id)
             if row:
                 row.delivered = True
-                row.delivered_at = datetime.now(timezone.utc).isoformat()
+                row.delivered_at = datetime.now(UTC).isoformat()
                 await session.commit()
 
     # ── Lessons ────────────────────────────────────────────────────────
@@ -1280,7 +1280,7 @@ class Database:
         """
         from sqlalchemy import delete as sa_delete
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         normalized_trigger = self._normalize_trigger(trigger)
         row = LessonRow(
             scope=scope, project_dir=project_dir, category=category,
@@ -1357,7 +1357,7 @@ class Database:
             row = await session.get(LessonRow, lesson_id)
             if row:
                 row.hit_count += 1
-                row.last_hit_at = datetime.now(timezone.utc).isoformat()
+                row.last_hit_at = datetime.now(UTC).isoformat()
                 row.confidence = min(1.0, row.confidence + min(0.1, (1.0 - row.confidence) * 0.2))
                 await session.commit()
 
@@ -1373,7 +1373,6 @@ class Database:
         Effective confidence = stored confidence - decay for staleness.
         Token budget is approximate (1 token ~ 4 chars).
         """
-        from datetime import timedelta  # noqa: F811 — local re-import is fine
         fetch_limit = max_count * 3
         async with self._session_factory() as session:
             query = select(LessonRow)
@@ -1393,7 +1392,7 @@ class Database:
             rows = list(result.scalars().all())
 
         # Rank by effective confidence (confidence - staleness decay)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         scored = []
         for row in rows:
             days = 90
@@ -1401,7 +1400,7 @@ class Database:
                 try:
                     last_hit = datetime.fromisoformat(row.last_hit_at)
                     if last_hit.tzinfo is None:
-                        last_hit = last_hit.replace(tzinfo=timezone.utc)
+                        last_hit = last_hit.replace(tzinfo=UTC)
                     days = (now - last_hit).days
                 except (ValueError, TypeError):
                     pass
@@ -1435,9 +1434,10 @@ class Database:
         """Delete lessons not hit in max_age_days. Returns count deleted."""
         import logging as _logging
         from datetime import timedelta  # noqa: F811
+
         from sqlalchemy import delete
         _logger = _logging.getLogger("forge")
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         async with self._session_factory() as session:
             result = await session.execute(
                 delete(LessonRow).where(LessonRow.last_hit_at < cutoff)
@@ -1450,7 +1450,8 @@ class Database:
 
     async def clear_lessons(self, project_dir: str | None = None) -> int:
         """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
-        from sqlalchemy import delete, func as sa_func
+        from sqlalchemy import delete
+        from sqlalchemy import func as sa_func
         async with self._session_factory() as session:
             if project_dir:
                 count_q = select(sa_func.count()).select_from(LessonRow).where(LessonRow.project_dir == project_dir)

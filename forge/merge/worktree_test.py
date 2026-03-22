@@ -1,5 +1,6 @@
 import os
 import subprocess
+
 import pytest
 
 from forge.merge.worktree import WorktreeManager

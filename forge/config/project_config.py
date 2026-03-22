@@ -347,7 +347,7 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
         settings.build_cmd = None
 
 
-def load_repo_configs(repos: 'dict[str, RepoConfig]') -> 'dict[str, ProjectConfig]':
+def load_repo_configs(repos: dict[str, RepoConfig]) -> dict[str, ProjectConfig]:
     """Load per-repo ProjectConfig from each repo's .forge/forge.toml.
 
     Args:
@@ -463,6 +463,7 @@ def parse_repo_flags(
     Raises click.ClickException on validation errors.
     """
     import click
+
     from forge.core.models import RepoConfig
 
     repos = []

@@ -1,5 +1,6 @@
 """Integration tests for task REST endpoints."""
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -309,6 +310,7 @@ class TestCancelEndpoint:
     async def test_cancel_returns_cancelled_task_ids(self, client_with_app):
         """POST /tasks/{id}/cancel should return list of cancelled task IDs."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -351,6 +353,7 @@ class TestCancelEndpoint:
     async def test_cancel_already_cancelled_returns_already(self, client_with_app):
         """POST /tasks/{id}/cancel on already-cancelled pipeline returns already_cancelled."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -420,7 +423,7 @@ class TestStats:
         Pipeline A: 60 s  |  Pipeline B: 120 s  ->  average = 90.0 s
         """
         import uuid
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
@@ -436,7 +439,7 @@ class TestStats:
         user_id = payload["sub"]
 
         # Build deterministic timestamps: A = 60 s, B = 120 s -> avg = 90 s.
-        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        base = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
         created_a = base.isoformat()
         completed_a = (base + timedelta(seconds=60)).isoformat()
 
@@ -640,6 +643,7 @@ class TestRestartEndpoint:
     async def test_restart_resets_pipeline(self, client_with_app):
         """POST /tasks/{id}/restart should reset pipeline to pending and clear state."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -683,6 +687,7 @@ class TestRestartEndpoint:
     async def test_restart_idor_protection(self, client_with_app):
         """POST /tasks/{id}/restart should 404 for another user's pipeline."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -919,6 +924,7 @@ class TestExecuteWithEditedGraph:
     async def test_execute_with_invalid_graph_returns_422(self, client_with_app):
         """POST /tasks/{id}/execute with cyclic deps should return 422."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -942,7 +948,7 @@ class TestExecuteWithEditedGraph:
 
         # Store a pending graph (mocked daemon)
         mock_daemon = MagicMock()
-        from forge.core.models import TaskDefinition, TaskGraph, Complexity
+        from forge.core.models import Complexity, TaskDefinition, TaskGraph
         original_graph = TaskGraph(tasks=[
             TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
         ])
@@ -968,6 +974,7 @@ class TestExecuteWithEditedGraph:
     async def test_execute_with_valid_edited_graph(self, client_with_app):
         """POST /tasks/{id}/execute with valid edited tasks should return 202."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -991,7 +998,7 @@ class TestExecuteWithEditedGraph:
         # Store a pending graph with mocked daemon
         mock_daemon = MagicMock()
         mock_daemon.execute = AsyncMock()
-        from forge.core.models import TaskDefinition, TaskGraph, Complexity
+        from forge.core.models import Complexity, TaskDefinition, TaskGraph
         original_graph = TaskGraph(tasks=[
             TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
         ])
@@ -1018,6 +1025,7 @@ class TestExecuteWithEditedGraph:
     async def test_execute_without_edited_graph_uses_original(self, client_with_app):
         """POST /tasks/{id}/execute without tasks field uses original plan."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1040,7 +1048,7 @@ class TestExecuteWithEditedGraph:
 
         mock_daemon = MagicMock()
         mock_daemon.execute = AsyncMock()
-        from forge.core.models import TaskDefinition, TaskGraph, Complexity
+        from forge.core.models import Complexity, TaskDefinition, TaskGraph
         original_graph = TaskGraph(tasks=[
             TaskDefinition(id="t1", title="T1", description="D1", files=["f.py"], complexity=Complexity.LOW),
         ])
@@ -1079,6 +1087,7 @@ class TestGetTaskDiff:
     async def test_diff_wrong_task_state_returns_409(self, client_with_app):
         """GET diff for a task not in awaiting_approval returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1114,6 +1123,7 @@ class TestGetTaskDiff:
         """GET diff when worktree doesn't exist returns 410."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1153,6 +1163,7 @@ class TestGetTaskDiff:
         """GET diff with valid worktree returns diff text and stats."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1232,6 +1243,7 @@ class TestApproveTask:
     async def test_approve_wrong_state_returns_409(self, client_with_app):
         """POST approve for a task not in awaiting_approval returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1267,6 +1279,7 @@ class TestApproveTask:
         """POST approve for task in awaiting_approval returns 202 and merging."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1340,6 +1353,7 @@ class TestRejectTask:
     async def test_reject_wrong_state_returns_409(self, client_with_app):
         """POST reject for a task not in awaiting_approval returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1376,6 +1390,7 @@ class TestRejectTask:
         """POST reject for awaiting_approval task resets to todo."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1428,6 +1443,7 @@ class TestRejectTask:
         """POST reject without a reason uses 'Rejected by user' default."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1493,6 +1509,7 @@ class TestPausePipeline:
     async def test_pause_non_running_returns_409(self, client_with_app):
         """POST /tasks/{id}/pause on a completed pipeline returns 409."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1518,6 +1535,7 @@ class TestPausePipeline:
     async def test_pause_executing_pipeline(self, client_with_app):
         """POST /tasks/{id}/pause on executing pipeline returns paused."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1552,6 +1570,7 @@ class TestPausePipeline:
     async def test_pause_planned_pipeline(self, client_with_app):
         """POST /tasks/{id}/pause on planned pipeline also works."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1587,6 +1606,7 @@ class TestResumePausedPipeline:
     async def test_resume_paused_pipeline(self, client_with_app):
         """POST /tasks/{id}/resume on paused pipeline returns executing."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1622,6 +1642,7 @@ class TestResumePausedPipeline:
     async def test_pause_then_resume_roundtrip(self, client_with_app):
         """Pause then resume a pipeline end-to-end."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -1745,6 +1766,7 @@ class TestNewEndpointIDOR:
         """GET diff for another user's pipeline returns 404."""
         import json
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1782,6 +1804,7 @@ class TestNewEndpointIDOR:
     async def test_approve_idor_protection(self, client_with_app):
         """POST approve for another user's pipeline returns 404."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow, TaskRow
 
@@ -1816,6 +1839,7 @@ class TestNewEndpointIDOR:
     async def test_pause_idor_protection(self, client_with_app):
         """POST pause for another user's pipeline returns 404."""
         import uuid
+
         from forge.api.security.jwt import decode_token
         from forge.storage.db import PipelineRow
 
@@ -2120,7 +2144,7 @@ class TestMultiRepoWorktreeCleanup:
     def test_cleanup_worktree_multi_repo(self, tmp_path):
         """_cleanup_worktree with repo_id resolves to <worktrees>/backend/<task_id>/."""
         import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_worktree
 
@@ -2137,7 +2161,7 @@ class TestMultiRepoWorktreeCleanup:
     def test_cleanup_worktree_default_repo(self, tmp_path):
         """_cleanup_worktree with repo_id='default' uses standard worktrees dir."""
         import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_worktree
 
@@ -2152,7 +2176,7 @@ class TestMultiRepoWorktreeCleanup:
     def test_cleanup_worktree_no_repo_id(self, tmp_path):
         """_cleanup_worktree without repo_id uses standard worktrees dir."""
         import os
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_worktree
 
@@ -2166,7 +2190,7 @@ class TestMultiRepoWorktreeCleanup:
 
     async def test_cleanup_all_worktrees_multi_repo(self):
         """_cleanup_all_pipeline_worktrees passes each task's repo_id."""
-        from unittest.mock import patch, AsyncMock, MagicMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_all_pipeline_worktrees
 

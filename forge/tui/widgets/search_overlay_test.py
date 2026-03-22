@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from forge.tui.widgets.search_overlay import (
+    _HIGHLIGHT_OPEN,
     SearchOverlay,
     apply_highlights,
-    _HIGHLIGHT_OPEN,
 )
-
 
 # ── apply_highlights tests ──────────────────────────────────────────────
 
@@ -235,8 +234,9 @@ def test_diff_viewer_set_search_highlights_empty_diff():
 
 def test_apply_highlights_valid_rich_markup():
     """Highlighted output should be valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
 
     text = "[bold #58a6ff]task-1[/]: Creating auth module..."
     result, count = apply_highlights(text, "auth")

@@ -48,10 +48,10 @@ async def async_subprocess(
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             proc.communicate(), timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
-        raise asyncio.TimeoutError(
+        raise TimeoutError(
             f"Command {cmd} timed out after {timeout}s",
         )
 
@@ -667,7 +667,7 @@ def _load_conventions_md(project_dir: str) -> str | None:
     """
     filepath = os.path.join(project_dir, ".forge", "conventions.md")
     try:
-        with open(filepath, "r", encoding="utf-8") as fh:
+        with open(filepath, encoding="utf-8") as fh:
             content = fh.read().strip()
             return content if content else None
     except (OSError, FileNotFoundError):
