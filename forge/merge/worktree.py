@@ -18,6 +18,21 @@ class WorktreeManager:
     def _branch_name(self, task_id: str) -> str:
         return f"forge/{task_id}"
 
+    def _ensure_forge_gitignored(self) -> None:
+        """Add .forge to the repo's .gitignore if not already present."""
+        gitignore = os.path.join(self._repo, ".gitignore")
+        entry = ".forge"
+        if os.path.isfile(gitignore):
+            with open(gitignore, "r") as f:
+                lines = {line.strip() for line in f}
+            if entry in lines or f"/{entry}" in lines or f"{entry}/" in lines:
+                return
+            with open(gitignore, "a") as f:
+                f.write(f"\n{entry}\n")
+        else:
+            with open(gitignore, "w") as f:
+                f.write(f"{entry}\n")
+
     def create(self, task_id: str, base_ref: str | None = None) -> str:
         """Create a worktree for a task. Returns the worktree path.
 
@@ -38,6 +53,9 @@ class WorktreeManager:
 
         branch = self._branch_name(task_id)
         os.makedirs(self._worktrees_dir, exist_ok=True)
+
+        # Ensure .forge is gitignored in the repo so worktrees don't show as untracked
+        self._ensure_forge_gitignored()
 
         # Check if the repo has any commits — orphan worktrees needed if not
         has_commits = subprocess.run(
