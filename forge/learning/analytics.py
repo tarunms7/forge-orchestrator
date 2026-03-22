@@ -55,22 +55,22 @@ async def get_retry_prevention_estimate(
     lessons = await get_lesson_effectiveness(db, project_dir=project_dir)
     total_lessons = len(lessons)
 
-    active = [l for l in lessons if l["hit_count"] > 1 and l["confidence"] >= 0.6]
+    active = [le for le in lessons if le["hit_count"] > 1 and le["confidence"] >= 0.6]
     active_lessons = len(active)
 
     estimated_retries_prevented = sum(
-        (l["hit_count"] - 1) * l["confidence"] for l in active
+        (le["hit_count"] - 1) * le["confidence"] for le in active
     )
 
     # Build top lessons sorted by estimated retries prevented descending
-    for l in active:
-        l["estimated_prevented"] = (l["hit_count"] - 1) * l["confidence"]
-    top_lessons = sorted(active, key=lambda l: l["estimated_prevented"], reverse=True)[
-        :10
-    ]
+    for le in active:
+        le["estimated_prevented"] = (le["hit_count"] - 1) * le["confidence"]
+    top_lessons = sorted(
+        active, key=lambda x: x["estimated_prevented"], reverse=True
+    )[:10]
     # Remove temp key
-    for l in top_lessons:
-        l.pop("estimated_prevented", None)
+    for le in top_lessons:
+        le.pop("estimated_prevented", None)
 
     return {
         "total_lessons": total_lessons,
@@ -87,8 +87,8 @@ async def get_lesson_category_breakdown(
     lessons = await get_lesson_effectiveness(db, project_dir=project_dir)
 
     breakdown: dict[str, int] = {}
-    for l in lessons:
-        cat = l["category"]
+    for le in lessons:
+        cat = le["category"]
         breakdown[cat] = breakdown.get(cat, 0) + 1
 
     return breakdown

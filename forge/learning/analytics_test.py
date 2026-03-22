@@ -45,7 +45,7 @@ async def test_effectiveness_empty(db):
 
 @pytest.mark.asyncio
 async def test_effectiveness_returns_sorted_by_hits(db):
-    lid1 = await _add_lesson(db, title="low", trigger="t1")
+    await _add_lesson(db, title="low", trigger="t1")
     lid2 = await _add_lesson(db, title="high", trigger="t2")
 
     # Bump lid2 multiple times
