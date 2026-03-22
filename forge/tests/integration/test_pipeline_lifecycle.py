@@ -18,154 +18,169 @@ from forge.storage.db import Database
 async def test_flow_a_full_success(tmp_path):
     """All tasks complete -> pipeline status = complete."""
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-flow-a-001"
-    await db.create_pipeline(
-        id=pid,
-        description="test", project_dir=str(tmp_path),
-        model_strategy="balanced", budget_limit_usd=10,
-    )
-    await db.update_pipeline_status(pid, "executing")
-    for i in range(3):
-        await db.create_task(id=f"t{i}", title=f"Task {i}", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-        await db.update_task_state(f"t{i}", "done")
+    try:
+        await db.initialize()
+        pid = "test-flow-a-001"
+        await db.create_pipeline(
+            id=pid,
+            description="test", project_dir=str(tmp_path),
+            model_strategy="balanced", budget_limit_usd=10,
+        )
+        await db.update_pipeline_status(pid, "executing")
+        for i in range(3):
+            await db.create_task(id=f"t{i}", title=f"Task {i}", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+            await db.update_task_state(f"t{i}", "done")
 
-    tasks = await db.list_tasks_by_pipeline(pid)
-    states = [t.state for t in tasks]
-    done_count = states.count("done")
-    error_count = states.count("error") + states.count("blocked")
-    if error_count == 0:
-        result = "complete"
-    elif done_count == 0:
-        result = "error"
-    else:
-        result = "partial_success"
+        tasks = await db.list_tasks_by_pipeline(pid)
+        states = [t.state for t in tasks]
+        done_count = states.count("done")
+        error_count = states.count("error") + states.count("blocked")
+        if error_count == 0:
+            result = "complete"
+        elif done_count == 0:
+            result = "error"
+        else:
+            result = "partial_success"
 
-    await db.update_pipeline_status(pid, result)
-    p = await db.get_pipeline(pid)
-    assert p.status == "complete"
+        await db.update_pipeline_status(pid, result)
+        p = await db.get_pipeline(pid)
+        assert p.status == "complete"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
 async def test_flow_b_partial_success(tmp_path):
     """Some tasks fail -> pipeline status = partial_success."""
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-flow-b-001"
-    await db.create_pipeline(
-        id=pid,
-        description="test", project_dir=str(tmp_path),
-        model_strategy="balanced", budget_limit_usd=10,
-    )
-    await db.update_pipeline_status(pid, "executing")
-    await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-    await db.create_task(id="t1", title="B", description="", files=[], depends_on=["t0"], complexity="low", pipeline_id=pid)
-    await db.update_task_state("t0", "done")
-    await db.update_task_state("t1", "error")
+    try:
+        await db.initialize()
+        pid = "test-flow-b-001"
+        await db.create_pipeline(
+            id=pid,
+            description="test", project_dir=str(tmp_path),
+            model_strategy="balanced", budget_limit_usd=10,
+        )
+        await db.update_pipeline_status(pid, "executing")
+        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.create_task(id="t1", title="B", description="", files=[], depends_on=["t0"], complexity="low", pipeline_id=pid)
+        await db.update_task_state("t0", "done")
+        await db.update_task_state("t1", "error")
 
-    tasks = await db.list_tasks_by_pipeline(pid)
-    states = [t.state for t in tasks]
-    done_count = states.count("done")
-    error_count = states.count("error") + states.count("blocked")
-    result = "complete" if error_count == 0 else ("error" if done_count == 0 else "partial_success")
+        tasks = await db.list_tasks_by_pipeline(pid)
+        states = [t.state for t in tasks]
+        done_count = states.count("done")
+        error_count = states.count("error") + states.count("blocked")
+        result = "complete" if error_count == 0 else ("error" if done_count == 0 else "partial_success")
 
-    await db.update_pipeline_status(pid, result)
-    p = await db.get_pipeline(pid)
-    assert p.status == "partial_success"
+        await db.update_pipeline_status(pid, result)
+        p = await db.get_pipeline(pid)
+        assert p.status == "partial_success"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
 async def test_flow_c_retry_resets_and_resumes(tmp_path):
     """Retry: error/blocked -> todo, pipeline -> retrying -> complete."""
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-flow-c-001"
-    await db.create_pipeline(
-        id=pid,
-        description="test", project_dir=str(tmp_path),
-        model_strategy="balanced", budget_limit_usd=10,
-    )
-    await db.update_pipeline_status(pid, "partial_success")
-    await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-    await db.create_task(id="t1", title="B", description="", files=[], depends_on=["t0"], complexity="low", pipeline_id=pid)
-    await db.update_task_state("t0", "error")
-    await db.update_task_state("t1", "blocked")
+    try:
+        await db.initialize()
+        pid = "test-flow-c-001"
+        await db.create_pipeline(
+            id=pid,
+            description="test", project_dir=str(tmp_path),
+            model_strategy="balanced", budget_limit_usd=10,
+        )
+        await db.update_pipeline_status(pid, "partial_success")
+        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.create_task(id="t1", title="B", description="", files=[], depends_on=["t0"], complexity="low", pipeline_id=pid)
+        await db.update_task_state("t0", "error")
+        await db.update_task_state("t1", "blocked")
 
-    for t in await db.list_tasks_by_pipeline(pid):
-        if t.state in ("error", "blocked"):
-            await db.update_task_state(t.id, "todo")
-    await db.update_pipeline_status(pid, "retrying")
-    p = await db.get_pipeline(pid)
-    assert p.status == "retrying"
+        for t in await db.list_tasks_by_pipeline(pid):
+            if t.state in ("error", "blocked"):
+                await db.update_task_state(t.id, "todo")
+        await db.update_pipeline_status(pid, "retrying")
+        p = await db.get_pipeline(pid)
+        assert p.status == "retrying"
 
-    await db.update_task_state("t0", "done")
-    await db.update_task_state("t1", "done")
-    await db.update_pipeline_status(pid, "complete")
-    p = await db.get_pipeline(pid)
-    assert p.status == "complete"
+        await db.update_task_state("t0", "done")
+        await db.update_task_state("t1", "done")
+        await db.update_pipeline_status(pid, "complete")
+        p = await db.get_pipeline(pid)
+        assert p.status == "complete"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
 async def test_flow_f_skip_and_finish(tmp_path):
     """Skip: error/blocked -> cancelled, pipeline -> complete."""
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-flow-f-001"
-    await db.create_pipeline(
-        id=pid,
-        description="test", project_dir=str(tmp_path),
-        model_strategy="balanced", budget_limit_usd=10,
-    )
-    await db.update_pipeline_status(pid, "partial_success")
-    await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-    await db.create_task(id="t1", title="B", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-    await db.update_task_state("t0", "done")
-    await db.update_task_state("t1", "error")
+    try:
+        await db.initialize()
+        pid = "test-flow-f-001"
+        await db.create_pipeline(
+            id=pid,
+            description="test", project_dir=str(tmp_path),
+            model_strategy="balanced", budget_limit_usd=10,
+        )
+        await db.update_pipeline_status(pid, "partial_success")
+        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.create_task(id="t1", title="B", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.update_task_state("t0", "done")
+        await db.update_task_state("t1", "error")
 
-    for t in await db.list_tasks_by_pipeline(pid):
-        if t.state in ("error", "blocked"):
-            await db.update_task_state(t.id, "cancelled")
-    await db.update_pipeline_status(pid, "complete")
+        for t in await db.list_tasks_by_pipeline(pid):
+            if t.state in ("error", "blocked"):
+                await db.update_task_state(t.id, "cancelled")
+        await db.update_pipeline_status(pid, "complete")
 
-    tasks = await db.list_tasks_by_pipeline(pid)
-    states = {t.id: t.state for t in tasks}
-    assert states["t0"] == "done"
-    assert states["t1"] == "cancelled"
-    p = await db.get_pipeline(pid)
-    assert p.status == "complete"
+        tasks = await db.list_tasks_by_pipeline(pid)
+        states = {t.id: t.state for t in tasks}
+        assert states["t0"] == "done"
+        assert states["t1"] == "cancelled"
+        p = await db.get_pipeline(pid)
+        assert p.status == "complete"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
 async def test_flow_gh_quit_and_resume(tmp_path):
     """Quit: non-terminal -> todo, pipeline -> interrupted. Resume: interrupted -> executing."""
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-flow-gh-001"
-    await db.create_pipeline(
-        id=pid,
-        description="test", project_dir=str(tmp_path),
-        model_strategy="balanced", budget_limit_usd=10,
-    )
-    await db.update_pipeline_status(pid, "executing")
-    await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-    await db.create_task(id="t1", title="B", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
-    await db.update_task_state("t0", "done")
-    await db.update_task_state("t1", "in_progress")
+    try:
+        await db.initialize()
+        pid = "test-flow-gh-001"
+        await db.create_pipeline(
+            id=pid,
+            description="test", project_dir=str(tmp_path),
+            model_strategy="balanced", budget_limit_usd=10,
+        )
+        await db.update_pipeline_status(pid, "executing")
+        await db.create_task(id="t0", title="A", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.create_task(id="t1", title="B", description="", files=[], depends_on=[], complexity="low", pipeline_id=pid)
+        await db.update_task_state("t0", "done")
+        await db.update_task_state("t1", "in_progress")
 
-    non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
-    for t in await db.list_tasks_by_pipeline(pid):
-        if t.state in non_terminal:
-            await db.update_task_state(t.id, "todo")
-    await db.update_pipeline_status(pid, "interrupted")
+        non_terminal = ("in_progress", "in_review", "merging", "awaiting_input", "awaiting_approval")
+        for t in await db.list_tasks_by_pipeline(pid):
+            if t.state in non_terminal:
+                await db.update_task_state(t.id, "todo")
+        await db.update_pipeline_status(pid, "interrupted")
 
-    p = await db.get_pipeline(pid)
-    assert p.status == "interrupted"
-    t1_row = await db.get_task("t1")
-    assert t1_row.state == "todo"
+        p = await db.get_pipeline(pid)
+        assert p.status == "interrupted"
+        t1_row = await db.get_task("t1")
+        assert t1_row.state == "todo"
 
-    await db.update_pipeline_status(pid, "executing")
-    p = await db.get_pipeline(pid)
-    assert p.status == "executing"
+        await db.update_pipeline_status(pid, "executing")
+        p = await db.get_pipeline(pid)
+        assert p.status == "executing"
+    finally:
+        await db.close()
 
 
 # ── Multi-repo E2E and regression tests ──────────────────────────────
@@ -185,58 +200,61 @@ async def test_multi_repo_pipeline_e2e(tmp_path, make_git_repo):
     ]
 
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-multi-repo-e2e"
+    try:
+        await db.initialize()
+        pid = "test-multi-repo-e2e"
 
-    await db.create_pipeline(
-        id=pid,
-        description="multi-repo test",
-        project_dir=str(tmp_path),
-        model_strategy="balanced",
-        budget_limit_usd=10,
-        repos_json=json.dumps(repos),
-    )
-    await db.update_pipeline_status(pid, "executing")
+        await db.create_pipeline(
+            id=pid,
+            description="multi-repo test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
+            repos_json=json.dumps(repos),
+        )
+        await db.update_pipeline_status(pid, "executing")
 
-    # Create 3 tasks across repos
-    await db.create_task(
-        id="t-be-1", title="Backend API", description="Create API",
-        files=["src/main.py"], depends_on=[], complexity="low",
-        pipeline_id=pid, repo_id="backend",
-    )
-    await db.create_task(
-        id="t-be-2", title="Backend DB", description="Add DB layer",
-        files=["src/db.py"], depends_on=["t-be-1"], complexity="low",
-        pipeline_id=pid, repo_id="backend",
-    )
-    await db.create_task(
-        id="t-fe-1", title="Frontend UI", description="Build UI",
-        files=["src/index.ts"], depends_on=["t-be-1"], complexity="low",
-        pipeline_id=pid, repo_id="frontend",
-    )
+        # Create 3 tasks across repos
+        await db.create_task(
+            id="t-be-1", title="Backend API", description="Create API",
+            files=["src/main.py"], depends_on=[], complexity="low",
+            pipeline_id=pid, repo_id="backend",
+        )
+        await db.create_task(
+            id="t-be-2", title="Backend DB", description="Add DB layer",
+            files=["src/db.py"], depends_on=["t-be-1"], complexity="low",
+            pipeline_id=pid, repo_id="backend",
+        )
+        await db.create_task(
+            id="t-fe-1", title="Frontend UI", description="Build UI",
+            files=["src/index.ts"], depends_on=["t-be-1"], complexity="low",
+            pipeline_id=pid, repo_id="frontend",
+        )
 
-    # Verify tasks stored with correct repo_id
-    tasks = await db.list_tasks_by_pipeline(pid)
-    repo_ids = {t.id: t.repo_id for t in tasks}
-    assert repo_ids["t-be-1"] == "backend"
-    assert repo_ids["t-be-2"] == "backend"
-    assert repo_ids["t-fe-1"] == "frontend"
+        # Verify tasks stored with correct repo_id
+        tasks = await db.list_tasks_by_pipeline(pid)
+        repo_ids = {t.id: t.repo_id for t in tasks}
+        assert repo_ids["t-be-1"] == "backend"
+        assert repo_ids["t-be-2"] == "backend"
+        assert repo_ids["t-fe-1"] == "frontend"
 
-    # Verify get_repos() returns both repos
-    pipeline = await db.get_pipeline(pid)
-    got_repos = pipeline.get_repos()
-    assert len(got_repos) == 2
-    repo_ids_from_pipeline = {r["id"] for r in got_repos}
-    assert repo_ids_from_pipeline == {"backend", "frontend"}
+        # Verify get_repos() returns both repos
+        pipeline = await db.get_pipeline(pid)
+        got_repos = pipeline.get_repos()
+        assert len(got_repos) == 2
+        repo_ids_from_pipeline = {r["id"] for r in got_repos}
+        assert repo_ids_from_pipeline == {"backend", "frontend"}
 
-    # Simulate completing all tasks
-    await db.update_task_state("t-be-1", "done")
-    await db.update_task_state("t-be-2", "done")
-    await db.update_task_state("t-fe-1", "done")
+        # Simulate completing all tasks
+        await db.update_task_state("t-be-1", "done")
+        await db.update_task_state("t-be-2", "done")
+        await db.update_task_state("t-fe-1", "done")
 
-    await db.update_pipeline_status(pid, "complete")
-    p = await db.get_pipeline(pid)
-    assert p.status == "complete"
+        await db.update_pipeline_status(pid, "complete")
+        p = await db.get_pipeline(pid)
+        assert p.status == "complete"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -245,47 +263,50 @@ async def test_single_repo_pipeline_regression(tmp_path, make_git_repo):
     project_path = make_git_repo("project")
 
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-single-repo-regression"
+    try:
+        await db.initialize()
+        pid = "test-single-repo-regression"
 
-    await db.create_pipeline(
-        id=pid,
-        description="single-repo test",
-        project_dir=str(project_path),
-        model_strategy="balanced",
-        budget_limit_usd=10,
-        base_branch="main",
-    )
+        await db.create_pipeline(
+            id=pid,
+            description="single-repo test",
+            project_dir=str(project_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
+            base_branch="main",
+        )
 
-    # Verify repos_json is None
-    pipeline = await db.get_pipeline(pid)
-    assert pipeline.repos_json is None
+        # Verify repos_json is None
+        pipeline = await db.get_pipeline(pid)
+        assert pipeline.repos_json is None
 
-    # Verify get_repos() returns single default repo
-    got_repos = pipeline.get_repos()
-    assert len(got_repos) == 1
-    default_repo = got_repos[0]
-    assert default_repo["id"] == "default"
-    assert default_repo["path"] == str(project_path)
-    assert default_repo["base_branch"] == "main"
+        # Verify get_repos() returns single default repo
+        got_repos = pipeline.get_repos()
+        assert len(got_repos) == 1
+        default_repo = got_repos[0]
+        assert default_repo["id"] == "default"
+        assert default_repo["path"] == str(project_path)
+        assert default_repo["base_branch"] == "main"
 
-    # Create a task with default repo_id
-    await db.create_task(
-        id="t-single", title="Single task", description="Do something",
-        files=[], depends_on=[], complexity="low",
-        pipeline_id=pid,
-    )
-    task = await db.get_task("t-single")
-    assert task.repo_id == "default"
+        # Create a task with default repo_id
+        await db.create_task(
+            id="t-single", title="Single task", description="Do something",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid,
+        )
+        task = await db.get_task("t-single")
+        assert task.repo_id == "default"
 
-    # Verify worktree path is flat (no repo_id subdirectory)
-    worktree_base = os.path.join(str(project_path), ".forge", "worktrees")
-    single_repo_worktree = os.path.join(worktree_base, "t-single")
-    multi_repo_worktree = os.path.join(worktree_base, "default", "t-single")
-    # Single-repo should use flat path, not nested
-    assert single_repo_worktree != multi_repo_worktree
-    # The convention: single-repo uses {project_dir}/.forge/worktrees/{worktree_id}
-    assert "default" not in os.path.relpath(single_repo_worktree, worktree_base)
+        # Verify worktree path is flat (no repo_id subdirectory)
+        worktree_base = os.path.join(str(project_path), ".forge", "worktrees")
+        single_repo_worktree = os.path.join(worktree_base, "t-single")
+        multi_repo_worktree = os.path.join(worktree_base, "default", "t-single")
+        # Single-repo should use flat path, not nested
+        assert single_repo_worktree != multi_repo_worktree
+        # The convention: single-repo uses {project_dir}/.forge/worktrees/{worktree_id}
+        assert "default" not in os.path.relpath(single_repo_worktree, worktree_base)
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -333,48 +354,51 @@ async def test_cross_repo_dependency_ordering(tmp_path, make_git_repo):
     ]
 
     db = Database(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await db.initialize()
-    pid = "test-cross-repo-deps"
+    try:
+        await db.initialize()
+        pid = "test-cross-repo-deps"
 
-    await db.create_pipeline(
-        id=pid,
-        description="cross-repo dependency test",
-        project_dir=str(tmp_path),
-        model_strategy="balanced",
-        budget_limit_usd=10,
-        repos_json=json.dumps(repos),
-    )
-    await db.update_pipeline_status(pid, "executing")
+        await db.create_pipeline(
+            id=pid,
+            description="cross-repo dependency test",
+            project_dir=str(tmp_path),
+            model_strategy="balanced",
+            budget_limit_usd=10,
+            repos_json=json.dumps(repos),
+        )
+        await db.update_pipeline_status(pid, "executing")
 
-    # Backend task (no deps)
-    await db.create_task(
-        id="t-be", title="Backend service", description="Build backend",
-        files=[], depends_on=[], complexity="low",
-        pipeline_id=pid, repo_id="backend",
-    )
-    # Frontend task depends on backend
-    await db.create_task(
-        id="t-fe", title="Frontend client", description="Build frontend",
-        files=[], depends_on=["t-be"], complexity="low",
-        pipeline_id=pid, repo_id="frontend",
-    )
+        # Backend task (no deps)
+        await db.create_task(
+            id="t-be", title="Backend service", description="Build backend",
+            files=[], depends_on=[], complexity="low",
+            pipeline_id=pid, repo_id="backend",
+        )
+        # Frontend task depends on backend
+        await db.create_task(
+            id="t-fe", title="Frontend client", description="Build frontend",
+            files=[], depends_on=["t-be"], complexity="low",
+            pipeline_id=pid, repo_id="frontend",
+        )
 
-    # Verify dependency
-    fe_task = await db.get_task("t-fe")
-    assert fe_task.depends_on == ["t-be"]
+        # Verify dependency
+        fe_task = await db.get_task("t-fe")
+        assert fe_task.depends_on == ["t-be"]
 
-    # Simulate execution order: backend first, then frontend
-    await db.update_task_state("t-be", "done")
-    be_task = await db.get_task("t-be")
-    assert be_task.state == "done"
+        # Simulate execution order: backend first, then frontend
+        await db.update_task_state("t-be", "done")
+        be_task = await db.get_task("t-be")
+        assert be_task.state == "done"
 
-    await db.update_task_state("t-fe", "done")
-    fe_task = await db.get_task("t-fe")
-    assert fe_task.state == "done"
+        await db.update_task_state("t-fe", "done")
+        fe_task = await db.get_task("t-fe")
+        assert fe_task.state == "done"
 
-    # All tasks done -> pipeline complete
-    tasks = await db.list_tasks_by_pipeline(pid)
-    assert all(t.state == "done" for t in tasks)
-    await db.update_pipeline_status(pid, "complete")
-    p = await db.get_pipeline(pid)
-    assert p.status == "complete"
+        # All tasks done -> pipeline complete
+        tasks = await db.list_tasks_by_pipeline(pid)
+        assert all(t.state == "done" for t in tasks)
+        await db.update_pipeline_status(pid, "complete")
+        p = await db.get_pipeline(pid)
+        assert p.status == "complete"
+    finally:
+        await db.close()

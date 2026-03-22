@@ -13,7 +13,13 @@ from forge.core.models import TaskState
 
 def _make_daemon(tmp_path, **settings_kwargs):
     settings = ForgeSettings(**settings_kwargs)
-    return ForgeDaemon(project_dir=str(tmp_path), settings=settings)
+    daemon = ForgeDaemon(project_dir=str(tmp_path), settings=settings)
+    # Initialize per-repo infra dicts that _execution_loop_inner expects
+    # (normally set by _setup_per_repo_infra during pipeline setup)
+    daemon._worktree_managers = {}
+    daemon._merge_workers = {}
+    daemon._pipeline_branches = {}
+    return daemon
 
 
 def _make_task(state: str, task_id: str = "task-1") -> MagicMock:
@@ -27,6 +33,7 @@ def _make_task(state: str, task_id: str = "task-1") -> MagicMock:
     t.complexity = "medium"
     t.assigned_agent = None
     t.retry_count = 0
+    t.repo_id = "default"
     return t
 
 
@@ -138,10 +145,13 @@ class TestContinuousTaskPool:
 
         gate_task1 = asyncio.Event()
         gate_task2 = asyncio.Event()
+        both_dispatched = asyncio.Event()
         call_order = []
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None):
+        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
             call_order.append(task_id)
+            if len(call_order) >= 2:
+                both_dispatched.set()
             if task_id == "task-1":
                 await gate_task1.wait()
             elif task_id == "task-2":
@@ -160,11 +170,8 @@ class TestContinuousTaskPool:
                 return [("task-2", "agent-1")]
             return []
 
-        db = MagicMock()
-        db.assign_task = AsyncMock()
-        db.update_task_state = AsyncMock()
-        db.release_agent = AsyncMock()
-        db.log_event = AsyncMock()
+        db = AsyncMock()
+        db.get_task = AsyncMock(return_value=MagicMock(repo_id="default", retry_count=0))
 
         # Return tasks as in_progress after first dispatch, then add task-2 as todo
         call_count = 0
@@ -187,7 +194,7 @@ class TestContinuousTaskPool:
             MagicMock(id="agent-0", state="idle", current_task=None),
             MagicMock(id="agent-1", state="idle", current_task=None),
         ])
-        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
 
         monitor = MagicMock()
         monitor.take_snapshot = AsyncMock(return_value={})
@@ -195,8 +202,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=make_dispatch_plan), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
 
             async def run_loop():
                 await daemon._execution_loop_inner(
@@ -204,15 +211,15 @@ class TestContinuousTaskPool:
                 )
 
             loop_task = asyncio.create_task(run_loop())
-            # Let two poll cycles run so both tasks get dispatched
-            await asyncio.sleep(0.2)
+            # Wait until both tasks have been dispatched (event-driven, no sleep)
+            await asyncio.wait_for(both_dispatched.wait(), timeout=5.0)
             # Both tasks should have been dispatched
             assert "task-1" in call_order
             assert "task-2" in call_order
             # Release gates so tasks complete
             gate_task1.set()
             gate_task2.set()
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.05)
             loop_task.cancel()
             try:
                 await loop_task
@@ -225,9 +232,11 @@ class TestContinuousTaskPool:
 
         dispatch_count = {"task-1": 0}
         gate = asyncio.Event()
+        first_dispatched = asyncio.Event()
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None):
+        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
             dispatch_count[task_id] = dispatch_count.get(task_id, 0) + 1
+            first_dispatched.set()
             await gate.wait()
 
         daemon._execute_task = fake_execute
@@ -241,11 +250,8 @@ class TestContinuousTaskPool:
                 return [("task-1", "agent-0")]
             return []
 
-        db = MagicMock()
-        db.assign_task = AsyncMock()
-        db.update_task_state = AsyncMock()
-        db.release_agent = AsyncMock()
-        db.log_event = AsyncMock()
+        db = AsyncMock()
+        db.get_task = AsyncMock(return_value=MagicMock(repo_id="default", retry_count=0))
 
         call_count = 0
         async def list_tasks(*args, **kwargs):
@@ -259,7 +265,7 @@ class TestContinuousTaskPool:
         db.list_agents = AsyncMock(return_value=[
             MagicMock(id="agent-0", state="idle", current_task=None),
         ])
-        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
 
         monitor = MagicMock()
         monitor.take_snapshot = AsyncMock(return_value={})
@@ -267,15 +273,18 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=always_dispatch), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
 
             loop_task = asyncio.create_task(
                 daemon._execution_loop_inner(db, MagicMock(), MagicMock(), MagicMock(), monitor, "pipe-1")
             )
-            await asyncio.sleep(0.3)
+            # Wait for the first dispatch (event-driven, no sleep)
+            await asyncio.wait_for(first_dispatched.wait(), timeout=5.0)
+            # Allow a few more poll cycles to verify no double-dispatch
+            await asyncio.sleep(0.15)
             gate.set()
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.05)
             loop_task.cancel()
             try:
                 await loop_task
@@ -290,7 +299,7 @@ class TestContinuousTaskPool:
 
         task2_completed = asyncio.Event()
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None):
+        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
             if task_id == "task-1":
                 raise RuntimeError("task-1 crash")
             task2_completed.set()
@@ -306,16 +315,8 @@ class TestContinuousTaskPool:
                 return [("task-1", "agent-0"), ("task-2", "agent-1")]
             return []
 
-        db = MagicMock()
-        db.assign_task = AsyncMock()
-        db.update_task_state = AsyncMock()
-        db.release_agent = AsyncMock()
+        db = AsyncMock()
         db.get_task = AsyncMock(return_value=_make_task("error", "task-1"))
-        db.log_event = AsyncMock()
-        db.list_tasks_by_pipeline = AsyncMock(return_value=[
-            _make_task(TaskState.DONE.value, "task-2"),
-            _make_task(TaskState.ERROR.value, "task-1"),
-        ])
 
         call_count = 0
         async def list_tasks_seq(*args, **kwargs):
@@ -330,7 +331,7 @@ class TestContinuousTaskPool:
             MagicMock(id="agent-0", state="idle", current_task=None),
             MagicMock(id="agent-1", state="idle", current_task=None),
         ])
-        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
 
         monitor = MagicMock()
         monitor.take_snapshot = AsyncMock(return_value={})
@@ -338,8 +339,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=dispatch_once), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
 
             loop_task = asyncio.create_task(
                 daemon._execution_loop_inner(db, MagicMock(), MagicMock(), MagicMock(), monitor, "pipe-1")
@@ -364,7 +365,7 @@ class TestContinuousTaskPool:
         task_started = asyncio.Event()
         was_cancelled = False
 
-        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None):
+        async def fake_execute(db, runtime, wt, mw, task_id, agent_id, pipeline_id=None, repo_id=None):
             nonlocal was_cancelled
             task_started.set()
             try:
@@ -383,12 +384,9 @@ class TestContinuousTaskPool:
                 return [("task-1", "agent-0")]
             return []
 
-        db = MagicMock()
-        db.assign_task = AsyncMock()
-        db.update_task_state = AsyncMock()
-        db.release_agent = AsyncMock()
-        db.log_event = AsyncMock()
-        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False))
+        db = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
+        db.get_task = AsyncMock(return_value=MagicMock(repo_id="default", retry_count=0))
 
         call_count = 0
         async def list_tasks(*args, **kwargs):
@@ -412,8 +410,8 @@ class TestContinuousTaskPool:
 
         with patch("forge.core.daemon.Scheduler.dispatch_plan", side_effect=dispatch_once), \
              patch("forge.core.daemon._print_status_table"), \
-             patch("forge.core.daemon._row_to_record", side_effect=lambda t: t), \
-             patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
+             patch("forge.core.daemon.row_to_record", side_effect=lambda t: t), \
+             patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
 
             # Use _execution_loop (not _inner) so the finally block runs shutdown
             loop_task = asyncio.create_task(

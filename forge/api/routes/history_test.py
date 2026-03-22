@@ -278,40 +278,57 @@ class TestHistoryDetail:
 
 
 class TestListHistoryProjectPath:
-    """Unit tests for project_path field in history list response.
+    """Tests for project_path field in history list response.
 
-    These tests exercise the key logic without importing the full API stack,
-    so they run correctly regardless of the installed pydantic version.
+    Uses httpx.AsyncClient against the real FastAPI app to verify that
+    project_path is populated correctly in /history responses.
     """
 
-    def test_project_path_populated_from_project_dir(self):
-        """project_path is set from project_dir value."""
-        # Mirrors the expression used in list_history()
-        project_dir = "/Users/foo/my-project"
-        entry = {"project_path": project_dir or ""}
-        assert entry["project_path"] == "/Users/foo/my-project"
+    async def test_project_path_populated_in_list(self, client):
+        """GET /history items include project_path from the pipeline's project_dir."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+        user_id = await _get_user_id(client, "history-user@example.com")
 
-    def test_project_path_empty_string_when_none(self):
-        """project_path is empty string when project_dir is None."""
-        project_dir = None
-        entry = {"project_path": project_dir or ""}
-        assert entry["project_path"] == ""
+        await _create_pipeline_in_db(
+            client,
+            user_id=user_id,
+            description="Project path test",
+            created_at="2026-01-01T00:00:00+00:00",
+        )
 
-    def test_project_path_key_present_in_list_item_shape(self):
-        """HistoryItem dict always includes the project_path key."""
-        # Build a minimal item the same way list_history() does
-        item = {
-            "pipeline_id": "abc",
-            "description": "Test",
-            "phase": "complete",
-            "created_at": "",
-            "duration": None,
-            "task_count": 0,
-            "build_cmd": None,
-            "test_cmd": None,
-            "github_issue_url": None,
-            "github_issue_number": None,
-            "project_path": "/tmp/proj",
-        }
-        assert "project_path" in item
-        assert item["project_path"] == "/tmp/proj"
+        resp = await client.get("/api/history", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert "project_path" in data[0]
+        assert data[0]["project_path"] == "/tmp/proj"
+
+    async def test_project_path_present_in_empty_history(self, client):
+        """GET /history returns empty list when no pipelines exist."""
+        token = await _register_and_get_token(client)
+        resp = await client.get("/api/history", headers=_auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_multiple_pipelines_each_have_project_path(self, client):
+        """Each item in GET /history includes the project_path key."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+        user_id = await _get_user_id(client, "history-user@example.com")
+
+        for i in range(2):
+            await _create_pipeline_in_db(
+                client,
+                user_id=user_id,
+                description=f"Pipeline {i}",
+                created_at=f"2026-01-0{i+1}T00:00:00+00:00",
+            )
+
+        resp = await client.get("/api/history", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        for item in data:
+            assert "project_path" in item
+            assert item["project_path"] == "/tmp/proj"
