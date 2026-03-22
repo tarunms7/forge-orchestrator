@@ -52,6 +52,8 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
             "implementation_summary": mr.get("implementation_summary", "")
                 or t.get("implementation_summary", ""),
             "state": t.get("state", "done"),
+            "repo_id": t.get("repo_id", "default"),
+            "cost_usd": t.get("cost_usd", 0),
             "added": mr.get("linesAdded", 0) if mr.get("success") else 0,
             "removed": mr.get("linesRemoved", 0) if mr.get("success") else 0,
             "files": mr.get("filesChanged", 0) if mr.get("success") else 0,
@@ -340,7 +342,7 @@ class ForgeApp(App):
 
     async def on_final_approval_screen_create_pr(self, event) -> None:
         """User confirmed PR creation from FinalApprovalScreen."""
-        from forge.tui.pr_creator import push_branch, create_pr, generate_pr_body
+        from forge.tui.pr_creator import push_branch, create_pr, generate_pr_body, create_prs_multi_repo
 
         self._state.apply_event("pipeline:pr_creating", {})
 
@@ -372,15 +374,88 @@ class ForgeApp(App):
         done_tasks = [t for t in task_summaries if t["state"] == "done"]
         failed_tasks = [t for t in task_summaries if t["state"] not in ("done", "todo", "pending")] or None
 
-        # Determine the base branch for the PR target
+        # Determine the base branch for the PR target and detect multi-repo
         base_branch = "main"
+        repos_list: list[dict] = []
         if self._db and self._pipeline_id:
             try:
                 pipeline = await self._db.get_pipeline(self._pipeline_id)
                 base_branch = getattr(pipeline, "base_branch", None) or "main"
+                if pipeline:
+                    repos_list = pipeline.get_repos()
             except Exception:
                 pass
 
+        # ── Multi-repo PR creation ──────────────────────────────────────
+        if len(repos_list) > 1:
+            import json
+            try:
+                repos: dict[str, dict] = {}
+                pipeline_branches: dict[str, str] = {}
+                for entry in repos_list:
+                    rid = entry.get("repo_id", "default")
+                    repos[rid] = {
+                        "project_dir": entry.get("project_dir", project_dir),
+                        "base_branch": entry.get("base_branch", base_branch),
+                    }
+                    pipeline_branches[rid] = entry.get("branch", branch)
+
+                result = await create_prs_multi_repo(
+                    task_summaries=task_summaries,
+                    repos=repos,
+                    pipeline_branches=pipeline_branches,
+                    description=self._pipeline_description(),
+                    elapsed_str=elapsed_str,
+                    questions=all_questions,
+                    failed_tasks=failed_tasks,
+                )
+
+                # Update repos_json with PR URLs
+                for entry in repos_list:
+                    rid = entry.get("repo_id", "default")
+                    if rid in result.pr_urls:
+                        entry["pr_url"] = result.pr_urls[rid]
+                if self._db and self._pipeline_id:
+                    try:
+                        await self._db.update_pipeline_repos_json(
+                            self._pipeline_id, json.dumps(repos_list),
+                        )
+                    except Exception:
+                        logger.warning("Failed to update repos_json with PR URLs", exc_info=True)
+
+                # Show warnings for any failures
+                for rid, err in result.failures.items():
+                    self.notify(f"PR failed for {rid}: {err}", severity="warning")
+
+                if result.pr_urls:
+                    # Emit success with first available URL
+                    first_url = next(iter(result.pr_urls.values()))
+                    self._state.apply_event("pipeline:pr_created", {"pr_url": first_url})
+                    # Show all URLs
+                    url_lines = ", ".join(
+                        f"{rid}: {url}" for rid, url in result.pr_urls.items()
+                    )
+                    self.notify(f"PRs created: {url_lines}", severity="information")
+                else:
+                    self._state.apply_event("pipeline:pr_failed", {"error": "All repo PR creations failed"})
+                    if self._db and self._pipeline_id:
+                        try:
+                            await self._db.update_pipeline_status(self._pipeline_id, "error")
+                        except Exception:
+                            pass
+                    self.notify("PR creation failed for all repos.", severity="error")
+            except Exception as e:
+                logger.error("Multi-repo PR creation error: %s", e, exc_info=True)
+                self._state.apply_event("pipeline:pr_failed", {"error": str(e)})
+                if self._db and self._pipeline_id:
+                    try:
+                        await self._db.update_pipeline_status(self._pipeline_id, "error")
+                    except Exception:
+                        pass
+                self.notify(f"PR creation error: {_escape_markup(e)}", severity="error")
+            return
+
+        # ── Single-repo PR creation (existing path) ────────────────────
         try:
             pushed = await push_branch(project_dir, branch)
             if not pushed:
