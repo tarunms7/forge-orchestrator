@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -114,11 +113,11 @@ def format_cost_breakdown(stats: dict) -> str:
     lines = [
         f"  [bold #e6edf3]Total: ${total:.3f}[/]",
         "",
-        f"  [#a371f7]Planner[/]",
+        "  [#a371f7]Planner[/]",
         _bar(planner, total, "#a371f7"),
-        f"  [#58a6ff]Agent[/]",
+        "  [#58a6ff]Agent[/]",
         _bar(agent_cost, total, "#58a6ff"),
-        f"  [#f0883e]Review[/]",
+        "  [#f0883e]Review[/]",
         _bar(review_cost, total, "#f0883e"),
     ]
     return "\n".join(lines)
