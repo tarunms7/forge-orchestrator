@@ -7,6 +7,7 @@ pipelines, tasks, and agents.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from typing import Optional
 from sqlalchemy import DateTime, Integer, String, Text, JSON, func, or_, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -457,6 +460,23 @@ class Database:
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
             if task:
+                # Guard: validate state transition via TaskStateMachine
+                try:
+                    from forge.core.models import TaskState
+                    from forge.core.state import TaskStateMachine
+                    current = TaskState(task.state)
+                    target = TaskState(state)
+                    if not TaskStateMachine.can_transition(current, target):
+                        logger.warning(
+                            "Invalid state transition for task %s: %s -> %s",
+                            task_id, task.state, state,
+                        )
+                except (ValueError, KeyError):
+                    # Unknown state value — log and proceed
+                    logger.warning(
+                        "Could not validate state transition for task %s: %s -> %s",
+                        task_id, task.state, state,
+                    )
                 task.state = state
                 await session.commit()
 

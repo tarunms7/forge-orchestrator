@@ -1113,6 +1113,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         Clears the worktree if one exists, resets the task state in DB,
         and emits a task:state_changed event so the TUI/subscribers update.
         """
+        # Guard: only retry tasks in ERROR or CANCELLED state
+        task_row = await db.get_task(task_id)
+        if task_row and task_row.state not in ("error", "cancelled"):
+            logger.warning(
+                "Cannot retry task %s: current state '%s' is not error or cancelled",
+                task_id, task_row.state,
+            )
+            return
+
         # Reset state in DB
         await db.update_task_state(task_id, "todo")
 

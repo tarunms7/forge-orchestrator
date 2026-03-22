@@ -652,6 +652,46 @@ class TestRetryTask:
         db.update_task_state.assert_called_once_with("task-1", "todo")
         daemon._emit.assert_called_once()
 
+    async def test_retry_task_rejects_non_retryable_state(self, tmp_path):
+        """retry_task should return early if task is not in error/cancelled state."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("in_progress", "task-1"))
+        db.log_event = AsyncMock()
+
+        daemon._emit = AsyncMock()
+
+        await daemon.retry_task("task-1", db, "pipe-abc")
+
+        # Should NOT have updated state or emitted events
+        db.update_task_state.assert_not_called()
+        daemon._emit.assert_not_called()
+
+    async def test_retry_task_allows_cancelled_state(self, tmp_path):
+        """retry_task should proceed for cancelled tasks."""
+        daemon = _make_daemon(tmp_path)
+
+        db = MagicMock()
+        db.update_task_state = AsyncMock()
+        db.get_task = AsyncMock(return_value=_make_task("cancelled", "task-1"))
+        db.log_event = AsyncMock()
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        with patch("forge.core.daemon.WorktreeManager") as MockWM:
+            MockWM.return_value.remove = MagicMock()
+            await daemon.retry_task("task-1", db, "pipe-abc")
+
+        db.update_task_state.assert_called_once_with("task-1", "todo")
+        assert any(ev[0] == "task:state_changed" for ev in emitted)
+
 
 # ---------------------------------------------------------------------------
 # Tests for run() using central DB path
