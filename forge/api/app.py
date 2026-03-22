@@ -77,14 +77,20 @@ def create_app(
             now = time.monotonic()
             cutoff = now - ttl_seconds
 
-            # Prune followup_store
+            # Prune followup_store using parallel timestamp dict
             followup_store: dict = getattr(app.state, "followup_store", {})
+            followup_ts: dict = getattr(app.state, "followup_store_ts", {})
             stale_keys = [
-                k for k, v in followup_store.items()
-                if getattr(v, "_created_mono", getattr(v, "_store_ts", 0.0)) < cutoff
+                k for k, ts in followup_ts.items()
+                if ts < cutoff and k in followup_store
             ]
             for k in stale_keys:
                 followup_store.pop(k, None)
+                followup_ts.pop(k, None)
+            # Also clean orphaned timestamps
+            orphaned = [k for k in followup_ts if k not in followup_store]
+            for k in orphaned:
+                followup_ts.pop(k, None)
             if stale_keys:
                 logger.info("Pruned %d stale followup_store entries", len(stale_keys))
 
@@ -146,6 +152,7 @@ def create_app(
     app.state.forge_db = db
     app.state.pending_graphs = {}
     app.state.pending_graphs_lock = asyncio.Lock()
+    app.state.followup_store_ts: dict[str, float] = {}
     app.state.rate_limit_store: dict[str, list[float]] = {}
     app.state.rate_limit_last_cleanup: float = 0.0
 

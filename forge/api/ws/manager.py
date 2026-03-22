@@ -97,3 +97,6 @@ class ConnectionManager:
                 conns.remove(ws)
             except ValueError:
                 pass  # Already removed by concurrent disconnect()
+            # Also remove from user connection tracking to prevent lockout
+            for uid_conns in self._user_connections.values():
+                uid_conns.discard(ws)
