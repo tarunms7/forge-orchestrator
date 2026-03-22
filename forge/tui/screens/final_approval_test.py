@@ -256,3 +256,98 @@ def test_format_task_table_partial_mode():
     assert "Auth" in result
     assert "timed out" in result
     assert "blocked by API" in result
+
+
+# --- Multi-repo tests ---
+
+
+class TestMultiRepoFinalApproval:
+    """Tests for multi-repo display in final approval screen."""
+
+    def test_format_task_table_multi_repo(self):
+        """Multi-repo task table groups tasks by repo with headers and aggregate stats."""
+        tasks = [
+            {"title": "Add auth", "state": "done", "added": 80, "removed": 20, "files": 2, "tests_passed": 5, "tests_total": 5, "repo": "backend"},
+            {"title": "Add models", "state": "done", "added": 40, "removed": 10, "files": 1, "tests_passed": 3, "tests_total": 3, "repo": "backend"},
+            {"title": "Add login page", "state": "done", "added": 50, "removed": 5, "files": 3, "tests_passed": 2, "tests_total": 2, "repo": "frontend"},
+        ]
+        result = format_task_table(tasks, multi_repo=True)
+        # Should have repo headers
+        assert "backend" in result
+        assert "frontend" in result
+        # Should have aggregate stats per repo
+        assert "+120/-30" in result  # backend aggregate
+        assert "+50/-5" in result  # frontend aggregate
+        # Should have task titles
+        assert "Add auth" in result
+        assert "Add models" in result
+        assert "Add login page" in result
+
+    def test_format_task_table_single_repo(self):
+        """Single-repo task table should be identical to current behavior (no repo headers)."""
+        tasks = [
+            {"title": "Add auth", "state": "done", "added": 80, "removed": 20, "files": 2, "tests_passed": 5, "tests_total": 5},
+        ]
+        result_single = format_task_table(tasks, multi_repo=False)
+        result_default = format_task_table(tasks)
+        # Should be identical
+        assert result_single == result_default
+        # Should NOT have repo headers
+        assert "backend" not in result_single
+        assert "frontend" not in result_single
+
+    def test_format_summary_stats_multi_repo(self):
+        """Multi-repo summary stats should prepend repo/task counts."""
+        stats = {
+            "added": 170, "removed": 35, "files": 5, "elapsed": "3m 42s",
+            "cost": 1.23, "questions": 2, "repo_count": 2, "task_count": 5,
+        }
+        result = format_summary_stats(stats, multi_repo=True)
+        assert "2 repos, 5 tasks" in result
+        assert "+170" in result
+        assert "-35" in result
+        assert "$1.23" in result
+
+    def test_format_summary_stats_single_repo(self):
+        """Single-repo summary stats should NOT have repo/task prefix."""
+        stats = {
+            "added": 170, "removed": 35, "files": 5, "elapsed": "3m 42s",
+            "cost": 1.23, "questions": 2,
+        }
+        result_single = format_summary_stats(stats, multi_repo=False)
+        result_default = format_summary_stats(stats)
+        assert result_single == result_default
+        assert "repos" not in result_single
+
+    def test_format_task_table_multi_repo_with_errors(self):
+        """Multi-repo task table should handle error/blocked/cancelled states."""
+        tasks = [
+            {"title": "Add auth", "state": "done", "added": 80, "removed": 20, "files": 2, "repo": "backend"},
+            {"title": "Add API", "state": "error", "error": "timed out", "repo": "backend"},
+            {"title": "Add login", "state": "cancelled", "repo": "frontend"},
+        ]
+        result = format_task_table(tasks, multi_repo=True)
+        assert "backend" in result
+        assert "frontend" in result
+        assert "✅" in result
+        assert "❌" in result
+        assert "✘" in result or "cancelled" in result
+
+
+class TestFinalApprovalCreatePrsButton:
+    """Tests for multi-repo PR button text."""
+
+    def test_final_approval_create_prs_button(self):
+        """Button text should be 'Create PRs' for multi-repo and 'Create PR' for single."""
+        # Multi-repo screen
+        multi_screen = FinalApprovalScreen(
+            stats={}, tasks=[], pipeline_branch="feat/x",
+            multi_repo=True, repos=[{"repo_id": "backend"}, {"repo_id": "frontend"}],
+        )
+        assert multi_screen._multi_repo is True
+
+        # Single-repo screen
+        single_screen = FinalApprovalScreen(
+            stats={}, tasks=[], pipeline_branch="feat/x",
+        )
+        assert single_screen._multi_repo is False
