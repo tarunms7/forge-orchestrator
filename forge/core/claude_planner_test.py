@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from forge.core.claude_planner import PLANNER_SYSTEM_PROMPT, ClaudePlannerLLM
+from forge.core.claude_planner import PLANNER_SYSTEM_PROMPT, ClaudePlannerLLM, _extract_json
 from forge.core.errors import SdkCallError
 
 
@@ -100,6 +100,50 @@ class TestBuildPrompt:
         # Should not raise even if file doesn't exist
         prompt = planner._build_prompt("task", "", None)
         assert "Respond with ONLY the TaskGraph JSON." in prompt
+
+
+class TestExtractJson:
+    """Tests for _extract_json string-aware brace matching."""
+
+    def test_plain_json(self):
+        assert _extract_json('{"tasks": []}') == '{"tasks": []}'
+
+    def test_json_in_markdown_fence(self):
+        text = '```json\n{"tasks": []}\n```'
+        assert _extract_json(text) == '{"tasks": []}'
+
+    def test_trailing_text_stripped(self):
+        """Text after the JSON object should be excluded."""
+        text = '{"tasks": []} some trailing commentary'
+        assert _extract_json(text) == '{"tasks": []}'
+
+    def test_braces_in_strings_not_confused(self):
+        """Braces inside JSON string values should not break extraction."""
+        text = '{"description": "handle {edge} cases", "id": 1} extra text here'
+        result = _extract_json(text)
+        assert result == '{"description": "handle {edge} cases", "id": 1}'
+
+    def test_escaped_quotes_in_strings(self):
+        """Escaped quotes should not break string tracking."""
+        text = r'{"msg": "say \"hello\"", "n": 1} trailing'
+        result = _extract_json(text)
+        assert '"msg"' in result
+        assert result.endswith("}")
+        assert "trailing" not in result
+
+    def test_nested_objects(self):
+        text = '{"a": {"b": {"c": 1}}} after'
+        assert _extract_json(text) == '{"a": {"b": {"c": 1}}}'
+
+    def test_no_json(self):
+        assert _extract_json("no json here") == "no json here"
+
+    def test_fallback_unbalanced(self):
+        """Unbalanced braces should fall back to rfind."""
+        text = '{"key": "value"'
+        result = _extract_json(text)
+        # No closing brace at depth 0, falls back — still returns something
+        assert result == text
 
 
 class TestGeneratePlanSdkError:

@@ -76,14 +76,20 @@ def _detect_excluded_repos(user_input: str, repo_ids: set[str]) -> set[str]:
     a repo name, that repo is excluded.
     """
     excluded = set()
+    # Pre-compile word-boundary patterns for each repo id to avoid
+    # substring false positives (e.g. "web" matching "webutils").
+    repo_patterns = {
+        repo_id: re.compile(r"\b" + re.escape(repo_id.lower()) + r"\b")
+        for repo_id in repo_ids
+    }
     # Split by sentence boundaries (., !, newlines, commas with spaces)
     sentences = re.split(r"[.!\n]+|,\s+", user_input)
     for sentence in sentences:
         if not _EXCLUDE_KEYWORDS.search(sentence):
             continue
         sentence_lower = sentence.lower()
-        for repo_id in repo_ids:
-            if repo_id.lower() in sentence_lower:
+        for repo_id, pattern in repo_patterns.items():
+            if pattern.search(sentence_lower):
                 excluded.add(repo_id)
     return excluded
 
@@ -94,8 +100,13 @@ def _classify_pipeline_result(task_states: list[str]) -> str:
     if not active_states:
         return "complete"
     done_count = sum(1 for s in active_states if s == "done")
+    blocked_count = sum(1 for s in active_states if s == "blocked")
     if done_count == len(active_states):
         return "complete"
+    # All remaining tasks are either done or blocked — partial success if
+    # at least one task completed.
+    if done_count + blocked_count == len(active_states) and done_count > 0:
+        return "partial_success"
     if done_count == 0:
         return "error"
     return "partial_success"
@@ -562,7 +573,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Decide planning mode
         spec_text = ""
         if spec_path:
-            with open(spec_path, "r") as f:
+            with open(spec_path, "r", encoding="utf-8") as f:
                 spec_text = f.read()
 
         use_deep = deep_plan or _should_use_deep_planning(

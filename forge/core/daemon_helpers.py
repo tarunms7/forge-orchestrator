@@ -89,10 +89,24 @@ def _parse_forge_question(text: str | None) -> dict | None:
         json_text = fence_match.group(1).strip()
     else:
         # Check if there's significant text after the JSON block
-        # Find the closing brace
+        # Find the closing brace using string-aware matching
+        # (ignore braces inside JSON string values)
         brace_depth = 0
         json_end = -1
+        in_string = False
+        escape_next = False
         for i, ch in enumerate(json_text):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_string:
+                escape_next = True
+                continue
+            if ch == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
             if ch == "{":
                 brace_depth += 1
             elif ch == "}":

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.config.settings import ForgeSettings
-from forge.core.daemon import ForgeDaemon, _classify_pipeline_result
+from forge.core.daemon import ForgeDaemon, _classify_pipeline_result, _detect_excluded_repos
 from forge.core.errors import ForgeError
 from forge.core.models import RepoConfig, TaskState
 
@@ -769,6 +769,47 @@ class TestClassifyPipelineResult:
     def test_classify_all_cancelled(self):
         states = ["cancelled", "cancelled"]
         assert _classify_pipeline_result(states) == "complete"
+
+    def test_classify_all_blocked(self):
+        """All tasks blocked with none done → error."""
+        states = ["blocked", "blocked"]
+        assert _classify_pipeline_result(states) == "error"
+
+    def test_classify_blocked_and_done(self):
+        """Mix of blocked and done → partial_success."""
+        states = ["done", "done", "blocked"]
+        assert _classify_pipeline_result(states) == "partial_success"
+
+    def test_classify_blocked_done_cancelled(self):
+        """Cancelled excluded; remaining blocked+done → partial_success."""
+        states = ["done", "blocked", "cancelled"]
+        assert _classify_pipeline_result(states) == "partial_success"
+
+
+class TestDetectExcludedRepos:
+    """Tests for _detect_excluded_repos word-boundary matching."""
+
+    def test_exact_match(self):
+        result = _detect_excluded_repos("skip web", {"web"})
+        assert result == {"web"}
+
+    def test_no_substring_match(self):
+        """'web' should NOT match 'webutils' (word boundary)."""
+        result = _detect_excluded_repos("skip webutils", {"web"})
+        assert result == set()
+
+    def test_substring_repo_not_falsely_excluded(self):
+        """Repo 'web' should NOT match inside 'webutils' (no word boundary)."""
+        result = _detect_excluded_repos("ignore webutils", {"web"})
+        assert result == set()
+
+    def test_multiple_repos(self):
+        result = _detect_excluded_repos("ignore web, skip api", {"web", "api", "core"})
+        assert result == {"web", "api"}
+
+    def test_no_exclude_keyword(self):
+        result = _detect_excluded_repos("work on web", {"web"})
+        assert result == set()
 
 
 # ---------------------------------------------------------------------------
