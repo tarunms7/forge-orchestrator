@@ -268,3 +268,66 @@ class TestDiffFromDBEvents:
         )
         assert resp.status_code == 200
         assert resp.json()["diff"] == ""
+
+    async def test_pipeline_diff_includes_repo_id_prefix(self, client_with_app):
+        """Diff sections should be prefixed with '# repo: <repo_id>\\n'.
+
+        When merge events have a repo_id in their payload, each diff section
+        should start with '# repo: <repo_id>'. Events without a repo_id should
+        default to '# repo: default'.
+        """
+        client, app = client_with_app
+        db = app.state.db
+        user_id, token = await _register_and_get_user_id_and_token(
+            client, email="diff-repo-id@example.com"
+        )
+
+        pipeline_id = "test-pipe-repo-id"
+        await db.create_pipeline(
+            id=pipeline_id,
+            description="repo_id prefix test",
+            project_dir="/tmp/proj",
+            user_id=user_id,
+        )
+
+        # Event with explicit repo_id
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t1",
+            event_type="task:merge_result",
+            payload={
+                "success": True,
+                "diff": "diff --git a/backend/main.py\n+new line",
+                "repo_id": "backend",
+            },
+        )
+
+        # Event without repo_id — should default to "default"
+        await db.log_event(
+            pipeline_id=pipeline_id,
+            task_id="t2",
+            event_type="task:merge_result",
+            payload={
+                "success": True,
+                "diff": "diff --git a/frontend/app.ts\n+another line",
+            },
+        )
+
+        resp = await client.get(
+            f"/api/tasks/{pipeline_id}/diff",
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        diff_text = data["diff"]
+
+        # Each section must be prefixed with the repo header
+        assert "# repo: backend\n" in diff_text
+        assert "# repo: default\n" in diff_text
+
+        # The actual diff content must still be present
+        assert "diff --git a/backend/main.py" in diff_text
+        assert "diff --git a/frontend/app.ts" in diff_text
+
+        # The backend section must come before the default section
+        assert diff_text.index("# repo: backend") < diff_text.index("# repo: default")
