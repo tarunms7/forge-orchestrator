@@ -41,6 +41,7 @@ async def async_subprocess(
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=cwd,
+        stdin=asyncio.subprocess.DEVNULL,  # Prevent hangs on interactive prompts
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

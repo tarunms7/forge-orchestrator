@@ -1926,7 +1926,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     _last_timeout_check = now
                     await self._check_question_timeouts(db, pipeline_id)
 
-            # AWAITING_APPROVAL, BLOCKED, and CANCELLED count as "parked" — not blocking the loop
+            # AWAITING_APPROVAL, BLOCKED, and CANCELLED count as "parked"
+            # Note: AWAITING_INPUT is NOT parked — the loop needs to poll for
+            # answered questions and emit pause/resume events.
             parked_states = (
                 TaskState.DONE.value,
                 TaskState.ERROR.value,
@@ -1936,9 +1938,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             all_parked = all(t.state in parked_states for t in tasks)
             if all_parked:
-                # If any tasks are still awaiting approval, sleep and poll
-                # rather than exiting — approvals/rejections create new work
-                has_awaiting = any(t.state == TaskState.AWAITING_APPROVAL.value for t in tasks)
+                # If any tasks are still awaiting approval or input, sleep and poll
+                # rather than exiting — answers/approvals create new work
+                has_awaiting = any(
+                    t.state in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value)
+                    for t in tasks
+                )
                 if has_awaiting:
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
@@ -2078,9 +2083,27 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     ):
                         await asyncio.sleep(self._settings.scheduler_poll_interval)
                         continue
-                    console.print(
-                        "[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]"
-                    )
+                    # Check if there are still TODO tasks that can't be dispatched
+                    # (e.g., all agents are busy, or dependencies haven't resolved yet)
+                    has_todo = any(t.state == TaskState.TODO.value for t in tasks)
+                    has_blocked = any(t.state == TaskState.BLOCKED.value for t in tasks)
+                    if has_todo:
+                        # TODO tasks exist but can't be dispatched — wait for agents
+                        logger.debug("TODO tasks exist but no dispatch possible, waiting...")
+                        await asyncio.sleep(self._settings.scheduler_poll_interval)
+                        continue
+                    if has_blocked and not any(
+                        t.state in (TaskState.TODO.value, TaskState.IN_PROGRESS.value)
+                        for t in tasks
+                    ):
+                        # All remaining non-terminal tasks are BLOCKED with nothing to unblock them
+                        console.print(
+                            "[bold red]All remaining tasks are blocked — dependency failure cascade.[/bold red]"
+                        )
+                    else:
+                        console.print(
+                            "[yellow]No tasks to dispatch and none in progress. Stopping.[/yellow]"
+                        )
                     break
                 _done, _pending = await asyncio.wait(
                     self._active_tasks.values(),
