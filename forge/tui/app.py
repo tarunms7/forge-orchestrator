@@ -848,7 +848,10 @@ class ForgeApp(App):
 
             self._bus.subscribe(evt_type, _handler)
 
-        repos = self._resolve_repos()
+        # Use self._repos which includes per-repo base branch overrides
+        # from the branch selectors. Do NOT re-resolve from disk — that
+        # would discard the user's branch selections.
+        repos = self._repos
         self._daemon = ForgeDaemon(
             self._project_dir,
             settings=settings,
