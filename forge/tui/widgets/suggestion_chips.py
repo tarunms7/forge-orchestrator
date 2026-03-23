@@ -1,4 +1,8 @@
-"""Horizontal chip selector for agent question suggestions."""
+"""Suggestion chip selector for agent question suggestions.
+
+Each suggestion is rendered on its own line for readability.
+User can press 1-9 to select, or Tab to cycle and Enter to confirm.
+"""
 
 from __future__ import annotations
 
@@ -7,15 +11,17 @@ from textual.widget import Widget
 
 
 def format_chips(suggestions: list[str], selected: int = -1) -> str:
+    """Format suggestions as numbered lines, one per row."""
     if not suggestions:
         return ""
-    parts = []
+    lines = []
     for i, s in enumerate(suggestions):
+        num = f"{i + 1}"
         if i == selected:
-            parts.append(f"[bold reverse #58a6ff] {i + 1}. {s} [/]")
+            lines.append(f"  [bold #58a6ff on #1c3a5f] {num}. {s} [/]")
         else:
-            parts.append(f"[#58a6ff on #1c3a5f] {i + 1}. {s} [/]")
-    return "  ".join(parts)
+            lines.append(f"  [#58a6ff]{num}.[/] [#c9d1d9]{s}[/]")
+    return "\n".join(lines)
 
 
 class SuggestionChips(Widget):
@@ -24,7 +30,7 @@ class SuggestionChips(Widget):
             self.text = text
             super().__init__()
 
-    DEFAULT_CSS = "SuggestionChips { height: 1; margin: 0 1; }"
+    DEFAULT_CSS = "SuggestionChips { height: auto; max-height: 8; margin: 0 1; }"
 
     def __init__(self, suggestions: list[str] | None = None) -> None:
         super().__init__()

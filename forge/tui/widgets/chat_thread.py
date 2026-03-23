@@ -27,12 +27,20 @@ def format_work_log(lines: list[str]) -> str:
 
 
 def format_question_card(question: dict) -> str:
+    """Format a question card with clear visual structure."""
     q = question.get("question", "")
     ctx = question.get("context", "")
     parts = []
+    parts.append("[bold #f0883e]━━━ Question from Planner ━━━[/]")
+    parts.append("")
     if ctx:
-        parts.append(f"[#c9d1d9]{_escape(ctx)}[/]")
-    parts.append(f"\n[#f0883e]{_escape(q)}[/]")
+        parts.append(f"[#8b949e]{_escape(ctx)}[/]")
+        parts.append("")
+    parts.append(f"[bold #f0883e]{_escape(q)}[/]")
+    parts.append("")
+    parts.append(
+        "[#6e7681]Type your answer below, or press a number key (1-9) to select a suggestion:[/]"
+    )
     return "\n".join(parts)
 
 
@@ -52,7 +60,16 @@ class ChatThread(Widget):
     DEFAULT_CSS = """
     ChatThread { height: 1fr; }
     ChatThread VerticalScroll { height: 1fr; }
-    ChatThread Input { dock: bottom; margin: 0 1; }
+    ChatThread SuggestionChips { height: auto; max-height: 8; }
+    ChatThread Input {
+        dock: bottom;
+        margin: 0 1;
+        border: tall #30363d;
+        background: #161b22;
+    }
+    ChatThread Input:focus {
+        border: tall #58a6ff;
+    }
     """
 
     def __init__(self, task_id: str = "", mode: str = "answer") -> None:
@@ -105,11 +122,21 @@ class ChatThread(Widget):
         self._work_lines = work_lines
         self._history = history or []
         chips = self.query_one(SuggestionChips)
-        suggestions = question.get("suggestions", [])
+        suggestions = list(question.get("suggestions", []))
         suggestions.append("Let agent decide")
         chips.update_suggestions(suggestions)
+        chips.display = True
         self._render_scroll_content()
-        self.query_one("#chat-input", Input).focus()
+        # Focus the input after a short delay to ensure rendering is complete
+        self.set_timer(0.1, self._focus_input)
+
+    def _focus_input(self) -> None:
+        """Focus the chat input. Called after a short delay to ensure widgets are mounted."""
+        try:
+            inp = self.query_one("#chat-input", Input)
+            inp.focus()
+        except Exception:
+            pass
 
     def clear_question(self) -> None:
         self._question = None
@@ -118,12 +145,23 @@ class ChatThread(Widget):
         self.query_one("#chat-scroll", VerticalScroll).remove_children()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.value.strip():
-            if self._mode == "interjection":
-                self.post_message(self.InterjectionSubmitted(self.task_id, event.value.strip()))
-            else:
-                self.post_message(self.AnswerSubmitted(self.task_id, event.value.strip()))
-            event.input.value = ""
+        text = event.value.strip()
+        if not text:
+            return
+        # Check if user typed just a number to select a suggestion
+        if text.isdigit() and self._question:
+            chips = self.query_one(SuggestionChips)
+            n = int(text)
+            suggestions = chips._suggestions
+            if 1 <= n <= len(suggestions):
+                event.input.value = ""
+                self.post_message(self.AnswerSubmitted(self.task_id, suggestions[n - 1]))
+                return
+        if self._mode == "interjection":
+            self.post_message(self.InterjectionSubmitted(self.task_id, text))
+        else:
+            self.post_message(self.AnswerSubmitted(self.task_id, text))
+        event.input.value = ""
 
     def on_suggestion_chips_selected(self, event: SuggestionChips.Selected) -> None:
         self.post_message(self.AnswerSubmitted(self.task_id, event.text))
