@@ -320,6 +320,34 @@ def upgrade() -> None:
 
     from forge.core.paths import forge_data_dir
 
+    # Detect if running from a local git clone (editable install / dev mode)
+    forge_pkg_dir = os.path.dirname(os.path.dirname(__file__))  # forge/ package root
+    is_dev = os.path.isdir(os.path.join(forge_pkg_dir, ".git")) or os.path.isfile(
+        os.path.join(forge_pkg_dir, "pyproject.toml")
+    )
+
+    if is_dev:
+        click.echo("Detected development install (local git clone).")
+        click.echo(f"Pulling latest from git in {forge_pkg_dir}...")
+        pull = subprocess.run(
+            ["git", "pull"],
+            cwd=forge_pkg_dir,
+            capture_output=True,
+            text=True,
+        )
+        if pull.returncode == 0:
+            click.echo(pull.stdout.strip() if pull.stdout.strip() else "Already up to date.")
+            # Reinstall in dev mode to pick up any new dependencies
+            pip = shutil.which("pip") or sys.executable + " -m pip"
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", ".[web]", "-q"],
+                cwd=forge_pkg_dir,
+            )
+            click.echo("Done. Restart forge to use the new version.")
+        else:
+            click.echo(f"git pull failed:\n{pull.stderr}", err=True)
+        return
+
     uv = shutil.which("uv")
     if not uv:
         click.echo("Error: uv not found. Install it first: https://docs.astral.sh/uv/", err=True)
