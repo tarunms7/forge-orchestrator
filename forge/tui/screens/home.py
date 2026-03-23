@@ -7,8 +7,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Static, TextArea
 
+from forge.tui.widgets.branch_selector import BranchInput, BranchSelector
 from forge.tui.widgets.logo import ForgeLogo
 from forge.tui.widgets.pipeline_list import PipelineList
 from forge.tui.widgets.shortcut_bar import ShortcutBar
@@ -120,15 +121,15 @@ class HomeScreen(Screen):
         width: 1fr;
         height: auto;
     }
-    .branch-field Input {
-        height: 3;
-        border: tall #30363d;
-        background: #161b22;
-        color: #e6edf3;
-        padding: 0 1;
+    .workspace-repo-row {
+        width: 100%;
+        height: auto;
     }
-    .branch-field Input:focus {
-        border: tall #58a6ff;
+    .repo-id-label {
+        width: 15;
+        height: 3;
+        content-align: left middle;
+        color: #58a6ff;
     }
     .branch-label {
         color: #8b949e;
@@ -158,18 +159,29 @@ class HomeScreen(Screen):
     ]
 
     class TaskSubmitted(Message):
-        def __init__(self, task: str, base_branch: str = "main", branch_name: str = "") -> None:
+        def __init__(
+            self,
+            task: str,
+            base_branch: str = "main",
+            branch_name: str = "",
+            per_repo_base_branches: dict[str, str] | None = None,
+        ) -> None:
             self.task = task
             self.base_branch = base_branch
             self.branch_name = branch_name
+            self.per_repo_base_branches = per_repo_base_branches
             super().__init__()
 
     def __init__(
-        self, recent_pipelines: list[dict] | None = None, repos: list | None = None
+        self,
+        recent_pipelines: list[dict] | None = None,
+        repos: list | None = None,
+        project_dir: str = "",
     ) -> None:
         super().__init__()
         self._recent_pipelines = recent_pipelines or []
         self._repos = repos or []
+        self._project_dir = project_dir
         self._is_workspace = len(self._repos) > 1 or (
             len(self._repos) == 1 and self._repos[0].id != "default"
         )
@@ -192,23 +204,29 @@ class HomeScreen(Screen):
                 yield PromptTextArea(id="prompt-input")
                 yield Static(shortcuts_text, id="shortcuts-panel")
             if self._is_workspace:
-                # Workspace mode: show repos as read-only info
-                repo_lines = "  ".join(
-                    f"[#58a6ff]{r.id}[/] [#8b949e]({r.base_branch})[/]" for r in self._repos
-                )
-                yield Static(
-                    f"[#8b949e]Workspace repos:[/]  {repo_lines}\n"
-                    f"[#6e7681 italic]Edit .forge/workspace.toml to change base branches[/]",
-                    id="workspace-info",
-                )
+                yield Static("[#8b949e]Workspace repos[/]", id="workspace-label")
+                for repo in self._repos:
+                    with Horizontal(classes="workspace-repo-row"):
+                        yield Static(f"[#58a6ff]{repo.id}[/]", classes="repo-id-label")
+                        yield BranchSelector(
+                            default=repo.base_branch,
+                            id=f"base-branch-{repo.id}",
+                        )
+                with Vertical(classes="branch-field"):
+                    yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
+                    yield BranchInput(id="branch-name-input")
             else:
                 with Horizontal(id="branch-row"):
                     with Vertical(classes="branch-field"):
                         yield Static("[#8b949e]Base branch[/]", classes="branch-label")
-                        yield Input(value="main", id="base-branch-input")
+                        default_base = self._repos[0].base_branch if self._repos else ""
+                        yield BranchSelector(default=default_base, id="base-branch-selector")
                     with Vertical(classes="branch-field"):
-                        yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
-                        yield Input(placeholder="Auto-generated if empty", id="branch-name-input")
+                        yield Static(
+                            "[#8b949e]Branch name (optional)[/]",
+                            classes="branch-label",
+                        )
+                        yield BranchInput(id="branch-name-input")
             yield Static("Recent pipelines", id="recent-label")
             yield PipelineList()
         yield ShortcutBar(
@@ -220,40 +238,95 @@ class HomeScreen(Screen):
             ]
         )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        import asyncio
+
         pipeline_list = self.query_one(PipelineList)
         pipeline_list.update_pipelines(self._recent_pipelines)
 
+        # Load branches into ALL selectors concurrently (not sequentially)
+        tasks: list = []
+        if self._is_workspace:
+            for repo in self._repos:
+                try:
+                    sel = self.query_one(f"#base-branch-{repo.id}", BranchSelector)
+                    tasks.append(sel.load_branches(repo.path))
+                except Exception:
+                    pass
+        else:
+            try:
+                sel = self.query_one("#base-branch-selector", BranchSelector)
+                repo_path = self._repos[0].path if self._repos else self._project_dir
+                if repo_path:
+                    tasks.append(sel.load_branches(repo_path))
+            except Exception:
+                pass
+
+        # Also load branches into the pipeline branch input
+        try:
+            branch_inp = self.query_one("#branch-name-input", BranchInput)
+            repo_path = self._repos[0].path if self._repos else self._project_dir
+            if repo_path:
+                tasks.append(branch_inp.load_branches(repo_path))
+        except Exception:
+            pass
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
-        """Ctrl+Enter: submit the task prompt."""
+        """Ctrl+S: submit the task prompt."""
         if event.text:
+            per_repo: dict[str, str] | None = None
             if self._is_workspace:
-                # Workspace mode: base branch comes from workspace.toml per-repo,
-                # use the first repo's base branch as the pipeline-level default
-                base_branch = self._repos[0].base_branch if self._repos else "main"
-                branch_name = ""
+                per_repo = {}
+                for repo in self._repos:
+                    try:
+                        sel = self.query_one(f"#base-branch-{repo.id}", BranchSelector)
+                        per_repo[repo.id] = sel.selected_value
+                    except Exception:
+                        per_repo[repo.id] = repo.base_branch
+                base_branch = per_repo.get(self._repos[0].id, "main") if self._repos else "main"
             else:
-                base_branch = self.query_one("#base-branch-input", Input).value.strip() or "main"
-                branch_name = self.query_one("#branch-name-input", Input).value.strip()
+                try:
+                    sel = self.query_one("#base-branch-selector", BranchSelector)
+                    base_branch = sel.selected_value or "main"
+                except Exception:
+                    base_branch = "main"
+            try:
+                branch_inp = self.query_one("#branch-name-input", BranchInput)
+                branch_name = branch_inp.value
+            except Exception:
+                branch_name = ""
             self.post_message(
-                self.TaskSubmitted(event.text, base_branch=base_branch, branch_name=branch_name)
+                self.TaskSubmitted(
+                    event.text,
+                    base_branch=base_branch,
+                    branch_name=branch_name,
+                    per_repo_base_branches=per_repo,
+                )
             )
 
     def on_click(self, event) -> None:
         """Click outside focused widget to unfocus it."""
-        # Let Textual handle focus naturally — clicking a focusable widget
-        # focuses it. If user clicks a non-focusable area, blur everything.
-        from textual.widgets import Input
-
         target = getattr(event, "widget", None) if hasattr(event, "widget") else None
-        if target is not None and not isinstance(target, (PromptTextArea, Input, PipelineList)):
+        focusable = (PromptTextArea, PipelineList, BranchSelector, BranchInput)
+        if target is not None and not isinstance(target, focusable):
             self.set_focus(None)
 
     def action_cycle_focus(self) -> None:
-        """Tab: switch focus between PromptTextArea and PipelineList."""
-        prompt = self.query_one(PromptTextArea)
-        pipeline_list = self.query_one(PipelineList)
-        if prompt.has_focus:
-            pipeline_list.focus()
+        """Tab: cycle focus through prompt → base branch → pipeline branch → history."""
+        focusable: list = [self.query_one(PromptTextArea)]
+        # Add branch selectors
+        for sel in self.query(BranchSelector):
+            focusable.append(sel)
+        for inp in self.query(BranchInput):
+            focusable.append(inp)
+        focusable.append(self.query_one(PipelineList))
+
+        current = self.focused
+        if current in focusable:
+            idx = (focusable.index(current) + 1) % len(focusable)
         else:
-            prompt.focus()
+            idx = 0
+        focusable[idx].focus()
