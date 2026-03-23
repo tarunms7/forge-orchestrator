@@ -328,15 +328,56 @@ def upgrade() -> None:
     repo_pip = "git+https://github.com/tarunms7/forge-orchestrator.git"
     click.echo(f"Upgrading forge-orchestrator from {_version}...")
 
-    # Step 1: Ensure Python 3.12+ is available
-    py_check = subprocess.run(
-        [uv, "python", "list"], capture_output=True, text=True
-    )
-    if "3.12" not in (py_check.stdout or ""):
-        click.echo("Installing Python 3.12 (required by Forge)...")
-        subprocess.run([uv, "python", "install", "3.12"], capture_output=True)
+    # Step 1: Detect if this is a dev install (editable pip install from a git clone)
+    forge_location = shutil.which("forge") or ""
+    is_dev_install = (
+        "site-packages" not in forge_location
+        and os.path.isfile(
+            os.path.join(os.path.dirname(os.path.dirname(forge_location or "/")), "pyproject.toml")
+        )
+    ) or os.path.isfile(os.path.join(os.getcwd(), "forge", "cli", "main.py"))
 
-    # Step 2: Upgrade Python package with web extras
+    if is_dev_install:
+        # Dev install: just git pull in the repo
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if os.path.isdir(os.path.join(repo_root, ".git")):
+            click.echo("Dev install detected — pulling latest from git...")
+            pull = subprocess.run(
+                ["git", "pull"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+            )
+            if pull.returncode == 0:
+                click.echo("Updated. Run `pip install -e '.[web]'` to apply.")
+            else:
+                click.echo(f"git pull failed: {pull.stderr.strip()}", err=True)
+            return
+        click.echo("Dev install detected but no git repo found. Run `git pull` manually.")
+        return
+
+    # Step 2: Ensure Python 3.12+ is available for uv tool install
+    py_check = subprocess.run([uv, "python", "list"], capture_output=True, text=True)
+    has_312 = any(
+        f"3.{v}" in (py_check.stdout or "")
+        for v in range(12, 20)  # 3.12 through 3.19
+    )
+    if not has_312:
+        click.echo("Installing Python 3.12 (required by Forge)...")
+        py_install = subprocess.run(
+            [uv, "python", "install", "3.12"],
+            capture_output=True,
+            text=True,
+        )
+        if py_install.returncode != 0:
+            click.echo(
+                "Error: Could not install Python 3.12.\n"
+                "Install it manually: brew install python@3.12 (macOS) or uv python install 3.12",
+                err=True,
+            )
+            sys.exit(1)
+
+    # Step 3: Upgrade Python package with web extras
     result = subprocess.run(
         [uv, "tool", "install", "--python", "3.12", "--upgrade", "--force", f"{repo_pip}[web]"],
         capture_output=True,
@@ -344,7 +385,17 @@ def upgrade() -> None:
     )
 
     if result.returncode != 0:
-        click.echo(f"Upgrade failed:\n{result.stderr}", err=True)
+        # Provide helpful error message instead of raw pip output
+        stderr = result.stderr or ""
+        if "Python" in stderr and "does not satisfy" in stderr:
+            click.echo(
+                "Error: Python 3.12+ required but not available for uv.\n"
+                "Fix: uv python install 3.12\n"
+                "Or:  brew install python@3.12",
+                err=True,
+            )
+        else:
+            click.echo(f"Upgrade failed:\n{stderr}", err=True)
         sys.exit(1)
 
     # Step 2: Update the cloned repo (for web frontend)
@@ -353,18 +404,26 @@ def upgrade() -> None:
         click.echo("Updating web frontend...")
         subprocess.run(
             ["git", "fetch", "origin", "main", "--quiet"],
-            cwd=repo_dir, capture_output=True,
+            cwd=repo_dir,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "reset", "--hard", "origin/main", "--quiet"],
-            cwd=repo_dir, capture_output=True,
+            cwd=repo_dir,
+            capture_output=True,
         )
     else:
         click.echo("Cloning web frontend...")
         os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
         subprocess.run(
-            ["git", "clone", "--depth", "1",
-             "https://github.com/tarunms7/forge-orchestrator.git", repo_dir],
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "https://github.com/tarunms7/forge-orchestrator.git",
+                repo_dir,
+            ],
             capture_output=True,
         )
 
@@ -374,7 +433,8 @@ def upgrade() -> None:
         click.echo("Installing frontend dependencies...")
         npm_result = subprocess.run(
             ["npm", "install", "--prefix", web_dir, "--silent"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if npm_result.returncode == 0:
             click.echo("Frontend dependencies installed.")

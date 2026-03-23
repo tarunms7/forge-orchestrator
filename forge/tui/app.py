@@ -875,7 +875,7 @@ class ForgeApp(App):
             project_name=os.path.basename(self._project_dir),
         )
 
-        self._pipeline_start_time = asyncio.get_event_loop().time()
+        self._pipeline_start_time = asyncio.get_running_loop().time()
         self._elapsed_timer = self.set_interval(1.0, self._tick_elapsed)
 
         try:
@@ -997,7 +997,7 @@ class ForgeApp(App):
     def _tick_elapsed(self) -> None:
         if self._pipeline_start_time:
             self._state.elapsed_seconds = (
-                asyncio.get_event_loop().time() - self._pipeline_start_time
+                asyncio.get_running_loop().time() - self._pipeline_start_time
             )
             self._state._notify("elapsed")
 

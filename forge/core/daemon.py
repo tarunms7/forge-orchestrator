@@ -645,7 +645,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Run snapshot gathering in a thread to avoid blocking the event loop
         if len(planning_repos) == 1:
             repo = next(iter(planning_repos.values()))
-            self._snapshot = await asyncio.get_event_loop().run_in_executor(
+            self._snapshot = await asyncio.get_running_loop().run_in_executor(
                 None,
                 gather_project_snapshot,
                 repo.path,
@@ -1804,7 +1804,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         import uuid as _uuid_mod
 
         prefix = pipeline_id[:8] if pipeline_id else None
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
         timeout = self._settings.pipeline_timeout_seconds
         # Pipeline pause tracking: timestamp (loop time) when all tasks went into awaiting_input
         _all_paused_since: float | None = None
@@ -1846,7 +1846,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await self._handle_task_exception(tid, exc, db, worktree_mgr, pipeline_id)
 
             # Watchdog: check elapsed time
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = asyncio.get_running_loop().time() - start_time
             if timeout > 0 and elapsed > timeout:
                 logger.error("Pipeline timeout exceeded (%ds > %ds)", int(elapsed), timeout)
                 all_tasks = await (
@@ -1886,7 +1886,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Periodic question-timeout checker (every 30 s)
             if pipeline_id:
-                now = asyncio.get_event_loop().time()
+                now = asyncio.get_running_loop().time()
                 if now - _last_timeout_check >= 30.0:
                     _last_timeout_check = now
                     await self._check_question_timeouts(db, pipeline_id)
@@ -1930,7 +1930,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if pipeline_id:
                     # If we were tracking a pause window, close it out now
                     if _all_paused_since is not None:
-                        paused_elapsed = asyncio.get_event_loop().time() - _all_paused_since
+                        paused_elapsed = asyncio.get_running_loop().time() - _all_paused_since
                         _all_paused_since = None
                         await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
                         await db.set_pipeline_paused_at(pipeline_id, None)
@@ -1975,7 +1975,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if all_awaiting_input:
                     if _all_paused_since is None:
                         # Transition into paused state
-                        _all_paused_since = asyncio.get_event_loop().time()
+                        _all_paused_since = asyncio.get_running_loop().time()
                         paused_at_iso = datetime.now(UTC).isoformat()
                         await db.set_pipeline_paused_at(pipeline_id, paused_at_iso)
                         await self._emit(
@@ -1995,7 +1995,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 else:
                     if _all_paused_since is not None:
                         # Tasks have resumed; accumulate pause duration
-                        paused_elapsed = asyncio.get_event_loop().time() - _all_paused_since
+                        paused_elapsed = asyncio.get_running_loop().time() - _all_paused_since
                         _all_paused_since = None
                         await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
                         await db.set_pipeline_paused_at(pipeline_id, None)
