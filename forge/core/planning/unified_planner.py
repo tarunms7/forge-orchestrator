@@ -123,15 +123,26 @@ class UnifiedPlanner:
                 autonomy=self._autonomy,
                 remaining=self._question_limit - questions_asked,
             )
+            # Load project instructions from CLAUDE.md if available
+            claude_md_content = ""
+            if self._cwd:
+                from forge.agents.adapter import _load_claude_md
+
+                claude_md_content = _load_claude_md(self._cwd) or ""
+
             system_prompt = _build_unified_system_prompt(
-                question_protocol, lessons_block=lessons_block, repo_ids=self._repo_ids
+                question_protocol,
+                lessons_block=lessons_block,
+                repo_ids=self._repo_ids,
+                claude_md=claude_md_content,
             )
 
             options = ClaudeCodeOptions(
                 system_prompt=system_prompt,
                 max_turns=self._max_turns,
                 model=self._model,
-                # Full codebase read access — the key improvement over the old Architect
+                # Planner runs in the MAIN REPO (not a worktree) — must NOT write files.
+                # Edit/Write are blocked to prevent polluting the user's working tree.
                 disallowed_tools=["Edit", "Write"],
                 permission_mode="acceptEdits",
             )
@@ -335,7 +346,10 @@ class UnifiedPlanner:
 
 
 def _build_unified_system_prompt(
-    question_protocol: str, lessons_block: str = "", repo_ids: set[str] | None = None
+    question_protocol: str,
+    lessons_block: str = "",
+    repo_ids: set[str] | None = None,
+    claude_md: str = "",
 ) -> str:
     """Build the unified planner's system prompt."""
     multi_repo_section = ""
@@ -414,6 +428,8 @@ You have FULL READ ACCESS to the codebase:
 Use these tools to understand the codebase BEFORE planning. You are not working
 from a summary — you have direct access to the actual code.
 
+{"## Project Instructions (from CLAUDE.md)" + chr(10) + chr(10) + "These are the project's conventions and instructions. Follow them when designing tasks — agents will also receive these instructions." + chr(10) + chr(10) + claude_md if claude_md else ""}
+
 ## Workflow
 
 ### Phase 1: Explore (use as many turns as needed)
@@ -434,10 +450,16 @@ Then explore strategically:
 Do NOT read files "just to be thorough." Do NOT read test files or generated files
 unless the task specifically involves them.
 
-### Phase 2: Clarify (if needed)
+### Phase 2: Clarify (REQUIRED for ambiguous tasks)
 
-If the request is ambiguous and you have questions remaining, ask BEFORE planning.
-It is better to pause for 30 seconds than to build the wrong plan.
+Before producing a plan, evaluate these three questions:
+1. Are there multiple valid interpretations of this request?
+2. Would asking one question save 10 minutes of wrong work?
+3. Is there a technology, pattern, or approach choice the user should decide?
+
+If ANY answer is yes: **you MUST ask** using the FORGE_QUESTION protocol below.
+Do NOT proceed with assumptions when a 30-second question would give certainty.
+A plan built on wrong assumptions wastes the entire pipeline budget.
 
 {question_protocol}
 
