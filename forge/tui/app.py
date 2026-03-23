@@ -197,7 +197,9 @@ class ForgeApp(App):
         await self.mount(CommandPalette(actions=palette_actions))
         recent = await self._load_recent_pipelines()
         repos = self._resolve_repos()
-        self.push_screen(HomeScreen(recent_pipelines=recent, repos=repos))
+        self.push_screen(
+            HomeScreen(recent_pipelines=recent, repos=repos, project_dir=self._project_dir)
+        )
         self._state.on_change(self._on_state_change)
 
     def _on_state_change(self, field: str) -> None:
@@ -790,6 +792,21 @@ class ForgeApp(App):
         task = event.task
         base_branch = getattr(event, "base_branch", "main") or "main"
         branch_name = getattr(event, "branch_name", "") or ""
+        per_repo = getattr(event, "per_repo_base_branches", None)
+
+        # Apply per-repo base branch overrides from the selectors
+        if per_repo and self._repos:
+            from dataclasses import replace as _dc_replace
+
+            updated: list = []
+            for rc in self._repos:
+                override = per_repo.get(rc.id)
+                if override and override != rc.base_branch:
+                    updated.append(_dc_replace(rc, base_branch=override))
+                else:
+                    updated.append(rc)
+            self._repos = updated
+
         logger.info("Task submitted: %s (base: %s, branch: %s)", task, base_branch, branch_name)
         self._state.base_branch = base_branch
         self._state.apply_event("pipeline:phase_changed", {"phase": "planning"})
@@ -1009,7 +1026,7 @@ class ForgeApp(App):
         """Load recent pipelines and push a fresh HomeScreen."""
         recent = await self._load_recent_pipelines()
         repos = self._resolve_repos()
-        home = HomeScreen(recent_pipelines=recent, repos=repos)
+        home = HomeScreen(recent_pipelines=recent, repos=repos, project_dir=self._project_dir)
         self.push_screen(home)
         # Focus the prompt input
         try:

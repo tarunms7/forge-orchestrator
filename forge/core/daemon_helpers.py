@@ -348,6 +348,54 @@ async def _get_current_branch(repo_path: str) -> str:
     return sym_branch if sym_branch else "main"
 
 
+async def list_local_branches(repo_path: str, include_remote: bool = False) -> list[str]:
+    """Return local branch names (current branch first).
+
+    If *include_remote* is True, also includes remote-tracking branches that
+    don't have a local counterpart (shown as ``origin/branch-name``).
+    Requires a prior ``git fetch`` — does NOT hit the network.
+    """
+    cmd = ["git", "branch", "--format=%(refname:short)"]
+    if include_remote:
+        cmd = ["git", "branch", "-a", "--format=%(refname:short)"]
+    result = await async_subprocess(cmd, cwd=repo_path)
+    if result.returncode != 0:
+        return ["main"]
+    raw = [b.strip() for b in result.stdout.splitlines() if b.strip()]
+    if not raw:
+        return ["main"]
+
+    local: list[str] = []
+    remote_only: list[str] = []
+    local_names: set[str] = set()
+    for b in raw:
+        if b.startswith("origin/"):
+            short = b[len("origin/") :]
+            if short not in local_names and short != "HEAD":
+                remote_only.append(b)
+        else:
+            local.append(b)
+            local_names.add(b)
+
+    # Current branch first
+    current = await _get_current_branch(repo_path)
+    if current in local:
+        local.remove(current)
+        local.insert(0, current)
+
+    return local + remote_only
+
+
+async def fetch_remote_branches(repo_path: str) -> bool:
+    """Run ``git fetch --prune``. Returns True on success."""
+    result = await async_subprocess(
+        ["git", "fetch", "--prune"],
+        cwd=repo_path,
+        timeout=15,
+    )
+    return result.returncode == 0
+
+
 def _build_agent_prompt(
     title: str, description: str, files: list[str], agent_prompt_modifier: str = ""
 ) -> str:
