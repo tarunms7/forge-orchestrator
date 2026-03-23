@@ -237,7 +237,17 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
         uvicorn.run(app, host=host, port=port)
         return
 
-    web_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "web"))
+    from forge.core.paths import forge_web_dir
+
+    web_dir = forge_web_dir()
+    if not os.path.isdir(web_dir):
+        click.echo(
+            f"Web frontend not found at {web_dir}\n"
+            "Run the installer to set it up:\n"
+            "  curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh\n"
+            "\nOr set FORGE_WEB_DIR to point to the web/ directory."
+        )
+        raise SystemExit(1)
 
     # Auto-install dependencies if needed
     if not os.path.isdir(os.path.join(web_dir, "node_modules")):
@@ -250,8 +260,9 @@ def serve(port: int, host: str, db_url: str | None, jwt_secret: str | None, buil
     )
     server_thread.start()
 
-    # Spawn Next.js dev server
-    frontend_proc = subprocess.Popen(["npm", "run", "dev"], cwd=web_dir)
+    # Spawn Next.js dev server with API URL pointing to the FastAPI backend
+    frontend_env = {**os.environ, "NEXT_PUBLIC_API_URL": f"http://{host}:{port}/api"}
+    frontend_proc = subprocess.Popen(["npm", "run", "dev"], cwd=web_dir, env=frontend_env)
 
     click.echo(f"Forge UI at http://localhost:3000 (API at http://localhost:{port})")
 
@@ -307,16 +318,19 @@ def upgrade() -> None:
     import subprocess
     import sys
 
+    from forge.core.paths import forge_data_dir
+
     uv = shutil.which("uv")
     if not uv:
         click.echo("Error: uv not found. Install it first: https://docs.astral.sh/uv/", err=True)
         sys.exit(1)
 
-    repo = "git+https://github.com/tarunms7/forge-orchestrator.git"
+    repo_pip = "git+https://github.com/tarunms7/forge-orchestrator.git"
     click.echo(f"Upgrading forge-orchestrator from {_version}...")
 
+    # Step 1: Upgrade Python package with web extras
     result = subprocess.run(
-        [uv, "tool", "install", "--upgrade", "--force", repo],
+        [uv, "tool", "install", "--upgrade", "--force", f"{repo_pip}[web]"],
         capture_output=True,
         text=True,
     )
@@ -324,6 +338,40 @@ def upgrade() -> None:
     if result.returncode != 0:
         click.echo(f"Upgrade failed:\n{result.stderr}", err=True)
         sys.exit(1)
+
+    # Step 2: Update the cloned repo (for web frontend)
+    repo_dir = os.path.join(forge_data_dir(), "repo")
+    if os.path.isdir(os.path.join(repo_dir, ".git")):
+        click.echo("Updating web frontend...")
+        subprocess.run(
+            ["git", "fetch", "origin", "main", "--quiet"],
+            cwd=repo_dir, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "reset", "--hard", "origin/main", "--quiet"],
+            cwd=repo_dir, capture_output=True,
+        )
+    else:
+        click.echo("Cloning web frontend...")
+        os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--depth", "1",
+             "https://github.com/tarunms7/forge-orchestrator.git", repo_dir],
+            capture_output=True,
+        )
+
+    # Step 3: Install frontend dependencies
+    web_dir = os.path.join(repo_dir, "web")
+    if os.path.isdir(web_dir) and shutil.which("npm"):
+        click.echo("Installing frontend dependencies...")
+        npm_result = subprocess.run(
+            ["npm", "install", "--prefix", web_dir, "--silent"],
+            capture_output=True, text=True,
+        )
+        if npm_result.returncode == 0:
+            click.echo("Frontend dependencies installed.")
+        else:
+            click.echo("Warning: npm install failed — TUI still works, web UI may not.")
 
     # Get the new version — forge --version outputs "Forge, version X.Y.Z"
     ver_result = subprocess.run(
