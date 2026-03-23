@@ -63,8 +63,26 @@ def init(project_dir: str) -> None:
         ],
     )
 
+    # Auto-detect project commands and show helpful summary
+    detected = []
+    if os.path.isfile(os.path.join(project_dir, "pyproject.toml")):
+        detected.append("Python project (pyproject.toml)")
+    if os.path.isfile(os.path.join(project_dir, "package.json")):
+        detected.append("Node.js project (package.json)")
+    if os.path.isfile(os.path.join(project_dir, "Cargo.toml")):
+        detected.append("Rust project (Cargo.toml)")
+    if os.path.isfile(os.path.join(project_dir, "go.mod")):
+        detected.append("Go project (go.mod)")
+    if os.path.isfile(os.path.join(project_dir, "Makefile")):
+        detected.append("Makefile detected")
+    if os.path.isfile(os.path.join(project_dir, "workspace.toml")):
+        detected.append("Multi-repo workspace (workspace.toml)")
+
     click.echo(f"Forge initialized in {forge_dir}")
+    if detected:
+        click.echo(f"  Detected: {', '.join(detected)}")
     click.echo(f"  Config: {os.path.join(forge_dir, 'forge.toml')} — edit to customize")
+    click.echo("  Run `forge tui` to start, or `forge doctor` to verify setup")
 
 
 @cli.command()
@@ -130,11 +148,30 @@ def run(
     if strategy:
         settings.model_strategy = strategy
 
-    daemon = ForgeDaemon(project_dir, settings=settings)
+    # Pre-flight checks before starting the pipeline
+    from forge.core.preflight import run_preflight
+
+    async def _run_with_preflight():
+        repos_dict = {rc.id: rc for rc in repos} if repos else None
+        preflight = await run_preflight(project_dir, repos=repos_dict)
+        if not preflight.passed:
+            for e in preflight.errors:
+                click.echo(f"  ✗ {e.name}: {e.message}", err=True)
+                if e.fix_hint:
+                    click.echo(f"    Fix: {e.fix_hint}", err=True)
+            raise SystemExit(1)
+        for w in preflight.warnings:
+            click.echo(f"  ⚠ {w.name}: {w.message}", err=True)
+
+        daemon = ForgeDaemon(project_dir, settings=settings)
+        await daemon.run(task, spec_path=spec, deep_plan=deep_plan)
+
     try:
-        asyncio.run(daemon.run(task, spec_path=spec, deep_plan=deep_plan))
+        asyncio.run(_run_with_preflight())
     except KeyboardInterrupt:
         click.echo("\nForge interrupted by user.")
+    except SystemExit:
+        raise
     except Exception as e:
         click.echo(f"Forge failed: {e}")
         if ctx.obj.get("verbose"):
