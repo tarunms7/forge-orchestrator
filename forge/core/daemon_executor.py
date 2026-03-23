@@ -1604,6 +1604,12 @@ class ExecutorMixin:
             text = _extract_activity(msg)
             if not text:
                 return
+
+            # Notify health monitor that this task is alive
+            health = getattr(self, "_health_monitor", None)
+            if health:
+                health.record_task_activity(task_id)
+
             _batch.append(text)
             now = time.monotonic()
             if now - _last_flush[0] >= 0.1:

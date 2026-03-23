@@ -239,7 +239,16 @@ class ForgeApp(App):
 
     def _push_final_approval(self, partial: bool = False) -> None:
         """Build stats/tasks summary and push FinalApprovalScreen."""
+        # Alert user the pipeline is done
+        import sys
+
+        sys.stdout.write("\a")  # terminal bell
+        sys.stdout.flush()
+
         state = self._state
+        # TUI notification banner
+        status = "partially completed" if partial else "completed"
+        self.notify(f"Pipeline {status}!", severity="information", timeout=10)
         tasks_list = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
         total_questions = sum(len(v) for v in state.question_history.values())
         elapsed_secs = int(state.elapsed_seconds)
@@ -831,10 +840,33 @@ class ForgeApp(App):
         from forge.config.settings import ForgeSettings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
+        from forge.core.preflight import run_preflight
 
         settings = self._settings or ForgeSettings()
         project_config = ProjectConfig.load(self._project_dir)
         apply_project_config(settings, project_config)
+
+        # Pre-flight checks: catch issues before wasting time on planning
+        repos_dict = {rc.id: rc for rc in self._repos} if self._repos else None
+        preflight = await run_preflight(
+            self._project_dir,
+            base_branch=base_branch,
+            repos=repos_dict,
+        )
+        if not preflight.passed:
+            errors = "\n".join(
+                f"  ✗ {e.name}: {e.message}" + (f"\n    Fix: {e.fix_hint}" if e.fix_hint else "")
+                for e in preflight.errors
+            )
+            self._state.apply_event(
+                "pipeline:error",
+                {"error": f"Pre-flight checks failed:\n{errors}"},
+            )
+            logger.error("Pre-flight failed: %s", preflight.summary())
+            return
+        if preflight.warnings:
+            for w in preflight.warnings:
+                logger.info("Pre-flight warning: %s — %s", w.name, w.message)
 
         emitter = EventEmitter()
         self._bus = EventBus()

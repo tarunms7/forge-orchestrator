@@ -311,10 +311,20 @@ async def test_run_plan_passes_project_path_to_create_pipeline(tmp_project, cent
 
         app._db.create_pipeline = tracked_create
 
+        # Mock preflight to always pass (test env isn't a real git repo)
+        mock_preflight_report = MagicMock()
+        mock_preflight_report.passed = True
+        mock_preflight_report.warnings = []
+
         with (
             patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
             patch("forge.core.events.EventEmitter"),
             patch.object(app, "push_screen"),
+            patch(
+                "forge.core.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=mock_preflight_report,
+            ),
         ):
             app._bus = MagicMock()
             app._source = MagicMock()

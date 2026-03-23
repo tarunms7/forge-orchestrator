@@ -1753,6 +1753,30 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         pipeline_id: str | None = None,
     ) -> None:
         """Loop until all tasks are DONE or ERROR."""
+        # Start health monitor as a background task
+        from forge.core.health_monitor import PipelineHealthMonitor
+
+        health_monitor = None
+        health_task = None
+        if pipeline_id:
+
+            async def _on_stuck_task(task_id: str, reason: str) -> None:
+                logger.warning("Health monitor: task %s stuck — %s", task_id, reason)
+                await self._emit(
+                    "task:agent_output",
+                    {"task_id": task_id, "line": f"⚠ Health monitor: {reason}"},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
+
+            health_monitor = PipelineHealthMonitor(
+                db=db,
+                pipeline_id=pipeline_id,
+                on_stuck_task=_on_stuck_task,
+            )
+            self._health_monitor = health_monitor
+            health_task = asyncio.create_task(health_monitor.run(), name="health-monitor")
+
         try:
             await self._execution_loop_inner(
                 db, runtime, worktree_mgr, merge_worker, monitor, pipeline_id
@@ -1776,6 +1800,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 logger.exception("Failed to emit pipeline:error event after execution loop crash")
             raise
         finally:
+            # Stop health monitor
+            if health_monitor:
+                health_monitor.stop()
+            if health_task and not health_task.done():
+                health_task.cancel()
+                try:
+                    await health_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._health_monitor = None
+
             self._cleanup_answer_handler()
             await self._shutdown_active_tasks()
             if pipeline_id:
