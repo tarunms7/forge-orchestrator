@@ -307,21 +307,19 @@ class HomeScreen(Screen):
                 )
             )
 
-    def on_click(self, event) -> None:
-        """Click outside focused widget to unfocus it."""
-        target = getattr(event, "widget", None) if hasattr(event, "widget") else None
-        focusable = (PromptTextArea, PipelineList, BranchSelector, BranchInput)
-        if target is not None and not isinstance(target, focusable):
-            self.set_focus(None)
-
     def action_cycle_focus(self) -> None:
-        """Tab: cycle focus through prompt → base branch → pipeline branch → history."""
+        """Tab: cycle focus through prompt → branch selectors → history."""
+        from textual.widgets import Select
+
         focusable: list = [self.query_one(PromptTextArea)]
-        # Add branch selectors
-        for sel in self.query(BranchSelector):
+        # Add focusable Select/Input widgets inside branch containers
+        for sel in self.query(Select):
             focusable.append(sel)
-        for inp in self.query(BranchInput):
-            focusable.append(inp)
+        from textual.widgets import Input as TextualInput
+
+        for inp in self.query(TextualInput):
+            if inp.id == "branch-text-input":
+                focusable.append(inp)
         focusable.append(self.query_one(PipelineList))
 
         current = self.focused
