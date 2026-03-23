@@ -178,13 +178,12 @@ async def test_unified_planner_has_full_tool_access(monkeypatch):
     planner = UnifiedPlanner(model="opus", cwd="/tmp", max_turns=30)
     await planner.run(user_input="x", spec_text="x", snapshot_text="x")
 
-    # Should only disallow Edit and Write — NOT Bash, Glob, Grep, Read
+    # Edit/Write blocked (planner runs in main repo, not worktree)
+    # All read tools (Bash, Glob, Grep, Read) should be allowed
     assert "Edit" in captured["disallowed_tools"]
     assert "Write" in captured["disallowed_tools"]
     assert "Bash" not in captured["disallowed_tools"]
     assert "Glob" not in captured["disallowed_tools"]
-    assert "Grep" not in captured["disallowed_tools"]
-    assert "Read" not in captured["disallowed_tools"]
     assert captured["max_turns"] == 30
 
 
@@ -378,6 +377,31 @@ class TestPlannerMultiRepo:
             repo_ids={"default"},
         )
         assert "## Multi-Repo Workspace" not in prompt
+
+    def test_planner_prompt_includes_claude_md(self):
+        """CLAUDE.md content should appear in the planner system prompt."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            claude_md="Always use TypeScript. Never use var.",
+        )
+        assert "## Project Instructions (from CLAUDE.md)" in prompt
+        assert "Always use TypeScript" in prompt
+
+    def test_planner_prompt_no_claude_md_when_empty(self):
+        """Empty CLAUDE.md should not add a section."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+            claude_md="",
+        )
+        assert "## Project Instructions (from CLAUDE.md)" not in prompt
+
+    def test_planner_prompt_stronger_question_protocol(self):
+        """Phase 2 should say REQUIRED, not just 'if needed'."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+        )
+        assert "REQUIRED for ambiguous tasks" in prompt
+        assert "you MUST ask" in prompt
 
     def test_parse_validates_repo_assignments(self):
         """_parse() rejects unknown repo IDs when repo_ids is set."""
