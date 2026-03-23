@@ -13,7 +13,7 @@ Forge is a multi-agent orchestration engine. You describe what you want. Forge p
 
 **One command. Multiple agents. Reviewed code delivered via PR.**
 
-[Install](#install) · [How It Works](#how-it-works) · [Screenshots](#see-it-in-action) · [Configuration](#configuration)
+[Install](#install) · [How It Works](#how-it-works) · [In Action](#see-it-in-action) · [Configuration](#configuration)
 
 </div>
 
