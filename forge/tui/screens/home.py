@@ -239,15 +239,18 @@ class HomeScreen(Screen):
         )
 
     async def on_mount(self) -> None:
+        import asyncio
+
         pipeline_list = self.query_one(PipelineList)
         pipeline_list.update_pipelines(self._recent_pipelines)
 
-        # Load branches into selectors asynchronously
+        # Load branches into ALL selectors concurrently (not sequentially)
+        tasks: list = []
         if self._is_workspace:
             for repo in self._repos:
                 try:
                     sel = self.query_one(f"#base-branch-{repo.id}", BranchSelector)
-                    await sel.load_branches(repo.path)
+                    tasks.append(sel.load_branches(repo.path))
                 except Exception:
                     pass
         else:
@@ -255,18 +258,21 @@ class HomeScreen(Screen):
                 sel = self.query_one("#base-branch-selector", BranchSelector)
                 repo_path = self._repos[0].path if self._repos else self._project_dir
                 if repo_path:
-                    await sel.load_branches(repo_path)
+                    tasks.append(sel.load_branches(repo_path))
             except Exception:
                 pass
 
-        # Load branches into the pipeline branch input too
+        # Also load branches into the pipeline branch input
         try:
             branch_inp = self.query_one("#branch-name-input", BranchInput)
             repo_path = self._repos[0].path if self._repos else self._project_dir
             if repo_path:
-                await branch_inp.load_branches(repo_path)
+                tasks.append(branch_inp.load_branches(repo_path))
         except Exception:
             pass
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
         """Ctrl+S: submit the task prompt."""

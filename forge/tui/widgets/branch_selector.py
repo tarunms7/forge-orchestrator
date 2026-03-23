@@ -6,7 +6,6 @@ BranchInput    — hybrid: free-text input + branch dropdown (pipeline branch).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from rich.text import Text
@@ -20,9 +19,16 @@ logger = logging.getLogger("forge.tui.widgets.branch_selector")
 # ── Constants ────────────────────────────────────────────────────────
 
 _MAX_VISIBLE = 8
+_MAX_BRANCH_DISPLAY = 50
 _MARKER_CURRENT = "●"
 _MARKER_CURSOR = "▸"
 _MARKER_EMPTY = " "
+_CURSOR_IN_TEXT = -1  # Sentinel for "cursor is in the text input" in BranchInput
+
+
+def _truncate(name: str, max_len: int = _MAX_BRANCH_DISPLAY) -> str:
+    """Truncate a branch name with ellipsis if too long."""
+    return name[: max_len - 1] + "…" if len(name) > max_len else name
 
 
 # ── BranchSelector ──────────────────────────────────────────────────
@@ -32,8 +38,8 @@ class BranchSelector(Widget, can_focus=True):
     """Dropdown selector for git branches.
 
     Expands on focus showing a filterable list of branches. Supports
-    keyboard navigation (arrows/j/k), type-to-filter, and ``r`` to
-    fetch remote branches.
+    keyboard navigation (arrows/j/k when not filtering), type-to-filter,
+    and ``r`` to fetch remote branches (when filter is empty).
 
     Usage::
 
@@ -61,10 +67,7 @@ class BranchSelector(Widget, can_focus=True):
         Binding("enter", "select_branch", "Select", show=False, priority=True),
         Binding("escape", "collapse", "Close", show=False, priority=True),
         Binding("up", "cursor_up", "Up", show=False, priority=True),
-        Binding("k", "cursor_up", "Up", show=False, priority=True),
         Binding("down", "cursor_down", "Down", show=False, priority=True),
-        Binding("j", "cursor_down", "Down", show=False, priority=True),
-        Binding("r", "refresh_branches", "Refresh", show=False, priority=True),
         Binding("backspace", "delete_filter_char", "Backspace", show=False, priority=True),
     ]
 
@@ -102,15 +105,16 @@ class BranchSelector(Widget, can_focus=True):
 
     async def load_branches(self, repo_path: str) -> None:
         """Load branches from a git repo. Call after mounting."""
-        from forge.core.daemon_helpers import _get_current_branch, list_local_branches
+        from forge.core.daemon_helpers import list_local_branches
 
         self._repo_path = repo_path
         self._loading = True
         self.refresh()
 
         try:
-            branches = await list_local_branches(repo_path, include_remote=True)
-            current = await _get_current_branch(repo_path)
+            branches, current = await list_local_branches(
+                repo_path, include_remote=True, return_current=True
+            )
         except Exception:
             branches = ["main"]
             current = "main"
@@ -151,8 +155,8 @@ class BranchSelector(Widget, can_focus=True):
 
         if not self._expanded:
             # Collapsed: show selected value with dropdown indicator
-            display = self._selected or "main"
-            if display == self._current_branch:
+            display = _truncate(self._selected or "main")
+            if self._selected == self._current_branch:
                 text.append(f"  {_MARKER_CURRENT} ", style="#3fb950")
             else:
                 text.append("    ")
@@ -193,13 +197,14 @@ class BranchSelector(Widget, can_focus=True):
             else:
                 text.append(f"  {_MARKER_EMPTY} ")
 
-            # Branch name
+            # Branch name (truncated)
+            display = _truncate(branch)
             if is_cursor:
-                text.append(branch, style="#e6edf3 bold")
+                text.append(display, style="#e6edf3 bold")
             elif is_remote:
-                text.append(branch, style="#8b949e")
+                text.append(display, style="#8b949e")
             else:
-                text.append(branch, style="#e6edf3")
+                text.append(display, style="#e6edf3")
 
             # Tags
             if is_current and not is_cursor:
@@ -221,7 +226,9 @@ class BranchSelector(Widget, can_focus=True):
         # Hint at bottom
         text.append("\n  ", style="")
         text.append("r", style="#58a6ff")
-        text.append(": fetch remotes", style="#6e7681")
+        text.append(": fetch remotes  ", style="#6e7681")
+        text.append("↑↓", style="#58a6ff")
+        text.append(": navigate", style="#6e7681")
 
         return text
 
@@ -246,30 +253,41 @@ class BranchSelector(Widget, can_focus=True):
     # ── Key handlers ─────────────────────────────────────────────────
 
     def on_key(self, event: Key) -> None:
-        """Handle printable character input for filtering."""
+        """Handle character input for filtering.
+
+        When filter is empty, j/k/r act as shortcuts (nav/refresh).
+        When filter has content, ALL printable chars (including j/k/r)
+        are appended to the filter — so you can search for "jira" or "release".
+        """
         if not self._expanded:
             return
-        # Let bindings handle special keys
-        if event.key in (
-            "up",
-            "down",
-            "enter",
-            "escape",
-            "backspace",
-            "j",
-            "k",
-            "r",
-            "tab",
-            "shift+tab",
-        ):
+
+        # Always let these pass to bindings
+        if event.key in ("up", "down", "enter", "escape", "backspace", "tab", "shift+tab"):
             return
-        # Printable character → append to filter
-        if event.character and event.character.isprintable() and len(event.character) == 1:
-            self._filter += event.character
-            self._cursor = 0  # Reset cursor on filter change
+
+        char = event.character
+        if not char or not char.isprintable() or len(char) != 1:
+            return
+
+        # j/k/r are shortcuts ONLY when filter is empty
+        if not self._filter and char in ("j", "k", "r"):
+            if char == "j":
+                self.action_cursor_down()
+            elif char == "k":
+                self.action_cursor_up()
+            elif char == "r":
+                self._start_refresh()
             event.prevent_default()
             event.stop()
-            self.refresh()
+            return
+
+        # All other chars (and j/k/r when filter is active) → append to filter
+        self._filter += char
+        self._cursor = 0
+        event.prevent_default()
+        event.stop()
+        self.refresh()
 
     def action_cursor_down(self) -> None:
         if not self._expanded:
@@ -314,11 +332,13 @@ class BranchSelector(Widget, can_focus=True):
             self._cursor = 0
             self.refresh()
 
-    def action_refresh_branches(self) -> None:
+    # ── Remote fetch ─────────────────────────────────────────────────
+
+    def _start_refresh(self) -> None:
+        """Start fetching remote branches in the background."""
         if not self._repo_path:
             return
-        # Fire and forget — run in background
-        asyncio.get_event_loop().create_task(self._do_refresh())
+        self.run_worker(self._do_refresh, exclusive=True)
 
     async def _do_refresh(self) -> None:
         from forge.core.daemon_helpers import fetch_remote_branches
@@ -330,8 +350,9 @@ class BranchSelector(Widget, can_focus=True):
             await self.load_branches(self._repo_path)
         except Exception:
             logger.debug("Failed to fetch remote branches", exc_info=True)
-        self._loading = False
-        self._expanded = True
+            self._loading = False
+        # Only re-expand if we still have focus (user didn't leave)
+        self._expanded = self.has_focus
         self.refresh()
 
 
@@ -390,7 +411,7 @@ class BranchInput(Widget, can_focus=True):
         super().__init__(id=id, classes=classes)
         self._branches: list[str] = []
         self._text: str = ""
-        self._cursor: int = -1  # -1 = in text input, 0+ = in list
+        self._cursor: int = _CURSOR_IN_TEXT
         self._expanded: bool = False
 
     # ── Public API ───────────────────────────────────────────────────
@@ -409,7 +430,8 @@ class BranchInput(Widget, can_focus=True):
         from forge.core.daemon_helpers import list_local_branches
 
         try:
-            self._branches = await list_local_branches(repo_path)
+            branches, _ = await list_local_branches(repo_path, return_current=True)
+            self._branches = branches
         except Exception:
             self._branches = []
         self.refresh()
@@ -422,7 +444,7 @@ class BranchInput(Widget, can_focus=True):
         query = self._text.lower().strip()
         for b in self._branches:
             if not query or query in b.lower():
-                items.append((b, b))
+                items.append((_truncate(b), b))
         return items
 
     # ── Rendering ────────────────────────────────────────────────────
@@ -433,7 +455,7 @@ class BranchInput(Widget, can_focus=True):
         if not self._expanded:
             # Collapsed: show current value or placeholder
             if self._text:
-                text.append(f"  {self._text}", style="#e6edf3")
+                text.append(f"  {_truncate(self._text)}", style="#e6edf3")
             else:
                 text.append("  Auto-generated if empty", style="#8b949e italic")
             text.append("  ▾", style="#8b949e")
@@ -478,7 +500,7 @@ class BranchInput(Widget, can_focus=True):
 
     def on_focus(self) -> None:
         self._expanded = True
-        self._cursor = -1  # Start in text input mode
+        self._cursor = _CURSOR_IN_TEXT
         self.refresh()
 
     def on_blur(self) -> None:
@@ -494,7 +516,7 @@ class BranchInput(Widget, can_focus=True):
             return
         if event.character and event.character.isprintable() and len(event.character) == 1:
             self._text += event.character
-            self._cursor = -1  # Back to input mode
+            self._cursor = _CURSOR_IN_TEXT
             event.prevent_default()
             event.stop()
             self.refresh()
@@ -510,7 +532,7 @@ class BranchInput(Widget, can_focus=True):
     def action_cursor_up(self) -> None:
         if not self._expanded:
             return
-        if self._cursor > -1:
+        if self._cursor > _CURSOR_IN_TEXT:
             self._cursor -= 1
             self.refresh()
 
@@ -531,5 +553,5 @@ class BranchInput(Widget, can_focus=True):
     def action_delete_char(self) -> None:
         if self._text:
             self._text = self._text[:-1]
-            self._cursor = -1
+            self._cursor = _CURSOR_IN_TEXT
             self.refresh()

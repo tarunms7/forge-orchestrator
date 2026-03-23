@@ -348,22 +348,31 @@ async def _get_current_branch(repo_path: str) -> str:
     return sym_branch if sym_branch else "main"
 
 
-async def list_local_branches(repo_path: str, include_remote: bool = False) -> list[str]:
+async def list_local_branches(
+    repo_path: str,
+    include_remote: bool = False,
+    return_current: bool = False,
+) -> list[str] | tuple[list[str], str]:
     """Return local branch names (current branch first).
 
     If *include_remote* is True, also includes remote-tracking branches that
     don't have a local counterpart (shown as ``origin/branch-name``).
     Requires a prior ``git fetch`` — does NOT hit the network.
+
+    If *return_current* is True, returns ``(branches, current_branch)`` tuple
+    to avoid a redundant subprocess call for callers that need both.
     """
     cmd = ["git", "branch", "--format=%(refname:short)"]
     if include_remote:
         cmd = ["git", "branch", "-a", "--format=%(refname:short)"]
     result = await async_subprocess(cmd, cwd=repo_path)
     if result.returncode != 0:
-        return ["main"]
+        fallback = ["main"]
+        return (fallback, "main") if return_current else fallback
     raw = [b.strip() for b in result.stdout.splitlines() if b.strip()]
     if not raw:
-        return ["main"]
+        fallback = ["main"]
+        return (fallback, "main") if return_current else fallback
 
     local: list[str] = []
     remote_only: list[str] = []
@@ -377,13 +386,13 @@ async def list_local_branches(repo_path: str, include_remote: bool = False) -> l
             local.append(b)
             local_names.add(b)
 
-    # Current branch first
     current = await _get_current_branch(repo_path)
     if current in local:
         local.remove(current)
         local.insert(0, current)
 
-    return local + remote_only
+    branches = local + remote_only
+    return (branches, current) if return_current else branches
 
 
 async def fetch_remote_branches(repo_path: str) -> bool:
@@ -391,7 +400,7 @@ async def fetch_remote_branches(repo_path: str) -> bool:
     result = await async_subprocess(
         ["git", "fetch", "--prune"],
         cwd=repo_path,
-        timeout=15,
+        timeout=30,
     )
     return result.returncode == 0
 

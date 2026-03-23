@@ -1,6 +1,7 @@
 """Forge TUI widgets."""
 
 from forge.tui.widgets.agent_output import AgentOutput
+from forge.tui.widgets.branch_selector import BranchInput, BranchSelector
 from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteAction
 from forge.tui.widgets.copy_overlay import CopyOverlay
@@ -19,6 +20,8 @@ from forge.tui.widgets.suggestion_chips import SuggestionChips
 from forge.tui.widgets.task_list import TaskList
 
 __all__ = [
+    "BranchInput",
+    "BranchSelector",
     "AgentOutput",
     "ChatThread",
     "CommandPaletteAction",

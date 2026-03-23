@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import time
+from dataclasses import replace as _dc_replace
 
 from textual.app import App
 from textual.binding import Binding
@@ -796,8 +797,6 @@ class ForgeApp(App):
 
         # Apply per-repo base branch overrides from the selectors
         if per_repo and self._repos:
-            from dataclasses import replace as _dc_replace
-
             updated: list = []
             for rc in self._repos:
                 override = per_repo.get(rc.id)
