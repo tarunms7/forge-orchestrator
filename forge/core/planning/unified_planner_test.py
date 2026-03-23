@@ -378,21 +378,13 @@ class TestPlannerMultiRepo:
         )
         assert "## Multi-Repo Workspace" not in prompt
 
-    def test_planner_prompt_includes_claude_md(self):
-        """CLAUDE.md content should appear in the planner system prompt."""
+    def test_planner_prompt_does_not_include_inline_claude_md(self):
+        """CLAUDE.md is now loaded by the CLI harness via append_system_prompt,
+        not manually injected into our system prompt."""
         prompt = _build_unified_system_prompt(
             question_protocol="Ask questions.",
-            claude_md="Always use TypeScript. Never use var.",
         )
-        assert "## Project Instructions (from CLAUDE.md)" in prompt
-        assert "Always use TypeScript" in prompt
-
-    def test_planner_prompt_no_claude_md_when_empty(self):
-        """Empty CLAUDE.md should not add a section."""
-        prompt = _build_unified_system_prompt(
-            question_protocol="Ask questions.",
-            claude_md="",
-        )
+        # Should NOT have inline CLAUDE.md section — the CLI handles it
         assert "## Project Instructions (from CLAUDE.md)" not in prompt
 
     def test_planner_prompt_stronger_question_protocol(self):

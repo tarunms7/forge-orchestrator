@@ -123,27 +123,26 @@ class UnifiedPlanner:
                 autonomy=self._autonomy,
                 remaining=self._question_limit - questions_asked,
             )
-            # Load project instructions from CLAUDE.md if available
-            claude_md_content = ""
-            if self._cwd:
-                from forge.agents.adapter import _load_claude_md
-
-                claude_md_content = _load_claude_md(self._cwd) or ""
-
+            # CLAUDE.md is loaded automatically by the Claude Code CLI harness
+            # when we use append_system_prompt (not system_prompt). No need to
+            # manually load it here — the CLI handles it.
             system_prompt = _build_unified_system_prompt(
                 question_protocol,
                 lessons_block=lessons_block,
                 repo_ids=self._repo_ids,
-                claude_md=claude_md_content,
             )
 
             options = ClaudeCodeOptions(
-                system_prompt=system_prompt,
+                # Use append_system_prompt instead of system_prompt so the Claude
+                # Code CLI loads its full harness first (skills, CLAUDE.md, memory,
+                # MCP servers, hooks) and we ADD our planning instructions on top.
+                # This gives the planner the same power as interactive Claude Code.
+                append_system_prompt=system_prompt,
                 max_turns=self._max_turns,
                 model=self._model,
                 # Planner runs in the MAIN REPO (not a worktree) — must NOT write files.
                 # Edit/Write are blocked to prevent polluting the user's working tree.
-                disallowed_tools=["Edit", "Write"],
+                disallowed_tools=["Edit", "Write", "NotebookEdit"],
                 permission_mode="acceptEdits",
             )
             if self._cwd:
@@ -349,7 +348,6 @@ def _build_unified_system_prompt(
     question_protocol: str,
     lessons_block: str = "",
     repo_ids: set[str] | None = None,
-    claude_md: str = "",
 ) -> str:
     """Build the unified planner's system prompt."""
     multi_repo_section = ""
@@ -427,8 +425,6 @@ You have FULL READ ACCESS to the codebase:
 
 Use these tools to understand the codebase BEFORE planning. You are not working
 from a summary — you have direct access to the actual code.
-
-{"## Project Instructions (from CLAUDE.md)" + chr(10) + chr(10) + "These are the project's conventions and instructions. Follow them when designing tasks — agents will also receive these instructions." + chr(10) + chr(10) + claude_md if claude_md else ""}
 
 ## Workflow
 
