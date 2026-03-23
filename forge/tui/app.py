@@ -130,9 +130,13 @@ class ForgeApp(App):
 
         self._db_path = forge_db_path()
         self._db = None
+        self._repos: list = []
         self._graph = None
         self._pipeline_id = None
         self._final_approval_pushed = False
+        self._cached_pipeline_branch: str = ""
+        self._cached_base_branch: str = "main"
+        self._force_quit: bool = False
 
     async def _init_db(self):
         """Initialize database connection."""
@@ -197,9 +201,9 @@ class ForgeApp(App):
         palette_actions.insert(4, _stats_action)
         await self.mount(CommandPalette(actions=palette_actions))
         recent = await self._load_recent_pipelines()
-        repos = self._resolve_repos()
+        self._repos = self._resolve_repos()
         self.push_screen(
-            HomeScreen(recent_pipelines=recent, repos=repos, project_dir=self._project_dir)
+            HomeScreen(recent_pipelines=recent, repos=self._repos, project_dir=self._project_dir)
         )
         self._state.on_change(self._on_state_change)
 
@@ -266,8 +270,8 @@ class ForgeApp(App):
         task_summaries = _build_task_summaries(tasks_list)
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
-        pipeline_branch = getattr(self, "_cached_pipeline_branch", "") or ""
-        base_branch = getattr(self, "_cached_base_branch", "main") or "main"
+        pipeline_branch = self._cached_pipeline_branch or ""
+        base_branch = self._cached_base_branch or "main"
         self.push_screen(
             FinalApprovalScreen(
                 stats=stats,
@@ -1024,8 +1028,8 @@ class ForgeApp(App):
     async def _push_fresh_home(self) -> None:
         """Load recent pipelines and push a fresh HomeScreen."""
         recent = await self._load_recent_pipelines()
-        repos = self._resolve_repos()
-        home = HomeScreen(recent_pipelines=recent, repos=repos, project_dir=self._project_dir)
+        self._repos = self._resolve_repos()
+        home = HomeScreen(recent_pipelines=recent, repos=self._repos, project_dir=self._project_dir)
         self.push_screen(home)
         # Focus the prompt input
         try:
@@ -1091,7 +1095,7 @@ class ForgeApp(App):
                 logger.debug("Failed to load pipeline trends", exc_info=True)
 
             try:
-                pipeline_id = getattr(self, "_pipeline_id", None)
+                pipeline_id = self._pipeline_id
                 if pipeline_id:
                     stats = await self._db.get_pipeline_stats(pipeline_id)
                 elif trends:
@@ -1108,7 +1112,7 @@ class ForgeApp(App):
 
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():
-            if getattr(self, "_force_quit", False):
+            if self._force_quit:
                 safe_create_task(self._graceful_quit(), logger=logger, name="graceful-quit")
             else:
                 self.notify(
