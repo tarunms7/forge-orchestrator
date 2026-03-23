@@ -177,6 +177,10 @@ class BranchSelector(Widget, can_focus=True):
             text.append("  [no matching branches]", style="#8b949e italic")
             return text
 
+        # Clamp cursor to valid range (can go stale after filter change or branch reload)
+        if self._cursor >= len(filtered):
+            self._cursor = max(0, len(filtered) - 1)
+
         # Determine visible window (scroll around cursor)
         start = max(0, self._cursor - _MAX_VISIBLE + 1)
         end = min(len(filtered), start + _MAX_VISIBLE)
@@ -470,6 +474,9 @@ class BranchInput(Widget, can_focus=True):
         text.append("│\n", style="#30363d")
 
         items = self._filtered_with_auto()
+        # Clamp cursor to valid range
+        if self._cursor >= len(items):
+            self._cursor = max(_CURSOR_IN_TEXT, len(items) - 1)
         visible = items[: _MAX_VISIBLE + 1]  # +1 for auto-generate
         for i, (display, _val) in enumerate(visible):
             is_cursor = i == self._cursor

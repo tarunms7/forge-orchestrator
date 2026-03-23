@@ -84,6 +84,63 @@ class TestBranchSelectorState:
         assert sel._filtered_branches() == ["main"]
 
 
+class TestBranchSelectorEdgeCases:
+    """Edge case and negative scenario tests for BranchSelector."""
+
+    def test_select_on_empty_filtered_is_noop(self):
+        sel = BranchSelector()
+        sel._branches = ["main", "develop"]
+        sel._expanded = True
+        sel._filter = "nonexistent"
+        sel._cursor = 0
+        sel.action_select_branch()
+        assert sel._expanded  # still expanded, nothing happened
+        assert sel.selected_value == "main"  # unchanged from default
+
+    def test_backspace_clears_filter_char(self):
+        sel = BranchSelector()
+        sel._branches = ["main"]
+        sel._expanded = True
+        sel._filter = "ma"
+        sel._cursor = 3  # stale cursor
+        sel.action_delete_filter_char()
+        assert sel._filter == "m"
+        assert sel._cursor == 0  # reset on backspace
+
+    def test_backspace_on_empty_filter_is_noop(self):
+        sel = BranchSelector()
+        sel._filter = ""
+        sel.action_delete_filter_char()
+        assert sel._filter == ""
+
+    def test_load_branches_exception_fallback(self):
+        """If load_branches fails, defaults to ["main"]."""
+        sel = BranchSelector()
+        # Simulate post-exception state
+        sel._branches = ["main"]
+        sel._current_branch = "main"
+        sel._loading = False
+        assert sel.selected_value == "main"
+
+    def test_cursor_clamped_after_filter_shrinks_list(self):
+        sel = BranchSelector()
+        sel._branches = ["main", "develop", "staging", "feat/a", "feat/b"]
+        sel._expanded = True
+        sel._cursor = 4  # pointing at feat/b
+        sel._filter = "main"  # narrows to just ["main"]
+        # render() should clamp cursor
+        sel.render()
+        assert sel._cursor == 0
+
+    def test_collapse_clears_filter(self):
+        sel = BranchSelector()
+        sel._expanded = True
+        sel._filter = "some filter"
+        sel.action_collapse()
+        assert not sel._expanded
+        assert sel._filter == ""
+
+
 class TestBranchInputState:
     """Unit tests for BranchInput internal state."""
 
@@ -131,6 +188,13 @@ class TestBranchInputState:
         inp._cursor = 1  # last item (0=auto, 1=main)
         inp.action_cursor_down()
         assert inp._cursor == 1
+
+    def test_empty_branches_still_has_auto_generate(self):
+        inp = BranchInput()
+        inp._branches = []
+        items = inp._filtered_with_auto()
+        assert len(items) == 1
+        assert items[0] == ("✦ Auto-generate from task", "")
 
 
 @pytest.mark.asyncio
