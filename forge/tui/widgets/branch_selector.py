@@ -232,6 +232,9 @@ class BranchInput(Vertical):
             inp = self.query_one(Input)
             text = inp.value.strip()
             if text:
+                # Strip origin/ prefix for consistency
+                if text.startswith("origin/"):
+                    text = text[len("origin/") :]
                 return text
         except Exception:
             pass
@@ -240,7 +243,10 @@ class BranchInput(Vertical):
             val = sel.value
             if val is Select.BLANK or val is None:
                 return ""
-            return str(val)
+            result = str(val)
+            if result.startswith("origin/"):
+                result = result[len("origin/") :]
+            return result
         except Exception:
             return ""
 
@@ -284,12 +290,14 @@ class BranchInput(Vertical):
             logger.debug("Failed to update branch input", exc_info=True)
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """When user picks from dropdown, populate the text input."""
+        """When user picks from dropdown, populate or clear the text input."""
         if event.value is not Select.BLANK and event.value is not None:
             val = str(event.value)
-            if val:  # Not auto-generate
-                try:
-                    inp = self.query_one(Input)
-                    inp.value = val
-                except Exception:
-                    pass
+            # Strip origin/ prefix
+            if val.startswith("origin/"):
+                val = val[len("origin/") :]
+            try:
+                inp = self.query_one(Input)
+                inp.value = val  # Empty string for auto-generate clears the input
+            except Exception:
+                pass

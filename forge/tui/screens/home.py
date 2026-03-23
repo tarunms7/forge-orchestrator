@@ -308,18 +308,34 @@ class HomeScreen(Screen):
             )
 
     def action_cycle_focus(self) -> None:
-        """Tab: cycle focus through prompt → branch selectors → history."""
+        """Tab: cycle focus through prompt → base branch(es) → branch input → history.
+
+        For BranchInput, the text Input comes before the Select dropdown
+        to match the visual top-to-bottom order.
+        """
+        from textual.widgets import Input as TextualInput
         from textual.widgets import Select
 
         focusable: list = [self.query_one(PromptTextArea)]
-        # Add focusable Select/Input widgets inside branch containers
-        for sel in self.query(Select):
-            focusable.append(sel)
-        from textual.widgets import Input as TextualInput
 
-        for inp in self.query(TextualInput):
-            if inp.id == "branch-text-input":
-                focusable.append(inp)
+        # Base branch selectors (one per repo in workspace, or single)
+        for container in self.query(BranchSelector):
+            try:
+                focusable.append(container.query_one(Select))
+            except Exception:
+                pass
+
+        # Pipeline branch: text input first, then the dropdown
+        for container in self.query(BranchInput):
+            try:
+                focusable.append(container.query_one(TextualInput))
+            except Exception:
+                pass
+            try:
+                focusable.append(container.query_one(Select))
+            except Exception:
+                pass
+
         focusable.append(self.query_one(PipelineList))
 
         current = self.focused
