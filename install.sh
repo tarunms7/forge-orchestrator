@@ -57,11 +57,17 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 step 2 "Installing forge-orchestrator..."
 
+# Ensure Python 3.12+ is available for uv
+if ! uv python list 2>/dev/null | grep -q "3\.1[2-9]"; then
+    info "Installing Python 3.12 (required by Forge)..."
+    uv python install 3.12
+fi
+
 if uv tool list 2>/dev/null | grep -q forge-orchestrator; then
     info "Upgrading forge-orchestrator..."
-    uv tool install --upgrade --force "${FORGE_REPO_PIP}[web]"
+    uv tool install --python 3.12 --upgrade --force "${FORGE_REPO_PIP}[web]"
 else
-    uv tool install "${FORGE_REPO_PIP}[web]"
+    uv tool install --python 3.12 "${FORGE_REPO_PIP}[web]"
 fi
 
 FORGE_VERSION="$(forge --version 2>/dev/null || echo 'unknown')"

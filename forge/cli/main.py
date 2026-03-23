@@ -313,40 +313,12 @@ cli.add_command(stats)
 
 @cli.command()
 def upgrade() -> None:
-    """Upgrade Forge to the latest version from GitHub."""
+    """Upgrade Forge to the latest version from GitHub (global install)."""
     import shutil
     import subprocess
     import sys
 
     from forge.core.paths import forge_data_dir
-
-    # Detect if running from a local git clone (editable install / dev mode)
-    forge_pkg_dir = os.path.dirname(os.path.dirname(__file__))  # forge/ package root
-    is_dev = os.path.isdir(os.path.join(forge_pkg_dir, ".git")) or os.path.isfile(
-        os.path.join(forge_pkg_dir, "pyproject.toml")
-    )
-
-    if is_dev:
-        click.echo("Detected development install (local git clone).")
-        click.echo(f"Pulling latest from git in {forge_pkg_dir}...")
-        pull = subprocess.run(
-            ["git", "pull"],
-            cwd=forge_pkg_dir,
-            capture_output=True,
-            text=True,
-        )
-        if pull.returncode == 0:
-            click.echo(pull.stdout.strip() if pull.stdout.strip() else "Already up to date.")
-            # Reinstall in dev mode to pick up any new dependencies
-            pip = shutil.which("pip") or sys.executable + " -m pip"
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-e", ".[web]", "-q"],
-                cwd=forge_pkg_dir,
-            )
-            click.echo("Done. Restart forge to use the new version.")
-        else:
-            click.echo(f"git pull failed:\n{pull.stderr}", err=True)
-        return
 
     uv = shutil.which("uv")
     if not uv:
@@ -356,9 +328,17 @@ def upgrade() -> None:
     repo_pip = "git+https://github.com/tarunms7/forge-orchestrator.git"
     click.echo(f"Upgrading forge-orchestrator from {_version}...")
 
-    # Step 1: Upgrade Python package with web extras
+    # Step 1: Ensure Python 3.12+ is available
+    py_check = subprocess.run(
+        [uv, "python", "list"], capture_output=True, text=True
+    )
+    if "3.12" not in (py_check.stdout or ""):
+        click.echo("Installing Python 3.12 (required by Forge)...")
+        subprocess.run([uv, "python", "install", "3.12"], capture_output=True)
+
+    # Step 2: Upgrade Python package with web extras
     result = subprocess.run(
-        [uv, "tool", "install", "--upgrade", "--force", f"{repo_pip}[web]"],
+        [uv, "tool", "install", "--python", "3.12", "--upgrade", "--force", f"{repo_pip}[web]"],
         capture_output=True,
         text=True,
     )
