@@ -192,3 +192,76 @@ def lessons_clear(project_dir: str, clear_all: bool) -> None:
         raise SystemExit(1)
 
     click.echo(f"Cleared {count} lesson(s).")
+
+
+@lessons.command("remove")
+@click.argument("lesson_id")
+def lessons_remove(lesson_id: str) -> None:
+    """Remove a specific lesson by ID (or ID prefix)."""
+
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            # Support short ID prefixes (e.g., "dc97dc2c" for full UUID)
+            rows = await db.get_relevant_lessons(max_count=500)
+            matches = [r for r in rows if r.id.startswith(lesson_id)]
+            if not matches:
+                return None, 0
+            for match in matches:
+                await db._execute(
+                    "DELETE FROM lessons WHERE id = :id",
+                    {"id": match.id},
+                )
+            return matches[0].title, len(matches)
+        finally:
+            await db.close()
+
+    try:
+        title, count = asyncio.run(_run())
+    except Exception as e:
+        click.echo(f"Error removing lesson: {e}")
+        raise SystemExit(1)
+
+    if count == 0:
+        click.echo(f"No lesson found matching '{lesson_id}'.")
+        raise SystemExit(1)
+    click.echo(f"Removed {count} lesson(s): {title}")
+
+
+@lessons.command("show")
+@click.argument("lesson_id")
+def lessons_show(lesson_id: str) -> None:
+    """Show full details of a specific lesson."""
+
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            rows = await db.get_relevant_lessons(max_count=500)
+            matches = [r for r in rows if r.id.startswith(lesson_id)]
+            return matches[0] if matches else None
+        finally:
+            await db.close()
+
+    try:
+        lesson = asyncio.run(_run())
+    except Exception as e:
+        click.echo(f"Error reading lesson: {e}")
+        raise SystemExit(1)
+
+    if not lesson:
+        click.echo(f"No lesson found matching '{lesson_id}'.")
+        raise SystemExit(1)
+
+    console = Console()
+    console.print(f"[bold]{lesson.title}[/bold]")
+    console.print(f"  ID:         {lesson.id}")
+    console.print(f"  Scope:      {lesson.scope}")
+    console.print(f"  Category:   {lesson.category}")
+    console.print(f"  Trigger:    {lesson.trigger}")
+    console.print(f"  Resolution: {lesson.resolution}")
+    console.print(f"  Hits:       {lesson.hit_count}")
+    console.print(f"  Confidence: {lesson.confidence:.1%}")
+    console.print(f"  Created:    {lesson.created_at}")
+    console.print(f"  Last hit:   {lesson.last_hit_at}")
