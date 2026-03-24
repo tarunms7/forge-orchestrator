@@ -14,6 +14,7 @@ BG_BASE = "#0d1117"  # Deepest background (screen)
 BG_SURFACE = "#161b22"  # Cards, panels, elevated surfaces
 BG_RAISED = "#1c2128"  # Hover states, selected items
 BG_OVERLAY = "#21262d"  # Modals, overlays, dropdowns
+BG_SELECTED = "#1f2937"  # Unified selection highlight for all lists
 
 # ── Border colors ────────────────────────────────────────────────────
 BORDER_DEFAULT = "#30363d"  # Default borders

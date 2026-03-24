@@ -9,6 +9,8 @@ from __future__ import annotations
 from textual.message import Message
 from textual.widget import Widget
 
+from forge.tui.theme import ACCENT_BLUE, TEXT_PRIMARY
+
 
 def format_chips(suggestions: list[str], selected: int = -1) -> str:
     """Format suggestions as numbered lines, one per row."""
@@ -18,9 +20,9 @@ def format_chips(suggestions: list[str], selected: int = -1) -> str:
     for i, s in enumerate(suggestions):
         num = f"{i + 1}"
         if i == selected:
-            lines.append(f"  [bold #58a6ff on #1c3a5f] {num}. {s} [/]")
+            lines.append(f"  [bold {ACCENT_BLUE} on #1c3a5f] {num}. {s} [/]")
         else:
-            lines.append(f"  [#58a6ff]{num}.[/] [#c9d1d9]{s}[/]")
+            lines.append(f"  [{ACCENT_BLUE}]{num}.[/] [{TEXT_PRIMARY}]{s}[/]")
     return "\n".join(lines)
 
 
