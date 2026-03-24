@@ -174,6 +174,8 @@ Your working directory is {cwd}.{extra_dirs_clause}
 
 {question_protocol}
 
+{project_commands_block}
+
 ## Boundaries
 - Only modify files listed in File Scope above (plus their test files). Out-of-scope changes are auto-reverted.
 - If contracts are specified above, implement them exactly as defined.
@@ -356,6 +358,7 @@ class ClaudeAdapter(AgentAdapter):
         project_dir: str | None = None,
         agent_max_turns: int = 75,
         lessons_block: str = "",
+        project_commands: dict[str, str] | None = None,
     ) -> ClaudeCodeOptions:
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         if allowed_dirs:
@@ -381,6 +384,25 @@ class ClaudeAdapter(AgentAdapter):
         # CLAUDE.md is loaded automatically by the Claude Code harness when
         # we use append_system_prompt. No manual loading needed.
 
+        # Build project commands block so agents know how to test/build/lint
+        project_commands_block = ""
+        if project_commands:
+            lines = ["## Project Commands", ""]
+            if project_commands.get("test"):
+                lines.append(f"- **Run tests**: `{project_commands['test']}`")
+            if project_commands.get("build"):
+                lines.append(f"- **Build**: `{project_commands['build']}`")
+            if project_commands.get("lint"):
+                lines.append(f"- **Lint**: `{project_commands['lint']}`")
+            if project_commands.get("lint_fix"):
+                lines.append(f"- **Lint fix**: `{project_commands['lint_fix']}`")
+            if len(lines) > 2:  # More than just header
+                lines.append("")
+                lines.append(
+                    "Always verify your work by running the test command before committing."
+                )
+                project_commands_block = "\n".join(lines)
+
         max_turns = agent_max_turns
         wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
 
@@ -393,6 +415,7 @@ class ClaudeAdapter(AgentAdapter):
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
+            project_commands_block=project_commands_block,
             lessons_block=lessons_block,
             max_turns=max_turns,
             wrap_up_turn=wrap_up_turn,
@@ -438,6 +461,7 @@ class ClaudeAdapter(AgentAdapter):
         project_dir: str | None = None,
         agent_max_turns: int = 75,
         lessons_block: str = "",
+        project_commands: dict[str, str] | None = None,
     ) -> AgentResult:
         options = self._build_options(
             worktree_path,
@@ -455,6 +479,7 @@ class ClaudeAdapter(AgentAdapter):
             project_dir=project_dir,
             agent_max_turns=agent_max_turns,
             lessons_block=lessons_block,
+            project_commands=project_commands,
         )
 
         try:

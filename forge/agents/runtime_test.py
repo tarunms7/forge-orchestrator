@@ -47,6 +47,7 @@ async def test_run_task_calls_adapter(mock_adapter):
         questions_remaining=3,
         project_dir=None,
         agent_max_turns=75,
+        project_commands=None,
     )
 
 
@@ -201,6 +202,7 @@ async def test_runtime_passes_all_new_params_together():
         questions_remaining=3,
         project_dir=None,
         agent_max_turns=75,
+        project_commands=None,
     )
 
 

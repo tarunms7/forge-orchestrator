@@ -37,6 +37,7 @@ class AgentRuntime:
         timeout_seconds: int | None = None,
         project_dir: str | None = None,
         agent_max_turns: int = 75,
+        project_commands: dict[str, str] | None = None,
     ) -> AgentResult:
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         max_retries = 2  # 3 total attempts
@@ -61,6 +62,7 @@ class AgentRuntime:
                     questions_remaining=questions_remaining,
                     project_dir=project_dir,
                     agent_max_turns=agent_max_turns,
+                    project_commands=project_commands,
                 )
             except TimeoutError:
                 # Timeout means task is too large; don't retry

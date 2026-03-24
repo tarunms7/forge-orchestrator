@@ -1717,6 +1717,17 @@ class ExecutorMixin:
                 timeout_seconds=task_timeout,
                 project_dir=self._project_dir,
                 agent_max_turns=self._settings.agent_max_turns,
+                project_commands={
+                    k: v
+                    for k, v in {
+                        "test": self._settings.test_cmd,
+                        "build": self._settings.build_cmd,
+                        "lint": self._settings.lint_cmd,
+                        "lint_fix": self._settings.lint_fix_cmd,
+                    }.items()
+                    if v
+                }
+                or None,
             )
         except GuardTriggered as exc:
             logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)
