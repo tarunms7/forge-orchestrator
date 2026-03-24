@@ -465,8 +465,8 @@ class TestLoadClaudeMd:
 # --- CLAUDE.md injection into system prompt tests ---
 
 
-def test_system_prompt_includes_claude_md(tmp_path):
-    """When CLAUDE.md exists, its content appears in the append_system_prompt."""
+def test_claude_md_not_manually_loaded(tmp_path):
+    """CLAUDE.md should NOT be manually loaded — harness loads it via append_system_prompt."""
     (tmp_path / "CLAUDE.md").write_text("Always use type hints.")
     adapter = ClaudeAdapter()
     options = adapter._build_options(
@@ -474,19 +474,8 @@ def test_system_prompt_includes_claude_md(tmp_path):
         allowed_dirs=[],
         project_dir=str(tmp_path),
     )
-    assert "Always use type hints." in options.append_system_prompt
-    assert "Project Instructions" in options.append_system_prompt
-
-
-def test_system_prompt_without_claude_md(tmp_path):
-    """When CLAUDE.md doesn't exist, prompt still works without it."""
-    adapter = ClaudeAdapter()
-    options = adapter._build_options(
-        worktree_path=str(tmp_path),
-        allowed_dirs=[],
-        project_dir=str(tmp_path),
-    )
-    assert "Project Instructions" not in options.append_system_prompt
+    # The harness loads CLAUDE.md automatically. We should NOT duplicate it.
+    assert "Project Instructions (from CLAUDE.md)" not in options.append_system_prompt
 
 
 # --- _build_question_protocol tests ---

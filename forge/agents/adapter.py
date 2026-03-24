@@ -17,88 +17,36 @@ logger = logging.getLogger("forge.agents")
 
 
 # ── Agent permission rules ──────────────────────────────────────────
-# Passed directly to ClaudeCodeOptions as allowed_tools / disallowed_tools.
+# Passed directly to ClaudeCodeOptions as disallowed_tools (denylist).
 # No file is written to the worktree — permissions flow through the SDK,
 # keeping the git working tree clean for rebase.
 #
-# Design: allowlist only.  The agent runs in an isolated worktree so
-# there's nothing dangerous to hit.  We allow the tools agents actually
-# need (git, file ops, common project commands) and deny only the
-# clearly dangerous ones (network, sudo, permissions, process killing).
-
-AGENT_ALLOWED_TOOLS = [
-    # Git operations — agents must be able to commit their own work
-    "Bash(git *)",
-    # File operations — refactoring needs rm, mv, cp, mkdir
-    "Bash(rm *)",
-    "Bash(mv *)",
-    "Bash(cp *)",
-    "Bash(mkdir *)",
-    "Bash(touch *)",
-    # Read/inspect — agents need to read files and search
-    "Bash(ls *)",
-    "Bash(cat *)",
-    "Bash(head *)",
-    "Bash(tail *)",
-    "Bash(find *)",
-    "Bash(wc *)",
-    "Bash(pwd)",
-    "Bash(echo *)",
-    "Bash(which *)",
-    # Build/test tools — agents verify their own work
-    "Bash(python *)",
-    "Bash(python3 *)",
-    "Bash(pip *)",
-    "Bash(pytest *)",
-    "Bash(npm *)",
-    "Bash(npx *)",
-    "Bash(node *)",
-    "Bash(make *)",
-    "Bash(cargo *)",
-    "Bash(go *)",
-    "Bash(yarn *)",
-    "Bash(pnpm *)",
-    "Bash(bun *)",
-    "Bash(ruff *)",
-    "Bash(eslint *)",
-    "Bash(tsc *)",
-    "Bash(javac *)",
-    "Bash(gradle *)",
-    "Bash(mvn *)",
-    "Bash(dotnet *)",
-    "Bash(swift *)",
-    "Bash(rustc *)",
-    "Bash(ruby *)",
-    "Bash(bundle *)",
-    "Bash(rake *)",
-    # Shell utilities — agents chain commands, source venvs
-    "Bash(source *)",
-    "Bash(cd *)",
-    "Bash(sort *)",
-    "Bash(uniq *)",
-    "Bash(xargs *)",
-    "Bash(sed *)",
-    "Bash(awk *)",
-    "Bash(tr *)",
-    "Bash(cut *)",
-    "Bash(diff *)",
-    "Bash(grep *)",
-    "Bash(jq *)",
-    "Bash(basename *)",
-    "Bash(dirname *)",
-    "Bash(realpath *)",
-    "Bash(readlink *)",
-]
+# Design: denylist only. Agents use append_system_prompt so they get the
+# full Claude Code harness (skills, MCP servers, memory, hooks) plus ALL
+# tools. We only BLOCK dangerous operations: branch management (orchestrator
+# handles that), network access, privilege escalation, system modification.
 
 AGENT_DISALLOWED_TOOLS = [
-    # Git operations that only the orchestrator should perform
+    # Git operations that only the orchestrator should perform.
+    # Both bare commands and with-args variants are blocked.
+    "Bash(git push)",
     "Bash(git push *)",
+    "Bash(git rebase)",
     "Bash(git rebase *)",
+    "Bash(git checkout)",
     "Bash(git checkout *)",
+    "Bash(git reset --hard)",
     "Bash(git reset --hard *)",
     "Bash(git branch -D *)",
     "Bash(git branch -d *)",
+    "Bash(git merge)",
     "Bash(git merge *)",
+    "Bash(git clean *)",
+    "Bash(git stash)",
+    "Bash(git stash *)",
+    "Bash(git cherry-pick *)",
+    "Bash(git tag *)",
+    "Bash(git remote *)",
     # Network — no exfiltration or downloads
     "Bash(curl *)",
     "Bash(wget *)",
@@ -453,12 +401,10 @@ class ClaudeAdapter(AgentAdapter):
             file_scope_block = ""
         question_protocol = _build_question_protocol(autonomy, questions_remaining)
 
-        # Load project instructions from CLAUDE.md
+        # CLAUDE.md is loaded automatically by the Claude Code harness when
+        # we use append_system_prompt. No need to load it manually — that
+        # would cause it to appear twice in the agent's context.
         claude_md_block = ""
-        if project_dir:
-            claude_md_content = _load_claude_md(project_dir)
-            if claude_md_content:
-                claude_md_block = f"## Project Instructions (from CLAUDE.md)\n\n{claude_md_content}"
 
         max_turns = agent_max_turns
         wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
