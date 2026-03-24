@@ -47,9 +47,11 @@ def test_forge_logo_is_reasonable_height() -> None:
 
 
 def test_forge_logo_has_correct_colors() -> None:
-    """Logo should use the expected accent colors."""
-    assert "#d6a85f" in FORGE_LOGO
-    assert "#7fa8ff" in FORGE_LOGO
+    """Logo should use the theme accent colors."""
+    from forge.tui.theme import ACCENT_BLUE, ACCENT_GOLD
+
+    assert ACCENT_GOLD in FORGE_LOGO
+    assert ACCENT_BLUE in FORGE_LOGO
 
 
 def test_forge_logo_uses_block_lettering() -> None:
