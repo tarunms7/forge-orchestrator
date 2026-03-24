@@ -91,6 +91,14 @@ AGENT_ALLOWED_TOOLS = [
 ]
 
 AGENT_DISALLOWED_TOOLS = [
+    # Git operations that only the orchestrator should perform
+    "Bash(git push *)",
+    "Bash(git rebase *)",
+    "Bash(git checkout *)",
+    "Bash(git reset --hard *)",
+    "Bash(git branch -D *)",
+    "Bash(git branch -d *)",
+    "Bash(git merge *)",
     # Network — no exfiltration or downloads
     "Bash(curl *)",
     "Bash(wget *)",
@@ -470,9 +478,15 @@ class ClaudeAdapter(AgentAdapter):
             wrap_up_turn=wrap_up_turn,
         )
         return ClaudeCodeOptions(
-            system_prompt=system_prompt,
+            # Use append_system_prompt so the Claude Code CLI loads its full
+            # harness first (skills, CLAUDE.md, memory, MCP servers, hooks)
+            # and we ADD our agent instructions on top. This gives agents the
+            # same power as interactive Claude Code sessions.
+            append_system_prompt=system_prompt,
             permission_mode="acceptEdits",
-            allowed_tools=list(AGENT_ALLOWED_TOOLS),
+            # No allowed_tools whitelist — agents get ALL Claude Code tools
+            # (Edit, Write, Bash, Glob, Grep, Read, plus any skills/MCP).
+            # We only BLOCK dangerous operations via disallowed_tools.
             disallowed_tools=list(AGENT_DISALLOWED_TOOLS),
             cwd=worktree_path,
             model=model,
