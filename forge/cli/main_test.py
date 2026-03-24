@@ -100,21 +100,29 @@ def test_run_help_shows_deep_plan_option():
 
 def test_run_passes_spec_and_deep_plan(tmp_path):
     """run command should forward spec and deep_plan to daemon.run()."""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     spec_file = tmp_path / "spec.md"
     spec_file.write_text("# Spec\nDo stuff")
 
     mock_daemon = MagicMock()
-    mock_daemon.run = MagicMock(return_value=None)
+    mock_daemon.run = AsyncMock(return_value=None)
+
+    # Mock preflight to pass
+    mock_preflight_report = MagicMock()
+    mock_preflight_report.passed = True
+    mock_preflight_report.warnings = []
 
     with (
         patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
-        patch("forge.cli.main.asyncio") as mock_asyncio,
+        patch(
+            "forge.core.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=mock_preflight_report,
+        ),
         patch("forge.config.project_config.resolve_repos", return_value=[]),
         patch("forge.config.project_config.validate_repos_startup"),
     ):
-        mock_asyncio.run = MagicMock(return_value=None)
         runner = CliRunner()
         runner.invoke(
             cli,
@@ -128,7 +136,6 @@ def test_run_passes_spec_and_deep_plan(tmp_path):
                 str(tmp_path),
             ],
         )
-        # asyncio.run should have been called with daemon.run(...)
         mock_daemon.run.assert_called_once_with(
             "Build it", spec_path=str(spec_file), deep_plan=True
         )
@@ -152,14 +159,23 @@ def test_tui_help_shows_repo_option():
 
 def test_run_exception_shows_traceback_hint_without_verbose(tmp_path):
     """When run fails without --verbose, show hint about --verbose flag."""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     mock_daemon = MagicMock()
-    mock_daemon.run = MagicMock(side_effect=RuntimeError("boom"))
+    mock_daemon.run = AsyncMock(side_effect=RuntimeError("boom"))
+
+    mock_preflight_report = MagicMock()
+    mock_preflight_report.passed = True
+    mock_preflight_report.warnings = []
 
     runner = CliRunner()
     with (
         patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+        patch(
+            "forge.core.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=mock_preflight_report,
+        ),
         patch("forge.config.project_config.resolve_repos", return_value=[]),
         patch("forge.config.project_config.validate_repos_startup"),
     ):
@@ -179,14 +195,23 @@ def test_run_exception_shows_traceback_hint_without_verbose(tmp_path):
 
 def test_run_exception_shows_traceback_with_verbose(tmp_path):
     """When run fails with --verbose, print the full traceback."""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     mock_daemon = MagicMock()
-    mock_daemon.run = MagicMock(side_effect=RuntimeError("boom"))
+    mock_daemon.run = AsyncMock(side_effect=RuntimeError("boom"))
+
+    mock_preflight_report = MagicMock()
+    mock_preflight_report.passed = True
+    mock_preflight_report.warnings = []
 
     runner = CliRunner()
     with (
         patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+        patch(
+            "forge.core.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=mock_preflight_report,
+        ),
         patch("forge.config.project_config.resolve_repos", return_value=[]),
         patch("forge.config.project_config.validate_repos_startup"),
     ):

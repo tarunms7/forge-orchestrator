@@ -118,17 +118,25 @@ class MergeMixin:
                 if task.state not in ("todo", "blocked"):
                     continue
                 if current_id in (task.depends_on or []):
-                    await db.update_task_state(task.id, "blocked")
-                    await self._emit(
-                        "task:state_changed",
-                        {
-                            "task_id": task.id,
-                            "state": "blocked",
-                            "error": f"Blocked: dependency {current_id} failed",
-                        },
-                        db=db,
-                        pipeline_id=pipeline_id,
-                    )
+                    try:
+                        await db.update_task_state(task.id, "blocked")
+                        await self._emit(
+                            "task:state_changed",
+                            {
+                                "task_id": task.id,
+                                "state": "blocked",
+                                "error": f"Blocked: dependency {current_id} failed",
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to mark task %s as blocked (dep %s failed)",
+                            task.id,
+                            current_id,
+                        )
+                    # Always add to newly_blocked to cascade further, even if DB failed
                     newly_blocked.add(task.id)
                     queue.append(task.id)
 
