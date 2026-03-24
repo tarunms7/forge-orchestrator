@@ -376,7 +376,8 @@ def upgrade() -> None:
 
     if is_dev_install:
         # Dev install: just git pull in the repo
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # __file__ is forge/cli/main.py — go up 3 levels to get repo root
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if os.path.isdir(os.path.join(repo_root, ".git")):
             click.echo("Dev install detected — pulling latest from git...")
             pull = subprocess.run(
@@ -386,7 +387,27 @@ def upgrade() -> None:
                 text=True,
             )
             if pull.returncode == 0:
-                click.echo("Updated. Run `pip install -e '.[web]'` to apply.")
+                click.echo(pull.stdout.strip())
+                # Auto-reinstall to pick up new dependencies
+                click.echo("Reinstalling dependencies...")
+                pip_install = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-e", ".[web]", "-q"],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                )
+                if pip_install.returncode == 0:
+                    # Check new version
+                    new_ver = subprocess.run(
+                        ["forge", "--version"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else "unknown"
+                    click.echo(f"Forge upgraded to {new_version}")
+                else:
+                    click.echo(f"pip install failed: {pip_install.stderr.strip()[:200]}", err=True)
+                    click.echo("Run manually: pip install -e '.[web]'")
             else:
                 click.echo(f"git pull failed: {pull.stderr.strip()}", err=True)
             return
