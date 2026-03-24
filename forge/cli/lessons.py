@@ -203,30 +203,29 @@ def lessons_remove(lesson_id: str) -> None:
         db = _get_db()
         await db.initialize()
         try:
-            # Support short ID prefixes (e.g., "dc97dc2c" for full UUID)
-            rows = await db.get_relevant_lessons(max_count=500)
-            matches = [r for r in rows if r.id.startswith(lesson_id)]
-            if not matches:
-                return None, 0
-            for match in matches:
-                await db._execute(
-                    "DELETE FROM lessons WHERE id = :id",
-                    {"id": match.id},
-                )
-            return matches[0].title, len(matches)
+            lesson = await db.get_lesson_by_id(lesson_id)
+            if not lesson:
+                return None
+            if not click.confirm(f"Remove lesson '{lesson.title}'?"):
+                return "cancelled"
+            await db.delete_lesson(lesson.id)
+            return lesson.title
         finally:
             await db.close()
 
     try:
-        title, count = asyncio.run(_run())
+        result = asyncio.run(_run())
     except Exception as e:
         click.echo(f"Error removing lesson: {e}")
         raise SystemExit(1)
 
-    if count == 0:
+    if result is None:
         click.echo(f"No lesson found matching '{lesson_id}'.")
         raise SystemExit(1)
-    click.echo(f"Removed {count} lesson(s): {title}")
+    if result == "cancelled":
+        click.echo("Aborted.")
+        return
+    click.echo(f"Removed lesson: {result}")
 
 
 @lessons.command("show")
@@ -238,9 +237,7 @@ def lessons_show(lesson_id: str) -> None:
         db = _get_db()
         await db.initialize()
         try:
-            rows = await db.get_relevant_lessons(max_count=500)
-            matches = [r for r in rows if r.id.startswith(lesson_id)]
-            return matches[0] if matches else None
+            return await db.get_lesson_by_id(lesson_id)
         finally:
             await db.close()
 
@@ -255,6 +252,7 @@ def lessons_show(lesson_id: str) -> None:
         raise SystemExit(1)
 
     console = Console()
+    confidence = getattr(lesson, "confidence", 0.5)
     console.print(f"[bold]{lesson.title}[/bold]")
     console.print(f"  ID:         {lesson.id}")
     console.print(f"  Scope:      {lesson.scope}")
@@ -262,6 +260,6 @@ def lessons_show(lesson_id: str) -> None:
     console.print(f"  Trigger:    {lesson.trigger}")
     console.print(f"  Resolution: {lesson.resolution}")
     console.print(f"  Hits:       {lesson.hit_count}")
-    console.print(f"  Confidence: {lesson.confidence:.1%}")
-    console.print(f"  Created:    {lesson.created_at}")
-    console.print(f"  Last hit:   {lesson.last_hit_at}")
+    console.print(f"  Confidence: {confidence:.1%}")
+    console.print(f"  Created:    {getattr(lesson, 'created_at', 'N/A')}")
+    console.print(f"  Last hit:   {getattr(lesson, 'last_hit_at', 'N/A')}")

@@ -1523,6 +1523,29 @@ class Database:
                 _logger.info("Pruned %d stale lessons (older than %d days)", count, max_age_days)
             return count
 
+    async def get_lesson_by_id(self, lesson_id: str) -> LessonRow | None:
+        """Get a single lesson by exact ID or ID prefix."""
+        async with self._session_factory() as session:
+            # Try exact match first
+            result = await session.execute(select(LessonRow).where(LessonRow.id == lesson_id))
+            row = result.scalars().first()
+            if row:
+                return row
+            # Try prefix match
+            result = await session.execute(
+                select(LessonRow).where(LessonRow.id.startswith(lesson_id))
+            )
+            return result.scalars().first()
+
+    async def delete_lesson(self, lesson_id: str) -> bool:
+        """Delete a lesson by exact ID. Returns True if deleted."""
+        from sqlalchemy import delete
+
+        async with self._session_factory() as session:
+            result = await session.execute(delete(LessonRow).where(LessonRow.id == lesson_id))
+            await session.commit()
+            return result.rowcount > 0
+
     async def clear_lessons(self, project_dir: str | None = None) -> int:
         """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
         from sqlalchemy import delete
