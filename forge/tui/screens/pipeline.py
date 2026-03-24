@@ -746,10 +746,15 @@ class PipelineScreen(Screen):
 
         if self._active_view != "chat":
             self._set_view("chat")
-            try:
-                self.query_one("#chat-input").focus()
-            except Exception:
-                pass
+        # Always focus the input — use a short delay to ensure layout is settled
+        self.set_timer(0.15, self._focus_chat_input)
+
+    def _focus_chat_input(self) -> None:
+        """Focus the chat input after layout settles."""
+        try:
+            self.query_one("#chat-input").focus()
+        except Exception:
+            pass
 
     def _auto_switch_chat(self, task_id: str, task: dict) -> None:
         """Switch to chat view and populate question when task needs input."""
@@ -765,10 +770,8 @@ class PipelineScreen(Screen):
         # Only auto-switch if we're not already in chat view
         if self._active_view != "chat":
             self._set_view("chat")
-            try:
-                self.query_one("#chat-input").focus()
-            except Exception:
-                pass
+        # Always focus input — delay to let layout settle
+        self.set_timer(0.15, self._focus_chat_input)
 
     # ------------------------------------------------------------------
     # Helpers
