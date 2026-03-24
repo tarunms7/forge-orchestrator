@@ -2,7 +2,6 @@ import json
 from unittest.mock import AsyncMock, patch
 
 from forge.agents.adapter import (
-    AGENT_ALLOWED_TOOLS,
     AGENT_DISALLOWED_TOOLS,
     AgentAdapter,
     AgentResult,
@@ -10,7 +9,6 @@ from forge.agents.adapter import (
     _build_conventions_block,
     _build_dependency_context,
     _build_question_protocol,
-    _load_claude_md,
 )
 
 # --- AgentResult tests ---
@@ -197,13 +195,13 @@ def test_adapter_build_options_sets_cwd():
 def test_adapter_system_prompt_includes_directory_boundary():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/test-worktree", [])
-    assert "/tmp/test-worktree" in options.system_prompt
+    assert "/tmp/test-worktree" in options.append_system_prompt
 
 
 def test_adapter_system_prompt_includes_extra_dirs():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/test-worktree", ["/tmp/shared-lib"])
-    assert "/tmp/shared-lib" in options.system_prompt
+    assert "/tmp/shared-lib" in options.append_system_prompt
 
 
 def test_build_options_includes_conventions():
@@ -214,8 +212,8 @@ def test_build_options_includes_conventions():
         [],
         conventions_md=conventions_md,
     )
-    assert "## Project Conventions" in options.system_prompt
-    assert "Use black" in options.system_prompt
+    assert "## Project Conventions" in options.append_system_prompt
+    assert "Use black" in options.append_system_prompt
 
 
 def test_build_options_includes_dependency_context():
@@ -233,14 +231,14 @@ def test_build_options_includes_dependency_context():
         [],
         completed_deps=deps,
     )
-    assert "## Completed Dependencies" in options.system_prompt
-    assert "Add models" in options.system_prompt
+    assert "## Completed Dependencies" in options.append_system_prompt
+    assert "Add models" in options.append_system_prompt
 
 
 def test_build_options_conventions_rule_in_prompt():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/wt", [])
-    assert "existing code style" in options.system_prompt
+    assert "existing code style" in options.append_system_prompt
 
 
 def test_build_options_no_conventions_or_deps():
@@ -248,14 +246,14 @@ def test_build_options_no_conventions_or_deps():
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/wt", [])
     # Should not error and should contain Boundaries section
-    assert "## Boundaries" in options.system_prompt
+    assert "## Boundaries" in options.append_system_prompt
 
 
 def test_system_prompt_includes_retry_discipline():
     """Agent prompt must include retry guardrails to prevent infinite command loops."""
     adapter = ClaudeAdapter()
     options = adapter._build_options("/tmp/wt", [])
-    prompt = options.system_prompt
+    prompt = options.append_system_prompt
     assert "## Command Retry Discipline" in prompt
     assert "3 times" in prompt
     assert "fundamentally different approach" in prompt
@@ -287,9 +285,7 @@ async def test_claude_adapter_passes_on_message_to_sdk_query():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch(
-            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=["a.py"]
-        ):
+        with patch("forge.agents.adapter._get_changed_files", return_value=["a.py"]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -330,9 +326,7 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch(
-            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]
-        ):
+        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -345,14 +339,14 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
             )
 
     assert result.success is True
-    # Verify system prompt contains conventions and deps
+    # Verify append_system_prompt contains conventions and deps
     call_kwargs = mock_query.call_args[1]
-    system_prompt = call_kwargs["options"].system_prompt
-    assert "## Project Conventions" in system_prompt
-    assert "Use ruff" in system_prompt
-    assert "**Testing**" in system_prompt
-    assert "## Completed Dependencies" in system_prompt
-    assert "Setup" in system_prompt
+    append_prompt = call_kwargs["options"].append_system_prompt
+    assert "## Project Conventions" in append_prompt
+    assert "Use ruff" in append_prompt
+    assert "**Testing**" in append_prompt
+    assert "## Completed Dependencies" in append_prompt
+    assert "Setup" in append_prompt
 
 
 def test_build_options_autonomy_settings():
@@ -364,9 +358,9 @@ def test_build_options_autonomy_settings():
         autonomy="full",
         questions_remaining=0,
     )
-    assert "Autonomy level: full" in options.system_prompt
-    assert "Questions remaining: 0" in options.system_prompt
-    assert "NEVER ask questions" in options.system_prompt
+    assert "Autonomy level: full" in options.append_system_prompt
+    assert "Questions remaining: 0" in options.append_system_prompt
+    assert "NEVER ask questions" in options.append_system_prompt
 
 
 def test_build_options_supervised_autonomy():
@@ -378,8 +372,8 @@ def test_build_options_supervised_autonomy():
         autonomy="supervised",
         questions_remaining=5,
     )
-    assert "Autonomy level: supervised" in options.system_prompt
-    assert "Questions remaining: 5" in options.system_prompt
+    assert "Autonomy level: supervised" in options.append_system_prompt
+    assert "Questions remaining: 5" in options.append_system_prompt
 
 
 async def test_claude_adapter_run_forwards_autonomy():
@@ -393,9 +387,7 @@ async def test_claude_adapter_run_forwards_autonomy():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch(
-            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]
-        ):
+        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -408,9 +400,9 @@ async def test_claude_adapter_run_forwards_autonomy():
 
     assert result.success is True
     call_kwargs = mock_query.call_args[1]
-    system_prompt = call_kwargs["options"].system_prompt
-    assert "Autonomy level: supervised" in system_prompt
-    assert "Questions remaining: 5" in system_prompt
+    append_prompt = call_kwargs["options"].append_system_prompt
+    assert "Autonomy level: supervised" in append_prompt
+    assert "Questions remaining: 5" in append_prompt
 
 
 async def test_claude_adapter_error_includes_cost():
@@ -424,9 +416,7 @@ async def test_claude_adapter_error_includes_cost():
 
     with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
-        with patch(
-            "forge.agents.adapter._get_changed_files", new_callable=AsyncMock, return_value=[]
-        ):
+        with patch("forge.agents.adapter._get_changed_files", return_value=[]):
             adapter = ClaudeAdapter()
             result = await adapter.run(
                 task_prompt="test",
@@ -442,40 +432,11 @@ async def test_claude_adapter_error_includes_cost():
     assert result.output_tokens == 200
 
 
-# --- _load_claude_md tests ---
+# --- CLAUDE.md harness loading tests ---
 
 
-class TestLoadClaudeMd:
-    def test_loads_from_project_root(self, tmp_path):
-        (tmp_path / "CLAUDE.md").write_text("# Project Rules\nUse pytest.")
-        result = _load_claude_md(str(tmp_path))
-        assert result == "# Project Rules\nUse pytest."
-
-    def test_loads_from_dotclaude_dir(self, tmp_path):
-        dotclaude = tmp_path / ".claude"
-        dotclaude.mkdir()
-        (dotclaude / "CLAUDE.md").write_text("# Alt Rules")
-        result = _load_claude_md(str(tmp_path))
-        assert result == "# Alt Rules"
-
-    def test_prefers_project_root(self, tmp_path):
-        (tmp_path / "CLAUDE.md").write_text("root")
-        dotclaude = tmp_path / ".claude"
-        dotclaude.mkdir()
-        (dotclaude / "CLAUDE.md").write_text("dotclaude")
-        result = _load_claude_md(str(tmp_path))
-        assert result == "root"
-
-    def test_returns_none_when_missing(self, tmp_path):
-        result = _load_claude_md(str(tmp_path))
-        assert result is None
-
-
-# --- CLAUDE.md injection into system prompt tests ---
-
-
-def test_system_prompt_includes_claude_md(tmp_path):
-    """When CLAUDE.md exists, its content appears in the system prompt."""
+def test_claude_md_not_manually_loaded(tmp_path):
+    """CLAUDE.md should NOT be manually loaded — harness loads it via append_system_prompt."""
     (tmp_path / "CLAUDE.md").write_text("Always use type hints.")
     adapter = ClaudeAdapter()
     options = adapter._build_options(
@@ -483,19 +444,8 @@ def test_system_prompt_includes_claude_md(tmp_path):
         allowed_dirs=[],
         project_dir=str(tmp_path),
     )
-    assert "Always use type hints." in options.system_prompt
-    assert "Project Instructions" in options.system_prompt
-
-
-def test_system_prompt_without_claude_md(tmp_path):
-    """When CLAUDE.md doesn't exist, prompt still works without it."""
-    adapter = ClaudeAdapter()
-    options = adapter._build_options(
-        worktree_path=str(tmp_path),
-        allowed_dirs=[],
-        project_dir=str(tmp_path),
-    )
-    assert "Project Instructions" not in options.system_prompt
+    # The harness loads CLAUDE.md automatically. We should NOT duplicate it.
+    assert "Project Instructions (from CLAUDE.md)" not in options.append_system_prompt
 
 
 # --- _build_question_protocol tests ---
@@ -536,8 +486,8 @@ def test_system_prompt_includes_turn_budget(tmp_path):
         allowed_dirs=[],
         agent_max_turns=30,
     )
-    assert "30 turns" in options.system_prompt
-    assert "turn 25" in options.system_prompt  # wrap_up_turn = 30 - 5
+    assert "30 turns" in options.append_system_prompt
+    assert "turn 25" in options.append_system_prompt  # wrap_up_turn = 30 - 5
     assert options.max_turns == 30
 
 
@@ -548,8 +498,8 @@ def test_system_prompt_turn_budget_defaults(tmp_path):
         worktree_path=str(tmp_path),
         allowed_dirs=[],
     )
-    assert "75 turns" in options.system_prompt
-    assert "turn 70" in options.system_prompt
+    assert "75 turns" in options.append_system_prompt
+    assert "turn 70" in options.append_system_prompt
     assert options.max_turns == 75
 
 
@@ -560,9 +510,9 @@ def test_system_prompt_allows_git_read_commands(tmp_path):
         worktree_path=str(tmp_path),
         allowed_dirs=[],
     )
-    assert "git diff" in options.system_prompt
-    assert "git status" in options.system_prompt
-    assert "git log" in options.system_prompt
+    assert "git diff" in options.append_system_prompt
+    assert "git status" in options.append_system_prompt
+    assert "git log" in options.append_system_prompt
 
 
 def test_system_prompt_blocks_git_write_commands(tmp_path):
@@ -572,8 +522,8 @@ def test_system_prompt_blocks_git_write_commands(tmp_path):
         worktree_path=str(tmp_path),
         allowed_dirs=[],
     )
-    assert "git push" in options.system_prompt
-    assert "git rebase" in options.system_prompt
+    assert "git push" in options.append_system_prompt
+    assert "git rebase" in options.append_system_prompt
 
 
 def test_system_prompt_no_working_effectively_section(tmp_path):
@@ -583,8 +533,8 @@ def test_system_prompt_no_working_effectively_section(tmp_path):
         worktree_path=str(tmp_path),
         allowed_dirs=[],
     )
-    assert "Working Effectively" not in options.system_prompt
-    assert "F821" not in options.system_prompt
+    assert "Working Effectively" not in options.append_system_prompt
+    assert "F821" not in options.append_system_prompt
 
 
 # --- Worktree permission tests ---
@@ -593,47 +543,28 @@ def test_system_prompt_no_working_effectively_section(tmp_path):
 class TestAgentPermissions:
     """Permissions are passed via SDK options, not written to disk."""
 
-    def test_allowed_tools_contains_git(self):
-        """Git commands are in the allowed tools list."""
-        from forge.agents.adapter import AGENT_ALLOWED_TOOLS
-
-        assert "Bash(git *)" in AGENT_ALLOWED_TOOLS
-
-    def test_allowed_tools_contains_file_ops(self):
-        """rm, mv, cp, mkdir are allowed for refactoring."""
-        from forge.agents.adapter import AGENT_ALLOWED_TOOLS
-
-        assert "Bash(rm *)" in AGENT_ALLOWED_TOOLS
-        assert "Bash(mv *)" in AGENT_ALLOWED_TOOLS
-        assert "Bash(mkdir *)" in AGENT_ALLOWED_TOOLS
-
-    def test_allowed_tools_contains_build_tools(self):
-        """Common build/test tools are allowed."""
-        from forge.agents.adapter import AGENT_ALLOWED_TOOLS
-
-        assert "Bash(pytest *)" in AGENT_ALLOWED_TOOLS
-        assert "Bash(npm *)" in AGENT_ALLOWED_TOOLS
-        assert "Bash(make *)" in AGENT_ALLOWED_TOOLS
-        assert "Bash(cargo *)" in AGENT_ALLOWED_TOOLS
-
     def test_disallowed_tools_blocks_network(self):
         """Network commands are blocked."""
-        from forge.agents.adapter import AGENT_DISALLOWED_TOOLS
-
         assert "Bash(curl *)" in AGENT_DISALLOWED_TOOLS
         assert "Bash(wget *)" in AGENT_DISALLOWED_TOOLS
         assert "Bash(ssh *)" in AGENT_DISALLOWED_TOOLS
 
     def test_disallowed_tools_blocks_privilege_escalation(self):
         """sudo and friends are blocked."""
-        from forge.agents.adapter import AGENT_DISALLOWED_TOOLS
-
         assert "Bash(sudo *)" in AGENT_DISALLOWED_TOOLS
         assert "Bash(chmod *)" in AGENT_DISALLOWED_TOOLS
 
+    def test_disallowed_tools_blocks_dangerous_git(self):
+        """Destructive git commands are in the disallowed tools list."""
+        assert "Bash(git push *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(git rebase *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(git checkout *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(git reset --hard *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(git branch -D *)" in AGENT_DISALLOWED_TOOLS
+        assert "Bash(git merge *)" in AGENT_DISALLOWED_TOOLS
+
     def test_no_settings_file_written(self, tmp_path):
         """Permissions are NOT written to disk — no file pollution."""
-        # Build options and verify no file is created
         adapter = ClaudeAdapter()
         options = adapter._build_options(
             str(tmp_path),
@@ -642,11 +573,12 @@ class TestAgentPermissions:
             project_context="",
         )
         assert not (tmp_path / ".claude" / "settings.json").exists()
-        assert options.allowed_tools == list(AGENT_ALLOWED_TOOLS)
+        # Agents get all tools now (no whitelist), only a denylist
+        assert not options.allowed_tools  # empty list = full access
         assert options.disallowed_tools == list(AGENT_DISALLOWED_TOOLS)
 
     def test_build_options_passes_permissions(self):
-        """_build_options includes allowed_tools and disallowed_tools."""
+        """_build_options includes disallowed_tools and empty allowed_tools."""
         adapter = ClaudeAdapter()
         options = adapter._build_options(
             "/tmp/test",
@@ -654,5 +586,8 @@ class TestAgentPermissions:
             model="sonnet",
             project_context="",
         )
-        assert "Bash(git *)" in options.allowed_tools
+        # Agents get all tools (no whitelist)
+        assert not options.allowed_tools  # empty list = full access
+        # Denylist includes network and dangerous git commands
         assert "Bash(curl *)" in options.disallowed_tools
+        assert "Bash(git push *)" in options.disallowed_tools

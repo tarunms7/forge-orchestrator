@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -17,80 +16,36 @@ logger = logging.getLogger("forge.agents")
 
 
 # ── Agent permission rules ──────────────────────────────────────────
-# Passed directly to ClaudeCodeOptions as allowed_tools / disallowed_tools.
+# Passed directly to ClaudeCodeOptions as disallowed_tools (denylist).
 # No file is written to the worktree — permissions flow through the SDK,
 # keeping the git working tree clean for rebase.
 #
-# Design: allowlist only.  The agent runs in an isolated worktree so
-# there's nothing dangerous to hit.  We allow the tools agents actually
-# need (git, file ops, common project commands) and deny only the
-# clearly dangerous ones (network, sudo, permissions, process killing).
-
-AGENT_ALLOWED_TOOLS = [
-    # Git operations — agents must be able to commit their own work
-    "Bash(git *)",
-    # File operations — refactoring needs rm, mv, cp, mkdir
-    "Bash(rm *)",
-    "Bash(mv *)",
-    "Bash(cp *)",
-    "Bash(mkdir *)",
-    "Bash(touch *)",
-    # Read/inspect — agents need to read files and search
-    "Bash(ls *)",
-    "Bash(cat *)",
-    "Bash(head *)",
-    "Bash(tail *)",
-    "Bash(find *)",
-    "Bash(wc *)",
-    "Bash(pwd)",
-    "Bash(echo *)",
-    "Bash(which *)",
-    # Build/test tools — agents verify their own work
-    "Bash(python *)",
-    "Bash(python3 *)",
-    "Bash(pip *)",
-    "Bash(pytest *)",
-    "Bash(npm *)",
-    "Bash(npx *)",
-    "Bash(node *)",
-    "Bash(make *)",
-    "Bash(cargo *)",
-    "Bash(go *)",
-    "Bash(yarn *)",
-    "Bash(pnpm *)",
-    "Bash(bun *)",
-    "Bash(ruff *)",
-    "Bash(eslint *)",
-    "Bash(tsc *)",
-    "Bash(javac *)",
-    "Bash(gradle *)",
-    "Bash(mvn *)",
-    "Bash(dotnet *)",
-    "Bash(swift *)",
-    "Bash(rustc *)",
-    "Bash(ruby *)",
-    "Bash(bundle *)",
-    "Bash(rake *)",
-    # Shell utilities — agents chain commands, source venvs
-    "Bash(source *)",
-    "Bash(cd *)",
-    "Bash(sort *)",
-    "Bash(uniq *)",
-    "Bash(xargs *)",
-    "Bash(sed *)",
-    "Bash(awk *)",
-    "Bash(tr *)",
-    "Bash(cut *)",
-    "Bash(diff *)",
-    "Bash(grep *)",
-    "Bash(jq *)",
-    "Bash(basename *)",
-    "Bash(dirname *)",
-    "Bash(realpath *)",
-    "Bash(readlink *)",
-]
+# Design: denylist only. Agents use append_system_prompt so they get the
+# full Claude Code harness (skills, MCP servers, memory, hooks) plus ALL
+# tools. We only BLOCK dangerous operations: branch management (orchestrator
+# handles that), network access, privilege escalation, system modification.
 
 AGENT_DISALLOWED_TOOLS = [
+    # Git operations that only the orchestrator should perform.
+    # Both bare commands and with-args variants are blocked.
+    "Bash(git push)",
+    "Bash(git push *)",
+    "Bash(git rebase)",
+    "Bash(git rebase *)",
+    "Bash(git checkout)",
+    "Bash(git checkout *)",
+    "Bash(git reset --hard)",
+    "Bash(git reset --hard *)",
+    "Bash(git branch -D *)",
+    "Bash(git branch -d *)",
+    "Bash(git merge)",
+    "Bash(git merge *)",
+    "Bash(git clean *)",
+    "Bash(git stash)",
+    "Bash(git stash *)",
+    "Bash(git cherry-pick *)",
+    "Bash(git tag *)",
+    "Bash(git remote *)",
     # Network — no exfiltration or downloads
     "Bash(curl *)",
     "Bash(wget *)",
@@ -128,26 +83,6 @@ AGENT_DISALLOWED_TOOLS = [
     "Read(.env)",
     "Read(.env.*)",
 ]
-
-
-def _load_claude_md(project_dir: str) -> str | None:
-    """Load CLAUDE.md from standard locations.
-
-    Searches:
-      1. {project_dir}/CLAUDE.md
-      2. {project_dir}/.claude/CLAUDE.md
-
-    Returns content as string, or None if not found.
-    """
-    for rel_path in ("CLAUDE.md", os.path.join(".claude", "CLAUDE.md")):
-        full_path = os.path.join(project_dir, rel_path)
-        if os.path.isfile(full_path):
-            try:
-                with open(full_path, encoding="utf-8") as f:
-                    return f.read()
-            except OSError:
-                continue
-    return None
 
 
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
@@ -230,8 +165,6 @@ Your working directory is {cwd}.{extra_dirs_clause}
 {conventions_block}
 
 {lessons_block}
-
-{claude_md_block}
 
 {contracts_block}
 
@@ -445,12 +378,8 @@ class ClaudeAdapter(AgentAdapter):
             file_scope_block = ""
         question_protocol = _build_question_protocol(autonomy, questions_remaining)
 
-        # Load project instructions from CLAUDE.md
-        claude_md_block = ""
-        if project_dir:
-            claude_md_content = _load_claude_md(project_dir)
-            if claude_md_content:
-                claude_md_block = f"## Project Instructions (from CLAUDE.md)\n\n{claude_md_content}"
+        # CLAUDE.md is loaded automatically by the Claude Code harness when
+        # we use append_system_prompt. No manual loading needed.
 
         max_turns = agent_max_turns
         wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
@@ -464,15 +393,20 @@ class ClaudeAdapter(AgentAdapter):
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
-            claude_md_block=claude_md_block,
             lessons_block=lessons_block,
             max_turns=max_turns,
             wrap_up_turn=wrap_up_turn,
         )
         return ClaudeCodeOptions(
-            system_prompt=system_prompt,
+            # Use append_system_prompt so the Claude Code CLI loads its full
+            # harness first (skills, CLAUDE.md, memory, MCP servers, hooks)
+            # and we ADD our agent instructions on top. This gives agents the
+            # same power as interactive Claude Code sessions.
+            append_system_prompt=system_prompt,
             permission_mode="acceptEdits",
-            allowed_tools=list(AGENT_ALLOWED_TOOLS),
+            # No allowed_tools whitelist — agents get ALL Claude Code tools
+            # (Edit, Write, Bash, Glob, Grep, Read, plus any skills/MCP).
+            # We only BLOCK dangerous operations via disallowed_tools.
             disallowed_tools=list(AGENT_DISALLOWED_TOOLS),
             cwd=worktree_path,
             model=model,
