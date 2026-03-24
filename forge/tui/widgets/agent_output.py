@@ -9,6 +9,13 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Static
 
+from forge.tui.theme import (
+    ACCENT_CYAN,
+    ACCENT_ORANGE,
+    ACCENT_PURPLE,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+)
 from forge.tui.widgets.search_overlay import apply_highlights
 
 logger = logging.getLogger("forge.tui.agent_output")
@@ -17,17 +24,17 @@ _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇"
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 _SECTION_COLORS = {
-    "agent": "#e2e4e8",  # White-ish for agent text — primary content
-    "review": "#a371f7",  # Purple for LLM review
-    "gate": "#79c0ff",  # Light blue for gate results (lint/test/build)
-    "system": "#8b949e",  # Gray for system messages
+    "agent": TEXT_PRIMARY,  # Bright text for agent output — primary content
+    "review": ACCENT_PURPLE,  # Purple for LLM review
+    "gate": ACCENT_CYAN,  # Light blue for gate results (lint/test/build)
+    "system": TEXT_SECONDARY,  # Gray for system messages
 }
 
 _SECTION_HEADER_COLORS = {
-    "agent": "#f0883e",  # Orange header for AGENT sections
-    "review": "#a371f7",  # Purple header for REVIEW sections
-    "gate": "#79c0ff",  # Blue header for gate sections
-    "system": "#8b949e",  # Gray header for system sections
+    "agent": ACCENT_ORANGE,  # Orange header for AGENT sections
+    "review": ACCENT_PURPLE,  # Purple header for REVIEW sections
+    "gate": ACCENT_CYAN,  # Blue header for gate sections
+    "system": TEXT_SECONDARY,  # Gray header for system sections
 }
 
 _ERROR_TAIL_LINES = 20

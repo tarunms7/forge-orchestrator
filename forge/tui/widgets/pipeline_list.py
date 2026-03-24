@@ -8,11 +8,11 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.widget import Widget
 
-from forge.tui.widgets.task_list import STATE_COLORS, STATE_ICONS
+from forge.tui.theme import PIPELINE_STATUS_ICONS, STATE_COLORS, STATE_ICONS
 
 logger = logging.getLogger("forge.tui.widgets.pipeline_list")
 
-# Map pipeline status → icon/color (reuse task_list constants where possible)
+# Map pipeline status → icon/color
 _STATUS_MAP: dict[str, tuple[str, str]] = {
     "complete": (STATE_ICONS.get("done", "✔"), STATE_COLORS.get("done", "#3fb950")),
     "error": (STATE_ICONS.get("error", "✖"), STATE_COLORS.get("error", "#f85149")),
@@ -22,8 +22,7 @@ _STATUS_MAP: dict[str, tuple[str, str]] = {
     ),
     "executing": (STATE_ICONS.get("in_progress", "●"), STATE_COLORS.get("in_progress", "#f0883e")),
     "cancelled": (STATE_ICONS.get("cancelled", "✘"), STATE_COLORS.get("cancelled", "#8b949e")),
-    "planning": ("◌", "#58a6ff"),
-    "planned": ("◉", "#a371f7"),
+    **{k: v for k, v in PIPELINE_STATUS_ICONS.items() if k not in ("complete", "error")},
 }
 
 

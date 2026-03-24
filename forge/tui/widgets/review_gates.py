@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from textual.widget import Widget
 
+from forge.tui.theme import (
+    ACCENT_BLUE,
+    ACCENT_GREEN,
+    ACCENT_PURPLE,
+    ACCENT_RED,
+    TEXT_MUTED,
+    TEXT_SECONDARY,
+)
+
 _GATE_NAMES = {
     "gate0_build": ("Build", "🔨"),
     "gate1_lint": ("Lint", "📏"),
@@ -11,22 +20,26 @@ _GATE_NAMES = {
     "gate2_llm_review": ("LLM Review", "🤖"),
 }
 
-_STATUS_ICONS = {"passed": "[#3fb950]✓[/]", "failed": "[#f85149]✗[/]", "running": "[#d2a8ff]◎[/]"}
+_STATUS_ICONS = {
+    "passed": f"[{ACCENT_GREEN}]✓[/]",
+    "failed": f"[{ACCENT_RED}]✗[/]",
+    "running": f"[{ACCENT_PURPLE}]◎[/]",
+}
 
 
 def format_gates(gates: dict[str, dict]) -> str:
     if not gates:
-        return "[#484f58]No review data yet[/]"
+        return f"[{TEXT_MUTED}]No review data yet[/]"
     lines = []
     for gate_key, (name, icon) in _GATE_NAMES.items():
         gate = gates.get(gate_key)
         if not gate:
-            lines.append(f"  [#484f58]○ {icon} {name}[/]")
+            lines.append(f"  [{TEXT_MUTED}]○ {icon} {name}[/]")
             continue
         status = gate.get("status", "unknown")
-        status_icon = _STATUS_ICONS.get(status, "[#8b949e]?[/]")
+        status_icon = _STATUS_ICONS.get(status, f"[{TEXT_SECONDARY}]?[/]")
         details = gate.get("details", "")
-        detail_str = f" [#8b949e]— {details}[/]" if details else ""
+        detail_str = f" [{TEXT_SECONDARY}]— {details}[/]" if details else ""
         lines.append(f"  {status_icon} {icon} {name}{detail_str}")
     return "\n".join(lines)
 
@@ -43,7 +56,7 @@ def format_streaming_output(
     parts = list(lines)
     if streaming:
         cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
-        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+        parts.append(f"[{ACCENT_BLUE}]● Typing{cursor}[/]")
     return "\n".join(parts)
 
 
