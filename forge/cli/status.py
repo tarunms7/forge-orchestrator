@@ -84,26 +84,34 @@ def status(project_dir: str, show_all: bool) -> None:
 
     console = Console()
     table = Table(title="Forge Pipelines")
-    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("ID", style="cyan", no_wrap=True, max_width=12)
     if show_all:
         table.add_column("Project")
-    table.add_column("Description")
+    table.add_column("Description", max_width=40)
     table.add_column("Status")
     table.add_column("Tasks", justify="right")
+    table.add_column("Cost", justify="right")
     table.add_column("Created At")
 
     for p in pipelines:
         color = _STATUS_COLORS.get(p["status"], "white")
         status_text = p["status"].replace("[", "\\[")
-        description_text = p["description"].replace("[", "\\[")
-        row = [p["id"]]
+        desc = p["description"].replace("[", "\\[")
+        # Truncate to first line, max 50 chars
+        description_text = desc.split("\n")[0][:40]
+        if len(desc.split("\n")[0]) > 40:
+            description_text += "…"
+        row = [p["id"][:8]]
         if show_all:
             row.append(p["project_name"])
+        cost = p.get("cost_usd", 0)
+        cost_str = f"${cost:.2f}" if cost else "-"
         row.extend(
             [
                 description_text,
                 f"[{color}]{status_text}[/{color}]",
                 str(p["task_count"]),
+                cost_str,
                 p["created_at"],
             ]
         )
