@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -86,26 +85,6 @@ AGENT_DISALLOWED_TOOLS = [
 ]
 
 
-def _load_claude_md(project_dir: str) -> str | None:
-    """Load CLAUDE.md from standard locations.
-
-    Searches:
-      1. {project_dir}/CLAUDE.md
-      2. {project_dir}/.claude/CLAUDE.md
-
-    Returns content as string, or None if not found.
-    """
-    for rel_path in ("CLAUDE.md", os.path.join(".claude", "CLAUDE.md")):
-        full_path = os.path.join(project_dir, rel_path)
-        if os.path.isfile(full_path):
-            try:
-                with open(full_path, encoding="utf-8") as f:
-                    return f.read()
-            except OSError:
-                continue
-    return None
-
-
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
     """Build the human interaction protocol section for agent system prompts."""
     remaining = max(0, remaining)  # Prevent negative remaining count
@@ -186,8 +165,6 @@ Your working directory is {cwd}.{extra_dirs_clause}
 {conventions_block}
 
 {lessons_block}
-
-{claude_md_block}
 
 {contracts_block}
 
@@ -402,9 +379,7 @@ class ClaudeAdapter(AgentAdapter):
         question_protocol = _build_question_protocol(autonomy, questions_remaining)
 
         # CLAUDE.md is loaded automatically by the Claude Code harness when
-        # we use append_system_prompt. No need to load it manually — that
-        # would cause it to appear twice in the agent's context.
-        claude_md_block = ""
+        # we use append_system_prompt. No manual loading needed.
 
         max_turns = agent_max_turns
         wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
@@ -418,7 +393,6 @@ class ClaudeAdapter(AgentAdapter):
             dependency_context=dependency_context,
             file_scope_block=file_scope_block,
             question_protocol=question_protocol,
-            claude_md_block=claude_md_block,
             lessons_block=lessons_block,
             max_turns=max_turns,
             wrap_up_turn=wrap_up_turn,

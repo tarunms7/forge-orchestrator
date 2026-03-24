@@ -9,7 +9,6 @@ from forge.agents.adapter import (
     _build_conventions_block,
     _build_dependency_context,
     _build_question_protocol,
-    _load_claude_md,
 )
 
 # --- AgentResult tests ---
@@ -433,36 +432,7 @@ async def test_claude_adapter_error_includes_cost():
     assert result.output_tokens == 200
 
 
-# --- _load_claude_md tests ---
-
-
-class TestLoadClaudeMd:
-    def test_loads_from_project_root(self, tmp_path):
-        (tmp_path / "CLAUDE.md").write_text("# Project Rules\nUse pytest.")
-        result = _load_claude_md(str(tmp_path))
-        assert result == "# Project Rules\nUse pytest."
-
-    def test_loads_from_dotclaude_dir(self, tmp_path):
-        dotclaude = tmp_path / ".claude"
-        dotclaude.mkdir()
-        (dotclaude / "CLAUDE.md").write_text("# Alt Rules")
-        result = _load_claude_md(str(tmp_path))
-        assert result == "# Alt Rules"
-
-    def test_prefers_project_root(self, tmp_path):
-        (tmp_path / "CLAUDE.md").write_text("root")
-        dotclaude = tmp_path / ".claude"
-        dotclaude.mkdir()
-        (dotclaude / "CLAUDE.md").write_text("dotclaude")
-        result = _load_claude_md(str(tmp_path))
-        assert result == "root"
-
-    def test_returns_none_when_missing(self, tmp_path):
-        result = _load_claude_md(str(tmp_path))
-        assert result is None
-
-
-# --- CLAUDE.md injection into system prompt tests ---
+# --- CLAUDE.md harness loading tests ---
 
 
 def test_claude_md_not_manually_loaded(tmp_path):
