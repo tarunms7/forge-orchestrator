@@ -201,11 +201,11 @@ You have {max_turns} turns for this task. Manage them wisely:
 ## Before You Finish
 1. Run git diff to review all your changes
 2. Run tests if a test command is available
-3. Stage and commit: git add -A && git commit --no-verify -m '<type>: <short summary>'
+3. Stage and commit ONCE: git add -A && git commit --no-verify -m '<type>: <short summary>'
    Use conventional commits (feat, fix, refactor, test, docs, chore).
    Max 72 chars. Describe WHAT changed, don't copy the task title.
    ALWAYS use --no-verify to skip pre-commit hooks (the orchestrator runs its own review).
-   If the commit fails for any reason, don't worry — the orchestrator will auto-commit your changes.
+   If the commit fails, STOP TRYING. Do NOT retry with different flags. The orchestrator auto-commits your changes after you finish. Move on.
 4. If nothing meaningful to do (files don't exist, task already done), make no changes."""
 
 
@@ -426,10 +426,11 @@ class ClaudeAdapter(AgentAdapter):
             # and we ADD our agent instructions on top. This gives agents the
             # same power as interactive Claude Code sessions.
             append_system_prompt=system_prompt,
-            permission_mode="acceptEdits",
-            # No allowed_tools whitelist — agents get ALL Claude Code tools
-            # (Edit, Write, Bash, Glob, Grep, Read, plus any skills/MCP).
-            # We only BLOCK dangerous operations via disallowed_tools.
+            permission_mode="bypassPermissions",
+            # Agents run autonomously — no human to click "approve".
+            # bypassPermissions auto-approves all tools (Edit, Write, Bash,
+            # Glob, Grep, Read, plus skills/MCP). Dangerous operations are
+            # blocked via disallowed_tools below (git push, curl, sudo, etc.).
             disallowed_tools=list(AGENT_DISALLOWED_TOOLS),
             cwd=worktree_path,
             model=model,
