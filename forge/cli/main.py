@@ -347,6 +347,10 @@ from forge.cli.stats import stats  # noqa: E402
 
 cli.add_command(stats)
 
+from forge.cli.export import export  # noqa: E402
+
+cli.add_command(export)
+
 
 @cli.command()
 def upgrade() -> None:
