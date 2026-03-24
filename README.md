@@ -9,11 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/tarunms7/forge-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/tarunms7/forge-orchestrator/actions/workflows/ci.yml)
 
-Forge is a multi-agent orchestration engine. You describe what you want. Forge plans the work, generates interface contracts, runs agents in parallel, reviews every line, and opens a pull request.
+Describe what you want. Forge plans it, runs parallel AI agents, reviews every line, and opens a pull request.
 
 **One command. Multiple agents. Reviewed code delivered via PR.**
 
-[Install](#install) · [How It Works](#how-it-works) · [In Action](#see-it-in-action) · [Configuration](#configuration)
+[Install](#install) · [How It Works](#how-it-works) · [In Action](#see-it-in-action) · [Multi-Repo](#multi-repo-workspaces) · [Configuration](#configuration) · [CLI Reference](#cli-reference)
 
 </div>
 
@@ -33,52 +33,60 @@ Type your task. Hit Ctrl+S. Walk away. Come back to a pull request.
 
 ## What makes Forge different
 
-Most AI coding tools are **chat interfaces**. You prompt, you wait, you review, you prompt again. You're still the bottleneck.
+Most AI coding tools are chat interfaces. You prompt, you wait, you review, you prompt again. You're still the bottleneck.
 
-Forge is an **orchestration engine**. It breaks your task into a dependency graph, assigns each piece to an agent, and runs them in parallel — each in its own git worktree, each with its own review pipeline. When everything passes, you get a PR.
+Forge is an **orchestration engine**. It decomposes your task into a dependency graph, assigns each piece to an isolated agent, runs them in parallel, reviews every diff through multiple gates, and delivers a pull request. You approve the plan. Forge does the rest.
 
 | You're doing this today | Forge does this instead |
 |---|---|
-| Prompting one thing at a time | Decomposes into a **DAG** and runs independent tasks **in parallel** |
-| Hoping two AI-written files agree on an API shape | **Contract Builder** generates binding specs *before* any code is written |
-| Manually reviewing every AI change | **5-gate review pipeline**: build, lint, test, LLM review, contract compliance |
+| Prompting one thing at a time | Decomposes into a **DAG** and runs tasks **in parallel** |
+| Hoping AI-written files agree on interfaces | **Contract Builder** generates binding API specs *before* coding starts |
+| Manually reviewing every AI change | **5-gate review pipeline**: build, lint, test, LLM review, contracts |
 | Copy-pasting between chat and terminal | Each agent works in an **isolated git worktree** — zero conflicts |
-| Losing context in long sessions | Each agent is a **fresh session** with a focused prompt + its contracts |
+| Losing context in long sessions | Each agent gets a **focused prompt** + contracts + project lessons |
 | Merging by hand | Auto **rebase + fast-forward merge**, then `gh pr create` |
-| No idea what the AI spend was | **Real-time cost tracking** with per-pipeline budget limits |
+| No idea what the AI cost | **Real-time cost tracking** with budget limits |
+| AI makes the same mistakes twice | **Self-evolving learning** — Forge learns from failures and gets smarter |
+| Waiting for AI to ask obvious questions | **Planner asks you first** — unclear requirements get clarified before agents run |
 
 ---
 
 ## See it in action
 
-### Planning — Forge reads your codebase, then builds a task graph
+### Planning — Forge reads your codebase and builds a task graph
 
 <p align="center">
-  <img src="docs/screenshots/forge_planning_screen.png" alt="Forge — planning phase, reading codebase" width="720" />
+  <img src="docs/screenshots/forge_planning_screen.png" alt="Forge — planning phase" width="720" />
 </p>
 
-### Plan review — Approve, edit, or reject before any code is written
+The planner has the same power as Claude Code — full access to your CLAUDE.md, skills, memory, and MCP servers. It explores your codebase deeply, asks clarifying questions if something is ambiguous, and produces a structured task graph.
+
+### Plan review — Approve, edit, or reject before agents run
 
 <p align="center">
-  <img src="docs/screenshots/forge_plans_screen.png" alt="Forge — task plan with dependencies and complexity" width="720" />
+  <img src="docs/screenshots/forge_plans_screen.png" alt="Forge — task plan with dependencies" width="720" />
 </p>
 
-### Execution — Agents work in parallel, learning from failures in real-time
+Every plan shows tasks with complexity, dependencies, file ownership, and a cost estimate. You can edit the plan, reorder tasks, or reject and re-plan with different instructions.
+
+### Execution — Parallel agents with real-time learning
 
 <p align="center">
-  <img src="docs/screenshots/forge_execution_with_learning.png" alt="Forge — parallel execution with self-learning" width="720" />
+  <img src="docs/screenshots/forge_execution_with_learning.png" alt="Forge — parallel execution" width="720" />
 </p>
+
+Each agent runs in its own git worktree with a focused prompt. When an agent fails and succeeds on retry, Forge captures what it learned and applies it to future runs. A health monitor watches for stuck tasks and deadlocks.
 
 ### Code review — Inspect every diff before merge
 
 <p align="center">
-  <img src="docs/screenshots/forge_diff_screen.png" alt="Forge — diff review screen" width="720" />
+  <img src="docs/screenshots/forge_diff_screen.png" alt="Forge — diff review" width="720" />
 </p>
 
 ### Done — PR created, cost tracked, ready to merge
 
 <p align="center">
-  <img src="docs/screenshots/forge_final_pr_screen.png" alt="Forge — pipeline complete with PR link" width="720" />
+  <img src="docs/screenshots/forge_final_pr_screen.png" alt="Forge — pipeline complete" width="720" />
 </p>
 
 ---
@@ -92,7 +100,13 @@ Forge is an **orchestration engine**. It breaks your task into a dependency grap
 curl -fsSL https://raw.githubusercontent.com/tarunms7/forge-orchestrator/main/install.sh | sh
 ```
 
-That's it. The installer handles Python 3.12, [uv](https://docs.astral.sh/uv/), and the Forge CLI. Safe to re-run to upgrade.
+The installer handles Python 3.12, [uv](https://docs.astral.sh/uv/), the Forge CLI, and all dependencies. Safe to re-run to upgrade.
+
+To upgrade later:
+
+```bash
+forge upgrade
+```
 
 <details>
 <summary><b>Manual install</b></summary>
@@ -100,7 +114,7 @@ That's it. The installer handles Python 3.12, [uv](https://docs.astral.sh/uv/), 
 ```bash
 git clone https://github.com/tarunms7/forge-orchestrator.git
 cd forge-orchestrator
-uv tool install .
+uv tool install --python 3.12 ".[web]"
 forge doctor
 ```
 
@@ -115,12 +129,18 @@ cd your-project
 forge tui
 ```
 
-Type what you want. Forge auto-creates `.forge/` in your project on first run.
+Type what you want. Hit Ctrl+S. Forge auto-creates `.forge/` on first run.
 
 Or skip the TUI:
 
 ```bash
 forge run "Add input validation to all API endpoints"
+```
+
+Fix a GitHub issue directly:
+
+```bash
+forge fix 42    # Fetches issue #42 and builds a pipeline to fix it
 ```
 
 ---
@@ -129,49 +149,104 @@ forge run "Add input validation to all API endpoints"
 
 ```
 You: "Build a REST API with JWT auth and tests"
-                    |
-              1. PLAN
-              Reads codebase, decomposes into task DAG
-              with dependencies, file ownership, complexity
-                    |
-              2. CONTRACT
+                    │
+              1. PRE-FLIGHT
+              Validates tools, branches, disk space
+              — catches problems before spending money
+                    │
+              2. PLAN
+              Full Claude Code power — reads codebase,
+              asks clarifying questions, builds task DAG
+                    │
+              3. CONTRACT
               Generates binding API & type specs so
               agents agree on interfaces before coding
-                    |
-              3. EXECUTE
-              Parallel agents in isolated git worktrees,
-              each with its contracts injected into the prompt
-                    |
-              4. REVIEW
+                    │
+              4. EXECUTE
+              Parallel agents in isolated git worktrees
+              with real-time health monitoring
+                    │
+              5. REVIEW
               5-gate pipeline per task:
-              build > lint > test > LLM review > contracts
-                    |
-              5. MERGE
-              Rebase + fast-forward, then gh pr create
+              build › lint › test › LLM review › contracts
+                    │
+              6. FORMAT + MERGE
+              Auto-format, rebase, fast-forward merge,
+              then gh pr create
 ```
 
 ### The Contract Builder
 
-The #1 problem with multi-agent code generation is **integration**. Two agents writing a backend API and a frontend client will invent different field names, response shapes, and auth patterns.
-
-Forge solves this by generating **binding contracts** before agents write a single line:
+Two agents writing a backend API and a frontend client will invent different field names and response shapes. Forge solves this with **binding contracts** generated before any code is written:
 
 ```
 POST /api/templates
   Request:  { name: string, description: string, tasks: TaskConfig[] }
   Response: { id: string, name: string, created_at: string }
-  Producer: task-1 (backend)  |  Consumer: task-2 (frontend)
+  Producer: task-1 (backend)  │  Consumer: task-2 (frontend)
 ```
 
-Producers implement the spec. Consumers call the spec. The reviewer verifies compliance. No pray-and-merge.
+Producers implement the spec. Consumers call the spec. The reviewer checks compliance.
 
 ### Self-evolving learning
 
-Forge learns from its own failures. When a task fails and succeeds on retry, the system captures what changed and stores it as a lesson. Next time a similar pattern appears, that knowledge is injected into the agent's prompt.
+Forge gets smarter with every pipeline it runs:
 
-- Adaptive lint timeouts (ESLint took 180s? Next run starts at 360s)
-- Agent self-reported learnings from review feedback
-- Lessons persist across pipelines and projects
+- **Adaptive timeouts** — ESLint took 180s and failed? Next run starts at 360s. Automatically.
+- **Agent learnings** — When a task fails then succeeds on retry, Forge asks "what did you do differently?" and stores the answer as a lesson.
+- **Noise filtering** — Server 503s and transient errors aren't stored. Only real pattern changes become lessons.
+- **Cross-pipeline** — Lessons persist across projects. What Forge learns on one repo helps on the next.
+
+```bash
+forge lessons list    # See what Forge has learned
+forge lessons add     # Manually teach Forge something
+```
+
+### Pre-flight validation
+
+Before any pipeline starts, Forge runs 8 fast checks:
+
+- Claude CLI installed and authenticated
+- Git repo valid, base branch exists
+- `gh` CLI available (for PR creation)
+- Sufficient disk space (>1 GB)
+- No uncommitted changes that would interfere
+- Build/test commands resolvable
+
+If anything fails, you get a clear error with a fix command — not a cryptic failure 5 minutes into planning.
+
+### Pipeline health monitor
+
+During execution, a background watchdog detects:
+
+- **Stuck tasks** — in_progress for >15 minutes with no activity
+- **Stuck reviews** — review gate running for >10 minutes
+- **Deadlocks** — all tasks blocked with no way to make progress
+- **Dependency cascades** — failed task blocking downstream work
+
+Problems are logged and surfaced immediately, not discovered after the pipeline "completes."
+
+---
+
+## Multi-repo workspaces
+
+Forge natively supports monorepos and multi-repo setups. Point it at a directory with multiple git repos:
+
+```
+super-repo/
+  backend/     ← git repo on 'develop' branch
+  frontend/    ← git repo on 'main' branch
+  shared-lib/  ← git repo on 'main' branch
+```
+
+```bash
+cd super-repo
+forge tui
+```
+
+Forge auto-detects the repos and uses **whatever branch each repo is currently checked out to** as the base. No config needed. The TUI shows branch selectors for each repo so you can override at submission time.
+
+Agents get repo-aware prompts. The planner understands cross-repo dependencies. Contracts ensure APIs match across repos.
 
 ---
 
@@ -196,7 +271,7 @@ FORGE_BUDGET_LIMIT_USD=5 forge run "Refactor auth to OAuth2"
 
 ### Project config
 
-Drop a `forge.toml` in your project root for per-project settings:
+Drop a `forge.toml` in your `.forge/` directory for per-project settings:
 
 ```toml
 [agents]
@@ -221,10 +296,31 @@ fix_cmd = "npm run lint:fix"
 
 ---
 
+## CLI reference
+
+| Command | What it does |
+|---|---|
+| `forge tui` | Launch the terminal UI |
+| `forge run "task"` | Run a pipeline from the command line |
+| `forge fix 42` | Fix GitHub issue #42 via pipeline |
+| `forge status` | Show pipeline status |
+| `forge stats` | Pipeline analytics and metrics |
+| `forge logs <id>` | Event timeline for a pipeline |
+| `forge lessons list` | Show learned lessons |
+| `forge lessons add` | Manually add a lesson |
+| `forge doctor` | Check environment health |
+| `forge clean` | Remove stale worktrees and branches |
+| `forge init` | Initialize Forge in a project |
+| `forge serve` | Start the web dashboard |
+| `forge upgrade` | Upgrade to latest version |
+| `forge ping` | Verify Claude CLI is reachable |
+
+---
+
 ## Web dashboard
 
 ```bash
-forge serve   # Starts backend on :8000 + frontend on :3000
+forge serve   # Backend :8000 + Frontend :3000
 ```
 
 Live pipeline progress via WebSocket, interactive plan editing, contract viewer, review gate results, and cost tracking. Set `FORGE_JWT_SECRET` for multi-user auth.
@@ -237,17 +333,17 @@ Live pipeline progress via WebSocket, interactive plan editing, contract viewer,
 
 ```
 forge/
-  cli/           # Click CLI — forge run, forge tui, forge status, forge clean
+  cli/           # Click CLI — 14 commands
   tui/           # Textual TUI — full terminal UI with live pipeline view
-  core/          # Orchestration engine — daemon, planner, executor, scheduler
+  core/          # Orchestration — daemon, planner, executor, scheduler, health monitor
   agents/        # Claude Code SDK adapter — agent runtime, prompt building
   merge/         # Git worktree lifecycle — create, merge, cleanup
   review/        # Multi-gate review — lint, build, test, LLM review
-  learning/      # Self-evolving system — lesson store, runtime guard, extractor
-  storage/       # SQLite via SQLAlchemy async — tasks, pipelines, events
-  config/        # Settings, project config, forge.toml parsing
+  learning/      # Self-evolving — lesson store, runtime guard, extractor
+  storage/       # SQLite via SQLAlchemy async — tasks, pipelines, events, analytics
+  config/        # Settings, project config, forge.toml, workspace.toml
   api/           # FastAPI backend for web dashboard
-web/             # Next.js 14 frontend — TypeScript, Tailwind, Zustand
+web/             # Next.js frontend — TypeScript, Tailwind, Zustand
 ```
 
 ---
@@ -256,11 +352,12 @@ web/             # Next.js 14 frontend — TypeScript, Tailwind, Zustand
 
 | Problem | Fix |
 |---|---|
-| `forge: command not found` | Add `~/.local/bin` to PATH, or re-run the installer |
-| Claude CLI not authenticated | Run `claude login` |
-| `gh: command not found` | Install [GitHub CLI](https://cli.github.com) and run `gh auth login` |
-| Database issues | Run `forge doctor` |
-| Pipeline stuck | Check `.forge/forge.log` for details |
+| `forge: command not found` | Re-run the installer, or add `~/.local/bin` to PATH |
+| Claude CLI not authenticated | `claude login` |
+| `gh: command not found` | Install [GitHub CLI](https://cli.github.com) and `gh auth login` |
+| Pipeline stuck | Forge auto-detects stuck tasks. Check `.forge/forge.log` |
+| Database issues | `forge doctor` |
+| Upgrade fails | `forge upgrade` auto-handles Python 3.12 installation |
 
 ---
 
@@ -274,7 +371,7 @@ pip install -e '.[dev,web]'
 python -m pytest forge/ -q
 ```
 
-CI runs ruff lint + format check + tests on every PR.
+CI runs ruff lint + format + 2200+ tests on every PR.
 
 ---
 
