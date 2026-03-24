@@ -28,7 +28,6 @@ from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
 from forge.core.models import TaskState
 from forge.core.sanitize import validate_task_id
-from forge.learning.extractor import extract_from_command_failures
 from forge.learning.guard import GuardTriggered, RuntimeGuard
 from forge.learning.store import format_lessons_block, row_to_lesson
 
@@ -459,12 +458,17 @@ class ExecutorMixin:
                 pipeline_id=pid,
             )
         if not result.success:
-            console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
+            error_msg = str(result.error or "Agent execution failed")
+            console.print(f"[red]{task_id} agent failed: {error_msg}[/red]")
             try:
-                await db.set_task_error(task_id, str(result.error or "Agent execution failed"))
+                await db.set_task_error(task_id, error_msg)
             except Exception:
                 logger.debug("Failed to record task error for %s", task_id, exc_info=True)
-            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            # Pass error as review_feedback so the NEXT agent attempt sees
+            # exactly what went wrong and can try a different approach
+            await self._handle_retry(
+                db, task_id, worktree_mgr, review_feedback=error_msg, pipeline_id=pid
+            )
             return None
 
         # Safety net: commit any uncommitted changes left by the agent.
@@ -1731,41 +1735,42 @@ class ExecutorMixin:
             )
         except GuardTriggered as exc:
             logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)
+            # Build detailed feedback for retry — include the specific commands
+            # that failed so the next agent attempt tries a different approach
+            failed_cmds = []
+            if exc.failures:
+                for f in exc.failures[:5]:
+                    cmd = getattr(f, "command", None) or str(f)
+                    # FailureRecord has stderr_snippet and error_class, not 'error'
+                    snippet = getattr(f, "stderr_snippet", "") or ""
+                    err_class = getattr(f, "error_class", "") or ""
+                    err = f"{err_class}: {snippet}".strip(": ") if (err_class or snippet) else ""
+                    failed_cmds.append(f"  - `{cmd}`: {err[:150]}")
+            guard_detail = str(exc)
+            if failed_cmds:
+                guard_detail += "\n\nCommands that failed repeatedly:\n" + "\n".join(failed_cmds)
+                guard_detail += (
+                    "\n\nDo NOT retry these commands. Try a fundamentally different approach."
+                )
             await self._emit(
                 "task:agent_output",
                 {"task_id": task_id, "line": f"Agent stopped: {exc}"},
                 db=db,
                 pipeline_id=pid,
             )
-            # Create lesson from failures — db is always available
-            try:
-                lesson = extract_from_command_failures(exc.failures, project_dir=self._project_dir)
-                existing = await db.find_matching_lesson(
-                    lesson.trigger, project_dir=self._project_dir
-                )
-                if existing:
-                    await db.bump_lesson_hit(existing.id)
-                else:
-                    await db.add_lesson(
-                        scope=lesson.scope,
-                        category=lesson.category,
-                        title=lesson.title,
-                        content=lesson.content,
-                        trigger=lesson.trigger,
-                        resolution=lesson.resolution,
-                        project_dir=self._project_dir if lesson.scope == "project" else None,
-                        confidence=0.7,
-                    )
-                logger.info("Lesson captured: %s", lesson.title)
-            except Exception as le:
-                logger.warning("Failed to capture lesson: %s", le)
-            # Return a failure result
+            # DON'T create lessons from failed agents — the "resolution" would be
+            # whatever the agent tried last, which DIDN'T WORK. Only store lessons
+            # from agents that succeeded after failure (handled in the learning
+            # extractor's success-after-retry path).
+            logger.info("Skipping lesson capture for failed agent (resolution would be invalid)")
+            # Return a failure result with detailed feedback for retry
             from forge.agents.adapter import AgentResult
 
             return AgentResult(
                 success=False,
                 files_changed=[],
-                summary=f"Agent stopped by RuntimeGuard: {exc}",
+                summary=f"Agent stopped by RuntimeGuard: {guard_detail}",
+                error=guard_detail,
                 cost_usd=0.0,
                 input_tokens=0,
                 output_tokens=0,

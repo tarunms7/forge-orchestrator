@@ -192,3 +192,74 @@ def lessons_clear(project_dir: str, clear_all: bool) -> None:
         raise SystemExit(1)
 
     click.echo(f"Cleared {count} lesson(s).")
+
+
+@lessons.command("remove")
+@click.argument("lesson_id")
+def lessons_remove(lesson_id: str) -> None:
+    """Remove a specific lesson by ID (or ID prefix)."""
+
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            lesson = await db.get_lesson_by_id(lesson_id)
+            if not lesson:
+                return None
+            if not click.confirm(f"Remove lesson '{lesson.title}'?"):
+                return "cancelled"
+            await db.delete_lesson(lesson.id)
+            return lesson.title
+        finally:
+            await db.close()
+
+    try:
+        result = asyncio.run(_run())
+    except Exception as e:
+        click.echo(f"Error removing lesson: {e}")
+        raise SystemExit(1)
+
+    if result is None:
+        click.echo(f"No lesson found matching '{lesson_id}'.")
+        raise SystemExit(1)
+    if result == "cancelled":
+        click.echo("Aborted.")
+        return
+    click.echo(f"Removed lesson: {result}")
+
+
+@lessons.command("show")
+@click.argument("lesson_id")
+def lessons_show(lesson_id: str) -> None:
+    """Show full details of a specific lesson."""
+
+    async def _run():
+        db = _get_db()
+        await db.initialize()
+        try:
+            return await db.get_lesson_by_id(lesson_id)
+        finally:
+            await db.close()
+
+    try:
+        lesson = asyncio.run(_run())
+    except Exception as e:
+        click.echo(f"Error reading lesson: {e}")
+        raise SystemExit(1)
+
+    if not lesson:
+        click.echo(f"No lesson found matching '{lesson_id}'.")
+        raise SystemExit(1)
+
+    console = Console()
+    confidence = getattr(lesson, "confidence", 0.5)
+    console.print(f"[bold]{lesson.title}[/bold]")
+    console.print(f"  ID:         {lesson.id}")
+    console.print(f"  Scope:      {lesson.scope}")
+    console.print(f"  Category:   {lesson.category}")
+    console.print(f"  Trigger:    {lesson.trigger}")
+    console.print(f"  Resolution: {lesson.resolution}")
+    console.print(f"  Hits:       {lesson.hit_count}")
+    console.print(f"  Confidence: {confidence:.1%}")
+    console.print(f"  Created:    {getattr(lesson, 'created_at', 'N/A')}")
+    console.print(f"  Last hit:   {getattr(lesson, 'last_hit_at', 'N/A')}")
