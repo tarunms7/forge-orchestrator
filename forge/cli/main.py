@@ -366,18 +366,35 @@ def upgrade() -> None:
     click.echo(f"Upgrading forge-orchestrator from {_version}...")
 
     # Step 1: Detect if this is a dev install (editable pip install from a git clone)
-    forge_location = shutil.which("forge") or ""
-    is_dev_install = (
-        "site-packages" not in forge_location
-        and os.path.isfile(
-            os.path.join(os.path.dirname(os.path.dirname(forge_location or "/")), "pyproject.toml")
-        )
-    ) or os.path.isfile(os.path.join(os.getcwd(), "forge", "cli", "main.py"))
+    # Check multiple locations: __file__ (editable install), cwd (user in repo), which forge
+    repo_root = None
+
+    # Method 1: __file__ points into the source tree (editable install)
+    candidate = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if os.path.isdir(os.path.join(candidate, ".git")) and os.path.isfile(
+        os.path.join(candidate, "pyproject.toml")
+    ):
+        repo_root = candidate
+
+    # Method 2: User is running from the repo directory
+    if not repo_root:
+        cwd = os.getcwd()
+        if os.path.isfile(os.path.join(cwd, "forge", "cli", "main.py")) and os.path.isdir(
+            os.path.join(cwd, ".git")
+        ):
+            repo_root = cwd
+
+    # Method 3: Check FORGE_DATA_DIR/repo (installer clones here)
+    if not repo_root:
+        data_repo = os.path.join(forge_data_dir(), "repo")
+        if os.path.isdir(os.path.join(data_repo, ".git")) and os.path.isfile(
+            os.path.join(data_repo, "pyproject.toml")
+        ):
+            repo_root = data_repo
+
+    is_dev_install = repo_root is not None
 
     if is_dev_install:
-        # Dev install: just git pull in the repo
-        # __file__ is forge/cli/main.py — go up 3 levels to get repo root
-        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if os.path.isdir(os.path.join(repo_root, ".git")):
             click.echo("Dev install detected — pulling latest from git...")
             pull = subprocess.run(
@@ -397,12 +414,26 @@ def upgrade() -> None:
                     text=True,
                 )
                 if pip_install.returncode == 0:
+                    # If there's a stale uv tool install shadowing the dev install, warn
+                    uv_forge = os.path.expanduser("~/.local/bin/forge")
+                    venv_forge = os.path.join(repo_root, ".venv", "bin", "forge")
+                    if os.path.isfile(uv_forge) and os.path.isfile(venv_forge):
+                        click.echo(f"[!] Note: {uv_forge} (uv tool) may shadow your dev install.")
+                        click.echo("    Run `uv tool uninstall forge-orchestrator` to remove it,")
+                        click.echo("    or activate your venv: `source .venv/bin/activate`")
                     # Check new version
                     new_ver = subprocess.run(
-                        ["forge", "--version"],
+                        [sys.executable, "-m", "forge.cli.main", "--version"],
                         capture_output=True,
                         text=True,
+                        cwd=repo_root,
                     )
+                    if new_ver.returncode != 0:
+                        new_ver = subprocess.run(
+                            ["forge", "--version"],
+                            capture_output=True,
+                            text=True,
+                        )
                     new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else "unknown"
                     click.echo(f"Forge upgraded to {new_version}")
                 else:
