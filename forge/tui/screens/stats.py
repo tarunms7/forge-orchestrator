@@ -10,6 +10,15 @@ from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
+from forge.tui.theme import (
+    ACCENT_BLUE,
+    ACCENT_GREEN,
+    ACCENT_ORANGE,
+    ACCENT_PURPLE,
+    ACCENT_RED,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+)
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 logger = logging.getLogger("forge.tui.screens.stats")
@@ -41,40 +50,40 @@ def _trend_arrow(values: list[float]) -> str:
     Compares average of first half vs second half. Returns up/down/flat arrow.
     """
     if len(values) < 2:
-        return "[#8b949e]—[/]"
+        return f"[{TEXT_SECONDARY}]—[/]"
     mid = len(values) // 2
     recent = sum(values[:mid]) / mid
     older = sum(values[mid:]) / (len(values) - mid)
     if older == 0:
-        return "[#8b949e]—[/]"
+        return f"[{TEXT_SECONDARY}]—[/]"
     pct = (recent - older) / older
     if pct > 0.1:
-        return "[#f85149]▲[/]"  # red = cost/duration going up (bad)
+        return f"[{ACCENT_RED}]▲[/]"  # red = cost/duration going up (bad)
     elif pct < -0.1:
-        return "[#3fb950]▼[/]"  # green = cost/duration going down (good)
-    return "[#8b949e]—[/]"
+        return f"[{ACCENT_GREEN}]▼[/]"  # green = cost/duration going down (good)
+    return f"[{TEXT_SECONDARY}]—[/]"
 
 
 def format_pipeline_summary(trends: list[dict]) -> str:
     """Section 1: Pipeline Performance Summary — compact table of recent pipelines."""
     if not trends:
-        return "[#8b949e]No pipeline data available[/]"
+        return f"[{TEXT_SECONDARY}]No pipeline data available[/]"
 
     _STATUS_ICONS = {
-        "done": ("✔", "#3fb950"),
-        "complete": ("✔", "#3fb950"),
-        "executing": ("●", "#f0883e"),
-        "planning": ("◌", "#58a6ff"),
-        "error": ("✖", "#f85149"),
-        "cancelled": ("✖", "#f85149"),
+        "done": ("✔", ACCENT_GREEN),
+        "complete": ("✔", ACCENT_GREEN),
+        "executing": ("●", ACCENT_ORANGE),
+        "planning": ("◌", ACCENT_BLUE),
+        "error": ("✖", ACCENT_RED),
+        "cancelled": ("✖", ACCENT_RED),
     }
 
     lines = [
-        "[bold #8b949e]  Status  Description                              Duration    Cost     Tasks[/]"
+        f"[bold {TEXT_SECONDARY}]  Status  Description                              Duration    Cost     Tasks[/]"
     ]
     for p in trends[:8]:
         status = p.get("status", "unknown")
-        icon, color = _STATUS_ICONS.get(status, ("?", "#8b949e"))
+        icon, color = _STATUS_ICONS.get(status, ("?", TEXT_SECONDARY))
         desc = (p.get("description", "Untitled") or "Untitled")[:40]
         dur = _fmt_duration(p.get("duration_s", 0.0))
         cost = f"${p.get('total_cost_usd', 0.0):.2f}"
@@ -84,7 +93,7 @@ def format_pipeline_summary(trends: list[dict]) -> str:
         if failed:
             task_info += f" {failed}✗"
         lines.append(
-            f"  [{color}]{icon}[/] {desc:<40s}  [#8b949e]{dur:>8s}  {cost:>7s}  {task_info}[/]"
+            f"  [{color}]{icon}[/] {desc:<40s}  [{TEXT_SECONDARY}]{dur:>8s}  {cost:>7s}  {task_info}[/]"
         )
     return "\n".join(lines)
 
@@ -92,7 +101,7 @@ def format_pipeline_summary(trends: list[dict]) -> str:
 def format_cost_breakdown(stats: dict) -> str:
     """Section 2: Cost Breakdown — show planner/agent/review cost split."""
     if not stats:
-        return "[#8b949e]No cost data available[/]"
+        return f"[{TEXT_SECONDARY}]No cost data available[/]"
 
     total = stats.get("total_cost_usd", 0.0)
     planner = stats.get("planner_cost_usd", 0.0)
@@ -102,7 +111,7 @@ def format_cost_breakdown(stats: dict) -> str:
     review_cost = sum(t.get("review_cost_usd", 0.0) for t in tasks)
 
     if total <= 0:
-        return "[#8b949e]No costs recorded[/]"
+        return f"[{TEXT_SECONDARY}]No costs recorded[/]"
 
     def _bar(value: float, total_val: float, color: str) -> str:
         pct = (value / total_val * 100) if total_val > 0 else 0
@@ -111,14 +120,14 @@ def format_cost_breakdown(stats: dict) -> str:
         return f"  [{color}]{bar}[/] {pct:5.1f}%  ${value:.3f}"
 
     lines = [
-        f"  [bold #e6edf3]Total: ${total:.3f}[/]",
+        f"  [bold {TEXT_PRIMARY}]Total: ${total:.3f}[/]",
         "",
-        "  [#a371f7]Planner[/]",
-        _bar(planner, total, "#a371f7"),
-        "  [#58a6ff]Agent[/]",
-        _bar(agent_cost, total, "#58a6ff"),
-        "  [#f0883e]Review[/]",
-        _bar(review_cost, total, "#f0883e"),
+        f"  [{ACCENT_PURPLE}]Planner[/]",
+        _bar(planner, total, ACCENT_PURPLE),
+        f"  [{ACCENT_BLUE}]Agent[/]",
+        _bar(agent_cost, total, ACCENT_BLUE),
+        f"  [{ACCENT_ORANGE}]Review[/]",
+        _bar(review_cost, total, ACCENT_ORANGE),
     ]
     return "\n".join(lines)
 
@@ -126,7 +135,7 @@ def format_cost_breakdown(stats: dict) -> str:
 def format_retry_hotspots(retry_summary: list[dict]) -> str:
     """Section 3: Retry Hotspots — top 5 most-retried error patterns."""
     if not retry_summary:
-        return "[#8b949e]No retries recorded — clean runs![/]"
+        return f"[{TEXT_SECONDARY}]No retries recorded — clean runs![/]"
 
     lines = []
     for entry in retry_summary[:5]:
@@ -138,8 +147,8 @@ def format_retry_hotspots(retry_summary: list[dict]) -> str:
         if len(task_ids) > 3:
             ids_str += f" +{len(task_ids) - 3}"
         lines.append(
-            f"  [#f85149]{retries}×[/] [#e6edf3]{pattern}[/]\n"
-            f"      [#8b949e]{task_count} task(s): {ids_str}[/]"
+            f"  [{ACCENT_RED}]{retries}×[/] [{TEXT_PRIMARY}]{pattern}[/]\n"
+            f"      [{TEXT_SECONDARY}]{task_count} task(s): {ids_str}[/]"
         )
     return "\n".join(lines)
 
@@ -147,7 +156,7 @@ def format_retry_hotspots(retry_summary: list[dict]) -> str:
 def format_token_usage(stats: dict) -> str:
     """Section 4: Token Usage — total input/output tokens with avg per task."""
     if not stats:
-        return "[#8b949e]No token data available[/]"
+        return f"[{TEXT_SECONDARY}]No token data available[/]"
 
     total_in = stats.get("total_input_tokens", 0)
     total_out = stats.get("total_output_tokens", 0)
@@ -158,9 +167,9 @@ def format_token_usage(stats: dict) -> str:
     avg_out = total_out / n_tasks if n_tasks else 0
 
     lines = [
-        f"  [#58a6ff]Input tokens:[/]   {_fmt_tokens(total_in):>8s}  [#8b949e](avg {_fmt_tokens(int(avg_in))}/task)[/]",
-        f"  [#f0883e]Output tokens:[/]  {_fmt_tokens(total_out):>8s}  [#8b949e](avg {_fmt_tokens(int(avg_out))}/task)[/]",
-        f"  [#8b949e]Total:[/]          {_fmt_tokens(total_in + total_out):>8s}",
+        f"  [{ACCENT_BLUE}]Input tokens:[/]   {_fmt_tokens(total_in):>8s}  [{TEXT_SECONDARY}](avg {_fmt_tokens(int(avg_in))}/task)[/]",
+        f"  [{ACCENT_ORANGE}]Output tokens:[/]  {_fmt_tokens(total_out):>8s}  [{TEXT_SECONDARY}](avg {_fmt_tokens(int(avg_out))}/task)[/]",
+        f"  [{TEXT_SECONDARY}]Total:[/]          {_fmt_tokens(total_in + total_out):>8s}",
     ]
     return "\n".join(lines)
 
@@ -168,7 +177,7 @@ def format_token_usage(stats: dict) -> str:
 def format_trend_indicators(trends: list[dict]) -> str:
     """Section 5: Trend Indicators — cost and duration arrows for last 5 pipelines."""
     if len(trends) < 2:
-        return "[#8b949e]Need at least 2 pipelines for trend data[/]"
+        return f"[{TEXT_SECONDARY}]Need at least 2 pipelines for trend data[/]"
 
     recent = trends[:5]
     costs = [p.get("total_cost_usd", 0.0) for p in recent]
@@ -184,9 +193,9 @@ def format_trend_indicators(trends: list[dict]) -> str:
     avg_retries = sum(retries) / len(retries)
 
     lines = [
-        f"  {cost_arrow} [#e6edf3]Cost[/]       avg ${avg_cost:.3f}/pipeline  [#8b949e](last {len(recent)})[/]",
-        f"  {dur_arrow} [#e6edf3]Duration[/]   avg {_fmt_duration(avg_dur)}/pipeline",
-        f"  {retry_arrow} [#e6edf3]Retries[/]    avg {avg_retries:.1f}/pipeline",
+        f"  {cost_arrow} [{TEXT_PRIMARY}]Cost[/]       avg ${avg_cost:.3f}/pipeline  [{TEXT_SECONDARY}](last {len(recent)})[/]",
+        f"  {dur_arrow} [{TEXT_PRIMARY}]Duration[/]   avg {_fmt_duration(avg_dur)}/pipeline",
+        f"  {retry_arrow} [{TEXT_PRIMARY}]Retries[/]    avg {avg_retries:.1f}/pipeline",
     ]
     return "\n".join(lines)
 
@@ -241,33 +250,35 @@ class StatsScreen(Screen):
         self._retry_summary = retry_summary or []
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold #58a6ff]STATS[/]", id="stats-header")
+        yield Static(f"[bold {ACCENT_BLUE}]STATS[/]", id="stats-header")
         with VerticalScroll(id="stats-body"):
-            yield Static("[bold #58a6ff]Pipeline Performance[/]", classes="stats-section-title")
+            yield Static(
+                f"[bold {ACCENT_BLUE}]Pipeline Performance[/]", classes="stats-section-title"
+            )
             yield Static(
                 format_pipeline_summary(self._trends),
                 id="pipeline-summary",
                 classes="stats-section",
             )
-            yield Static("[bold #58a6ff]Cost Breakdown[/]", classes="stats-section-title")
+            yield Static(f"[bold {ACCENT_BLUE}]Cost Breakdown[/]", classes="stats-section-title")
             yield Static(
                 format_cost_breakdown(self._stats),
                 id="cost-breakdown",
                 classes="stats-section",
             )
-            yield Static("[bold #58a6ff]Retry Hotspots[/]", classes="stats-section-title")
+            yield Static(f"[bold {ACCENT_BLUE}]Retry Hotspots[/]", classes="stats-section-title")
             yield Static(
                 format_retry_hotspots(self._retry_summary),
                 id="retry-hotspots",
                 classes="stats-section",
             )
-            yield Static("[bold #58a6ff]Token Usage[/]", classes="stats-section-title")
+            yield Static(f"[bold {ACCENT_BLUE}]Token Usage[/]", classes="stats-section-title")
             yield Static(
                 format_token_usage(self._stats),
                 id="token-usage",
                 classes="stats-section",
             )
-            yield Static("[bold #58a6ff]Trends[/]", classes="stats-section-title")
+            yield Static(f"[bold {ACCENT_BLUE}]Trends[/]", classes="stats-section-title")
             yield Static(
                 format_trend_indicators(self._trends),
                 id="trend-indicators",
