@@ -1708,6 +1708,69 @@ class Database:
                 "tasks": task_metrics,
             }
 
+    async def get_pipeline_export_data(self, pipeline_id: str) -> dict | None:
+        """Return full pipeline + per-task data dict for export. Returns None if not found."""
+        async with self._session_factory() as session:
+            pipeline = await session.get(PipelineRow, pipeline_id)
+            if not pipeline:
+                return None
+
+            result = await session.execute(
+                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            )
+            tasks = list(result.scalars().all())
+
+            task_list = []
+            for t in tasks:
+                task_list.append(
+                    {
+                        "id": t.id,
+                        "title": t.title,
+                        "description": t.description,
+                        "state": t.state,
+                        "files": t.files if t.files is not None else [],
+                        "assigned_agent": t.assigned_agent,
+                        "cost_usd": t.cost_usd or 0.0,
+                        "agent_cost_usd": t.agent_cost_usd or 0.0,
+                        "review_cost_usd": t.review_cost_usd or 0.0,
+                        "retry_count": t.retry_count or 0,
+                        "input_tokens": t.input_tokens or 0,
+                        "output_tokens": t.output_tokens or 0,
+                        "started_at": t.started_at,
+                        "completed_at": t.completed_at,
+                        "agent_duration_s": t.agent_duration_s or 0.0,
+                        "review_duration_s": t.review_duration_s or 0.0,
+                        "lint_duration_s": t.lint_duration_s or 0.0,
+                        "merge_duration_s": t.merge_duration_s or 0.0,
+                        "num_turns": t.num_turns or 0,
+                        "error_message": t.error_message,
+                        "complexity": t.complexity,
+                        "repo_id": t.repo_id or "default",
+                    }
+                )
+
+            return {
+                "id": pipeline.id,
+                "description": pipeline.description,
+                "status": pipeline.status,
+                "created_at": pipeline.created_at,
+                "completed_at": pipeline.completed_at,
+                "duration_s": pipeline.duration_s or 0.0,
+                "total_cost_usd": pipeline.total_cost_usd or 0.0,
+                "planner_cost_usd": pipeline.planner_cost_usd or 0.0,
+                "total_input_tokens": pipeline.total_input_tokens or 0,
+                "total_output_tokens": pipeline.total_output_tokens or 0,
+                "tasks_succeeded": pipeline.tasks_succeeded or 0,
+                "tasks_failed": pipeline.tasks_failed or 0,
+                "total_retries": pipeline.total_retries or 0,
+                "base_branch": pipeline.base_branch,
+                "branch_name": pipeline.branch_name,
+                "pr_url": pipeline.pr_url,
+                "model_strategy": pipeline.model_strategy or "auto",
+                "project_name": pipeline.project_name,
+                "tasks": task_list,
+            }
+
     async def get_pipeline_trends(
         self, project_path: str | None = None, limit: int = 20
     ) -> list[dict]:
