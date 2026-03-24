@@ -191,3 +191,92 @@ async def test_list_projects_empty(db):
     """list_projects on empty DB returns empty list."""
     projects = await db.list_projects()
     assert projects == []
+
+
+async def test_get_pipeline_export_data_not_found(db):
+    """get_pipeline_export_data returns None for unknown pipeline."""
+    result = await db.get_pipeline_export_data("nonexistent-id")
+    assert result is None
+
+
+async def test_get_pipeline_export_data(db):
+    """get_pipeline_export_data returns all pipeline and task fields."""
+    await db.create_pipeline(
+        id="pipe-export",
+        description="Export test pipeline",
+        project_dir="/tmp/export",
+        model_strategy="auto",
+        project_name="export-proj",
+    )
+    await db.create_task(
+        id="task-1",
+        title="Add validators",
+        description="Add pydantic validators to models",
+        files=["src/models.py", "src/validators.py"],
+        depends_on=[],
+        complexity="medium",
+        pipeline_id="pipe-export",
+        repo_id="default",
+    )
+    await db.create_task(
+        id="task-2",
+        title="Write tests",
+        description="Write unit tests",
+        files=[],
+        depends_on=["task-1"],
+        complexity="low",
+        pipeline_id="pipe-export",
+    )
+
+    data = await db.get_pipeline_export_data("pipe-export")
+
+    assert data is not None
+    # Pipeline-level fields
+    assert data["id"] == "pipe-export"
+    assert data["description"] == "Export test pipeline"
+    assert data["status"] == "planning"
+    assert data["model_strategy"] == "auto"
+    assert data["project_name"] == "export-proj"
+    assert data["base_branch"] is None
+    assert data["branch_name"] is None
+    assert data["pr_url"] is None
+    assert data["duration_s"] == 0.0
+    assert data["total_cost_usd"] == 0.0
+    assert data["planner_cost_usd"] == 0.0
+    assert data["total_input_tokens"] == 0
+    assert data["total_output_tokens"] == 0
+    assert data["tasks_succeeded"] == 0
+    assert data["tasks_failed"] == 0
+    assert data["total_retries"] == 0
+
+    # Tasks list
+    assert len(data["tasks"]) == 2
+    by_id = {t["id"]: t for t in data["tasks"]}
+
+    t1 = by_id["task-1"]
+    assert t1["title"] == "Add validators"
+    assert t1["description"] == "Add pydantic validators to models"
+    assert t1["state"] == "todo"
+    assert t1["files"] == ["src/models.py", "src/validators.py"]
+    assert t1["assigned_agent"] is None
+    assert t1["complexity"] == "medium"
+    assert t1["repo_id"] == "default"
+    assert t1["cost_usd"] == 0.0
+    assert t1["agent_cost_usd"] == 0.0
+    assert t1["review_cost_usd"] == 0.0
+    assert t1["retry_count"] == 0
+    assert t1["input_tokens"] == 0
+    assert t1["output_tokens"] == 0
+    assert t1["started_at"] is None
+    assert t1["completed_at"] is None
+    assert t1["agent_duration_s"] == 0.0
+    assert t1["review_duration_s"] == 0.0
+    assert t1["lint_duration_s"] == 0.0
+    assert t1["merge_duration_s"] == 0.0
+    assert t1["num_turns"] == 0
+    assert t1["error_message"] is None
+
+    t2 = by_id["task-2"]
+    assert t2["files"] == []
+    assert t2["complexity"] == "low"
+    assert t2["repo_id"] == "default"
