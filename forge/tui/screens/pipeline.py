@@ -173,7 +173,7 @@ class PipelineScreen(Screen):
         content-align: center middle;
         text-align: center;
         background: #0d1117;
-        border-bottom: tall #30363d;
+        border-bottom: tall #21262d;
     }
     #split-pane {
         height: 1fr;
@@ -185,10 +185,11 @@ class PipelineScreen(Screen):
         width: 100%;
     }
     #left-panel {
-        width: 35;
-        min-width: 30;
-        max-width: 45;
-        border-right: tall #30363d;
+        width: 38;
+        min-width: 32;
+        max-width: 48;
+        border-right: tall #21262d;
+        background: #0d1117;
         layout: vertical;
     }
     #left-panel TaskList {
@@ -203,7 +204,7 @@ class PipelineScreen(Screen):
     #right-panel AgentOutput {
         width: 1fr;
         height: 1fr;
-        padding: 1 1;
+        padding: 1 2;
     }
     #right-panel ChatThread {
         width: 1fr;
@@ -212,14 +213,14 @@ class PipelineScreen(Screen):
     #right-panel DiffViewer {
         width: 1fr;
         height: 1fr;
-        padding: 1 1;
+        padding: 1 2;
     }
     PipelineProgress {
         dock: bottom;
         height: 1;
         padding: 0 1;
         background: #161b22;
-        border-top: tall #30363d;
+        border-top: tall #21262d;
     }
     """
 
