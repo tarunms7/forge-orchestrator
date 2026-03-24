@@ -6,8 +6,6 @@ import csv
 import io
 import json
 
-import pytest
-
 from forge.cli.export_formatters import format_csv, format_json, format_markdown
 
 SAMPLE_TASK_1 = {

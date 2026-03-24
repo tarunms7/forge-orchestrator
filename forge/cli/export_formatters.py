@@ -8,7 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -118,7 +118,7 @@ def format_markdown(data: dict) -> str:
 
     lines.append("")
     lines.append("---")
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
     lines.append(f"*Generated at {now}*")
 
     return "\n".join(lines)
