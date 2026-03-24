@@ -9,6 +9,7 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
 
+from forge.tui.theme import PIPELINE_STATUS_ICONS as _PIPELINE_STATUS_ICONS
 from forge.tui.widgets.branch_selector import BranchInput, BranchSelector
 from forge.tui.widgets.logo import ForgeLogo
 from forge.tui.widgets.pipeline_list import PipelineList
@@ -45,15 +46,6 @@ class PromptTextArea(TextArea):
         self.move_cursor((0, 0))
 
 
-_PIPELINE_STATUS_ICONS = {
-    "complete": ("\u2714", "#3fb950"),
-    "executing": ("\u25cf", "#f0883e"),
-    "planned": ("\u25c9", "#a371f7"),
-    "planning": ("\u25cc", "#58a6ff"),
-    "error": ("\u2716", "#f85149"),
-}
-
-
 def format_recent_pipelines(pipelines: list[dict]) -> str:
     import os
 
@@ -87,8 +79,9 @@ class HomeScreen(Screen):
         align: center top;
     }
     #home-container {
-        width: 110;
+        width: 120;
         height: 1fr;
+        padding: 0 2;
     }
     ForgeLogo {
         width: 100%;
@@ -101,21 +94,24 @@ class HomeScreen(Screen):
     #prompt-input {
         height: 7;
         border: tall #30363d;
+        background: #161b22;
         width: 1fr;
     }
     #prompt-input:focus {
         border: tall #58a6ff;
     }
     #shortcuts-panel {
-        width: 30;
+        width: 32;
         height: 7;
         border: tall #30363d;
+        background: #161b22;
         margin-left: 1;
         padding: 0 1;
     }
     #branch-row {
         width: 100%;
         height: auto;
+        margin: 0 0 1 0;
     }
     .branch-field {
         width: 1fr;
@@ -134,6 +130,7 @@ class HomeScreen(Screen):
     .branch-label {
         color: #8b949e;
         height: 1;
+        margin-bottom: 0;
     }
     #workspace-info {
         width: 100%;
@@ -144,12 +141,12 @@ class HomeScreen(Screen):
     #recent-label {
         width: 100%;
         margin: 1 0 0 0;
-        color: #8b949e;
+        color: #484f58;
     }
     PipelineList {
         width: 100%;
         height: auto;
-        max-height: 8;
+        max-height: 10;
     }
     """
 
@@ -188,15 +185,13 @@ class HomeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         shortcuts_text = (
-            "[#D8DEE9 bold]Shortcuts[/]\n"
+            "[#e6edf3 bold]Shortcuts[/]\n"
             "\n"
-            "[#5FA8FF]Ctrl+S[/]  [#A9C7E8]Submit pipeline[/]\n"
-            "[#5FA8FF]Ctrl+U[/]  [#A9C7E8]Clear input[/]\n"
-            "[#5FA8FF]Tab[/]     [#A9C7E8]Switch focus[/]\n"
-            "[#5FA8FF]Ctrl+P[/]  [#A9C7E8]Command palette[/]\n"
-            "[#5FA8FF]5[/]       [#A9C7E8]Stats[/]\n"
-            "[#5FA8FF]Esc[/]     [#A9C7E8]Quit[/]\n"
-            "[#5FA8FF]?[/]       [#A9C7E8]Help[/]"
+            "[#58a6ff]Ctrl+S[/]  Submit pipeline\n"
+            "[#58a6ff]Ctrl+U[/]  Clear input\n"
+            "[#58a6ff]Tab[/]     Switch focus\n"
+            "[#58a6ff]Ctrl+P[/]  Command palette\n"
+            "[#58a6ff]?[/]       Help"
         )
         with Vertical(id="home-container"):
             yield ForgeLogo()

@@ -5,30 +5,7 @@ from __future__ import annotations
 from textual.message import Message
 from textual.widget import Widget
 
-STATE_ICONS: dict[str, str] = {
-    "todo": "○",
-    "in_progress": "●",
-    "in_review": "◉",
-    "awaiting_approval": "⊙",
-    "awaiting_input": "◆",
-    "merging": "◈",
-    "done": "✔",
-    "cancelled": "✘",
-    "error": "✖",
-}
-
-STATE_COLORS: dict[str, str] = {
-    "todo": "#8b949e",
-    "in_progress": "#f0883e",
-    "in_review": "#a371f7",
-    "awaiting_approval": "#d29922",
-    "awaiting_input": "#f0883e",
-    "merging": "#79c0ff",
-    "done": "#3fb950",
-    "cancelled": "#8b949e",
-    "error": "#f85149",
-}
-
+from forge.tui.theme import STATE_COLORS, STATE_ICONS
 
 MAX_WIDTH = 40
 
