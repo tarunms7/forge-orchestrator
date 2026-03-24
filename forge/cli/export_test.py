@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 
 import pytest
 from click.testing import CliRunner
