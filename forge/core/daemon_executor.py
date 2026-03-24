@@ -458,12 +458,17 @@ class ExecutorMixin:
                 pipeline_id=pid,
             )
         if not result.success:
-            console.print(f"[red]{task_id} agent failed: {result.error}[/red]")
+            error_msg = str(result.error or "Agent execution failed")
+            console.print(f"[red]{task_id} agent failed: {error_msg}[/red]")
             try:
-                await db.set_task_error(task_id, str(result.error or "Agent execution failed"))
+                await db.set_task_error(task_id, error_msg)
             except Exception:
                 logger.debug("Failed to record task error for %s", task_id, exc_info=True)
-            await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pid)
+            # Pass error as review_feedback so the NEXT agent attempt sees
+            # exactly what went wrong and can try a different approach
+            await self._handle_retry(
+                db, task_id, worktree_mgr, review_feedback=error_msg, pipeline_id=pid
+            )
             return None
 
         # Safety net: commit any uncommitted changes left by the agent.
@@ -1722,11 +1727,14 @@ class ExecutorMixin:
             # Build detailed feedback for retry — include the specific commands
             # that failed so the next agent attempt tries a different approach
             failed_cmds = []
-            if hasattr(exc, "failures") and exc.failures:
+            if exc.failures:
                 for f in exc.failures[:5]:
                     cmd = getattr(f, "command", None) or str(f)
-                    err = getattr(f, "error", None) or ""
-                    failed_cmds.append(f"  - `{cmd}`: {err[:100]}")
+                    # FailureRecord has stderr_snippet and error_class, not 'error'
+                    snippet = getattr(f, "stderr_snippet", "") or ""
+                    err_class = getattr(f, "error_class", "") or ""
+                    err = f"{err_class}: {snippet}".strip(": ") if (err_class or snippet) else ""
+                    failed_cmds.append(f"  - `{cmd}`: {err[:150]}")
             guard_detail = str(exc)
             if failed_cmds:
                 guard_detail += "\n\nCommands that failed repeatedly:\n" + "\n".join(failed_cmds)
