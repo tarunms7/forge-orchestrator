@@ -11,9 +11,9 @@
 
 Describe what you want. Forge plans it, runs parallel AI agents, reviews every line, and opens a pull request.
 
-**One command. Multiple agents. Reviewed code delivered via PR.**
+**Claude Code for thinking. Forge for shipping.**
 
-[Install](#install) · [How It Works](#how-it-works) · [In Action](#see-it-in-action) · [Multi-Repo](#multi-repo-workspaces) · [Configuration](#configuration) · [CLI Reference](#cli-reference)
+[Why Forge?](#why-not-just-use-claude-code) · [Install](#install) · [How It Works](#how-it-works) · [In Action](#see-it-in-action) · [Multi-Repo](#multi-repo-workspaces) · [Configuration](#configuration) · [CLI Reference](#cli-reference)
 
 </div>
 
@@ -31,11 +31,35 @@ Type your task. Hit Ctrl+S. Walk away. Come back to a pull request.
 
 ---
 
+## Why not just use Claude Code?
+
+Claude Code is great. Forge is built on it. Every Forge agent IS a Claude Code session. The planner IS a Claude Code session. So why not just use Claude Code directly?
+
+**Because you're the bottleneck.**
+
+Claude Code handles one task at a time. You prompt, you wait, you review, you prompt the next thing. For a 5-task feature, that's 5 rounds of your attention. Forge runs all 5 in parallel while you do something else.
+
+| Scenario | Claude Code | Forge |
+|---|---|---|
+| Fix a typo | ✅ Perfect. One file, 10 seconds. | Overkill. Don't use Forge for this. |
+| Add a button | ✅ Great. Quick and interactive. | Unnecessary. |
+| "Build JWT auth with registration, email verification, password reset, and tests" | You prompt 4 times. Review 4 times. Hope they work together. | Plans all 4. Generates contracts so they agree on APIs. Runs in parallel. Reviews every diff. One PR. |
+| "Migrate 15 endpoints from requests to httpx" | One by one. An hour of your time. | All 15 in parallel. 8 minutes. You weren't even watching. |
+| "Fix issue #42" | You read the issue. Understand the code. Write the fix. | `forge fix 42`. Done. |
+| Multi-repo backend + frontend change | Switch repos. Copy-paste API shapes. Hope they match. | Agents in both repos get the same contract. They match on first try. |
+
+**Forge doesn't replace Claude Code. It removes the human scheduling layer.** You still approve the plan. You still review the PR. But the 45 minutes between "approve plan" and "PR ready" — that's Forge, not you.
+
+### When to use what
+
+- **Claude Code** → Debugging, exploration, quick fixes, learning a codebase
+- **Forge** → Features, migrations, multi-file changes, anything with 2+ parallel tasks
+
+---
+
 ## What makes Forge different
 
-Most AI coding tools are chat interfaces. You prompt, you wait, you review, you prompt again. You're still the bottleneck.
-
-Forge is an **orchestration engine**. It decomposes your task into a dependency graph, assigns each piece to an isolated agent, runs them in parallel, reviews every diff through multiple gates, and delivers a pull request. You approve the plan. Forge does the rest.
+Forge isn't another chat wrapper. It's an orchestration engine with systems that compound over time.
 
 | You're doing this today | Forge does this instead |
 |---|---|
