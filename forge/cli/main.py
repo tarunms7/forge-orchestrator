@@ -350,7 +350,7 @@ cli.add_command(stats)
 
 @cli.command()
 def upgrade() -> None:
-    """Upgrade Forge to the latest version from GitHub (global install)."""
+    """Upgrade Forge to the latest version from GitHub."""
     import shutil
     import subprocess
     import sys
@@ -359,136 +359,65 @@ def upgrade() -> None:
 
     uv = shutil.which("uv")
     if not uv:
-        click.echo("Error: uv not found. Install it first: https://docs.astral.sh/uv/", err=True)
+        click.echo("Error: uv not found. Install: https://docs.astral.sh/uv/", err=True)
         sys.exit(1)
 
-    repo_pip = "git+https://github.com/tarunms7/forge-orchestrator.git"
     click.echo(f"Upgrading forge-orchestrator from {_version}...")
 
-    # Step 1: Detect if this is a dev install (editable pip install from a git clone)
-    # Check multiple locations: __file__ (editable install), cwd (user in repo), which forge
-    repo_root = None
-
-    # Method 1: __file__ points into the source tree (editable install)
-    candidate = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if os.path.isdir(os.path.join(candidate, ".git")) and os.path.isfile(
-        os.path.join(candidate, "pyproject.toml")
-    ):
-        repo_root = candidate
-
-    # Method 2: User is running from the repo directory
-    if not repo_root:
-        cwd = os.getcwd()
-        if os.path.isfile(os.path.join(cwd, "forge", "cli", "main.py")) and os.path.isdir(
-            os.path.join(cwd, ".git")
+    # ── Step 1: Find a local repo clone ──
+    # Priority: FORGE_DATA_DIR/repo (installer) > __file__ parent (editable) > cwd
+    repo_clone = None
+    for candidate in [
+        os.path.join(forge_data_dir(), "repo"),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        os.getcwd(),
+    ]:
+        if (
+            candidate
+            and os.path.isdir(os.path.join(candidate, ".git"))
+            and os.path.isfile(os.path.join(candidate, "forge", "cli", "main.py"))
         ):
-            repo_root = cwd
+            repo_clone = candidate
+            break
 
-    # Method 3: Check FORGE_DATA_DIR/repo (installer clones here)
-    if not repo_root:
-        data_repo = os.path.join(forge_data_dir(), "repo")
-        if os.path.isdir(os.path.join(data_repo, ".git")) and os.path.isfile(
-            os.path.join(data_repo, "pyproject.toml")
-        ):
-            repo_root = data_repo
+    # ── Step 2: git pull ──
+    if repo_clone:
+        click.echo(f"Pulling latest from {repo_clone}...")
+        pull = subprocess.run(["git", "pull"], cwd=repo_clone, capture_output=True, text=True)
+        if pull.returncode != 0:
+            click.echo(f"git pull failed: {pull.stderr.strip()}", err=True)
+        elif pull.stdout.strip() != "Already up to date.":
+            click.echo(pull.stdout.strip())
 
-    is_dev_install = repo_root is not None
-
-    if is_dev_install:
-        if os.path.isdir(os.path.join(repo_root, ".git")):
-            click.echo("Dev install detected — pulling latest from git...")
-            pull = subprocess.run(
-                ["git", "pull"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-            )
-            if pull.returncode == 0:
-                click.echo(pull.stdout.strip())
-                # Auto-reinstall to pick up new dependencies
-                click.echo("Reinstalling dependencies...")
-                pip_install = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "-e", ".[web]", "-q"],
-                    cwd=repo_root,
-                    capture_output=True,
-                    text=True,
-                )
-                if pip_install.returncode == 0:
-                    # If there's a stale uv tool install shadowing the dev install, warn
-                    uv_forge = os.path.expanduser("~/.local/bin/forge")
-                    venv_forge = os.path.join(repo_root, ".venv", "bin", "forge")
-                    if os.path.isfile(uv_forge) and os.path.isfile(venv_forge):
-                        click.echo(f"[!] Note: {uv_forge} (uv tool) may shadow your dev install.")
-                        click.echo("    Run `uv tool uninstall forge-orchestrator` to remove it,")
-                        click.echo("    or activate your venv: `source .venv/bin/activate`")
-                    # Check new version
-                    new_ver = subprocess.run(
-                        [sys.executable, "-m", "forge.cli.main", "--version"],
-                        capture_output=True,
-                        text=True,
-                        cwd=repo_root,
-                    )
-                    if new_ver.returncode != 0:
-                        new_ver = subprocess.run(
-                            ["forge", "--version"],
-                            capture_output=True,
-                            text=True,
-                        )
-                    new_version = new_ver.stdout.strip() if new_ver.returncode == 0 else "unknown"
-                    click.echo(f"Forge upgraded to {new_version}")
-                else:
-                    click.echo(f"pip install failed: {pip_install.stderr.strip()[:200]}", err=True)
-                    click.echo("Run manually: pip install -e '.[web]'")
-            else:
-                click.echo(f"git pull failed: {pull.stderr.strip()}", err=True)
-            return
-        click.echo("Dev install detected but no git repo found. Run `git pull` manually.")
-        return
-
-    # Step 2: Ensure Python 3.12+ is available for uv tool install
+    # ── Step 3: Ensure Python 3.12+ ──
     py_check = subprocess.run([uv, "python", "list"], capture_output=True, text=True)
-    has_312 = any(
-        f"3.{v}" in (py_check.stdout or "")
-        for v in range(12, 20)  # 3.12 through 3.19
-    )
+    has_312 = any(f"3.{v}" in (py_check.stdout or "") for v in range(12, 20))
     if not has_312:
-        click.echo("Installing Python 3.12 (required by Forge)...")
-        py_install = subprocess.run(
-            [uv, "python", "install", "3.12"],
-            capture_output=True,
-            text=True,
-        )
-        if py_install.returncode != 0:
-            click.echo(
-                "Error: Could not install Python 3.12.\n"
-                "Install it manually: brew install python@3.12 (macOS) or uv python install 3.12",
-                err=True,
-            )
-            sys.exit(1)
+        click.echo("Installing Python 3.12...")
+        subprocess.run([uv, "python", "install", "3.12"], capture_output=True, text=True)
 
-    # Step 3: Upgrade Python package with web extras
+    # ── Step 4: uv tool install (from local clone if available, else GitHub) ──
+    install_source = (
+        f"{repo_clone}[web]"
+        if repo_clone
+        else "git+https://github.com/tarunms7/forge-orchestrator.git[web]"
+    )
+    click.echo("Installing...")
     result = subprocess.run(
-        [uv, "tool", "install", "--python", "3.12", "--upgrade", "--force", f"{repo_pip}[web]"],
+        [uv, "tool", "install", "--python", "3.12", "--upgrade", "--force", install_source],
         capture_output=True,
         text=True,
     )
-
     if result.returncode != 0:
-        # Provide helpful error message instead of raw pip output
         stderr = result.stderr or ""
-        if "Python" in stderr and "does not satisfy" in stderr:
-            click.echo(
-                "Error: Python 3.12+ required but not available for uv.\n"
-                "Fix: uv python install 3.12\n"
-                "Or:  brew install python@3.12",
-                err=True,
-            )
+        if "does not satisfy" in stderr:
+            click.echo("Error: Python 3.12+ required. Fix: uv python install 3.12", err=True)
         else:
             click.echo(f"Upgrade failed:\n{stderr}", err=True)
         sys.exit(1)
 
-    # Step 2: Update the cloned repo (for web frontend)
-    repo_dir = os.path.join(forge_data_dir(), "repo")
+    # ── Step 5: Update web frontend ──
+    repo_dir = repo_clone or os.path.join(forge_data_dir(), "repo")
     if os.path.isdir(os.path.join(repo_dir, ".git")):
         click.echo("Updating web frontend...")
         subprocess.run(
