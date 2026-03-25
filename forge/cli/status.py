@@ -97,15 +97,15 @@ def status(project_dir: str, show_all: bool) -> None:
         color = _STATUS_COLORS.get(p["status"], "white")
         status_text = p["status"].replace("[", "\\[")
         desc = p["description"].replace("[", "\\[")
-        # Truncate to first line, max 50 chars
+        # Truncate to first line, max 40 chars
         description_text = desc.split("\n")[0][:40]
         if len(desc.split("\n")[0]) > 40:
             description_text += "…"
         row = [p["id"][:8]]
         if show_all:
             row.append(p["project_name"])
-        cost = p.get("cost_usd", 0)
-        cost_str = f"${cost:.2f}" if cost else "-"
+        cost = p.get("cost_usd")
+        cost_str = f"${cost:.2f}" if cost is not None else "-"
         row.extend(
             [
                 description_text,

@@ -371,8 +371,8 @@ class FinalApprovalScreen(Screen):
                         format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table"
                     )
                     yield Static(
-                        "\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  r: re-run  "
-                        "f: follow up  n: new task  Esc: cancel[/]"
+                        f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  r: re-run  "
+                        f"f: follow up  n: new task  Esc: cancel[/]"
                     )
                     yield FollowUpInput(
                         branch=self._pipeline_branch,
