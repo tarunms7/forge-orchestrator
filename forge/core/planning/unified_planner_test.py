@@ -395,6 +395,32 @@ class TestPlannerMultiRepo:
         assert "REQUIRED for ambiguous tasks" in prompt
         assert "you MUST ask" in prompt
 
+    def test_planner_prompt_has_adaptive_task_assessment(self):
+        """Planner should assess task type before decomposing."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+        )
+        # All four task types should be described
+        assert "Simple / Small Fix" in prompt
+        assert "Review / Analysis" in prompt
+        assert "Medium Feature" in prompt
+        assert "Large Feature" in prompt
+        # Should instruct to choose simplest approach
+        assert "SIMPLEST approach" in prompt
+        # Review tasks should produce fix tasks
+        assert "each fix becomes a task" in prompt or "each issue you find" in prompt
+
+    def test_planner_prompt_allows_single_task_plans(self):
+        """Planner should explicitly allow single-task plans."""
+        prompt = _build_unified_system_prompt(
+            question_protocol="Ask questions.",
+        )
+        assert (
+            "single task" in prompt.lower()
+            or "single-task" in prompt.lower()
+            or "SINGLE task" in prompt
+        )
+
     def test_parse_validates_repo_assignments(self):
         """_parse() rejects unknown repo IDs when repo_ids is set."""
         planner = UnifiedPlanner(repo_ids={"backend", "frontend"})
