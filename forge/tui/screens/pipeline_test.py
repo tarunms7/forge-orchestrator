@@ -575,9 +575,9 @@ def test_phase_banner_multiword_wide_spacing():
     banner = PhaseBanner()
     banner._phase = "planned"
     rendered = banner.render()
-    # "Plan Approval" → "P L A N   A P P R O V A L" (triple-space between words)
+    # "Plan Ready" → "P L A N   R E A D Y" (triple-space between words)
     assert "P  L  A  N" in rendered
-    assert "A  P  P  R  O  V  A  L" in rendered
+    assert "R  E  A  D  Y" in rendered
 
 
 def test_phase_banner_icon_preserved():

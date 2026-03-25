@@ -108,6 +108,7 @@ class PipelineProgress(Widget):
         height: 1;
         padding: 0 1;
         background: #161b22;
+        border-top: tall #21262d;
     }
     """
 

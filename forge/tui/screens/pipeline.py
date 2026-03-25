@@ -14,6 +14,7 @@ from textual.widgets import Input
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
+from forge.tui.theme import PHASE_DISPLAY as _PHASE_BANNER
 from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.copy_overlay import CopyOverlay
@@ -26,28 +27,6 @@ from forge.tui.widgets.suggestion_chips import SuggestionChips
 from forge.tui.widgets.task_list import TaskList
 
 logger = logging.getLogger("forge.tui.screens.pipeline")
-
-# Map phase → display label and colour
-_PHASE_BANNER: dict[str, tuple[str, str]] = {
-    "idle": ("Idle", "#8b949e"),
-    "planning": ("◌ Planning", "#58a6ff"),
-    "planned": ("◉ Plan Approval", "#a371f7"),
-    "contracts": ("⚙ Contracts", "#d2a8ff"),
-    "executing": ("⚡ Execution", "#f0883e"),
-    "in_progress": ("⚡ Execution", "#f0883e"),
-    "review": ("🔍 Review", "#79c0ff"),
-    "in_review": ("🔍 Review", "#79c0ff"),
-    "final_approval": ("◎ Final Approval", "#f0883e"),
-    "pr_creating": ("⚙ Creating PR", "#d2a8ff"),
-    "pr_created": ("✔ PR Created", "#3fb950"),
-    "complete": ("✔ Complete", "#3fb950"),
-    "error": ("✖ Error", "#f85149"),
-    "cancelled": ("✘ Cancelled", "#8b949e"),
-    "paused": ("⏸ Paused", "#d29922"),
-    "partial_success": ("⚠ Partial Success", "#d29922"),
-    "retrying": ("⟳ Retrying Failed", "#f0883e"),
-    "interrupted": ("⏸ Interrupted", "#d29922"),
-}
 
 _VIEW_NAMES = ("output", "chat", "diff")
 
@@ -76,7 +55,7 @@ class PhaseBanner(Widget):
         content-align: center middle;
         text-align: center;
         background: #0d1117;
-        border-bottom: tall #30363d;
+        border-bottom: tall #21262d;
     }
     """
 
@@ -194,7 +173,7 @@ class PipelineScreen(Screen):
         content-align: center middle;
         text-align: center;
         background: #0d1117;
-        border-bottom: tall #30363d;
+        border-bottom: tall #21262d;
     }
     #split-pane {
         height: 1fr;
@@ -206,10 +185,11 @@ class PipelineScreen(Screen):
         width: 100%;
     }
     #left-panel {
-        width: 35;
-        min-width: 30;
-        max-width: 45;
-        border-right: tall #30363d;
+        width: 38;
+        min-width: 32;
+        max-width: 48;
+        border-right: tall #21262d;
+        background: #0d1117;
         layout: vertical;
     }
     #left-panel TaskList {
@@ -224,7 +204,7 @@ class PipelineScreen(Screen):
     #right-panel AgentOutput {
         width: 1fr;
         height: 1fr;
-        padding: 1 1;
+        padding: 1 2;
     }
     #right-panel ChatThread {
         width: 1fr;
@@ -233,14 +213,14 @@ class PipelineScreen(Screen):
     #right-panel DiffViewer {
         width: 1fr;
         height: 1fr;
-        padding: 1 1;
+        padding: 1 2;
     }
     PipelineProgress {
         dock: bottom;
         height: 1;
         padding: 0 1;
         background: #161b22;
-        border-top: tall #30363d;
+        border-top: tall #21262d;
     }
     """
 

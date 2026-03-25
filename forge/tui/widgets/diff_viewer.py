@@ -6,22 +6,30 @@ from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.widgets import Static
 
+from forge.tui.theme import (
+    ACCENT_BLUE,
+    ACCENT_CYAN,
+    ACCENT_GREEN,
+    ACCENT_RED,
+    BORDER_DEFAULT,
+    TEXT_SECONDARY,
+)
 from forge.tui.widgets.search_overlay import apply_highlights
 
 
 def format_diff(diff_text: str) -> str:
     if not diff_text:
-        return "[#8b949e]No diff available[/]"
+        return f"[{TEXT_SECONDARY}]No diff available[/]"
     lines = []
     for line in diff_text.splitlines():
         if line.startswith("+++") or line.startswith("---"):
-            lines.append(f"[bold #8b949e]{_escape(line)}[/]")
+            lines.append(f"[bold {TEXT_SECONDARY}]{_escape(line)}[/]")
         elif line.startswith("@@"):
-            lines.append(f"[#79c0ff]{_escape(line)}[/]")
+            lines.append(f"[{ACCENT_CYAN}]{_escape(line)}[/]")
         elif line.startswith("+"):
-            lines.append(f"[#3fb950]{_escape(line)}[/]")
+            lines.append(f"[{ACCENT_GREEN}]{_escape(line)}[/]")
         elif line.startswith("-"):
-            lines.append(f"[#f85149]{_escape(line)}[/]")
+            lines.append(f"[{ACCENT_RED}]{_escape(line)}[/]")
         else:
             lines.append(_escape(line))
     return "\n".join(lines)
@@ -81,10 +89,12 @@ class DiffViewer(ScrollableContainer):
     def _refresh_content(self) -> None:
         """Update the child Static with rendered diff content."""
         if not self._task_id:
-            self._content.update("[#8b949e]Select a task to view its diff[/]")
+            self._content.update(f"[{TEXT_SECONDARY}]Select a task to view its diff[/]")
             return
-        header = f"[bold #58a6ff]{_escape(self._task_id)}[/]: {_escape(self._task_title or '')}\n"
-        separator = "[#30363d]" + "─" * 60 + "[/]\n"
+        header = (
+            f"[bold {ACCENT_BLUE}]{_escape(self._task_id)}[/]: {_escape(self._task_title or '')}\n"
+        )
+        separator = f"[{BORDER_DEFAULT}]" + "─" * 60 + "[/]\n"
         diff_content = format_diff(self._diff_text)
         if self._search_pattern:
             diff_content, _ = apply_highlights(diff_content, self._search_pattern)

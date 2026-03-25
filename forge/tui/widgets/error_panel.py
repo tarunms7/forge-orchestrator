@@ -12,6 +12,17 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.widget import Widget
 
+from forge.tui.theme import (
+    ACCENT_CYAN,
+    ACCENT_ORANGE,
+    ACCENT_PURPLE,
+    ACCENT_RED,
+    ACCENT_YELLOW,
+    BORDER_DEFAULT,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+)
+
 
 @dataclass
 class ErrorClassification:
@@ -217,14 +228,14 @@ _CATEGORY_ICONS: dict[str, str] = {
 }
 
 _CATEGORY_COLORS: dict[str, str] = {
-    "syntax_error": "#f85149",
-    "import_error": "#f0883e",
-    "test_failure": "#d29922",
-    "timeout": "#79c0ff",
-    "permission": "#f85149",
-    "git_conflict": "#a371f7",
-    "budget_exceeded": "#f0883e",
-    "unknown": "#8b949e",
+    "syntax_error": ACCENT_RED,
+    "import_error": ACCENT_ORANGE,
+    "test_failure": ACCENT_YELLOW,
+    "timeout": ACCENT_CYAN,
+    "permission": ACCENT_RED,
+    "git_conflict": ACCENT_PURPLE,
+    "budget_exceeded": ACCENT_ORANGE,
+    "unknown": TEXT_SECONDARY,
 }
 
 
@@ -259,7 +270,7 @@ def format_error_panel(
     suggestions = get_suggestions(classification, task)
 
     icon = _CATEGORY_ICONS.get(classification.category, "❓")
-    color = _CATEGORY_COLORS.get(classification.category, "#8b949e")
+    color = _CATEGORY_COLORS.get(classification.category, TEXT_SECONDARY)
 
     parts: list[str] = []
 
@@ -267,10 +278,12 @@ def format_error_panel(
     parts.append(
         f"[bold {color}]{icon} {_escape(title)} — {classification.category.upper().replace('_', ' ')}[/]"
     )
-    parts.append(f"[#30363d]{'─' * 60}[/]")
+    parts.append(f"[{BORDER_DEFAULT}]{'─' * 60}[/]")
 
     # Root cause analysis
-    parts.append(f"[bold #c9d1d9]Root cause:[/] [{color}]{_escape(classification.root_cause)}[/]")
+    parts.append(
+        f"[bold {TEXT_PRIMARY}]Root cause:[/] [{color}]{_escape(classification.root_cause)}[/]"
+    )
 
     # File/line context
     if classification.file_path or classification.line_number:
@@ -279,42 +292,42 @@ def format_error_panel(
             loc_parts.append(_escape(classification.file_path))
         if classification.line_number:
             loc_parts.append(f"line {classification.line_number}")
-        parts.append(f"[#8b949e]  📍 {' : '.join(loc_parts)}[/]")
+        parts.append(f"[{TEXT_SECONDARY}]  📍 {' : '.join(loc_parts)}[/]")
 
     # Error message
     parts.append("")
-    parts.append(f"[#f85149]{_escape(error)}[/]")
+    parts.append(f"[{ACCENT_RED}]{_escape(error)}[/]")
 
     # Files changed
     if files_changed:
         parts.append("")
-        parts.append("[#8b949e]Files modified:[/]")
+        parts.append(f"[{TEXT_SECONDARY}]Files modified:[/]")
         for f in files_changed:
-            parts.append(f"[#8b949e]  {_escape(f)}[/]")
+            parts.append(f"[{TEXT_SECONDARY}]  {_escape(f)}[/]")
 
     # Error history — show previous failures to help spot patterns
     if error_history:
         parts.append("")
-        parts.append(f"[bold #d29922]⚠ Previous failures ({len(error_history)}):[/]")
+        parts.append(f"[bold {ACCENT_YELLOW}]⚠ Previous failures ({len(error_history)}):[/]")
         # Show last 3 previous errors
         for i, prev_error in enumerate(error_history[-3:], 1):
             # Truncate long messages
             display = prev_error[:120] + "..." if len(prev_error) > 120 else prev_error
-            parts.append(f"[#d29922]  {i}. {_escape(display)}[/]")
+            parts.append(f"[{ACCENT_YELLOW}]  {i}. {_escape(display)}[/]")
 
     # Last output
     parts.append("")
-    parts.append("[#8b949e]── Last output ──[/]")
+    parts.append(f"[{TEXT_SECONDARY}]── Last output ──[/]")
     tail = output_lines[-_ERROR_TAIL_LINES:] if output_lines else []
     if tail:
         parts.extend(tail)
     else:
-        parts.append("[#8b949e]No output captured[/]")
+        parts.append(f"[{TEXT_SECONDARY}]No output captured[/]")
 
     # Suggested actions
     parts.append("")
     action_parts = [f"\\[{s.key}] {s.label}" for s in suggestions]
-    parts.append(f"[#8b949e]{' | '.join(action_parts)}[/]")
+    parts.append(f"[{TEXT_SECONDARY}]{' | '.join(action_parts)}[/]")
 
     return "\n".join(parts)
 

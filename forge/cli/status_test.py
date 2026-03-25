@@ -222,7 +222,7 @@ def test_status_without_all_filters_to_project(central_db):
     runner = CliRunner()
     result = runner.invoke(cli, ["status", "--project-dir", cwd])
     assert result.exit_code == 0
-    assert "pipe-here" in result.output
+    assert "pipe-her" in result.output  # ID truncated to 8 chars
     assert "pipe-other" not in result.output
 
 
@@ -255,4 +255,4 @@ def test_status_central_db_usage(central_db):
     runner = CliRunner()
     result = runner.invoke(cli, ["status", "--project-dir", os.getcwd()])
     assert result.exit_code == 0
-    assert "central-pipe" in result.output
+    assert "central-" in result.output  # ID truncated to 8 chars

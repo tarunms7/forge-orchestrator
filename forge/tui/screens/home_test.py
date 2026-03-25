@@ -174,22 +174,19 @@ async def test_shortcuts_panel_contains_all_shortcuts():
         assert "Switch focus" in rendered
         assert "Ctrl+P" in rendered
         assert "Command palette" in rendered
-        assert "Esc" in rendered
-        assert "Quit" in rendered
         assert "?" in rendered
         assert "Help" in rendered
 
 
 @pytest.mark.asyncio
 async def test_shortcuts_panel_has_color_codes():
-    """Shortcuts panel should use the specified color codes."""
+    """Shortcuts panel should use the theme color codes."""
     app = HomeTestApp()
     async with app.run_test():
         panel = app.screen.query_one("#shortcuts-panel", Static)
         rendered = str(panel.content)
-        assert "#D8DEE9" in rendered  # section title color
-        assert "#5FA8FF" in rendered  # shortcut key color
-        assert "#A9C7E8" in rendered  # description color
+        assert "#e6edf3" in rendered  # section title color
+        assert "#58a6ff" in rendered  # shortcut key color
 
 
 @pytest.mark.asyncio

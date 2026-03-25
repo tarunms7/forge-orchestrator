@@ -19,8 +19,9 @@ class ShortcutBar(Widget):
     ShortcutBar {
         dock: bottom;
         height: 1;
-        background: $surface;
+        background: #161b22;
         padding: 0 1;
+        border-top: tall #21262d;
     }
     """
 
@@ -44,7 +45,7 @@ class ShortcutBar(Widget):
         parts = Text()
         for i, (key, label) in enumerate(self.shortcuts):
             if i > 0:
-                parts.append("  ")
-            parts.append(f"[{key}]", style="bold bright_cyan")
-            parts.append(f" {label}")
+                parts.append("  │  ", style="#30363d")
+            parts.append(f"[{key}]", style="bold #58a6ff")
+            parts.append(f" {label}", style="#8b949e")
         return parts

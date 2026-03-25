@@ -7,6 +7,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
+from forge.tui.theme import ACCENT_BLUE, ACCENT_ORANGE, TEXT_MUTED, TEXT_SECONDARY
 from forge.tui.widgets.suggestion_chips import SuggestionChips
 
 
@@ -19,10 +20,10 @@ def _escape(text: str | None) -> str:
 
 def format_work_log(lines: list[str]) -> str:
     if not lines:
-        return "[#484f58]No activity yet[/]"
+        return f"[{TEXT_MUTED}]No activity yet[/]"
     formatted = []
     for line in lines[-10:]:  # show last 10
-        formatted.append(f"  [#8b949e]{_escape(line)}[/]")
+        formatted.append(f"  [{TEXT_SECONDARY}]{_escape(line)}[/]")
     return "\n".join(formatted)
 
 
@@ -31,15 +32,15 @@ def format_question_card(question: dict) -> str:
     q = question.get("question", "")
     ctx = question.get("context", "")
     parts = []
-    parts.append("[bold #f0883e]━━━ Question from Planner ━━━[/]")
+    parts.append(f"[bold {ACCENT_ORANGE}]━━━ Question from Planner ━━━[/]")
     parts.append("")
     if ctx:
-        parts.append(f"[#8b949e]{_escape(ctx)}[/]")
+        parts.append(f"[{TEXT_SECONDARY}]{_escape(ctx)}[/]")
         parts.append("")
-    parts.append(f"[bold #f0883e]{_escape(q)}[/]")
+    parts.append(f"[bold {ACCENT_ORANGE}]{_escape(q)}[/]")
     parts.append("")
     parts.append(
-        "[#6e7681]Type your answer below, or press a number key (1-9) to select a suggestion:[/]"
+        f"[{TEXT_SECONDARY}]Type your answer below, or press a number key (1-9) to select a suggestion:[/]"
     )
     return "\n".join(parts)
 
@@ -102,7 +103,9 @@ class ChatThread(Widget):
         for entry in self._history:
             q_text = _escape(entry.get("question", ""))
             a_text = _escape(entry.get("answer", ""))
-            scroll.mount(Static(f"[#8b949e]Q: {q_text}[/]\n[#58a6ff]A: {a_text}[/]\n"))
+            scroll.mount(
+                Static(f"[{TEXT_SECONDARY}]Q: {q_text}[/]\n[{ACCENT_BLUE}]A: {a_text}[/]\n")
+            )
 
         # Show work log
         if self._work_lines:

@@ -12,6 +12,7 @@ from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
+from forge.tui.theme import ACCENT_BLUE, ACCENT_GREEN, ACCENT_ORANGE, TEXT_SECONDARY
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _DISPLAY_GROUPS = {
@@ -42,56 +43,56 @@ def format_settings(settings: Any) -> str:
     for group_name, fields in _DISPLAY_GROUPS.items():
         if group_name == "Autonomy":
             continue  # rendered interactively by AutonomyWidget
-        lines.append(f"\n[bold #58a6ff]{group_name}[/]")
+        lines.append(f"\n[bold {ACCENT_BLUE}]{group_name}[/]")
         for field in fields:
             value = getattr(settings, field, "?")
             env_var = f"FORGE_{field.upper()}"
-            lines.append(f"  [#8b949e]{field}[/]: {value}  [dim]({env_var})[/dim]")
+            lines.append(f"  [{TEXT_SECONDARY}]{field}[/]: {value}  [dim]({env_var})[/dim]")
     return "\n".join(lines)
 
 
 def _render_autonomy(settings: Any, selected_field: int) -> str:
     """Render the Autonomy group as Rich markup with interactive indicators."""
-    lines: list[str] = ["\n[bold #58a6ff]Autonomy[/]"]
+    lines: list[str] = [f"\n[bold {ACCENT_BLUE}]Autonomy[/]"]
 
     # --- autonomy radio ---
     field_idx = 0
-    cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
+    cursor = f"[bold {ACCENT_ORANGE}]>[/] " if selected_field == field_idx else "  "
     mode = getattr(settings, "autonomy", "balanced")
     radio_parts = []
     for opt in _AUTONOMY_MODES:
         if opt == mode:
-            radio_parts.append(f"[bold #3fb950][[{opt}]][/]")
+            radio_parts.append(f"[bold {ACCENT_GREEN}][[{opt}]][/]")
         else:
-            radio_parts.append(f"[#8b949e][{opt}][/]")
+            radio_parts.append(f"[{TEXT_SECONDARY}][{opt}][/]")
     lines.append(
-        f"{cursor}[#8b949e]autonomy[/]: {' '.join(radio_parts)}  [dim](FORGE_AUTONOMY)[/dim]"
+        f"{cursor}[{TEXT_SECONDARY}]autonomy[/]: {' '.join(radio_parts)}  [dim](FORGE_AUTONOMY)[/dim]"
     )
 
     # --- question_limit +/- ---
     field_idx = 1
-    cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
+    cursor = f"[bold {ACCENT_ORANGE}]>[/] " if selected_field == field_idx else "  "
     ql = getattr(settings, "question_limit", 3)
     lines.append(
-        f"{cursor}[#8b949e]question_limit[/]: [bold][-] {ql} [+][/]"
+        f"{cursor}[{TEXT_SECONDARY}]question_limit[/]: [bold][-] {ql} [+][/]"
         f"  [dim](FORGE_QUESTION_LIMIT, 1-10)[/dim]"
     )
 
     # --- question_timeout +/- ---
     field_idx = 2
-    cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
+    cursor = f"[bold {ACCENT_ORANGE}]>[/] " if selected_field == field_idx else "  "
     qt = getattr(settings, "question_timeout", 1800)
     lines.append(
-        f"{cursor}[#8b949e]question_timeout[/]: [bold][-] {qt} [+][/]"
+        f"{cursor}[{TEXT_SECONDARY}]question_timeout[/]: [bold][-] {qt} [+][/]"
         f"  [dim](FORGE_QUESTION_TIMEOUT, 60-7200)[/dim]"
     )
 
     # --- auto_pr toggle ---
     field_idx = 3
-    cursor = "[bold #f0883e]>[/] " if selected_field == field_idx else "  "
+    cursor = f"[bold {ACCENT_ORANGE}]>[/] " if selected_field == field_idx else "  "
     apr = getattr(settings, "auto_pr", False)
-    toggle = "[bold #3fb950][ON][/]" if apr else "[#8b949e][OFF][/]"
-    lines.append(f"{cursor}[#8b949e]auto_pr[/]: {toggle}  [dim](FORGE_AUTO_PR)[/dim]")
+    toggle = f"[bold {ACCENT_GREEN}][ON][/]" if apr else f"[{TEXT_SECONDARY}][OFF][/]"
+    lines.append(f"{cursor}[{TEXT_SECONDARY}]auto_pr[/]: {toggle}  [dim](FORGE_AUTO_PR)[/dim]")
 
     return "\n".join(lines)
 
@@ -143,7 +144,7 @@ class SettingsScreen(Screen):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold #58a6ff]SETTINGS[/]", id="settings-header")
+        yield Static(f"[bold {ACCENT_BLUE}]SETTINGS[/]", id="settings-header")
         with VerticalScroll(id="settings-body"):
             yield Static(format_settings(self._settings), id="static-settings")
             yield Static(

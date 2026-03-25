@@ -35,7 +35,8 @@ def test_forge_logo_contains_orchestrator_text() -> None:
 
 def test_forge_logo_matches_expected_ascii_art() -> None:
     """Logo should match the expected FORGE art exactly."""
-    plain = _strip_markup(FORGE_LOGO).rstrip()
+    # Strip trailing whitespace per line (logo source has padding before [/] tags)
+    plain = "\n".join(line.rstrip() for line in _strip_markup(FORGE_LOGO).split("\n")).strip()
     assert plain == EXPECTED_LOGO_PLAIN
 
 
@@ -47,9 +48,11 @@ def test_forge_logo_is_reasonable_height() -> None:
 
 
 def test_forge_logo_has_correct_colors() -> None:
-    """Logo should use the expected accent colors."""
-    assert "#d6a85f" in FORGE_LOGO
-    assert "#7fa8ff" in FORGE_LOGO
+    """Logo should use the theme accent colors."""
+    from forge.tui.theme import ACCENT_BLUE, ACCENT_GOLD
+
+    assert ACCENT_GOLD in FORGE_LOGO
+    assert ACCENT_BLUE in FORGE_LOGO
 
 
 def test_forge_logo_uses_block_lettering() -> None:

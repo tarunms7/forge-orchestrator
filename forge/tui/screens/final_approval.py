@@ -14,6 +14,14 @@ from textual.screen import Screen
 from textual.widgets import Static
 
 from forge.core.async_utils import safe_create_task
+from forge.tui.theme import (
+    ACCENT_BLUE,
+    ACCENT_GREEN,
+    ACCENT_RED,
+    ACCENT_YELLOW,
+    TEXT_MUTED,
+    TEXT_SECONDARY,
+)
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.followup_input import FollowUpInput
 from forge.tui.widgets.shortcut_bar import ShortcutBar
@@ -35,8 +43,8 @@ def format_summary_stats(stats: dict, multi_repo: bool = False) -> str:
         lines.append(f"{repo_count} repos, {task_count} tasks")
     lines.extend(
         [
-            f"[bold #3fb950]+{added}[/] / [bold #f85149]-{removed}[/]  •  {files} files  •  {elapsed}",
-            f"[#8b949e]${cost:.2f} cost  •  {questions} questions answered[/]",
+            f"[bold {ACCENT_GREEN}]+{added}[/] / [bold {ACCENT_RED}]-{removed}[/]  •  {files} files  •  {elapsed}",
+            f"[{TEXT_SECONDARY}]${cost:.2f} cost  •  {questions} questions answered[/]",
         ]
     )
     return "\n".join(lines)
@@ -60,19 +68,25 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
                 stats += f"  tests: {tp}/{tt}"
             if files > 0:
                 stats += f"  {files} files"
-            lines.append(f"{indent}[#3fb950]✅[/] [bold]{title}[/]  [#8b949e]{stats}[/]")
+            lines.append(
+                f"{indent}[{ACCENT_GREEN}]✅[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]"
+            )
         elif state == "error":
             error = t.get("error", "failed")
-            lines.append(f"{indent}[#f85149]❌[/] [bold]{title}[/]  [#f85149]{error}[/]")
+            lines.append(f"{indent}[{ACCENT_RED}]❌[/] [bold]{title}[/]  [{ACCENT_RED}]{error}[/]")
         elif state == "blocked":
             error = t.get("error", "blocked by dependency")
-            lines.append(f"{indent}[#d29922]⚠️[/] [bold]{title}[/]  [#d29922]{error}[/]")
+            lines.append(
+                f"{indent}[{ACCENT_YELLOW}]⚠️[/] [bold]{title}[/]  [{ACCENT_YELLOW}]{error}[/]"
+            )
         elif state == "cancelled":
-            lines.append(f"{indent}[#8b949e]✘[/] [bold]{title}[/]  [#8b949e]cancelled[/]")
+            lines.append(
+                f"{indent}[{TEXT_SECONDARY}]✘[/] [bold]{title}[/]  [{TEXT_SECONDARY}]cancelled[/]"
+            )
         else:
             # Legacy: review-based display
             review = t.get("review", "?")
-            icon = "[#3fb950]✓[/]" if review == "passed" else "[#f85149]✗[/]"
+            icon = f"[{ACCENT_GREEN}]✓[/]" if review == "passed" else f"[{ACCENT_RED}]✗[/]"
             added = t.get("added", 0)
             removed = t.get("removed", 0)
             tp = t.get("tests_passed", 0)
@@ -80,14 +94,14 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
             stats = f"+{added}/-{removed}"
             if tt > 0:
                 stats += f"  tests: {tp}/{tt}"
-            lines.append(f"{indent}{icon} [bold]{title}[/]  [#8b949e]{stats}[/]")
+            lines.append(f"{indent}{icon} [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]")
     return lines
 
 
 def format_task_table(tasks: list[dict], multi_repo: bool = False) -> str:
     """Format task table with status icons based on task state."""
     if not tasks:
-        return "[#484f58]No tasks[/]"
+        return f"[{TEXT_MUTED}]No tasks[/]"
 
     if not multi_repo:
         lines = _format_task_list(tasks, indent="  ")
@@ -106,7 +120,7 @@ def format_task_table(tasks: list[dict], multi_repo: bool = False) -> str:
         # Aggregate stats for repo header
         total_added = sum(t.get("added", 0) for t in repo_tasks)
         total_removed = sum(t.get("removed", 0) for t in repo_tasks)
-        lines.append(f"[bold #58a6ff]{repo_id}[/]  +{total_added}/-{total_removed}")
+        lines.append(f"[bold {ACCENT_BLUE}]{repo_id}[/]  +{total_added}/-{total_removed}")
         lines.extend(_format_task_list(repo_tasks, indent="    "))
     return "\n".join(lines)
 
@@ -172,7 +186,7 @@ class RepoSelectorScreen(Screen):
 
     def compose(self):
         with Center(), Vertical(id="repo-selector-container"):
-            yield Static("[bold #58a6ff]Select Repository[/]\n")
+            yield Static(f"[bold {ACCENT_BLUE}]Select Repository[/]\n")
             for i, repo in enumerate(self._repos):
                 repo_id = repo.get("repo_id", repo.get("id", "unknown"))
                 # Calculate aggregate stats for this repo
@@ -181,11 +195,11 @@ class RepoSelectorScreen(Screen):
                 total_removed = sum(t.get("removed", 0) for t in repo_tasks)
                 marker = "▸ " if i == 0 else "  "
                 yield Static(
-                    f"{marker}[bold]{repo_id}[/]  [#8b949e]+{total_added}/-{total_removed}[/]",
+                    f"{marker}[bold]{repo_id}[/]  [{TEXT_SECONDARY}]+{total_added}/-{total_removed}[/]",
                     id=f"repo-item-{i}",
                     classes="repo-item repo-item--selected" if i == 0 else "repo-item",
                 )
-            yield Static("\n[#8b949e]j/k: navigate  Enter: select  Esc: back[/]")
+            yield Static(f"\n[{TEXT_SECONDARY}]j/k: navigate  Enter: select  Esc: back[/]")
 
     def _update_cursor(self) -> None:
         """Update visual cursor state."""
@@ -198,7 +212,7 @@ class RepoSelectorScreen(Screen):
                 total_removed = sum(t.get("removed", 0) for t in repo_tasks)
                 marker = "▸ " if i == self._cursor else "  "
                 widget.update(
-                    f"{marker}[bold]{repo_id}[/]  [#8b949e]+{total_added}/-{total_removed}[/]"
+                    f"{marker}[bold]{repo_id}[/]  [{TEXT_SECONDARY}]+{total_added}/-{total_removed}[/]"
                 )
                 if i == self._cursor:
                     widget.add_class("repo-item--selected")
@@ -328,7 +342,7 @@ class FinalApprovalScreen(Screen):
             if count > 0 and self.is_running:
                 warning = self.query_one("#behind-main-warning", Static)
                 warning.update(
-                    f"[bold #d29922]⚠ Branch is {count} commit{'s' if count != 1 else ''} "
+                    f"[bold {ACCENT_YELLOW}]⚠ Branch is {count} commit{'s' if count != 1 else ''} "
                     f"behind {base}. PR may have merge conflicts.[/]"
                 )
         except Exception:
@@ -346,7 +360,7 @@ class FinalApprovalScreen(Screen):
         with VerticalScroll():
             with Center():
                 with Vertical(id="approval-container"):
-                    yield Static(f"[bold #58a6ff]{header}[/]\n", id="header")
+                    yield Static(f"[bold {ACCENT_BLUE}]{header}[/]\n", id="header")
                     yield Static("", id="behind-main-warning")  # populated by _check_behind_main
                     yield Static(
                         format_summary_stats(self._stats, multi_repo=self._multi_repo), id="stats"
@@ -357,8 +371,8 @@ class FinalApprovalScreen(Screen):
                         format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table"
                     )
                     yield Static(
-                        "\n[#8b949e]Enter: create PR  d: diff  r: re-run  "
-                        "f: follow up  n: new task  Esc: cancel[/]"
+                        f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  r: re-run  "
+                        f"f: follow up  n: new task  Esc: cancel[/]"
                     )
                     yield FollowUpInput(
                         branch=self._pipeline_branch,
@@ -395,10 +409,14 @@ class FinalApprovalScreen(Screen):
                 # Render all accumulated repo PR URLs
                 pr_lines = []
                 for rid, rurl in self._per_repo_pr_urls.items():
-                    pr_lines.append(f"[bold #3fb950]{rid}:[/] [underline #58a6ff]{rurl}[/]")
+                    pr_lines.append(
+                        f"[bold {ACCENT_GREEN}]{rid}:[/] [underline {ACCENT_BLUE}]{rurl}[/]"
+                    )
                 pr_widget.update("\n".join(pr_lines))
             else:
-                pr_widget.update(f"[bold #3fb950]PR created:[/] [underline #58a6ff]{url}[/]")
+                pr_widget.update(
+                    f"[bold {ACCENT_GREEN}]PR created:[/] [underline {ACCENT_BLUE}]{url}[/]"
+                )
         except Exception:
             pass
 

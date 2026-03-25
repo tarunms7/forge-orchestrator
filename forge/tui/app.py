@@ -22,6 +22,7 @@ from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
 from forge.tui.screens.stats import StatsScreen
 from forge.tui.state import TuiState
+from forge.tui.theme import APP_CSS as _APP_CSS
 from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteAction, get_all_actions
 from forge.tui.widgets.pipeline_list import PipelineList
 
@@ -86,12 +87,7 @@ class ForgeApp(App):
     """Forge Terminal UI."""
 
     TITLE = "Forge"
-    CSS = """
-    Screen {
-        background: #0d1117;
-        color: #c9d1d9;
-    }
-    """
+    CSS = _APP_CSS
 
     BINDINGS = [
         Binding("1", "switch_home", "Home", show=True),

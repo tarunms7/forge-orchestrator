@@ -12,12 +12,21 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
 
+from forge.tui.theme import (
+    ACCENT_BLUE,
+    ACCENT_GREEN,
+    ACCENT_PURPLE,
+    ACCENT_RED,
+    ACCENT_YELLOW,
+    TEXT_MUTED,
+    TEXT_SECONDARY,
+)
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _COMPLEXITY_COLORS = {
-    "low": "#3fb950",
-    "medium": "#d29922",
-    "high": "#f85149",
+    "low": ACCENT_GREEN,
+    "medium": ACCENT_YELLOW,
+    "high": ACCENT_RED,
 }
 
 _COMPLEXITY_ORDER = ["low", "medium", "high"]
@@ -29,18 +38,18 @@ def format_plan_task(task: dict, index: int) -> str:
     files = task.get("files", [])
     complexity = task.get("complexity", "medium")
     deps = task.get("depends_on", [])
-    color = _COMPLEXITY_COLORS.get(complexity, "#8b949e")
+    color = _COMPLEXITY_COLORS.get(complexity, TEXT_SECONDARY)
 
-    lines = [f"  [bold #58a6ff]{index}. {title}[/]  [{color}]{complexity}[/]"]
+    lines = [f"  [bold {ACCENT_BLUE}]{index}. {title}[/]  [{color}]{complexity}[/]"]
     if desc:
-        lines.append(f"     [#8b949e]{desc[:120]}[/]")
+        lines.append(f"     [{TEXT_SECONDARY}]{desc[:120]}[/]")
     if files:
         file_str = ", ".join(files[:5])
         if len(files) > 5:
             file_str += f" +{len(files) - 5} more"
-        lines.append(f"     [#8b949e]Files:[/] {file_str}")
+        lines.append(f"     [{TEXT_SECONDARY}]Files:[/] {file_str}")
     if deps:
-        lines.append(f"     [#8b949e]Depends on:[/] {', '.join(deps)}")
+        lines.append(f"     [{TEXT_SECONDARY}]Depends on:[/] {', '.join(deps)}")
     return "\n".join(lines)
 
 
@@ -55,10 +64,10 @@ def format_plan_summary(tasks: list[dict], estimated_cost: float = 0.0) -> str:
     parts = [f"[bold]{count} {task_word}[/]"]
     for level, n in complexities.items():
         if n > 0:
-            color = _COMPLEXITY_COLORS.get(level, "#8b949e")
+            color = _COMPLEXITY_COLORS.get(level, TEXT_SECONDARY)
             parts.append(f"[{color}]{n} {level}[/]")
     if estimated_cost > 0:
-        parts.append(f"[#3fb950]~${estimated_cost:.2f}[/]")
+        parts.append(f"[{ACCENT_GREEN}]~${estimated_cost:.2f}[/]")
     return " · ".join(parts)
 
 
@@ -69,10 +78,10 @@ def format_cost_estimate(cost_estimate: dict | None) -> str | None:
     min_usd = cost_estimate.get("min_usd")
     max_usd = cost_estimate.get("max_usd")
     if min_usd is not None and max_usd is not None:
-        return f"[#d29922]💰 Estimated cost: ${min_usd:.2f} – ${max_usd:.2f}[/]"
+        return f"[{ACCENT_YELLOW}]💰 Estimated cost: ${min_usd:.2f} – ${max_usd:.2f}[/]"
     legacy = cost_estimate.get("estimated_cost")
     if legacy is not None:
-        return f"[#d29922]💰 Estimated cost: ~${legacy:.2f}[/]"
+        return f"[{ACCENT_YELLOW}]💰 Estimated cost: ~${legacy:.2f}[/]"
     return None
 
 
@@ -80,7 +89,7 @@ def _format_task_line(task: dict, index: int, selected: bool, modified: bool, re
     """Format a single task line for the interactive list."""
     if removed:
         title = task.get("title", "Untitled")
-        return f"  [#484f58 strike]{index}. {title}[/]  [#484f58][removed — press z to undo][/]"
+        return f"  [{TEXT_MUTED} strike]{index}. {title}[/]  [{TEXT_MUTED}][removed — press z to undo][/]"
 
     title = task.get("title", "Untitled")
     desc = task.get("description", "")
@@ -88,23 +97,25 @@ def _format_task_line(task: dict, index: int, selected: bool, modified: bool, re
     complexity = task.get("complexity", "medium")
     deps = task.get("depends_on", [])
     notes = task.get("agent_notes", "")
-    color = _COMPLEXITY_COLORS.get(complexity, "#8b949e")
+    color = _COMPLEXITY_COLORS.get(complexity, TEXT_SECONDARY)
 
     marker = "▶ " if selected else "  "
-    mod_indicator = " [#d29922]●[/]" if modified else ""
+    mod_indicator = f" [{ACCENT_YELLOW}]●[/]" if modified else ""
 
-    lines = [f"{marker}[bold #58a6ff]{index}. {title}[/]  [{color}]{complexity}[/]{mod_indicator}"]
+    lines = [
+        f"{marker}[bold {ACCENT_BLUE}]{index}. {title}[/]  [{color}]{complexity}[/]{mod_indicator}"
+    ]
     if desc:
-        lines.append(f"     [#8b949e]{desc[:120]}[/]")
+        lines.append(f"     [{TEXT_SECONDARY}]{desc[:120]}[/]")
     if files:
         file_str = ", ".join(files[:5])
         if len(files) > 5:
             file_str += f" +{len(files) - 5} more"
-        lines.append(f"     [#8b949e]Files:[/] {file_str}")
+        lines.append(f"     [{TEXT_SECONDARY}]Files:[/] {file_str}")
     if deps:
-        lines.append(f"     [#8b949e]Depends on:[/] {', '.join(deps)}")
+        lines.append(f"     [{TEXT_SECONDARY}]Depends on:[/] {', '.join(deps)}")
     if notes:
-        lines.append(f"     [#a371f7]📝 Note:[/] {notes[:100]}")
+        lines.append(f"     [{ACCENT_PURPLE}]📝 Note:[/] {notes[:100]}")
     return "\n".join(lines)
 
 
@@ -224,7 +235,7 @@ class PlanApprovalScreen(Screen):
 
     def compose(self) -> ComposeResult:
         summary = format_plan_summary(self._active_tasks, self._estimated_cost)
-        yield Static(f"[bold #58a6ff]PLAN REVIEW[/]  {summary}", id="plan-header")
+        yield Static(f"[bold {ACCENT_BLUE}]PLAN REVIEW[/]  {summary}", id="plan-header")
         cost_line = format_cost_estimate(self._cost_estimate)
         if cost_line is not None:
             yield Static(cost_line, id="plan-cost")
@@ -262,7 +273,9 @@ class PlanApprovalScreen(Screen):
             widget.update(_format_task_line(task, i + 1, selected, modified, removed))
 
         summary = format_plan_summary(self._active_tasks, self._estimated_cost)
-        self.query_one("#plan-header", Static).update(f"[bold #58a6ff]PLAN REVIEW[/]  {summary}")
+        self.query_one("#plan-header", Static).update(
+            f"[bold {ACCENT_BLUE}]PLAN REVIEW[/]  {summary}"
+        )
 
     def _clamp_cursor(self) -> None:
         """Ensure cursor is within bounds."""
@@ -300,7 +313,7 @@ class PlanApprovalScreen(Screen):
         self._editing = "description"
         label = self.query_one("#edit-label", Static)
         label.update(
-            f"[#d29922]Editing task {self._cursor + 1} — title | description (Ctrl+S to save, Esc to cancel)[/]"
+            f"[{ACCENT_YELLOW}]Editing task {self._cursor + 1} — title | description (Ctrl+S to save, Esc to cancel)[/]"
         )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
@@ -316,7 +329,7 @@ class PlanApprovalScreen(Screen):
         self._editing = "files"
         label = self.query_one("#edit-label", Static)
         label.update(
-            f"[#d29922]Editing files for task {self._cursor + 1} — comma-separated (Ctrl+S to save, Esc to cancel)[/]"
+            f"[{ACCENT_YELLOW}]Editing files for task {self._cursor + 1} — comma-separated (Ctrl+S to save, Esc to cancel)[/]"
         )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
@@ -332,7 +345,7 @@ class PlanApprovalScreen(Screen):
         self._editing = "note"
         label = self.query_one("#edit-label", Static)
         label.update(
-            f"[#d29922]Agent note for task {self._cursor + 1} (Ctrl+S to save, Esc to cancel)[/]"
+            f"[{ACCENT_YELLOW}]Agent note for task {self._cursor + 1} (Ctrl+S to save, Esc to cancel)[/]"
         )
         label.add_class("visible")
         area = self.query_one("#edit-area", TextArea)
