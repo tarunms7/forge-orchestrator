@@ -602,19 +602,28 @@ class PipelineScreen(Screen):
             agent_output.clear_error_detail()
             agent_output.update_output(None, None, None, [])
 
-        # Update diff for selected task (ReviewGates removed — data flows through unified log)
+        # Update diff for selected task
         diff_viewer = self.query_one(DiffViewer)
         if tid and tid in state.tasks:
             task = state.tasks[tid]
             if self._active_view == "diff":
-                if tid in self._diff_cache:
+                # Prefer daemon-computed diff (always accurate)
+                daemon_diff = state.task_diffs.get(tid, "")
+                if daemon_diff:
+                    self._diff_cache[tid] = daemon_diff
+                    diff_viewer.update_diff(tid, task.get("title", ""), daemon_diff)
+                elif tid in self._diff_cache:
                     diff_viewer.update_diff(tid, task.get("title", ""), self._diff_cache[tid])
                 else:
-                    diff_viewer.update_diff(tid, task.get("title", ""), "Loading diff...")
+                    diff_viewer.update_diff(tid, task.get("title", ""), "⏳ Loading diff...")
                     safe_create_task(
                         self._refresh_diff_async(tid), logger=logger, name="refresh-diff"
                     )
             else:
+                # Not in diff view — update cache from daemon if available
+                daemon_diff = state.task_diffs.get(tid, "")
+                if daemon_diff:
+                    self._diff_cache[tid] = daemon_diff
                 diff_text = self._diff_cache.get(tid, "")
                 diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
 
