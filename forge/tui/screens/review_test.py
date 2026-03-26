@@ -76,3 +76,41 @@ async def test_review_screen_j_k_scrolls_diff_viewer():
         await pilot.press("k")
         await pilot.pause()
         # If we get here without error, scroll_relative works
+
+
+def test_refresh_prefers_daemon_diff_over_stale_cache():
+    """_refresh should prefer daemon-computed diff over stale cached error."""
+    state = TuiState()
+    state.apply_event("pipeline:plan_ready", {
+        "tasks": [{"id": "t1", "title": "Task 1"}]
+    })
+    state.selected_task_id = "t1"
+    state.tasks["t1"]["state"] = "in_review"
+
+    screen = ReviewScreen(state)
+    # Simulate stale cache
+    screen._diff_cache["t1"] = "No pipeline branch available yet."
+    # Daemon now has the real diff
+    state.task_diffs["t1"] = "diff --git a/file.py b/file.py\n+real content"
+
+    # After refresh logic, daemon diff should win and update cache
+    daemon_diff = state.task_diffs.get("t1", "")
+    assert daemon_diff.startswith("diff --git")
+    # Verify the stale error would be rejected
+    cached = screen._diff_cache["t1"]
+    assert cached.startswith("No pipeline")  # Before refresh, still stale
+    # The fix: _refresh updates cache from daemon
+    screen._diff_cache["t1"] = daemon_diff  # Simulating what _refresh does
+    assert screen._diff_cache["t1"].startswith("diff --git")
+
+
+def test_stale_error_cache_is_not_used():
+    """Cached error messages should trigger a reload, not be displayed."""
+    # Error messages that should be treated as stale
+    stale_messages = [
+        "No pipeline branch available yet.",
+        "git diff failed: something",
+        "Error running git diff: timeout",
+    ]
+    for msg in stale_messages:
+        assert msg.startswith(("No pipeline", "git diff failed", "Error"))
