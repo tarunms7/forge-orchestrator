@@ -542,29 +542,7 @@ class PipelineScreen(Screen):
             elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
                 # Streaming active — sync data WITHOUT toggling streaming off/on
                 # (update_unified calls set_streaming(False) which causes double render)
-                agent_output._task_id = tid
-                agent_output._title = task.get("title")
-                agent_output._state = task.get("state")
-                agent_output._unified_entries = list(unified)
-                agent_output._lines = []
-                # Reset incremental state so next append starts fresh
-                agent_output._rendered_parts = []
-                agent_output._rendered_section = None
-                agent_output._rendered_review_count = 0
-                try:
-                    from textual.widgets import Static
-                    from forge.tui.widgets.agent_output import format_header, format_unified_output
-                    agent_output.query_one("#agent-header", Static).update(
-                        format_header(tid, task.get("title"), task.get("state"))
-                    )
-                    agent_output.query_one("#agent-content", Static).update(
-                        format_unified_output(unified, agent_output._spinner_frame, streaming=True, typing_frame=agent_output._typing_frame)
-                    )
-                except Exception:
-                    pass
-                # Ensure streaming stays on without toggling
-                if not agent_output._streaming:
-                    agent_output.set_streaming(True)
+                agent_output.sync_streaming(tid, task.get("title"), task.get("state"), unified)
             else:
                 agent_output._error_mode = False  # Exit error mode without double-render
                 agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
@@ -687,7 +665,10 @@ class PipelineScreen(Screen):
             self._diff_cache[tid] = daemon_diff
             return daemon_diff
         if tid in self._diff_cache:
-            return self._diff_cache[tid]
+            cached = self._diff_cache[tid]
+            # Don't return cached error messages — they may be stale
+            if not cached.startswith(("No pipeline", "git diff failed", "Error")):
+                return cached
         # Fallback: git diff on the pipeline branch (works for already-merged tasks)
         branch = await self._resolve_branch()
         if not branch:

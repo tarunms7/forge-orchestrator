@@ -220,6 +220,8 @@ def format_unified_incremental(
 
     if effective != current_section:
         current_section = effective
+        global _IN_CODE_BLOCK
+        _IN_CODE_BLOCK = False  # Reset code block state on section change
         header_color = _SECTION_HEADER_COLORS.get(effective, "#8b949e")
         if effective == "review":
             review_count += 1
@@ -500,6 +502,44 @@ class AgentOutput(Widget):
                 self._request_scroll()
         except Exception:
             pass
+
+    def sync_streaming(
+        self,
+        task_id: str | None,
+        title: str | None,
+        state: str | None,
+        entries: list[tuple[str, str]],
+    ) -> None:
+        """Sync unified entries during active streaming WITHOUT toggling streaming off/on.
+
+        Unlike update_unified(), this preserves the streaming indicator and avoids
+        the double-render caused by set_streaming(False) then set_streaming(True).
+        Use this when _refresh_all() is called while the task is actively streaming.
+        """
+        self._task_id = task_id
+        self._title = title
+        self._state = state
+        self._unified_entries = list(entries)
+        self._lines = []
+        # Reset incremental state so next append starts fresh
+        self._rendered_parts = []
+        self._rendered_section = None
+        self._rendered_review_count = 0
+        try:
+            self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
+            self.query_one("#agent-content", Static).update(
+                format_unified_output(
+                    entries,
+                    self._spinner_frame,
+                    streaming=self._streaming,
+                    typing_frame=self._typing_frame,
+                )
+            )
+        except Exception:
+            pass
+        # Ensure streaming stays on without toggling
+        if not self._streaming:
+            self.set_streaming(True)
 
     def update_unified(
         self,
