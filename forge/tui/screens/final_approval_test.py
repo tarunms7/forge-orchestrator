@@ -432,3 +432,74 @@ class TestFinalApprovalCreatePrsButton:
             pipeline_branch="feat/x",
         )
         assert single_screen._multi_repo is False
+
+
+# --- Task state icon tests ---
+
+
+def test_format_task_list_merging_with_gates_passed_shows_green():
+    """A task in 'merging' state with all gates passed should show green, not red cross."""
+    tasks = [
+        {
+            "title": "Auth middleware",
+            "state": "merging",
+            "added": 50,
+            "removed": 10,
+            "files": 3,
+            "tests_passed": 5,
+            "tests_total": 5,
+            "review_gates": {
+                "gate0_build": {"status": "passed"},
+                "gate1_lint": {"status": "passed"},
+                "gate2_llm_review": {"status": "passed"},
+            },
+        }
+    ]
+    result = format_task_table(tasks)
+    assert "✗" not in result
+    assert "✅" in result
+
+
+def test_format_task_list_in_review_shows_pending():
+    """A task in 'in_review' state should show pending indicator, not red cross."""
+    tasks = [
+        {
+            "title": "DB migration",
+            "state": "in_review",
+            "added": 20,
+            "removed": 5,
+        }
+    ]
+    result = format_task_table(tasks)
+    assert "✗" not in result
+    assert "⏳" in result
+
+
+def test_format_task_list_merging_no_gates_shows_pending():
+    """A task in 'merging' without gate data should show pending, not red cross."""
+    tasks = [
+        {
+            "title": "API routes",
+            "state": "merging",
+            "added": 30,
+            "removed": 15,
+        }
+    ]
+    result = format_task_table(tasks)
+    assert "✗" not in result
+    assert "⏳" in result
+
+
+def test_format_task_list_in_progress_shows_running():
+    """A task in 'in_progress' state should show running indicator."""
+    tasks = [
+        {
+            "title": "Frontend build",
+            "state": "in_progress",
+            "added": 0,
+            "removed": 0,
+        }
+    ]
+    result = format_task_table(tasks)
+    assert "✗" not in result
+    assert "⚙" in result

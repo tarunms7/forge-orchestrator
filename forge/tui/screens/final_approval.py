@@ -84,9 +84,7 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
                 f"{indent}[{TEXT_SECONDARY}]✘[/] [bold]{title}[/]  [{TEXT_SECONDARY}]cancelled[/]"
             )
         else:
-            # Legacy: review-based display
-            review = t.get("review", "?")
-            icon = f"[{ACCENT_GREEN}]✓[/]" if review == "passed" else f"[{ACCENT_RED}]✗[/]"
+            # Active states: merging, in_review, awaiting_approval, in_progress, todo
             added = t.get("added", 0)
             removed = t.get("removed", 0)
             tp = t.get("tests_passed", 0)
@@ -94,7 +92,37 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
             stats = f"+{added}/-{removed}"
             if tt > 0:
                 stats += f"  tests: {tp}/{tt}"
-            lines.append(f"{indent}{icon} [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]")
+            files = t.get("files", 0)
+            if files > 0:
+                stats += f"  {files} files"
+
+            if state in ("merging", "awaiting_approval"):
+                # Check review gates — if all passed, show green
+                gates = t.get("review_gates", {})
+                all_passed = gates and all(
+                    g.get("status") == "passed" for g in gates.values()
+                )
+                if all_passed:
+                    lines.append(
+                        f"{indent}[{ACCENT_GREEN}]✅[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]"
+                    )
+                else:
+                    lines.append(
+                        f"{indent}[{ACCENT_YELLOW}]⏳[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{state}  {stats}[/]"
+                    )
+            elif state == "in_review":
+                lines.append(
+                    f"{indent}[{ACCENT_YELLOW}]⏳[/] [bold]{title}[/]  [{TEXT_SECONDARY}]reviewing  {stats}[/]"
+                )
+            elif state == "in_progress":
+                lines.append(
+                    f"{indent}[{ACCENT_BLUE}]⚙[/] [bold]{title}[/]  [{TEXT_SECONDARY}]running  {stats}[/]"
+                )
+            else:
+                # Fallback for unknown states (todo, etc.)
+                lines.append(
+                    f"{indent}[{TEXT_SECONDARY}]○[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{state}  {stats}[/]"
+                )
     return lines
 
 
