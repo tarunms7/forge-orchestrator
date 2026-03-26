@@ -635,3 +635,45 @@ async def test_sidebar_shown_during_error():
         await pilot.pause()
         split_pane = app.screen.query_one("#split-pane")
         assert not split_pane.has_class("full-width")
+
+
+# ── Streaming double-render fix tests ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_preserves_streaming_flag():
+    """_refresh_all must NOT reset streaming to False when task is actively streaming."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        await pilot.pause()
+        # Start streaming so the task is in _agent_streaming_tasks
+        state.apply_event("task:agent_output", {"task_id": "t1", "line": "working..."})
+        await pilot.pause()
+        screen = app.screen
+        agent_output = app.screen.query_one("AgentOutput")
+        assert "t1" in screen._agent_streaming_tasks
+        assert agent_output._streaming is True
+        # Now trigger _refresh_all (e.g. via a state change that isn't agent_output)
+        # Use update_unified as a spy to ensure it is NOT called (it would reset streaming)
+        with patch.object(agent_output, "update_unified") as mock_update:
+            screen._refresh_all()
+            # update_unified should NOT be called for the streaming task
+            mock_update.assert_not_called()
+        # Streaming must still be True — no off/on toggle
+        assert agent_output._streaming is True

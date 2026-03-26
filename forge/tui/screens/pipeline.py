@@ -540,10 +540,31 @@ class PipelineScreen(Screen):
             if task.get("state") == "error":
                 agent_output.render_error_detail(tid, task, state.agent_output.get(tid, []))
             elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
-                # Streaming active — sync unified entries from authoritative state
-                # (needed on task switch so we see the full log, not stale data)
-                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
-                agent_output.set_streaming(True)
+                # Streaming active — sync data WITHOUT toggling streaming off/on
+                # (update_unified calls set_streaming(False) which causes double render)
+                agent_output._task_id = tid
+                agent_output._title = task.get("title")
+                agent_output._state = task.get("state")
+                agent_output._unified_entries = list(unified)
+                agent_output._lines = []
+                # Reset incremental state so next append starts fresh
+                agent_output._rendered_parts = []
+                agent_output._rendered_section = None
+                agent_output._rendered_review_count = 0
+                try:
+                    from textual.widgets import Static
+                    from forge.tui.widgets.agent_output import format_header, format_unified_output
+                    agent_output.query_one("#agent-header", Static).update(
+                        format_header(tid, task.get("title"), task.get("state"))
+                    )
+                    agent_output.query_one("#agent-content", Static).update(
+                        format_unified_output(unified, agent_output._spinner_frame, streaming=True, typing_frame=agent_output._typing_frame)
+                    )
+                except Exception:
+                    pass
+                # Ensure streaming stays on without toggling
+                if not agent_output._streaming:
+                    agent_output.set_streaming(True)
             else:
                 agent_output._error_mode = False  # Exit error mode without double-render
                 agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
