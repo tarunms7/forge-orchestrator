@@ -494,3 +494,60 @@ def test_tick_spinner_skipped_when_unified_entries_present():
     initial_frame = widget._spinner_frame
     widget._tick_spinner()
     assert widget._spinner_frame == initial_frame  # Should not increment
+
+
+# ── Incremental rendering tests ────────────────────────────────────
+
+
+def test_format_unified_incremental_returns_appended_text():
+    from forge.tui.widgets.agent_output import format_unified_incremental
+
+    # First entry — gets header + line
+    text, section, review_count = format_unified_incremental(
+        "agent", "hello world", current_section=None, review_count=0, is_first=True
+    )
+    assert "AGENT" in text
+    assert "hello world" in text
+
+    # Second entry — same section, no header
+    text2, section2, review_count2 = format_unified_incremental(
+        "agent", "second line", current_section="agent", review_count=0, is_first=False
+    )
+    assert "AGENT" not in text2
+    assert "second line" in text2
+
+    # Section change to review
+    text3, section3, review_count3 = format_unified_incremental(
+        "review", "review line", current_section="agent", review_count=0, is_first=False
+    )
+    assert "REVIEW 1" in text3
+    assert "review line" in text3
+    assert review_count3 == 1
+
+
+def test_format_unified_incremental_gate_merges_into_review():
+    from forge.tui.widgets.agent_output import format_unified_incremental
+
+    text, section, count = format_unified_incremental(
+        "gate", "Build: passed", current_section=None, review_count=0, is_first=True
+    )
+    assert section == "review"
+    assert "REVIEW 1" in text
+
+
+def test_scroll_debounce_flag_exists():
+    widget = AgentOutput()
+    assert hasattr(widget, "_scroll_pending")
+    assert widget._scroll_pending is False
+
+
+def test_incremental_state_reset_on_update_unified():
+    widget = AgentOutput()
+    widget._rendered_parts = ["some old content"]
+    widget._rendered_section = "agent"
+    widget._rendered_review_count = 2
+    # Calling update_unified should reset incremental state
+    widget.update_unified("t1", "Title", "running", [("agent", "line")])
+    assert widget._rendered_parts == []
+    assert widget._rendered_section is None
+    assert widget._rendered_review_count == 0

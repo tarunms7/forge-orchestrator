@@ -204,6 +204,44 @@ def format_unified_output(
     return "\n".join(parts)
 
 
+def format_unified_incremental(
+    source_type: str,
+    line: str,
+    current_section: str | None,
+    review_count: int,
+    is_first: bool,
+) -> tuple[str, str, int]:
+    """Format a SINGLE unified log entry incrementally.
+
+    Returns (rendered_text, new_current_section, new_review_count).
+    """
+    parts: list[str] = []
+    effective = "review" if source_type == "gate" else source_type
+
+    if effective != current_section:
+        current_section = effective
+        header_color = _SECTION_HEADER_COLORS.get(effective, "#8b949e")
+        if effective == "review":
+            review_count += 1
+            label = f"REVIEW {review_count}"
+        else:
+            label = "AGENT"
+        bar = "─" * max(1, 50 - len(label))
+        header = f"[{header_color} bold]───── {label} {bar}[/]"
+        if not is_first:
+            parts.append("")
+        parts.append(header)
+
+    if source_type == "gate":
+        parts.append(f"  [#79c0ff]{_escape(line)}[/]")
+    elif source_type == "review":
+        parts.append(f"[#a371f7]{_render_markdown(line)}[/]")
+    else:
+        parts.append(_render_markdown(line))
+
+    return "\n".join(parts), current_section, review_count
+
+
 class AgentOutput(Widget):
     """Scrollable agent output with fixed header and auto-scrolling body."""
 
@@ -236,6 +274,12 @@ class AgentOutput(Widget):
         self._error_mode: bool = False
         self._unified_entries: list[tuple[str, str]] = []
         self._search_pattern: str | None = None
+        # Incremental rendering state
+        self._rendered_parts: list[str] = []
+        self._rendered_section: str | None = None
+        self._rendered_review_count: int = 0
+        # Scroll debounce
+        self._scroll_pending: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
@@ -270,7 +314,12 @@ class AgentOutput(Widget):
         self._typing_frame += 1
         try:
             content = self.query_one("#agent-content", Static)
-            if self._unified_entries:
+            if self._rendered_parts:
+                full = "\n".join(self._rendered_parts)
+                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
+                full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                content.update(full)
+            elif self._unified_entries:
                 content.update(
                     format_unified_output(
                         self._unified_entries,
@@ -316,7 +365,13 @@ class AgentOutput(Widget):
         # Refresh the content widget to show/hide the indicator
         try:
             content = self.query_one("#agent-content", Static)
-            if self._unified_entries:
+            if self._rendered_parts:
+                full = "\n".join(self._rendered_parts)
+                if self._streaming:
+                    cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
+                    full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                content.update(full)
+            elif self._unified_entries:
                 content.update(
                     format_unified_output(
                         self._unified_entries,
@@ -369,7 +424,7 @@ class AgentOutput(Widget):
                 )
             )
             if self._is_near_bottom():
-                self.call_after_refresh(self._scroll_to_end)
+                self._request_scroll()
         except Exception:
             pass  # Not yet composed
 
@@ -401,7 +456,7 @@ class AgentOutput(Widget):
                 format_output(lines, self._spinner_frame)
             )
             if lines and self._is_near_bottom():
-                self.call_after_refresh(self._scroll_to_end)
+                self._request_scroll()
         except Exception:
             pass  # Not yet composed
 
@@ -421,22 +476,30 @@ class AgentOutput(Widget):
             pass
 
     def append_unified(self, source_type: str, line: str) -> None:
-        """Append a single unified log entry during streaming."""
+        """Append a single unified log entry using incremental rendering."""
         self._unified_entries.append((source_type, line))
+        is_first = len(self._rendered_parts) == 0
+
+        text, self._rendered_section, self._rendered_review_count = format_unified_incremental(
+            source_type,
+            line,
+            current_section=self._rendered_section,
+            review_count=self._rendered_review_count,
+            is_first=is_first,
+        )
+        self._rendered_parts.append(text)
+
         try:
             content = self.query_one("#agent-content", Static)
-            content.update(
-                format_unified_output(
-                    self._unified_entries,
-                    self._spinner_frame,
-                    streaming=self._streaming,
-                    typing_frame=self._typing_frame,
-                )
-            )
+            full = "\n".join(self._rendered_parts)
+            if self._streaming:
+                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
+                full += f"\n[#58a6ff]● Typing{cursor}[/]"
+            content.update(full)
             if self._is_near_bottom():
-                self.call_after_refresh(self._scroll_to_end)
+                self._request_scroll()
         except Exception:
-            pass  # Not yet composed
+            pass
 
     def update_unified(
         self,
@@ -454,6 +517,10 @@ class AgentOutput(Widget):
         self._state = state
         self._unified_entries = list(entries)
         self._lines = []  # Clear line-based data when switching to unified mode
+        # Reset incremental rendering state
+        self._rendered_parts = []
+        self._rendered_section = None
+        self._rendered_review_count = 0
         self.set_streaming(False)
         try:
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
@@ -461,7 +528,7 @@ class AgentOutput(Widget):
                 format_unified_output(entries, self._spinner_frame)
             )
             if entries and self._is_near_bottom():
-                self.call_after_refresh(self._scroll_to_end)
+                self._request_scroll()
         except Exception:
             pass  # Not yet composed
 
@@ -487,6 +554,11 @@ class AgentOutput(Widget):
                 {"title": self._title, "error": "", "state": self._state},
                 self._lines,
             )
+        elif self._rendered_parts:
+            base = "\n".join(self._rendered_parts)
+            if self._streaming:
+                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
+                base += f"\n[#58a6ff]● Typing{cursor}[/]"
         elif self._unified_entries:
             base = format_unified_output(
                 self._unified_entries,
@@ -514,6 +586,18 @@ class AgentOutput(Widget):
             pass
         return count
 
+    def _request_scroll(self) -> None:
+        """Request a scroll-to-end, debounced to avoid stacking."""
+        if self._scroll_pending:
+            return
+        self._scroll_pending = True
+        self.call_after_refresh(self._do_scroll)
+
+    def _do_scroll(self) -> None:
+        """Execute the debounced scroll."""
+        self._scroll_pending = False
+        self._scroll_to_end()
+
     def _scroll_to_end(self) -> None:
         try:
             self.query_one("#agent-scroll", VerticalScroll).scroll_end(animate=False)
@@ -540,7 +624,7 @@ class AgentOutput(Widget):
                 f"[bold #f85149]✖ {_escape(task.get('title', 'Untitled'))} — ERROR[/]"
             )
             self.query_one("#agent-content", Static).update(rendered)
-            self.call_after_refresh(self._scroll_to_end)
+            self._request_scroll()
         except Exception:
             pass  # Not yet composed
 
