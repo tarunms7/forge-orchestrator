@@ -540,10 +540,9 @@ class PipelineScreen(Screen):
             if task.get("state") == "error":
                 agent_output.render_error_detail(tid, task, state.agent_output.get(tid, []))
             elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
-                # Streaming active — sync unified entries from authoritative state
-                # (needed on task switch so we see the full log, not stale data)
-                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
-                agent_output.set_streaming(True)
+                # Streaming active — sync data WITHOUT toggling streaming off/on
+                # (update_unified calls set_streaming(False) which causes double render)
+                agent_output.sync_streaming(tid, task.get("title"), task.get("state"), unified)
             else:
                 agent_output._error_mode = False  # Exit error mode without double-render
                 agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
@@ -581,19 +580,28 @@ class PipelineScreen(Screen):
             agent_output.clear_error_detail()
             agent_output.update_output(None, None, None, [])
 
-        # Update diff for selected task (ReviewGates removed — data flows through unified log)
+        # Update diff for selected task
         diff_viewer = self.query_one(DiffViewer)
         if tid and tid in state.tasks:
             task = state.tasks[tid]
             if self._active_view == "diff":
-                if tid in self._diff_cache:
+                # Prefer daemon-computed diff (always accurate)
+                daemon_diff = state.task_diffs.get(tid, "")
+                if daemon_diff:
+                    self._diff_cache[tid] = daemon_diff
+                    diff_viewer.update_diff(tid, task.get("title", ""), daemon_diff)
+                elif tid in self._diff_cache:
                     diff_viewer.update_diff(tid, task.get("title", ""), self._diff_cache[tid])
                 else:
-                    diff_viewer.update_diff(tid, task.get("title", ""), "Loading diff...")
+                    diff_viewer.update_diff(tid, task.get("title", ""), "⏳ Loading diff...")
                     safe_create_task(
                         self._refresh_diff_async(tid), logger=logger, name="refresh-diff"
                     )
             else:
+                # Not in diff view — update cache from daemon if available
+                daemon_diff = state.task_diffs.get(tid, "")
+                if daemon_diff:
+                    self._diff_cache[tid] = daemon_diff
                 diff_text = self._diff_cache.get(tid, "")
                 diff_viewer.update_diff(tid, task.get("title", ""), diff_text)
 
@@ -657,7 +665,10 @@ class PipelineScreen(Screen):
             self._diff_cache[tid] = daemon_diff
             return daemon_diff
         if tid in self._diff_cache:
-            return self._diff_cache[tid]
+            cached = self._diff_cache[tid]
+            # Don't return cached error messages — they may be stale
+            if not cached.startswith(("No pipeline", "git diff failed", "Error")):
+                return cached
         # Fallback: git diff on the pipeline branch (works for already-merged tasks)
         branch = await self._resolve_branch()
         if not branch:

@@ -121,15 +121,22 @@ class ReviewScreen(Screen):
         tid = state.selected_task_id
         if tid and tid in state.tasks:
             task = state.tasks[tid]
-            # Prefer daemon-computed diff (from worktree, always accurate)
+            # Always prefer daemon-computed diff (from worktree, always accurate)
             diff = state.task_diffs.get(tid, "")
-            if not diff:
-                # Fallback: try cache from previous git-based load
-                diff = self._diff_cache.get(tid, "")
+            if diff:
+                # Update cache with fresh daemon diff (replaces any stale error)
+                self._diff_cache[tid] = diff
+            elif tid in self._diff_cache:
+                cached = self._diff_cache[tid]
+                # Don't use cached error messages — they may be stale
+                if cached.startswith(("No pipeline", "git diff failed", "Error")):
+                    diff = ""  # Force reload below
+                else:
+                    diff = cached
             if not diff and tid not in self._diff_loading:
                 self._diff_loading.add(tid)
                 safe_create_task(self._load_diff(tid), logger=logger, name="load-diff")
-                diff = "Loading diff..."
+                diff = "\u23f3 Loading diff..."
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
     def action_cursor_down(self) -> None:
