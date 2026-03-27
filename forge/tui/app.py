@@ -1109,37 +1109,7 @@ class ForgeApp(App):
     def action_switch_stats(self) -> None:
         if self._is_input_focused() or self._is_modal_screen():
             return
-        from forge.core.async_utils import safe_create_task
-
-        safe_create_task(self._push_stats_screen(), logger=logger, name="switch-stats")
-
-    async def _push_stats_screen(self) -> None:
-        """Load stats data from DB and push the StatsScreen."""
-        stats: dict = {}
-        trends: list[dict] = []
-        retry_summary: list[dict] = []
-
-        if self._db:
-            try:
-                trends = await self._db.get_pipeline_trends(limit=20)
-            except Exception:
-                logger.debug("Failed to load pipeline trends", exc_info=True)
-
-            try:
-                pipeline_id = self._pipeline_id
-                if pipeline_id:
-                    stats = await self._db.get_pipeline_stats(pipeline_id)
-                elif trends:
-                    stats = await self._db.get_pipeline_stats(trends[0]["id"])
-            except Exception:
-                logger.debug("Failed to load pipeline stats", exc_info=True)
-
-            try:
-                retry_summary = await self._db.get_retry_summary()
-            except Exception:
-                logger.debug("Failed to load retry summary", exc_info=True)
-
-        self.push_screen(StatsScreen(stats=stats, trends=trends, retry_summary=retry_summary))
+        self.push_screen(StatsScreen(db=self._db))
 
     def action_quit_app(self) -> None:
         if self._daemon_task and not self._daemon_task.done():
