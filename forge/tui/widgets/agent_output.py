@@ -20,8 +20,19 @@ from forge.tui.widgets.search_overlay import apply_highlights
 
 logger = logging.getLogger("forge.tui.agent_output")
 
-_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+# Breathing pulse — size cycles with color
+_SPINNER_FRAMES = [
+    ("[#58a6ff]●[/]", "#58a6ff"),  # Bright, full
+    ("[#3b82c4]◉[/]", "#3b82c4"),  # Medium
+    ("[#484f58]○[/]", "#484f58"),  # Dim, hollow
+    ("[#3b82c4]◉[/]", "#3b82c4"),  # Medium
+    ("[#58a6ff]●[/]", "#58a6ff"),  # Bright, full
+]
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
+
+# Dim→bright fade-in for new lines
+_FADE_STEPS = ["#30363d", "#484f58", "#6e7681", "#8b949e", "#c9d1d9"]
+_FADE_INTERVAL = 0.06  # 60ms per step, 300ms total
 
 _SECTION_COLORS = {
     "agent": TEXT_PRIMARY,  # Bright text for agent output — primary content
@@ -141,8 +152,9 @@ def format_output(
     typing_frame: int = 0,
 ) -> str:
     if not lines:
-        frame = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
-        return f"[#58a6ff]{frame}[/] [#8b949e]Waiting for output...[/]"
+        frame_data = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
+        spinner = frame_data[0] if isinstance(frame_data, tuple) else frame_data
+        return f"{spinner} [#8b949e]Waiting for output...[/]"
     global _IN_CODE_BLOCK
     _IN_CODE_BLOCK = False  # Reset at start of full render
     parts = [_render_markdown(line) for line in lines]
@@ -160,8 +172,9 @@ def format_unified_output(
 ) -> str:
     """Render unified log with section headers when source type changes."""
     if not entries:
-        frame = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
-        return f"[#58a6ff]{frame}[/] [#8b949e]Waiting for output...[/]"
+        frame_data = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
+        spinner = frame_data[0] if isinstance(frame_data, tuple) else frame_data
+        return f"{spinner} [#8b949e]Waiting for output...[/]"
 
     parts: list[str] = []
     current_section: str | None = None
@@ -280,6 +293,9 @@ class AgentOutput(Widget):
         self._rendered_parts: list[str] = []
         self._rendered_section: str | None = None
         self._rendered_review_count: int = 0
+        # Fade-in animation state
+        self._fade_step: int = len(_FADE_STEPS)  # Start at max (no fade active)
+        self._fade_timer = None
         # Scroll debounce
         self._scroll_pending: bool = False
 
@@ -290,7 +306,7 @@ class AgentOutput(Widget):
             yield Static("", id="agent-content")
 
     def on_mount(self) -> None:
-        self._spinner_timer = self.set_interval(0.1, self._tick_spinner)
+        self._spinner_timer = self.set_interval(0.2, self._tick_spinner)
 
     def on_unmount(self) -> None:
         if hasattr(self, "_spinner_timer") and self._spinner_timer:
@@ -298,6 +314,9 @@ class AgentOutput(Widget):
         if self._typing_timer is not None:
             self._typing_timer.stop()
             self._typing_timer = None
+        if self._fade_timer is not None:
+            self._fade_timer.stop()
+            self._fade_timer = None
 
     def _tick_spinner(self) -> None:
         if self._lines or self._unified_entries:
@@ -314,31 +333,64 @@ class AgentOutput(Widget):
         if not self._streaming:
             return
         self._typing_frame += 1
+        if self._rendered_parts:
+            self._update_content()
+        else:
+            try:
+                content = self.query_one("#agent-content", Static)
+                if self._unified_entries:
+                    content.update(
+                        format_unified_output(
+                            self._unified_entries,
+                            self._spinner_frame,
+                            streaming=True,
+                            typing_frame=self._typing_frame,
+                        )
+                    )
+                else:
+                    content.update(
+                        format_output(
+                            self._lines,
+                            self._spinner_frame,
+                            streaming=True,
+                            typing_frame=self._typing_frame,
+                        )
+                    )
+            except Exception:
+                pass
+
+    def _tick_fade(self) -> None:
+        """Step the fade-in animation for the last appended line."""
+        self._fade_step += 1
+        if self._fade_step >= len(_FADE_STEPS):
+            if self._fade_timer is not None:
+                self._fade_timer.stop()
+                self._fade_timer = None
+            self._fade_step = len(_FADE_STEPS)
+        self._update_content()
+
+    def _update_content(self) -> None:
+        """Re-render the content panel, applying fade to the last line if active."""
         try:
             content = self.query_one("#agent-content", Static)
             if self._rendered_parts:
-                full = "\n".join(self._rendered_parts)
-                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                if self._fade_step < len(_FADE_STEPS) and len(self._rendered_parts) > 0:
+                    fade_color = _FADE_STEPS[self._fade_step]
+                    parts = list(self._rendered_parts)
+                    parts[-1] = f"[{fade_color}]{parts[-1]}[/]"
+                    full = "\n".join(parts)
+                else:
+                    full = "\n".join(self._rendered_parts)
+                if self._streaming:
+                    cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
+                    full += f"\n[#58a6ff]● Typing{cursor}[/]"
                 content.update(full)
+                if self._is_near_bottom():
+                    self._request_scroll()
             elif self._unified_entries:
-                content.update(
-                    format_unified_output(
-                        self._unified_entries,
-                        self._spinner_frame,
-                        streaming=True,
-                        typing_frame=self._typing_frame,
-                    )
-                )
+                content.update(format_unified_output(self._unified_entries, self._spinner_frame))
             else:
-                content.update(
-                    format_output(
-                        self._lines,
-                        self._spinner_frame,
-                        streaming=True,
-                        typing_frame=self._typing_frame,
-                    )
-                )
+                content.update(format_output(self._lines, self._spinner_frame))
         except Exception:
             pass
 
@@ -365,34 +417,31 @@ class AgentOutput(Widget):
             self._typing_frame = 0
 
         # Refresh the content widget to show/hide the indicator
-        try:
-            content = self.query_one("#agent-content", Static)
-            if self._rendered_parts:
-                full = "\n".join(self._rendered_parts)
-                if self._streaming:
-                    cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                    full += f"\n[#58a6ff]● Typing{cursor}[/]"
-                content.update(full)
-            elif self._unified_entries:
-                content.update(
-                    format_unified_output(
-                        self._unified_entries,
-                        self._spinner_frame,
-                        streaming=self._streaming,
-                        typing_frame=self._typing_frame,
+        if self._rendered_parts:
+            self._update_content()
+        else:
+            try:
+                content = self.query_one("#agent-content", Static)
+                if self._unified_entries:
+                    content.update(
+                        format_unified_output(
+                            self._unified_entries,
+                            self._spinner_frame,
+                            streaming=self._streaming,
+                            typing_frame=self._typing_frame,
+                        )
                     )
-                )
-            else:
-                content.update(
-                    format_output(
-                        self._lines,
-                        self._spinner_frame,
-                        streaming=self._streaming,
-                        typing_frame=self._typing_frame,
+                else:
+                    content.update(
+                        format_output(
+                            self._lines,
+                            self._spinner_frame,
+                            streaming=self._streaming,
+                            typing_frame=self._typing_frame,
+                        )
                     )
-                )
-        except Exception:
-            pass  # Not yet composed
+            except Exception:
+                pass  # Not yet composed
 
     def _is_near_bottom(self) -> bool:
         """Check if the scroll position is near the bottom.
@@ -491,17 +540,16 @@ class AgentOutput(Widget):
         )
         self._rendered_parts.append(text)
 
+        # Start fade-in for the last line
+        self._fade_step = 0
+        if self._fade_timer is not None:
+            self._fade_timer.stop()
         try:
-            content = self.query_one("#agent-content", Static)
-            full = "\n".join(self._rendered_parts)
-            if self._streaming:
-                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                full += f"\n[#58a6ff]● Typing{cursor}[/]"
-            content.update(full)
-            if self._is_near_bottom():
-                self._request_scroll()
+            self._fade_timer = self.set_interval(_FADE_INTERVAL, self._tick_fade)
         except Exception:
-            pass
+            self._fade_step = len(_FADE_STEPS)  # Skip fade if not composed
+
+        self._update_content()
 
     def sync_streaming(
         self,
@@ -525,6 +573,11 @@ class AgentOutput(Widget):
         self._rendered_parts = []
         self._rendered_section = None
         self._rendered_review_count = 0
+        # Reset fade animation
+        self._fade_step = len(_FADE_STEPS)
+        if self._fade_timer is not None:
+            self._fade_timer.stop()
+            self._fade_timer = None
         try:
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             self.query_one("#agent-content", Static).update(
@@ -561,6 +614,11 @@ class AgentOutput(Widget):
         self._rendered_parts = []
         self._rendered_section = None
         self._rendered_review_count = 0
+        # Reset fade animation
+        self._fade_step = len(_FADE_STEPS)
+        if self._fade_timer is not None:
+            self._fade_timer.stop()
+            self._fade_timer = None
         self.set_streaming(False)
         try:
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
