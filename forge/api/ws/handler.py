@@ -83,20 +83,26 @@ async def websocket_endpoint(
         return
 
     try:
+        missed_heartbeats = 0
+        max_missed = RECEIVE_TIMEOUT // HEARTBEAT_INTERVAL  # 2 missed → dead
         while True:
             try:
-                # Wait for a client message with a timeout so dead
-                # connections are detected even if no data is flowing.
+                # Wait for a client message; timeout at HEARTBEAT_INTERVAL
+                # so we can send proactive pings on that cadence.
                 await asyncio.wait_for(
-                    websocket.receive_json(), timeout=RECEIVE_TIMEOUT
+                    websocket.receive_json(), timeout=HEARTBEAT_INTERVAL
                 )
+                missed_heartbeats = 0  # Got a message — connection alive
             except TimeoutError:
-                # No message within the timeout window — send a ping to
-                # check if the connection is still alive.
+                # No message within the heartbeat window — send a ping.
                 try:
                     await websocket.send_json({"type": "ping"})
                 except Exception:
-                    break  # Connection dead
+                    break  # Connection dead — can't even send
+                missed_heartbeats += 1
+                if missed_heartbeats >= max_missed:
+                    # No client message for RECEIVE_TIMEOUT seconds total
+                    break
             except WebSocketDisconnect:
                 break
     except Exception:
