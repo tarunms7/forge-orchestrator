@@ -247,3 +247,37 @@ async def test_run_preflight_super_repo_git_wrapper(tmp_path):
     assert git_check is not None
     assert git_check.passed, f"git_repo check failed: {git_check.message}"
     assert report.passed, f"Preflight failed: {report.summary()}"
+
+
+@pytest.mark.asyncio
+async def test_super_repo_single_repo_no_regression(tmp_path):
+    """Single-repo mode still works exactly as before (no regression)."""
+    import subprocess
+
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    # Normal single repo
+    subprocess.run(["git", "init", "--initial-branch=main"], cwd=str(tmp_path), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        env=git_env,
+    )
+
+    # No repos dict — single-repo mode
+    report = await run_preflight(str(tmp_path), base_branch="main")
+    assert report.passed, f"Single-repo preflight should pass: {report.summary()}"
+
+    # With a single "default" repo dict — should also work
+    from forge.core.models import RepoConfig
+
+    repos = {"default": RepoConfig(id="default", path=str(tmp_path), base_branch="main")}
+    report = await run_preflight(str(tmp_path), repos=repos)
+    assert report.passed, f"Single default repo preflight should pass: {report.summary()}"
