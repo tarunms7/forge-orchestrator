@@ -172,6 +172,13 @@ class PipelineRow(Base):
     integration_status: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     # Multi-repo workspace support
     repos_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # CI Auto-Fix
+    ci_fix_enabled: Mapped[bool] = mapped_column(default=False)
+    ci_fix_status: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    ci_fix_attempt: Mapped[int] = mapped_column(default=0)
+    ci_fix_max_retries: Mapped[int] = mapped_column(default=3)
+    ci_fix_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    ci_fix_log: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     def get_repos(self) -> list[dict]:
         """Return repo configurations. Single-repo returns synthetic default entry."""
@@ -1924,3 +1931,36 @@ class Database:
 
             # Sort by total_retries descending
             return sorted(patterns.values(), key=lambda x: x["total_retries"], reverse=True)
+
+    # ── CI Auto-Fix ──────────────────────────────────────────────────
+
+    async def update_pipeline_ci_fix(self, pipeline_id: str, **kwargs) -> None:
+        """Update CI fix fields on a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                for key, value in kwargs.items():
+                    if hasattr(row, key) and key.startswith("ci_fix_"):
+                        setattr(row, key, value)
+                await session.commit()
+
+    async def get_pipeline_ci_fix_state(self, pipeline_id: str) -> dict:
+        """Get CI fix state for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return {}
+            return {
+                "ci_fix_enabled": row.ci_fix_enabled,
+                "ci_fix_status": row.ci_fix_status,
+                "ci_fix_attempt": row.ci_fix_attempt,
+                "ci_fix_max_retries": row.ci_fix_max_retries,
+                "ci_fix_cost_usd": row.ci_fix_cost_usd,
+                "ci_fix_log": row.ci_fix_log,
+            }
