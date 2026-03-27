@@ -298,6 +298,8 @@ class AgentOutput(Widget):
         self._fade_timer = None
         # Scroll debounce
         self._scroll_pending: bool = False
+        # Content change detection for _tick_typing
+        self._last_content_hash: int = 0
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
@@ -334,6 +336,11 @@ class AgentOutput(Widget):
             return
         self._typing_frame += 1
         if self._rendered_parts:
+            # Skip update if content hasn't changed (only cursor frame differs)
+            content_hash = hash(tuple(self._rendered_parts))
+            if content_hash == self._last_content_hash and self._typing_frame % len(_TYPING_FRAMES) != 0:
+                return
+            self._last_content_hash = content_hash
             self._update_content()
         else:
             try:

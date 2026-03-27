@@ -143,3 +143,41 @@ async def test_embedded_source_disconnect():
     source.disconnect()
     await emitter.emit("task:state_changed", {"task_id": "t1", "state": "done"})
     assert len(received) == 0
+
+
+@pytest.mark.asyncio
+async def test_embedded_source_disconnect_reconnect():
+    """Disconnect then reconnect should work cleanly via emitter.off()."""
+    from forge.core.events import EventEmitter
+
+    emitter = EventEmitter()
+    bus = EventBus()
+    source = EmbeddedSource(emitter, bus)
+    received = []
+
+    async def handler(data):
+        received.append(data)
+
+    bus.subscribe("task:state_changed", handler)
+    source.connect()
+    await emitter.emit("task:state_changed", {"task_id": "t1", "state": "done"})
+    assert len(received) == 1
+
+    source.disconnect()
+    await emitter.emit("task:state_changed", {"task_id": "t2", "state": "done"})
+    assert len(received) == 1  # No new events after disconnect
+
+    source.connect()
+    await emitter.emit("task:state_changed", {"task_id": "t3", "state": "done"})
+    assert len(received) == 2  # Events flow again after reconnect
+
+
+@pytest.mark.asyncio
+async def test_bus_unsubscribe_nonexistent():
+    """Unsubscribing a handler that was never added is a no-op."""
+    bus = EventBus()
+
+    async def handler(data):
+        pass
+
+    bus.unsubscribe("nonexistent:event", handler)  # should not raise
