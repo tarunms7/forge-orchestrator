@@ -107,38 +107,48 @@ class MergeMixin:
         from collections import deque
 
         all_tasks = await db.list_tasks_by_pipeline(pipeline_id)
+
+        # Build inverse dependency map: parent_id -> list of dependent task IDs
+        # This turns the O(N²) inner scan into O(1) lookups per BFS step
+        dependents_map: dict[str, list] = {}
+        blockable_tasks: dict[str, object] = {}
+        for task in all_tasks:
+            if task.state in ("todo", "blocked"):
+                blockable_tasks[task.id] = task
+                for dep_id in task.depends_on or []:
+                    dependents_map.setdefault(dep_id, []).append(task.id)
+
         newly_blocked: set[str] = set()
         queue: deque[str] = deque([failed_task_id])
 
         while queue:
             current_id = queue.popleft()
-            for task in all_tasks:
-                if task.id in newly_blocked:
+            for dependent_id in dependents_map.get(current_id, []):
+                if dependent_id in newly_blocked:
                     continue
-                if task.state not in ("todo", "blocked"):
+                if dependent_id not in blockable_tasks:
                     continue
-                if current_id in (task.depends_on or []):
-                    try:
-                        await db.update_task_state(task.id, "blocked")
-                        await self._emit(
-                            "task:state_changed",
-                            {
-                                "task_id": task.id,
-                                "state": "blocked",
-                                "error": f"Blocked: dependency {current_id} failed",
-                            },
-                            db=db,
-                            pipeline_id=pipeline_id,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to mark task %s as blocked (dep %s failed)",
-                            task.id,
-                            current_id,
-                        )
-                    # Always add to newly_blocked to cascade further, even if DB failed
-                    newly_blocked.add(task.id)
-                    queue.append(task.id)
+                try:
+                    await db.update_task_state(dependent_id, "blocked")
+                    await self._emit(
+                        "task:state_changed",
+                        {
+                            "task_id": dependent_id,
+                            "state": "blocked",
+                            "error": f"Blocked: dependency {current_id} failed",
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to mark task %s as blocked (dep %s failed)",
+                        dependent_id,
+                        current_id,
+                    )
+                # Always add to newly_blocked to cascade further, even if DB failed
+                newly_blocked.add(dependent_id)
+                queue.append(dependent_id)
 
     # ------------------------------------------------------------------
     # Retry logic (general)
