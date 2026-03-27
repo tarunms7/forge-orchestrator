@@ -1327,17 +1327,45 @@ class ReviewMixin:
                     else:
                         auto_fix_diff = diff_result.stdout.strip()
 
-                # Stage and commit auto-fixes
-                await _run_git(
-                    ["add", "-A"], cwd=worktree_path, check=False, description="stage lint fixes"
-                )
-                staged = await _run_git(
-                    ["diff", "--cached", "--name-only"],
+                # Stage ONLY in-scope files — lint may have touched inherited
+                # files from other pipeline tasks via the worktree base.
+                # Using `git add -A` here would stage out-of-scope changes,
+                # contaminating this task's diff with other tasks' files.
+                modified_result = await _run_git(
+                    ["diff", "--name-only"],
                     cwd=worktree_path,
                     check=False,
-                    description="check staged lint fixes",
+                    description="list lint-modified files",
                 )
-                if staged.stdout.strip():
+                modified_by_lint = {
+                    f.strip()
+                    for f in modified_result.stdout.strip().split("\n")
+                    if f.strip()
+                }
+                # Only stage files that overlap with this task's changed_files
+                in_scope_lint_fixes = sorted(modified_by_lint & set(changed_files))
+                if in_scope_lint_fixes:
+                    await _run_git(
+                        ["add", "--"] + in_scope_lint_fixes,
+                        cwd=worktree_path,
+                        check=False,
+                        description="stage scoped lint fixes",
+                    )
+                    # Discard any out-of-scope lint modifications
+                    out_of_scope_lint = sorted(modified_by_lint - set(changed_files))
+                    if out_of_scope_lint:
+                        logger.info(
+                            "Lint scope: discarding %d out-of-scope fix(es): %s",
+                            len(out_of_scope_lint),
+                            ", ".join(out_of_scope_lint[:5])
+                            + ("..." if len(out_of_scope_lint) > 5 else ""),
+                        )
+                        await _run_git(
+                            ["checkout", "--"] + out_of_scope_lint,
+                            cwd=worktree_path,
+                            check=False,
+                            description="discard out-of-scope lint fixes",
+                        )
                     await _run_git(
                         ["commit", "-m", strategy.commit_msg],
                         cwd=worktree_path,
