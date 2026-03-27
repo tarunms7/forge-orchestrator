@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import time
 import uuid
 from datetime import UTC, datetime
@@ -1644,7 +1643,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 ),
                 timeout=task_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "Task %s timed out after %ds (complexity-based safety net)",
                 task_id,
