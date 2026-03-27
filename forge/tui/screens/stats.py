@@ -15,14 +15,13 @@ from forge.tui.theme import (
     ACCENT_BLUE,
     ACCENT_GREEN,
     ACCENT_ORANGE,
-    ACCENT_RED,
     ACCENT_PURPLE,
-    BG_SURFACE,
+    ACCENT_RED,
     PIPELINE_STATUS_ICONS,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 )
-from forge.tui.widgets.charts import format_stats_line, render_donut_chart, render_sparkline
+from forge.tui.widgets.charts import render_donut_chart, render_sparkline
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 logger = logging.getLogger("forge.tui.screens.stats")
