@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
-from forge.core.sanitize import extract_json_block as _extract_json_block
 from forge.core.contracts import ContractType, IntegrationHint
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
+from forge.core.sanitize import extract_json_block as _extract_json_block
 
 # -- Helpers ---------------------------------------------------------------
 
