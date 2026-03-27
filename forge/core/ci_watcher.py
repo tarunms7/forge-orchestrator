@@ -13,10 +13,9 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from forge.core.daemon_helpers import async_subprocess
 
@@ -25,12 +24,6 @@ if TYPE_CHECKING:
     from forge.storage.db import Database
 
 logger = logging.getLogger("forge.ci_watcher")
-
-
-def _decode_output(raw: str | bytes) -> str:
-    """Decode subprocess output to str, handling both bytes and str inputs."""
-    return raw.decode() if isinstance(raw, bytes) else str(raw)
-
 
 # ── Data structures ──────────────────────────────────────────────────
 
@@ -171,7 +164,7 @@ async def _fetch_checks(
         cwd=project_dir,
     )
     if result.returncode != 0:
-        stderr = _decode_output(result.stderr)
+        stderr = result.stderr.decode() if isinstance(result.stderr, bytes) else str(result.stderr)
         logger.warning("gh pr checks failed (exit %d): %s", result.returncode, stderr[:500])
         return []
 
@@ -231,8 +224,8 @@ async def fetch_failure_logs(
             ],
             cwd=project_dir,
         )
-        stdout = _decode_output(result.stdout)
-        stderr = _decode_output(result.stderr)
+        stdout = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout)
+        stderr = result.stderr.decode() if isinstance(result.stderr, bytes) else str(result.stderr)
 
         if result.returncode != 0:
             logs[check.name] = f"Failed to fetch logs (exit {result.returncode}): {stderr[:500]}"
@@ -309,7 +302,7 @@ async def dispatch_fix_agent(
     model: str = "sonnet",
     max_turns: int = 50,
     base_branch: str = "main",
-) -> SdkResult | None:
+) -> "SdkResult | None":
     """Dispatch a Claude agent to fix CI failures.
 
     The agent works in project_dir on the given branch, reads failure logs,
@@ -358,7 +351,7 @@ async def run_ci_fix_loop(
     project_dir: str,
     branch: str,
     base_branch: str = "main",
-    db: Database | None = None,
+    db: "Database | None" = None,
     pipeline_id: str = "",
     emit_fn: Callable | None = None,
     cancel_event: asyncio.Event | None = None,

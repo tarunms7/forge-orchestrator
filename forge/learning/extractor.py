@@ -11,11 +11,6 @@ from forge.learning.store import Lesson
 
 logger = logging.getLogger("forge.learning")
 
-# Pre-compiled regex patterns for _extract_feedback_theme()
-_RE_FILE_PATH = re.compile(r"[/\\][\w./\\-]+\.\w+")
-_RE_LINE_NUMBER = re.compile(r"line\s+\d+")
-_RE_BACKTICK_CODE = re.compile(r"`[^`]+`")
-
 _INFRA_NOISE_PATTERNS = [
     "timeout",
     "timed out",
@@ -326,11 +321,11 @@ def _extract_feedback_theme(feedback: str) -> str:
     # Lowercase and strip specifics
     theme = feedback.lower()
     # Remove file paths
-    theme = _RE_FILE_PATH.sub("", theme)
+    theme = re.sub(r"[/\\][\w./\\-]+\.\w+", "", theme)
     # Remove line numbers
-    theme = _RE_LINE_NUMBER.sub("", theme)
+    theme = re.sub(r"line\s+\d+", "", theme)
     # Remove backtick code
-    theme = _RE_BACKTICK_CODE.sub("", theme)
+    theme = re.sub(r"`[^`]+`", "", theme)
     # Take first 100 chars of what's left
     theme = " ".join(theme.split())[:100]
     return theme
