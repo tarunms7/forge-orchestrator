@@ -119,7 +119,7 @@ async def test_run_health_check_shell_chaining():
 @pytest.fixture
 def git_repo(tmp_path):
     """Create a minimal git repo with a commit."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"],
         check=True,

@@ -1857,9 +1857,11 @@ class ExecutorMixin:
                     pipeline_id=pid,
                 )
 
+                # Use the repo path for this task's repo, not the workspace dir
+                _pm_repo_path = next(iter(self._repos.values())).path
                 check_result = await run_post_merge_check(
                     integration_config.post_merge,
-                    self._project_dir,
+                    _pm_repo_path,
                     actual_pb,
                     baseline_exit,
                     task_id,

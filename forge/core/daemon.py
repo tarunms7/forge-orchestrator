@@ -454,82 +454,110 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         Only sets values that are ``None`` — an empty string means the user
         explicitly wants to skip, so it is never overridden.
         """
+        # For multi-repo, check each repo. For single-repo, check project_dir.
+        dirs_to_scan = (
+            [rc.path for rc in self._repos.values()]
+            if len(self._repos) > 1
+            else [project_dir]
+        )
+
         # --- build_cmd ---
         if self._settings.build_cmd is None:
-            pkg_json = os.path.join(project_dir, "package.json")
-            if os.path.exists(pkg_json):
-                try:
-                    with open(pkg_json, encoding="utf-8") as fh:
-                        data = json.load(fh)
-                    if data.get("scripts", {}).get("build"):
-                        self._settings.build_cmd = "npm run build"
-                        logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
-                except (json.JSONDecodeError, OSError):
-                    logger.debug("Failed to read package.json for build_cmd auto-detection")
+            for scan_dir in dirs_to_scan:
+                pkg_json = os.path.join(scan_dir, "package.json")
+                if os.path.exists(pkg_json):
+                    try:
+                        with open(pkg_json, encoding="utf-8") as fh:
+                            data = json.load(fh)
+                        if data.get("scripts", {}).get("build"):
+                            self._settings.build_cmd = "npm run build"
+                            logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
+                            break
+                    except (json.JSONDecodeError, OSError):
+                        logger.debug("Failed to read package.json for build_cmd auto-detection")
 
         # --- test_cmd ---
         if self._settings.test_cmd is None:
-            pyproject = os.path.join(project_dir, "pyproject.toml")
-            if os.path.exists(pyproject):
-                try:
-                    with open(pyproject, encoding="utf-8") as fh:
-                        content = fh.read()
-                    if "[tool.pytest]" in content or "[tool.pytest.ini_options]" in content:
-                        self._settings.test_cmd = "python -m pytest"
-                        logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
-                except OSError:
-                    logger.debug("Failed to read pyproject.toml for test_cmd auto-detection")
+            for scan_dir in dirs_to_scan:
+                pyproject = os.path.join(scan_dir, "pyproject.toml")
+                if os.path.exists(pyproject):
+                    try:
+                        with open(pyproject, encoding="utf-8") as fh:
+                            content = fh.read()
+                        if "[tool.pytest]" in content or "[tool.pytest.ini_options]" in content:
+                            self._settings.test_cmd = "python -m pytest"
+                            logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
+                            break
+                    except OSError:
+                        logger.debug("Failed to read pyproject.toml for test_cmd auto-detection")
 
         if self._settings.test_cmd is None:
-            makefile = os.path.join(project_dir, "Makefile")
-            if os.path.exists(makefile):
-                try:
-                    with open(makefile, encoding="utf-8") as fh:
-                        content = fh.read()
-                    if re.search(r"^test[:\s]", content, re.MULTILINE):
-                        self._settings.test_cmd = "make test"
-                        logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
-                except OSError:
-                    logger.debug("Failed to read Makefile for test_cmd auto-detection")
+            for scan_dir in dirs_to_scan:
+                makefile = os.path.join(scan_dir, "Makefile")
+                if os.path.exists(makefile):
+                    try:
+                        with open(makefile, encoding="utf-8") as fh:
+                            content = fh.read()
+                        if re.search(r"^test[:\s]", content, re.MULTILINE):
+                            self._settings.test_cmd = "make test"
+                            logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
+                            break
+                    except OSError:
+                        logger.debug("Failed to read Makefile for test_cmd auto-detection")
 
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
         self._auto_detect_commands(project_dir)
         errors = []
 
-        # Valid git repo?
-        result = await async_subprocess(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=project_dir,
+        # Determine which directories to check — repo paths for multi-repo,
+        # project_dir for single-repo.
+        multi = len(self._repos) > 1
+        check_dirs = (
+            [(rid, rc.path) for rid, rc in self._repos.items()]
+            if multi
+            else [("default", project_dir)]
         )
-        if result.returncode != 0:
-            errors.append("Not a git repository")
 
-        # Ensure at least one commit exists (worktrees need valid HEAD)
-        has_commits_result = await async_subprocess(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_dir,
-        )
-        if has_commits_result.returncode != 0:
-            console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
-            await async_subprocess(
-                ["git", "commit", "--allow-empty", "-m", "chore: initial commit (forge)"],
-                cwd=project_dir,
+        for repo_id, repo_path in check_dirs:
+            label = f" [{repo_id}]" if multi else ""
+
+            # Valid git repo?
+            result = await async_subprocess(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=repo_path,
             )
+            if result.returncode != 0:
+                errors.append(f"Not a git repository{label}: {repo_path}")
+                continue  # Skip remaining checks for this repo
 
-        # Git remote (warning only)
-        result = await async_subprocess(
-            ["git", "remote"],
-            cwd=project_dir,
-        )
-        if not result.stdout.strip():
-            console.print(
-                "[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]"
+            # Ensure at least one commit exists (worktrees need valid HEAD)
+            has_commits_result = await async_subprocess(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_path,
             )
+            if has_commits_result.returncode != 0:
+                console.print(f"[dim]  Creating initial commit{label} (empty repo)...[/dim]")
+                await async_subprocess(
+                    ["git", "commit", "--allow-empty", "-m", "chore: initial commit (forge)"],
+                    cwd=repo_path,
+                )
 
-        # gh CLI auth (optional)
+            # Git remote (warning only)
+            result = await async_subprocess(
+                ["git", "remote"],
+                cwd=repo_path,
+            )
+            if not result.stdout.strip():
+                console.print(
+                    f"[yellow]  Warning: No git remote configured{label}. PR creation will be skipped.[/yellow]"
+                )
+
+        # gh CLI auth (optional, check once)
         if shutil.which("gh"):
-            result = await async_subprocess(["gh", "auth", "status"], cwd=project_dir)
+            result = await async_subprocess(
+                ["gh", "auth", "status"], cwd=check_dirs[0][1]
+            )
             if result.returncode != 0:
                 console.print(
                     "[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]"
@@ -1110,7 +1138,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Use the base branch stored by the TUI (user's explicit choice).
         # Fall back to detecting the current checkout only if not stored.
         base_branch = getattr(pipeline_record, "base_branch", None) or await _get_current_branch(
-            self._project_dir
+            next(iter(self._repos.values())).path
         )
         custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
         if custom_branch and custom_branch.strip():
@@ -1129,54 +1157,33 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             "pipeline:branch_resolved", {"branch": pipeline_branch}, db=db, pipeline_id=pid
         )
 
-        # Isolated pipeline branch — code reaches main only through a PR.
-        # On resume/retry the branch already exists and may contain merged
-        # task changes — force-resetting it would DESTROY that work.
-        if not resume:
-            result = await async_subprocess(
-                ["git", "branch", "-f", pipeline_branch, base_branch],
-                cwd=self._project_dir,
-            )
-            if result.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    result.returncode,
-                    ["git", "branch", "-f", pipeline_branch, base_branch],
-                    result.stdout,
-                    result.stderr,
-                )
-            await db.set_pipeline_base_branch(pid, base_branch)
-        else:
-            # Verify the branch still exists (safety check)
-            branch_check = await async_subprocess(
-                ["git", "rev-parse", "--verify", pipeline_branch],
-                cwd=self._project_dir,
-            )
-            if branch_check.returncode != 0:
-                # Branch was deleted — recreate it from base
-                console.print(
-                    f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]"
-                )
-                result = await async_subprocess(
-                    ["git", "branch", "-f", pipeline_branch, base_branch],
-                    cwd=self._project_dir,
-                )
-                if result.returncode != 0:
-                    raise subprocess.CalledProcessError(
-                        result.returncode,
-                        ["git", "branch", "-f", pipeline_branch, base_branch],
-                        result.stdout,
-                        result.stderr,
-                    )
-        console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
-
         # Set up per-repo infrastructure (worktree managers, merge workers, pipeline branches)
         self._setup_per_repo_infra(pipeline_branch)
 
-        # Create pipeline branches in all repos (multi-repo)
-        # For single-repo, the branch was already created above; _create_pipeline_branches
-        # is idempotent (git branch -f) so safe to call for all repos.
-        if len(self._repos) > 1 and not resume:
+        # Create pipeline branches in all repos.
+        # _create_pipeline_branches is idempotent (git branch -f).
+        if not resume:
             await self._create_pipeline_branches()
+            await db.set_pipeline_base_branch(pid, base_branch)
+        else:
+            # Verify the branch still exists in at least one repo
+            branch_exists = False
+            for rc in self._repos.values():
+                branch_check = await async_subprocess(
+                    ["git", "rev-parse", "--verify", pipeline_branch],
+                    cwd=rc.path,
+                )
+                if branch_check.returncode == 0:
+                    branch_exists = True
+                    break
+
+            if not branch_exists:
+                console.print(
+                    f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]"
+                )
+                await self._create_pipeline_branches()
+
+        console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
 
         # Load per-repo configs for review gates (build/test/lint commands)
         self._repo_configs = load_repo_configs(self._repos)
@@ -1215,9 +1222,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             baseline_cfg = (
                 integration_config.post_merge if pm_enabled else integration_config.final_gate
             )
+            # Use first repo path for integration checks (integration commands
+            # run in a worktree of a real git repo, not the workspace wrapper).
+            _integration_repo_path = next(iter(self._repos.values())).path
             baseline_exit = await capture_baseline(
                 baseline_cfg,
-                self._project_dir,
+                _integration_repo_path,
                 base_branch,
             )
 
@@ -1303,9 +1313,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 db=db,
                 pipeline_id=pid,
             )
+            _fg_repo_path = next(iter(self._repos.values())).path
             fg_result = await run_final_gate(
                 self._integration_config.final_gate,
-                self._project_dir,
+                _fg_repo_path,
                 pipeline_branch,
             )
             await self._emit(

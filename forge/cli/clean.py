@@ -11,6 +11,19 @@ from rich.table import Table
 logger = logging.getLogger("forge.cli.clean")
 
 
+def _is_git_repo(path: str) -> bool:
+    """Check if a path is a valid git repository."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=path,
+            capture_output=True,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def _list_worktree_dirs(worktrees_dir: str) -> list[str]:
     """Return names of subdirectories in the worktrees directory."""
     if not os.path.isdir(worktrees_dir):
@@ -25,6 +38,19 @@ def _list_worktree_dirs(worktrees_dir: str) -> list[str]:
 def _remove_worktrees(project_dir: str, worktrees_dir: str) -> list[str]:
     """Remove all worktree directories under worktrees_dir. Returns names removed."""
     names = _list_worktree_dirs(worktrees_dir)
+    if not names:
+        return []
+    if not _is_git_repo(project_dir):
+        import shutil as _shutil
+        removed = []
+        for name in names:
+            wt_path = os.path.join(worktrees_dir, name)
+            try:
+                _shutil.rmtree(wt_path)
+                removed.append(name)
+            except OSError:
+                pass
+        return removed
     removed: list[str] = []
     for name in names:
         wt_path = os.path.join(worktrees_dir, name)
@@ -37,13 +63,14 @@ def _remove_worktrees(project_dir: str, worktrees_dir: str) -> list[str]:
             )
             removed.append(name)
         except subprocess.CalledProcessError:
-            # If git worktree remove fails, try to continue
             pass
     return removed
 
 
 def _prune_worktrees(project_dir: str) -> None:
     """Run git worktree prune to clean up stale worktree admin files."""
+    if not _is_git_repo(project_dir):
+        return
     try:
         subprocess.run(
             ["git", "worktree", "prune"],
@@ -57,6 +84,8 @@ def _prune_worktrees(project_dir: str) -> None:
 
 def _list_forge_branches(project_dir: str) -> list[str]:
     """Return all local branch names matching 'forge/*' pattern."""
+    if not _is_git_repo(project_dir):
+        return []
     try:
         result = subprocess.run(
             ["git", "branch", "--list", "forge/*"],
