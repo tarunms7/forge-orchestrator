@@ -25,6 +25,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("forge.ci_watcher")
 
+
+def _decode_output(raw: str | bytes) -> str:
+    """Decode subprocess output to str, handling both bytes and str inputs."""
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
 # ── Data structures ──────────────────────────────────────────────────
 
 
@@ -164,7 +170,7 @@ async def _fetch_checks(
         cwd=project_dir,
     )
     if result.returncode != 0:
-        stderr = result.stderr.decode() if isinstance(result.stderr, bytes) else str(result.stderr)
+        stderr = _decode_output(result.stderr)
         logger.warning("gh pr checks failed (exit %d): %s", result.returncode, stderr[:500])
         return []
 
@@ -224,8 +230,8 @@ async def fetch_failure_logs(
             ],
             cwd=project_dir,
         )
-        stdout = result.stdout.decode() if isinstance(result.stdout, bytes) else str(result.stdout)
-        stderr = result.stderr.decode() if isinstance(result.stderr, bytes) else str(result.stderr)
+        stdout = _decode_output(result.stdout)
+        stderr = _decode_output(result.stderr)
 
         if result.returncode != 0:
             logs[check.name] = f"Failed to fetch logs (exit {result.returncode}): {stderr[:500]}"
