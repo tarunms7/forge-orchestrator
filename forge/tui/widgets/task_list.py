@@ -49,6 +49,15 @@ def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False, ic
 
     if state == "error":
         suffix_parts.append("⚠")
+    elif state == "merging":
+        _MERGE_STEP_LABELS = {
+            "rebasing": "Rebasing",
+            "integration_check": "Checks",
+            "finalizing": "Finalizing",
+        }
+        merge_sub = task.get("merge_substatus", "")
+        label = _MERGE_STEP_LABELS.get(merge_sub, "Merging")
+        suffix_parts.append(f"[#79c0ff]{label}…[/]")
     if file_count > 0:
         suffix_parts.append(f"[#8b949e]{file_count} files[/]")
 

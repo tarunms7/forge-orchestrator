@@ -83,6 +83,9 @@ class TuiState:
         self.integration_prompt: dict | None = None  # pending user decision
         self.integration_final_gate: dict | None = None
 
+        # Merge progress substatus (task_id → step label)
+        self.merge_substatus: dict[str, str] = {}
+
         # Multi-repo state
         self.repos: list[dict] = []
         self.per_repo_pr_urls: dict[str, str] = {}
@@ -151,6 +154,9 @@ class TuiState:
         new_state = data.get("state", "")
         if new_state in ("done", "error"):
             self.streaming_task_ids.discard(tid)
+        # Clear merge substatus when task leaves MERGING
+        if new_state != "merging":
+            self.merge_substatus.pop(tid, None)
         if tid in self.tasks:
             self.tasks[tid]["state"] = data.get("state", self.tasks[tid]["state"])
             if "error" in data:
@@ -162,6 +168,13 @@ class TuiState:
         else:
             # Buffer for when task is added via plan_ready
             self._pending_state_updates[tid] = data
+
+    def _on_merge_progress(self, data: dict) -> None:
+        tid = data.get("task_id")
+        step = data.get("step", "")
+        if tid and step:
+            self.merge_substatus[tid] = step
+            self._notify("tasks")  # triggers task list re-render
 
     def _on_agent_output(self, data: dict) -> None:
         tid = data.get("task_id", "")
@@ -637,6 +650,7 @@ class TuiState:
         "task:cost_update": _on_task_cost_update,
         "task:review_update": _on_review_update,
         "task:merge_result": _on_merge_result,
+        "task:merge_progress": _on_merge_progress,
         "task:awaiting_approval": _on_awaiting_approval,
         "task:review_diff": _on_review_diff,
         "planner:output": _on_planner_output,
