@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -216,7 +217,7 @@ async def gate2_llm_review(
             ", ".join(_diag_parts),
         )
         if attempt < max_review_attempts:
-            await asyncio.sleep(2)  # Brief pause before retrying
+            await asyncio.sleep(2**attempt + random.uniform(0, 1))
 
     # All attempts returned empty — auto-pass with warning rather than
     # retrying the entire task.  Empty results are transient SDK issues
