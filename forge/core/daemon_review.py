@@ -563,6 +563,7 @@ class ReviewMixin:
         """
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
+        _MAX_BATCH_SIZE = 50
 
         async def _on_msg(msg):
             text = _extract_text(msg)
@@ -570,7 +571,7 @@ class ReviewMixin:
                 return
             _batch.append(text)
             now = time.monotonic()
-            if now - _last_flush[0] >= 0.1:
+            if now - _last_flush[0] >= 0.1 or len(_batch) >= _MAX_BATCH_SIZE:
                 for line in _batch:
                     await self._emit(
                         "review:llm_output",
