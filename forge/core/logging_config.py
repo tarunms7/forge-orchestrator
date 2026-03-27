@@ -113,12 +113,6 @@ def configure_tui_logging() -> None:
         if not (isinstance(h, logging.StreamHandler) and h.stream is sys.stderr)
     ]
 
-    # Close existing RotatingFileHandlers before adding a new one to avoid leaking fds
-    for h in list(logger.handlers):
-        if isinstance(h, RotatingFileHandler):
-            h.close()
-            logger.removeHandler(h)
-
     # Add file handler to .forge/forge.log
     log_dir = os.path.join(os.getcwd(), ".forge")
     os.makedirs(log_dir, exist_ok=True)

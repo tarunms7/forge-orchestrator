@@ -119,12 +119,6 @@ class PipelineHealthMonitor:
                 if idle_time > self._config.merge_stuck_timeout_s:
                     stuck_tasks.append((task_id, state, idle_time, "merge stuck"))
 
-        # Clean up tracking entries for tasks in terminal states
-        terminal_states = {"done", "error", "cancelled"}
-        for task in tasks:
-            if task.state in terminal_states:
-                self._task_last_output.pop(task.id, None)
-
         # Check for deadlock: all remaining tasks are blocked
         if self._config.deadlock_check_enabled:
             active_states = [

@@ -22,14 +22,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Pre-compiled pattern lists for classify_agent_error()
-_SDK_AUTH_PATTERNS = ("authentication", "unauthorized", "403", "api key", "rate limit", "429")
-_TIMEOUT_PATTERNS = ("timeout", "max turns", "timed out")
-_GUARD_PATTERNS = ("guardtriggered", "retry loop")
-_NETWORK_PATTERNS = ("connection", "network", "dns", "socket", "eof")
-_NO_CHANGES_PATTERNS = ("no changes", "no diff")
-_INFRA_TEST_PATTERNS = ("command not found", "no module named", "importerror", "modulenotfounderror", "filenotfounderror")
-
 
 @dataclass
 class ClassifiedError:
@@ -53,7 +45,10 @@ def classify_agent_error(error: str | None, result=None) -> ClassifiedError:
     error_lower = error.lower()
 
     # SDK / auth errors
-    if any(p in error_lower for p in _SDK_AUTH_PATTERNS):
+    if any(
+        p in error_lower
+        for p in ("authentication", "unauthorized", "403", "api key", "rate limit", "429")
+    ):
         return ClassifiedError(
             category="sdk_error",
             message="Claude API authentication or rate limit error",
@@ -62,7 +57,7 @@ def classify_agent_error(error: str | None, result=None) -> ClassifiedError:
         )
 
     # Timeout
-    if any(p in error_lower for p in _TIMEOUT_PATTERNS):
+    if "timeout" in error_lower or "max turns" in error_lower or "timed out" in error_lower:
         return ClassifiedError(
             category="agent_timeout",
             message="Agent exceeded time or turn limit",
@@ -71,7 +66,7 @@ def classify_agent_error(error: str | None, result=None) -> ClassifiedError:
         )
 
     # Guard triggered (retry loop detection)
-    if any(p in error_lower for p in _GUARD_PATTERNS):
+    if "guardtriggered" in error_lower or "retry loop" in error_lower:
         return ClassifiedError(
             category="agent_crash",
             message="Agent stuck in retry loop (RuntimeGuard triggered)",
@@ -80,7 +75,7 @@ def classify_agent_error(error: str | None, result=None) -> ClassifiedError:
         )
 
     # Network errors
-    if any(p in error_lower for p in _NETWORK_PATTERNS):
+    if any(p in error_lower for p in ("connection", "network", "dns", "socket", "eof")):
         return ClassifiedError(
             category="sdk_error",
             message="Network error communicating with Claude API",
@@ -89,7 +84,7 @@ def classify_agent_error(error: str | None, result=None) -> ClassifiedError:
         )
 
     # No changes
-    if any(p in error_lower for p in _NO_CHANGES_PATTERNS):
+    if "no changes" in error_lower or "no diff" in error_lower:
         return ClassifiedError(
             category="agent_no_changes",
             message="Agent ran but produced no code changes",
@@ -134,7 +129,14 @@ def classify_review_error(gate: str, details: str) -> ClassifiedError:
 
     if gate == "gate1.5_test":
         # Check for infra errors vs real test failures
-        is_infra = any(p in details_lower for p in _INFRA_TEST_PATTERNS)
+        infra_patterns = [
+            "command not found",
+            "no module named",
+            "importerror",
+            "modulenotfounderror",
+            "filenotfounderror",
+        ]
+        is_infra = any(p in details_lower for p in infra_patterns)
         return ClassifiedError(
             category="infra_error" if is_infra else "test_failure",
             message=f"{'Infrastructure' if is_infra else 'Test'} failure: {details[:150]}",

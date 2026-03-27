@@ -9,8 +9,6 @@ forge.toml values override ForgeSettings defaults but env vars always win.
 
 from __future__ import annotations
 
-import asyncio
-import functools
 import logging
 import os
 import re
@@ -424,7 +422,6 @@ def load_repo_configs(repos: dict[str, RepoConfig]) -> dict[str, ProjectConfig]:
 _REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-@functools.lru_cache(maxsize=32)
 def auto_detect_base_branch(repo_path: str) -> str:
     """Detect the base branch for a git repo.
 
@@ -739,8 +736,8 @@ def resolve_repos(repo_flags: tuple[str, ...], project_dir: str) -> list:
     return [RepoConfig(id="default", path=project_dir, base_branch=base_branch)]
 
 
-async def validate_repos_startup_async(repos: list) -> None:
-    """Validate repos at startup (async version — runs subprocess checks concurrently).
+def validate_repos_startup(repos: list) -> None:
+    """Validate repos at startup.
 
     Checks:
     - gh CLI availability (multi-repo only)
@@ -761,101 +758,35 @@ async def validate_repos_startup_async(repos: list) -> None:
                 "Install: https://cli.github.com/"
             )
 
-    async def _validate_one(repo) -> str | None:
-        """Validate a single repo. Returns error message or None."""
+    for repo in repos:
+        # Staged changes check (skip for single default repo; untracked files
+        # like .forge/, .claude/ are expected and should not block execution)
         if not is_single_default:
-            proc = await asyncio.create_subprocess_exec(
-                "git", "diff", "--cached", "--quiet",
+            result = subprocess.run(
+                ["git", "diff", "--cached", "--quiet"],
                 cwd=repo.path,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                capture_output=True,
             )
-            await proc.wait()
-            if proc.returncode != 0:
-                return (
+            if result.returncode != 0:
+                raise click.ClickException(
                     f"Staged changes in repo '{repo.id}' ({repo.path}). "
                     "Commit or stash changes before running a pipeline."
                 )
 
-        proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "HEAD",
+        # Base branch existence check (skip for repos with no commits yet —
+        # the branch ref doesn't exist until the first commit)
+        has_commits = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
             cwd=repo.path,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            capture_output=True,
         )
-        await proc.wait()
-        if proc.returncode == 0:
-            proc2 = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}",
-                cwd=repo.path,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc2.wait()
-            if proc2.returncode != 0:
-                return (
-                    f"Base branch '{repo.base_branch}' not found in repo '{repo.id}' ({repo.path})"
-                )
-        return None
-
-    results = await asyncio.gather(*[_validate_one(r) for r in repos])
-    for err in results:
-        if err is not None:
-            raise click.ClickException(err)
-
-
-def validate_repos_startup(repos: list) -> None:
-    """Validate repos at startup (sync wrapper).
-
-    Checks:
-    - gh CLI availability (multi-repo only)
-    - Dirty working trees (skipped for single default repo)
-    - Base branch existence
-
-    Raises click.ClickException on any failure.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # Already in an async context — fall back to sequential validation
-        import click
-
-        is_single_default = len(repos) == 1 and repos[0].id == "default"
-        if not is_single_default:
-            if shutil.which("gh") is None:
-                raise click.ClickException(
-                    "gh (GitHub CLI) not found — required for multi-repo workspaces. "
-                    "Install: https://cli.github.com/"
-                )
-        for repo in repos:
-            if not is_single_default:
-                result = subprocess.run(
-                    ["git", "diff", "--cached", "--quiet"],
-                    cwd=repo.path,
-                    capture_output=True,
-                )
-                if result.returncode != 0:
-                    raise click.ClickException(
-                        f"Staged changes in repo '{repo.id}' ({repo.path}). "
-                        "Commit or stash changes before running a pipeline."
-                    )
-            has_commits = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
+        if has_commits.returncode == 0:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}"],
                 cwd=repo.path,
                 capture_output=True,
             )
-            if has_commits.returncode == 0:
-                result = subprocess.run(
-                    ["git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}"],
-                    cwd=repo.path,
-                    capture_output=True,
+            if result.returncode != 0:
+                raise click.ClickException(
+                    f"Base branch '{repo.base_branch}' not found in repo '{repo.id}' ({repo.path})"
                 )
-                if result.returncode != 0:
-                    raise click.ClickException(
-                        f"Base branch '{repo.base_branch}' not found in repo '{repo.id}' ({repo.path})"
-                    )
-    else:
-        asyncio.run(validate_repos_startup_async(repos))

@@ -1329,3 +1329,46 @@ async def test_normalize_trigger():
     assert Database._normalize_trigger("  Hello   World  ") == "hello world"
     assert Database._normalize_trigger("ALL\tCAPS\n\nHERE") == "all caps here"
     assert Database._normalize_trigger("simple") == "simple"
+
+
+# ── get_tasks_by_ids tests ──────────────────────────────────────────
+
+
+async def test_get_tasks_by_ids_basic(db: Database):
+    """Batch-fetch returns all matching tasks."""
+    for i in range(3):
+        await db.create_task(
+            id=f"t-{i}", title=f"Task {i}", description="d",
+            files=[], depends_on=[], complexity="low",
+        )
+    results = await db.get_tasks_by_ids(["t-0", "t-1", "t-2"])
+    assert len(results) == 3
+    ids = {t.id for t in results}
+    assert ids == {"t-0", "t-1", "t-2"}
+
+
+async def test_get_tasks_by_ids_empty_input(db: Database):
+    """Empty input returns empty list without querying."""
+    results = await db.get_tasks_by_ids([])
+    assert results == []
+
+
+async def test_get_tasks_by_ids_missing_ids(db: Database):
+    """Missing IDs are silently omitted."""
+    await db.create_task(
+        id="t-1", title="T", description="d",
+        files=[], depends_on=[], complexity="low",
+    )
+    results = await db.get_tasks_by_ids(["t-1", "nonexistent"])
+    assert len(results) == 1
+    assert results[0].id == "t-1"
+
+
+async def test_get_tasks_by_ids_dedup(db: Database):
+    """Duplicate IDs in input produce only one TaskRow per unique ID."""
+    await db.create_task(
+        id="t-1", title="T", description="d",
+        files=[], depends_on=[], complexity="low",
+    )
+    results = await db.get_tasks_by_ids(["t-1", "t-1", "t-1"])
+    assert len(results) == 1
