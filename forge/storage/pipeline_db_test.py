@@ -307,8 +307,9 @@ async def _create_pipeline_with_status(db, pid, status, tasks_succeeded=0, tasks
     )
     await db.update_pipeline_status(pid, status)
     # Update task counts directly
-    from forge.storage.db import PipelineRow
     from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
 
     async with db._session_factory() as session:
         await session.execute(
@@ -363,8 +364,9 @@ async def test_purge_old_pipelines_deletes_old(db):
     """purge_old_pipelines deletes old pipelines and keeps recent ones."""
     from datetime import UTC, datetime, timedelta
 
-    from forge.storage.db import PipelineRow
     from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
 
     # Create two pipelines
     await db.create_pipeline(
@@ -394,8 +396,9 @@ async def test_purge_old_pipelines_deletes_tasks(db):
     """purge_old_pipelines also deletes associated tasks."""
     from datetime import UTC, datetime, timedelta
 
-    from forge.storage.db import PipelineRow
     from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
 
     await db.create_pipeline(
         id="old-pipe", description="Old", project_dir="/tmp", model_strategy="auto"
@@ -439,8 +442,9 @@ async def test_purge_old_pipelines_nothing_to_delete(db):
 
 async def test_get_pipeline_trends_includes_total_tasks(db):
     """get_pipeline_trends includes total_tasks field."""
-    from forge.storage.db import PipelineRow
     from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
 
     await db.create_pipeline(
         id="t-pipe", description="Trend test", project_dir="/tmp", model_strategy="auto"
