@@ -90,6 +90,64 @@ class TestHandlerConstants:
 
         assert HEARTBEAT_INTERVAL == 30
 
+    @pytest.mark.asyncio
+    async def test_heartbeat_ping_sent_on_interval(self):
+        """Ping is sent every HEARTBEAT_INTERVAL (30s), not RECEIVE_TIMEOUT."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from forge.api.ws.handler import HEARTBEAT_INTERVAL, websocket_endpoint
+        from forge.api.ws.manager import ConnectionManager
+
+        ws = AsyncMock()
+        manager = ConnectionManager()
+
+        # First call: auth message; subsequent calls: TimeoutError then disconnect
+        call_count = 0
+
+        async def mock_receive_json():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"token": "valid"}
+            raise TimeoutError
+
+        ws.receive_json = mock_receive_json
+
+        # Track what timeout values wait_for is called with
+        timeouts_used: list[float] = []
+        original_wait_for = asyncio.wait_for
+
+        async def tracking_wait_for(coro, *, timeout=None):
+            timeouts_used.append(timeout)
+            return await original_wait_for(coro, timeout=timeout)
+
+        # After 2 missed heartbeats (60s // 30s = 2), loop breaks
+        # Ping send succeeds first time, then fails to trigger break
+        ping_count = 0
+
+        async def mock_send_json(data):
+            nonlocal ping_count
+            if data.get("type") == "ping":
+                ping_count += 1
+
+        ws.send_json = mock_send_json
+
+        with (
+            patch("forge.api.ws.handler.asyncio.wait_for", tracking_wait_for),
+            patch("forge.api.ws.handler.decode_token", return_value={"sub": "u1"}),
+        ):
+            await websocket_endpoint(ws, "p1", manager, "secret")
+
+        # The receive loop should use HEARTBEAT_INTERVAL (30), not RECEIVE_TIMEOUT (60)
+        loop_timeouts = [t for t in timeouts_used if t == HEARTBEAT_INTERVAL]
+        assert len(loop_timeouts) >= 1, (
+            f"Expected receive loop to use HEARTBEAT_INTERVAL={HEARTBEAT_INTERVAL}, "
+            f"but timeouts used were: {timeouts_used}"
+        )
+        # Pings should have been sent
+        assert ping_count >= 1
+
 
 class TestWebSocketBroadcastRepoId:
     """Test that broadcasts can include repo_id field."""
