@@ -223,3 +223,35 @@ class TestFormatTaskLineMultiRepo:
         assert with_repo_as < no_repo_as, (
             f"Expected fewer As with repo prefix: {with_repo_as} vs {no_repo_as}"
         )
+
+
+# ── Animated icon tests ──────────────────────────────────────────────────
+
+
+def test_format_task_line_animated_icon_in_progress():
+    """Selected in_progress task should show animated icon frame."""
+    from forge.tui.widgets.task_list import _ANIMATED_ICONS
+
+    task = {"id": "t1", "title": "Auth", "state": "in_progress"}
+    # Frame 0 should show first icon
+    line = format_task_line(task, selected=True, icon_frame=0)
+    assert _ANIMATED_ICONS["in_progress"][0] in line
+    # Frame 1 should show second icon
+    line2 = format_task_line(task, selected=True, icon_frame=1)
+    assert _ANIMATED_ICONS["in_progress"][1] in line2
+
+
+def test_format_task_line_non_selected_no_animation():
+    """Non-selected active tasks should show static icon regardless of frame."""
+    task = {"id": "t1", "title": "Auth", "state": "in_progress"}
+    line = format_task_line(task, selected=False, icon_frame=0)
+    assert STATE_ICONS["in_progress"] in line
+
+
+def test_task_list_has_icon_frame():
+    """TaskList should track icon animation frame."""
+    from forge.tui.widgets.task_list import TaskList
+
+    tl = TaskList()
+    assert hasattr(tl, "_icon_frame")
+    assert tl._icon_frame == 0

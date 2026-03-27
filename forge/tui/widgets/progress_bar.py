@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from textual.widget import Widget
 
+# Breathing pulse colors for active segment (orange spectrum)
+_PULSE_FRAMES = [
+    "#f0883e",  # Bright orange
+    "#d4782f",  # Medium
+    "#b06828",  # Dim
+    "#d4782f",  # Medium
+    "#f0883e",  # Bright orange
+]
+_PULSE_INTERVAL = 0.2  # 200ms per frame
+
 # 7 stages in the pipeline
 _STAGES = [
     ("planning", "Planning"),
@@ -99,6 +109,67 @@ def format_progress(
     return f"{bar} {pct:.0%} │ {done}/{total} tasks │ {meta}"
 
 
+def format_task_progress(
+    tasks: list[dict],
+    cost_usd: float,
+    elapsed_seconds: float,
+    phase: str,
+    pulse_frame: int = 0,
+) -> str:
+    """Build segmented progress bar -- one block per task with pulse on active."""
+    minutes = int(elapsed_seconds) // 60
+    seconds = int(elapsed_seconds) % 60
+    time_str = f"{minutes}:{seconds:02d}"
+    meta = f"[#3fb950]${cost_usd:.2f}[/] │ {time_str}"
+
+    # Non-task phases: show phase-specific status
+    if phase == "planning":
+        return f"[#58a6ff]◌ Planning...[/] │ {meta}"
+    if phase == "planned":
+        return f"[#a371f7]◉ Plan ready — review required[/] │ {meta}"
+    if phase == "contracts":
+        return f"[#d2a8ff]⚙ Generating contracts...[/] │ {meta}"
+    if phase == "final_approval":
+        return f"[#f0883e]◎ Awaiting final approval[/] │ {meta}"
+    if phase == "pr_creating":
+        return f"[#d2a8ff]⚙ Creating PR...[/] │ {meta}"
+    if phase == "pr_created":
+        done = sum(1 for t in tasks if t.get("state") == "done")
+        return f"[#3fb950]✔ PR Created[/] │ {done}/{len(tasks)} tasks │ {meta}"
+    if phase == "complete":
+        done = sum(1 for t in tasks if t.get("state") == "done")
+        return f"[#3fb950]✔ Complete[/] │ {done}/{len(tasks)} tasks │ {meta}"
+    if phase == "error":
+        return f"[#f85149]✖ Error[/] │ {meta}"
+
+    if not tasks:
+        return f"[#8b949e]{phase}[/] │ {meta}"
+
+    # Build segmented bar
+    segments: list[str] = []
+    done_count = 0
+    for task in tasks:
+        state = task.get("state", "todo")
+        if state == "done":
+            segments.append("[#3fb950]█[/]")
+            done_count += 1
+        elif state == "error":
+            segments.append("[#f85149]█[/]")
+        elif state in ("in_progress", "in_review", "merging", "awaiting_approval", "awaiting_input"):
+            # Active -- use pulsing orange
+            pulse_color = _PULSE_FRAMES[pulse_frame % len(_PULSE_FRAMES)]
+            segments.append(f"[{pulse_color}]█[/]")
+        elif state == "cancelled":
+            segments.append("[#484f58]▪[/]")
+        else:
+            # Pending (todo, blocked)
+            segments.append("[#21262d]░[/]")
+
+    bar = "".join(segments)
+    pct = done_count / len(tasks) if tasks else 0
+    return f"{bar} {pct:.0%} │ {done_count}/{len(tasks)} tasks │ {meta}"
+
+
 class PipelineProgress(Widget):
     """Bottom progress bar showing segment pipeline + cost + timing."""
 
@@ -119,6 +190,26 @@ class PipelineProgress(Widget):
         self._cost_usd = 0.0
         self._elapsed = 0.0
         self._phase = "idle"
+        self._tasks: list[dict] = []
+        self._pulse_frame: int = 0
+        self._pulse_timer = None
+
+    def on_mount(self) -> None:
+        self._pulse_timer = self.set_interval(_PULSE_INTERVAL, self._tick_pulse)
+
+    def on_unmount(self) -> None:
+        if self._pulse_timer is not None:
+            self._pulse_timer.stop()
+
+    def _tick_pulse(self) -> None:
+        """Animate the active task segment."""
+        self._pulse_frame += 1
+        # Only refresh if there's an active task
+        if any(
+            t.get("state") in ("in_progress", "in_review", "merging", "awaiting_approval", "awaiting_input")
+            for t in self._tasks
+        ):
+            self.refresh()
 
     def update_progress(
         self, done: int, total: int, cost_usd: float, elapsed: float, phase: str
@@ -130,5 +221,15 @@ class PipelineProgress(Widget):
         self._phase = phase
         self.refresh()
 
+    def update_tasks(self, tasks: list[dict]) -> None:
+        """Update task list for segmented progress bar."""
+        self._tasks = tasks
+        self.refresh()
+
     def render(self) -> str:
+        if self._tasks:
+            return format_task_progress(
+                self._tasks, self._cost_usd, self._elapsed, self._phase,
+                pulse_frame=self._pulse_frame,
+            )
         return format_progress(self._done, self._total, self._cost_usd, self._elapsed, self._phase)

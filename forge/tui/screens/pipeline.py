@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -45,6 +46,9 @@ _SIDEBAR_HIDDEN_PHASES = frozenset(
 )
 
 
+_SCRAMBLE_CHARS = "░▒▓█▀▄▌▐"
+
+
 class PhaseBanner(Widget):
     """Full-width centered phase indicator displayed above the split pane."""
 
@@ -63,24 +67,78 @@ class PhaseBanner(Widget):
         super().__init__()
         self._phase = "idle"
         self._read_only_banner: str | None = None
+        # Scramble-resolve animation state
+        self._target_text: str = ""
+        self._target_colour: str = "#8b949e"
+        self._target_icon: str = ""
+        self._resolved_count: int = 0
+        self._scramble_timer = None
+        self._animating: bool = False
 
     def update_phase(self, phase: str) -> None:
+        old_phase = self._phase
         self._phase = phase
+        if old_phase == phase:
+            self.refresh()
+            return
+        # Start scramble-resolve animation
+        label, colour = _PHASE_BANNER.get(phase, ("Unknown", "#8b949e"))
+        icon, _, text = label.partition(" ")
+        if not text:
+            text, icon = icon, ""
+        # Build the spaced text (same as render)
+        words = text.upper().split()
+        spaced_words = ["  ".join(w) for w in words]
+        spaced = "   ".join(spaced_words)
+
+        self._target_text = spaced
+        self._target_colour = colour
+        self._target_icon = f"{icon}  " if icon else ""
+        self._resolved_count = 0
+        self._animating = True
+
+        if self._scramble_timer is not None:
+            self._scramble_timer.stop()
+        try:
+            self._scramble_timer = self.set_interval(0.045, self._tick_scramble)
+        except Exception:
+            self._animating = False
         self.refresh()
+
+    def _tick_scramble(self) -> None:
+        """Resolve one character from left to right."""
+        self._resolved_count += 1
+        if self._resolved_count >= len(self._target_text):
+            self._animating = False
+            if self._scramble_timer is not None:
+                self._scramble_timer.stop()
+                self._scramble_timer = None
+        self.refresh()
+
+    def on_unmount(self) -> None:
+        if self._scramble_timer is not None:
+            self._scramble_timer.stop()
 
     def set_read_only_banner(self, text: str | None) -> None:
         self._read_only_banner = text
         self.refresh()
 
     def render(self) -> str:
+        if self._animating and self._target_text:
+            # Build partially-resolved text
+            resolved = self._target_text[: self._resolved_count]
+            remaining_len = len(self._target_text) - self._resolved_count
+            scrambled = "".join(random.choice(_SCRAMBLE_CHARS) for _ in range(remaining_len))
+            display = f"[bold {self._target_colour}]{self._target_icon}{resolved}[/][#484f58]{scrambled}[/]"
+            if self._read_only_banner:
+                display += f"\n[dim]{self._read_only_banner}[/]"
+            return display
+
+        # Normal static render
         label, colour = _PHASE_BANNER.get(self._phase, ("Unknown", "#8b949e"))
-        # Extract icon prefix and text
         icon, _, text = label.partition(" ")
         if not text:
             text, icon = icon, ""
-        # During planning, the unified planner streams output via planner:output
-        # No per-stage label needed — the banner just shows "PLANNING"
-        # Wide-space: double-space within words, triple-space between words
         words = text.upper().split()
         spaced_words = ["  ".join(w) for w in words]
         spaced = "   ".join(spaced_words)
@@ -612,6 +670,7 @@ class PipelineScreen(Screen):
             state.elapsed_seconds,
             state.phase,
         )
+        progress.update_tasks(ordered_tasks)
         dag.update_tasks(ordered_tasks)
         phase_banner.update_phase(state.phase)
 

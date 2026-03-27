@@ -9,6 +9,12 @@ from forge.tui.theme import STATE_COLORS, STATE_ICONS
 
 MAX_WIDTH = 40
 
+_ANIMATED_ICONS: dict[str, list[str]] = {
+    "in_progress": ["⚙", "⚡", "⚙", "⚡"],
+    "in_review": ["◉", "○", "◉", "○"],
+    "merging": ["◈", "◇", "◈", "◇"],
+}
+
 
 def _escape(text: str | None) -> str:
     """Escape Rich markup characters in user-provided text."""
@@ -17,9 +23,14 @@ def _escape(text: str | None) -> str:
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
-def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False) -> str:
+def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False, icon_frame: int = 0) -> str:
     state = task.get("state", "todo")
-    icon = STATE_ICONS.get(state, "?")
+    # Use animated icon for selected active tasks
+    if selected and state in _ANIMATED_ICONS:
+        frames = _ANIMATED_ICONS[state]
+        icon = frames[icon_frame % len(frames)]
+    else:
+        icon = STATE_ICONS.get(state, "?")
     color = STATE_COLORS.get(state, "#8b949e")
     title = task.get("title", "Untitled")
 
@@ -90,6 +101,8 @@ class TaskList(Widget):
         self._selected_index: int = 0
         self._phase: str = ""
         self._multi_repo: bool = False
+        self._icon_frame: int = 0
+        self._icon_timer = None
 
     def update_tasks(
         self,
@@ -110,6 +123,22 @@ class TaskList(Widget):
         self._selected_index = min(self._selected_index, max(0, len(tasks) - 1))
         self.refresh()
 
+    def on_mount(self) -> None:
+        self._icon_timer = self.set_interval(0.5, self._tick_icon)
+
+    def on_unmount(self) -> None:
+        if self._icon_timer is not None:
+            self._icon_timer.stop()
+
+    def _tick_icon(self) -> None:
+        """Animate the selected task's icon if it's in an active state."""
+        self._icon_frame += 1
+        # Only refresh if selected task has an animated state
+        if self.selected_task:
+            state = self.selected_task.get("state", "")
+            if state in _ANIMATED_ICONS:
+                self.refresh()
+
     @property
     def selected_task(self) -> dict | None:
         if 0 <= self._selected_index < len(self._tasks):
@@ -125,7 +154,10 @@ class TaskList(Widget):
         for i, task in enumerate(self._tasks):
             lines.append(
                 format_task_line(
-                    task, selected=(i == self._selected_index), multi_repo=self._multi_repo
+                    task,
+                    selected=(i == self._selected_index),
+                    multi_repo=self._multi_repo,
+                    icon_frame=self._icon_frame,
                 )
             )
         return "\n".join(lines)
