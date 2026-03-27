@@ -21,7 +21,7 @@ from forge.tui.theme import (
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 )
-from forge.tui.widgets.charts import render_donut_chart, render_sparkline
+from forge.tui.widgets.charts import format_stats_line, render_donut_chart, render_sparkline
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 logger = logging.getLogger("forge.tui.screens.stats")
@@ -299,9 +299,10 @@ class PipelineDetailScreen(Screen):
         Binding("escape", "close", "Close", show=True, priority=True),
     ]
 
-    def __init__(self, stats: dict) -> None:
+    def __init__(self, stats: dict, retry_summary: list[dict] | None = None) -> None:
         super().__init__()
         self._stats = stats
+        self._retry_summary: list[dict] = retry_summary or []
 
     def compose(self) -> ComposeResult:
         desc = self._stats.get("description", "Pipeline Details")
@@ -328,9 +329,7 @@ class PipelineDetailScreen(Screen):
                 classes="detail-section-title",
             )
             yield Static(
-                format_retry_hotspots(
-                    self._stats.get("tasks", [])
-                ),
+                format_retry_hotspots(self._retry_summary),
                 classes="detail-section",
             )
         yield ShortcutBar([("Esc", "Back")])
@@ -519,20 +518,28 @@ class StatsScreen(Screen):
         costs = [p.get("total_cost_usd", 0.0) for p in self._trends]
         durations = [p.get("duration_s", 0.0) for p in self._trends]
 
-        cost_spark = render_sparkline(
-            costs, width=30, color=ACCENT_GREEN,
-            fmt=lambda x: f"${x:.2f}",
+        cost_spark = render_sparkline(costs, width=30, color=ACCENT_GREEN)
+        cost_stats = format_stats_line(
+            label="Cost",
+            min_val=min(costs),
+            avg_val=sum(costs) / len(costs),
+            max_val=max(costs),
+            fmt_fn=lambda x: f"${x:.2f}",
         )
         self.query_one("#cost-sparkline", Static).update(
-            f"  [{TEXT_SECONDARY}]Cost:[/]\n  {cost_spark.replace(chr(10), chr(10) + '  ')}"
+            f"  [{TEXT_SECONDARY}]Cost:[/]\n  {cost_spark.split(chr(10))[0]}\n  {cost_stats}"
         )
 
-        dur_spark = render_sparkline(
-            durations, width=30, color=ACCENT_BLUE,
-            fmt=lambda x: _fmt_duration(x),
+        dur_spark = render_sparkline(durations, width=30, color=ACCENT_BLUE)
+        dur_stats = format_stats_line(
+            label="Duration",
+            min_val=min(durations),
+            avg_val=sum(durations) / len(durations),
+            max_val=max(durations),
+            fmt_fn=lambda x: _fmt_duration(x),
         )
         self.query_one("#duration-sparkline", Static).update(
-            f"  [{TEXT_SECONDARY}]Duration:[/]\n  {dur_spark.replace(chr(10), chr(10) + '  ')}"
+            f"  [{TEXT_SECONDARY}]Duration:[/]\n  {dur_spark.split(chr(10))[0]}\n  {dur_stats}"
         )
 
     def _populate_success_rate(self) -> None:
@@ -604,7 +611,14 @@ class StatsScreen(Screen):
         try:
             stats = await self._db.get_pipeline_stats(pipeline_id)
             if stats:
-                self.app.push_screen(PipelineDetailScreen(stats=stats))
+                retry_summary: list[dict] = []
+                try:
+                    retry_summary = await self._db.get_retry_summary(pipeline_id)
+                except Exception:
+                    logger.debug("Failed to load retry summary", exc_info=True)
+                self.app.push_screen(
+                    PipelineDetailScreen(stats=stats, retry_summary=retry_summary)
+                )
         except Exception:
             logger.debug("Failed to load pipeline detail", exc_info=True)
 
