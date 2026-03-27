@@ -517,6 +517,21 @@ class ForgeApp(App):
                     # Show all URLs in notification
                     url_lines = ", ".join(f"{rid}: {url}" for rid, url in result.pr_urls.items())
                     self.notify(f"PRs created: {url_lines}", severity="information")
+                    # Start CI auto-fix for each repo's PR
+                    from forge.tui.pr_creator import maybe_start_ci_fix
+
+                    for rid, url in result.pr_urls.items():
+                        repo_dir = repos[rid]["project_dir"]
+                        repo_base = repos[rid].get("base_branch", "main")
+                        repo_branch = pipeline_branches.get(rid, branch)
+                        await maybe_start_ci_fix(
+                            pr_url=url,
+                            project_dir=repo_dir,
+                            branch=repo_branch,
+                            base_branch=repo_base,
+                            pipeline_id=self._pipeline_id or "",
+                            db=self._db,
+                        )
                 else:
                     self._state.apply_event(
                         "pipeline:pr_failed", {"error": "All repo PR creations failed"}
@@ -577,6 +592,17 @@ class ForgeApp(App):
                         screen.show_pr_url(pr_url)
                 except Exception:
                     self.notify(f"PR created: {pr_url}", severity="information")
+                # Start CI auto-fix if enabled
+                from forge.tui.pr_creator import maybe_start_ci_fix
+
+                await maybe_start_ci_fix(
+                    pr_url=pr_url,
+                    project_dir=project_dir,
+                    branch=branch,
+                    base_branch=base_branch,
+                    pipeline_id=self._pipeline_id or "",
+                    db=self._db,
+                )
             else:
                 self._state.apply_event("pipeline:pr_failed", {"error": "gh pr create failed"})
                 if self._db and self._pipeline_id:

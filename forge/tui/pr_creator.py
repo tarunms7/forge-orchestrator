@@ -6,7 +6,12 @@ import asyncio
 import logging
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from forge.storage.db import Database
 
 logger = logging.getLogger("forge.tui.pr_creator")
 
@@ -473,3 +478,100 @@ async def _add_related_prs_comment(
             )
     except Exception:
         logger.warning("Failed to add related PRs comment to %s", pr_url, exc_info=True)
+
+
+async def maybe_start_ci_fix(
+    *,
+    pr_url: str,
+    project_dir: str,
+    branch: str,
+    base_branch: str = "main",
+    pipeline_id: str = "",
+    db: Database | None = None,
+    emit_fn: Callable | None = None,
+) -> bool:
+    """Start CI auto-fix loop if enabled in project config.
+
+    This is the shared entry point called by both the TUI and web API
+    after a PR is created. Returns True if the loop was started.
+    """
+    from forge.config.project_config import ProjectConfig
+
+    pconfig = ProjectConfig.load(project_dir)
+    if not pconfig.ci_fix.enabled:
+        logger.debug("CI auto-fix disabled in project config — skipping")
+        return False
+
+    # Also check if pipeline-level override disabled it
+    if db and pipeline_id:
+        pipeline = await db.get_pipeline(pipeline_id)
+        if pipeline and getattr(pipeline, "ci_fix_enabled", None) is False:
+            logger.debug("CI auto-fix disabled on pipeline %s — skipping", pipeline_id)
+            return False
+
+    from forge.core.ci_watcher import CIFixConfig as CIFixRuntimeConfig
+    from forge.core.ci_watcher import run_ci_fix_loop
+
+    ci_config = pconfig.ci_fix
+    config = CIFixRuntimeConfig(
+        max_retries=ci_config.max_retries,
+        poll_timeout_seconds=ci_config.poll_timeout_seconds,
+        poll_interval_seconds=ci_config.poll_interval_seconds,
+        budget_usd=ci_config.budget_usd,
+        model=ci_config.model,
+    )
+
+    cancel_event = asyncio.Event()
+
+    # Persist initial state
+    if db and pipeline_id:
+        try:
+            await db.update_pipeline_ci_fix(
+                pipeline_id,
+                ci_fix_enabled=True,
+                ci_fix_status="watching",
+                ci_fix_attempt=0,
+                ci_fix_max_retries=config.max_retries,
+            )
+        except Exception:
+            logger.warning("Failed to persist CI fix state", exc_info=True)
+
+    async def _emit(event_type: str, payload: dict):
+        if emit_fn:
+            try:
+                await emit_fn(event_type, payload)
+            except Exception:
+                logger.warning("Failed to emit %s", event_type, exc_info=True)
+
+    await _emit("pipeline:ci_watching", {})
+
+    logger.info(
+        "Starting CI auto-fix for PR %s (max %d retries, model=%s)",
+        pr_url,
+        config.max_retries,
+        config.model,
+    )
+
+    try:
+        result = await run_ci_fix_loop(
+            config=config,
+            pr_url=pr_url,
+            project_dir=project_dir,
+            branch=branch,
+            base_branch=base_branch,
+            db=db,
+            pipeline_id=pipeline_id,
+            emit_fn=_emit,
+            cancel_event=cancel_event,
+        )
+        logger.info(
+            "CI auto-fix completed: %s (cost=$%.2f, %d attempts)",
+            result.final_status,
+            result.total_cost_usd,
+            len(result.attempts),
+        )
+        return True
+    except Exception:
+        logger.exception("CI auto-fix loop failed for %s", pr_url)
+        await _emit("pipeline:ci_fix_error", {"error": "CI fix loop crashed"})
+        return False

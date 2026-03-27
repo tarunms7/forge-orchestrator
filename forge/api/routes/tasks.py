@@ -25,9 +25,10 @@ from forge.api.models.schemas import (
     TaskListItem,
     TaskStatusResponse,
 )
-from forge.core.ci_watcher import CIFixConfig as CIFixRuntimeConfig, run_ci_fix_loop, parse_pr_info
 from forge.api.security.dependencies import get_current_user
 from forge.core.async_utils import safe_create_task
+from forge.core.ci_watcher import CIFixConfig as CIFixRuntimeConfig
+from forge.core.ci_watcher import run_ci_fix_loop
 from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.templates import (
@@ -794,19 +795,28 @@ async def execute_pipeline(
                         },
                     )
 
-                    # Start CI auto-fix if enabled
-                    pipeline = await forge_db.get_pipeline(pipeline_id)
-                    ci_fix_enabled = getattr(pipeline, "ci_fix_enabled", False)
-                    if not ci_fix_enabled:
-                        # Check project config
-                        from forge.config.project_config import ProjectConfig
-                        project_dir = getattr(pipeline, "project_dir", None) or os.getcwd()
-                        pconfig = ProjectConfig.load(project_dir)
-                        ci_fix_enabled = pconfig.ci_fix.enabled
+                    # Start CI auto-fix if enabled (shared with TUI path)
+                    from forge.tui.pr_creator import maybe_start_ci_fix
 
-                    if ci_fix_enabled and pr_url:
+                    pipeline = await forge_db.get_pipeline(pipeline_id)
+                    _project_dir = getattr(pipeline, "project_dir", None) or os.getcwd()
+                    _branch = getattr(pipeline, "branch_name", None) or ""
+                    _base = getattr(pipeline, "base_branch", None) or "main"
+
+                    async def _emit_ws(event_type: str, payload: dict):
+                        await ws_manager.broadcast(pipeline_id, {"type": event_type, **payload})
+
+                    if _branch and pr_url:
                         safe_create_task(
-                            _run_ci_fix(forge_db, pipeline_id, pr_url, ws_manager),
+                            maybe_start_ci_fix(
+                                pr_url=pr_url,
+                                project_dir=_project_dir,
+                                branch=_branch,
+                                base_branch=_base,
+                                pipeline_id=pipeline_id,
+                                db=forge_db,
+                                emit_fn=_emit_ws,
+                            ),
                             logger=logger,
                             name=f"ci-fix-{pipeline_id}",
                         )
@@ -847,7 +857,7 @@ _ci_fix_cancel_events: dict[str, asyncio.Event] = {}
 
 
 async def _run_ci_fix(
-    forge_db: "Database",
+    forge_db: Database,
     pipeline_id: str,
     pr_url: str,
     ws_manager,
@@ -1110,6 +1120,7 @@ async def start_ci_fix(
         ci_fix_status="watching",
         ci_fix_attempt=0,
         ci_fix_max_retries=max_retries,
+        ci_fix_cost_usd=budget_usd,
     )
 
     ws_manager = request.app.state.ws_manager
