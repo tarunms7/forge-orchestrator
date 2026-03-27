@@ -7,10 +7,13 @@ without each independently scanning the codebase.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger("forge.context")
 
 if TYPE_CHECKING:
     from forge.core.models import RepoConfig
@@ -239,10 +242,17 @@ def _get_tracked_files(project_dir: str) -> list[str]:
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return []
     files = [f for f in result.stdout.strip().split("\n") if f]
+    if len(files) > 10_000:
+        logger.warning(
+            "Repo has %d tracked files — truncating to 10,000 to prevent memory bloat",
+            len(files),
+        )
+        files = files[:10_000]
     return sorted(files)
 
 
@@ -416,9 +426,10 @@ def _get_recent_commits(project_dir: str, count: int = 10) -> str:
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
         return result.stdout.strip()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return ""
 
 
@@ -434,9 +445,10 @@ def _get_branch(project_dir: str) -> str:
             capture_output=True,
             text=True,
             check=True,
+            timeout=10,
         )
         return result.stdout.strip()
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return ""
 
 

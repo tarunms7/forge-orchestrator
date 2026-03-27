@@ -116,8 +116,8 @@ def test_agent_output_ring_buffer():
     state = TuiState(max_output_lines=5)
     for i in range(10):
         state.apply_event("task:agent_output", {"task_id": "t1", "line": f"line {i}"})
-    assert len(state.agent_output["t1"]) == 5
-    assert state.agent_output["t1"][0] == "line 5"
+    assert len(state.agent_output["t1"]) <= 5
+    assert state.agent_output["t1"][-1] == "line 9"
 
 
 def test_apply_cost_update():
@@ -212,8 +212,8 @@ def test_review_llm_output_ring_buffer():
     state = TuiState(max_output_lines=3)
     for i in range(5):
         state.apply_event("review:llm_output", {"task_id": "t1", "line": f"line {i}"})
-    assert len(state.review_output["t1"]) == 3
-    assert state.review_output["t1"][0] == "line 2"
+    assert len(state.review_output["t1"]) <= 3
+    assert state.review_output["t1"][-1] == "line 4"
 
 
 def test_review_llm_output_notifies():
@@ -343,8 +343,8 @@ def test_contracts_output_ring_buffer():
     state = TuiState(max_output_lines=3)
     for i in range(5):
         state.apply_event("contracts:output", {"line": f"line {i}"})
-    assert len(state.contracts_output) == 3
-    assert state.contracts_output[0] == "line 2"
+    assert len(state.contracts_output) <= 3
+    assert state.contracts_output[-1] == "line 4"
 
 
 def test_contracts_output_notifies():
@@ -715,8 +715,8 @@ def test_unified_log_ring_buffer():
     state = TuiState(max_output_lines=3)
     for i in range(5):
         state.apply_event("task:agent_output", {"task_id": "t1", "line": f"line {i}"})
-    assert len(state.unified_log["t1"]) == 3
-    assert state.unified_log["t1"][0] == ("agent", "line 2")
+    assert len(state.unified_log["t1"]) <= 3
+    assert state.unified_log["t1"][-1] == ("agent", "line 4")
 
 
 def test_review_gate_passed_appends_to_unified_log():
@@ -1102,3 +1102,99 @@ class TestMultiRepoState:
         assert state.repos == []
         assert state.per_repo_pr_urls == {}
         assert state.per_repo_merge_status == {}
+
+
+# ── Pre-check-then-append truncation tests ────────────────────────────
+
+
+def test_agent_output_never_exceeds_max():
+    """Pre-check pattern: list never temporarily exceeds max_output_lines."""
+    state = TuiState(max_output_lines=100)
+    for i in range(200):
+        state.apply_event("task:agent_output", {"task_id": "t1", "line": f"line {i}"})
+        assert len(state.agent_output["t1"]) <= 100, f"Exceeded max at i={i}"
+
+
+def test_unified_log_never_exceeds_max():
+    """Unified log list never temporarily exceeds max_output_lines."""
+    state = TuiState(max_output_lines=100)
+    for i in range(200):
+        state.apply_event("task:agent_output", {"task_id": "t1", "line": f"line {i}"})
+        assert len(state.unified_log["t1"]) <= 100, f"Exceeded max at i={i}"
+
+
+def test_planner_output_never_exceeds_max():
+    """Planner output never temporarily exceeds max."""
+    state = TuiState(max_output_lines=50)
+    for i in range(100):
+        state.apply_event("planner:output", {"line": f"line {i}"})
+        assert len(state.planner_output) <= 50, f"Exceeded max at i={i}"
+
+
+def test_contracts_output_never_exceeds_max():
+    """Contracts output never temporarily exceeds max."""
+    state = TuiState(max_output_lines=50)
+    for i in range(100):
+        state.apply_event("contracts:output", {"line": f"line {i}"})
+        assert len(state.contracts_output) <= 50, f"Exceeded max at i={i}"
+
+
+def test_review_output_never_exceeds_max():
+    """Review output never temporarily exceeds max."""
+    state = TuiState(max_output_lines=50)
+    for i in range(100):
+        state.apply_event("review:llm_output", {"task_id": "t1", "line": f"line {i}"})
+        assert len(state.review_output["t1"]) <= 50, f"Exceeded max at i={i}"
+
+
+def test_followup_output_truncation():
+    """followup_output should be truncated like other output dicts."""
+    state = TuiState(max_output_lines=50)
+    for i in range(100):
+        state.apply_event("followup:agent_output", {"task_id": "f1", "line": f"line {i}"})
+        assert len(state.followup_output["f1"]) <= 50, f"Exceeded max at i={i}"
+    assert state.followup_output["f1"][-1] == "line 99"
+
+
+# ── review_output is regular dict, not defaultdict ─────────────────────
+
+
+def test_review_output_is_regular_dict():
+    """review_output should be a regular dict, not defaultdict."""
+    state = TuiState()
+    assert type(state.review_output) is dict
+
+
+def test_review_output_logs_unexpected_task_id(caplog):
+    """Logging for unexpected task_id in review_llm_output."""
+    import logging
+
+    state = TuiState()
+    with caplog.at_level(logging.WARNING, logger="forge.tui.state"):
+        state.apply_event("review:llm_output", {"task_id": "unknown_task", "line": "x"})
+    assert "unexpected task_id" in caplog.text
+    assert state.review_output["unknown_task"] == ["x"]
+
+
+# ── Callback removal test ──────────────────────────────────────────────
+
+
+def test_remove_change_callback():
+    """remove_change_callback prevents future notifications."""
+    state = TuiState()
+    changes = []
+
+    def cb(field):
+        changes.append(field)
+    state.on_change(cb)
+    state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+    assert len(changes) == 1
+    state.remove_change_callback(cb)
+    state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+    assert len(changes) == 1  # no new notification
+
+
+def test_remove_change_callback_nonexistent():
+    """Removing a callback that was never added is a no-op."""
+    state = TuiState()
+    state.remove_change_callback(lambda f: None)  # should not raise

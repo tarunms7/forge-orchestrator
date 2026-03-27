@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 
 from forge.agents.adapter import AgentAdapter, AgentResult
 from forge.learning.guard import GuardTriggered
@@ -89,9 +90,9 @@ class AgentRuntime:
                 ]
                 is_transient = any(kw in err_str for kw in transient_keywords)
                 if is_transient and attempt < max_retries:
-                    backoff = 5 * (2**attempt)
+                    backoff = 5 * (2**attempt) + random.uniform(0, 5)
                     logger.warning(
-                        "Transient error for agent '%s' (attempt %d/%d): %s — retrying in %ds",
+                        "Transient error for agent '%s' (attempt %d/%d): %s — retrying in %.1fs",
                         agent_id,
                         attempt + 1,
                         max_retries + 1,

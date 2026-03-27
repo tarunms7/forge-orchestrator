@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import shutil
-import subprocess
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -228,6 +228,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._active_tasks_lock = asyncio.Lock()
         self._effective_max_agents: int = self._settings.max_agents
         self._project_config = ProjectConfig.load(project_dir)
+        # Task list cache — avoids re-fetching from DB every poll iteration
+        self._cached_tasks: list | None = None
+        self._task_cache_time: float = 0.0
 
         # Multi-repo support: build repos dict
         if repos:
@@ -1615,17 +1618,51 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         repo_id: str | None = None,
     ) -> None:
         """Wrapper ensuring cleanup on cancellation or crash."""
+        # Complexity-based timeout as a safety net beyond SDK-level timeout
+        _COMPLEXITY_TIMEOUTS = {"low": 1800, "medium": 3600, "high": 7200}
+        task_timeout = _COMPLEXITY_TIMEOUTS.get("medium")  # default 60min
         try:
-            await self._execute_task(
-                db,
-                runtime,
-                worktree_mgr,
-                merge_worker,
-                task_id,
-                agent_id,
-                pipeline_id=pipeline_id,
-                repo_id=repo_id,
+            task_row = await db.get_task(task_id)
+            if task_row:
+                complexity = getattr(task_row, "complexity", "medium") or "medium"
+                task_timeout = _COMPLEXITY_TIMEOUTS.get(complexity, 3600)
+        except Exception:
+            pass  # Use default timeout on DB error
+
+        try:
+            await asyncio.wait_for(
+                self._execute_task(
+                    db,
+                    runtime,
+                    worktree_mgr,
+                    merge_worker,
+                    task_id,
+                    agent_id,
+                    pipeline_id=pipeline_id,
+                    repo_id=repo_id,
+                ),
+                timeout=task_timeout,
             )
+        except TimeoutError:
+            logger.error(
+                "Task %s timed out after %ds (complexity-based safety net)",
+                task_id,
+                task_timeout,
+            )
+            try:
+                await db.update_task_state(task_id, TaskState.ERROR.value)
+                await self._emit(
+                    "task:state_changed",
+                    {
+                        "task_id": task_id,
+                        "state": "error",
+                        "error": f"Task timed out after {task_timeout}s",
+                    },
+                    db=db,
+                    pipeline_id=pipeline_id or "",
+                )
+            except Exception:
+                logger.debug("Failed to mark timed-out task %s as error", task_id)
         except asyncio.CancelledError:
             logger.info("Task %s was cancelled (shutdown)", task_id)
             raise
@@ -1867,6 +1904,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._merge_worker = merge_worker
 
         # Register task:answer listener for event-driven resume
+        # Clean up any stale handler from a previous loop entry to prevent accumulation
+        self._cleanup_answer_handler()
+
         async def _answer_handler(data):
             await self._on_task_answered(data=data, db=db)
 
@@ -1881,12 +1921,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._current_answer_handler = _answer_handler
         while True:
             # Reap completed tasks from the pool
-            done_ids = [tid for tid, atask in list(self._active_tasks.items()) if atask.done()]
+            done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
             for tid in done_ids:
                 async with self._active_tasks_lock:
                     atask = self._active_tasks.pop(tid, None)
                 if atask is None:
                     continue  # Already removed by concurrent event handler
+                # Invalidate task cache — task state changed
+                self._cached_tasks = None
                 exc = atask.exception() if not atask.cancelled() else None
                 if exc:
                     await self._handle_task_exception(tid, exc, db, worktree_mgr, pipeline_id)
@@ -1925,9 +1967,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
 
-            tasks = await (
-                db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
-            )
+            # Use cached task list with TTL to avoid DB fetch every poll iteration
+            now_mono = time.monotonic()
+            if (
+                self._cached_tasks is None
+                or now_mono - self._task_cache_time > self._settings.scheduler_poll_interval
+            ):
+                self._cached_tasks = await (
+                    db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
+                )
+                self._task_cache_time = now_mono
+            tasks = self._cached_tasks
             _print_status_table(tasks)
 
             # Periodic question-timeout checker (every 30 s)
@@ -1947,22 +1997,26 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 TaskState.CANCELLED.value,
                 TaskState.BLOCKED.value,
             )
+            # Single-pass state counter — replaces multiple O(N) iterations
+            state_counts: dict[str, int] = {}
+            for t in tasks:
+                state_counts[t.state] = state_counts.get(t.state, 0) + 1
             all_parked = all(t.state in parked_states for t in tasks)
             if all_parked:
                 # If any tasks are still awaiting approval or input, sleep and poll
                 # rather than exiting — answers/approvals create new work
-                has_awaiting = any(
-                    t.state in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value)
-                    for t in tasks
+                has_awaiting = (
+                    state_counts.get(TaskState.AWAITING_APPROVAL.value, 0) > 0
+                    or state_counts.get(TaskState.AWAITING_INPUT.value, 0) > 0
                 )
                 if has_awaiting:
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
                 # All tasks are truly terminal (done/error/blocked/cancelled)
-                done_count = sum(1 for t in tasks if t.state == TaskState.DONE.value)
-                error_count = sum(1 for t in tasks if t.state == TaskState.ERROR.value)
-                blocked_count = sum(1 for t in tasks if t.state == TaskState.BLOCKED.value)
-                cancelled_count = sum(1 for t in tasks if t.state == TaskState.CANCELLED.value)
+                done_count = state_counts.get(TaskState.DONE.value, 0)
+                error_count = state_counts.get(TaskState.ERROR.value, 0)
+                blocked_count = state_counts.get(TaskState.BLOCKED.value, 0)
+                cancelled_count = state_counts.get(TaskState.CANCELLED.value, 0)
                 total_count = len(tasks)
 
                 result = _classify_pipeline_result([t.state for t in tasks])
@@ -2171,6 +2225,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
                 async with self._active_tasks_lock:
                     self._active_tasks[task_id] = atask
+                # Invalidate task cache — new task dispatched
+                self._cached_tasks = None
 
             # Wait efficiently
             if self._active_tasks:

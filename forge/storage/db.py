@@ -12,7 +12,21 @@ import re
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text, func, or_, select, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    case,
+    func,
+    or_,
+    select,
+    text,
+)
+from sqlalchemy import (
+    delete as sa_delete,
+)
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -85,7 +99,7 @@ class TaskRow(Base):
     retry_count: Mapped[int] = mapped_column(default=0)
     branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pipeline_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None, index=True)
     review_feedback: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     retry_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     cost_usd: Mapped[float] = mapped_column(default=0.0)
@@ -517,6 +531,23 @@ class Database:
         async with self._session_factory() as session:
             return await session.get(TaskRow, task_id)
 
+    async def get_tasks_by_ids(self, task_ids: list[str]) -> list[TaskRow]:
+        """Batch-fetch tasks by a list of IDs.
+
+        Returns TaskRow objects for all found IDs. Missing IDs are silently
+        omitted. If task_ids is empty, returns [] without issuing a query.
+        Duplicate IDs produce only one TaskRow per unique ID.
+        Order is NOT guaranteed to match input order.
+        """
+        if not task_ids:
+            return []
+        unique_ids = list(set(task_ids))
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TaskRow).where(TaskRow.id.in_(unique_ids))
+            )
+            return list(result.scalars().all())
+
     async def update_task_state(self, task_id: str, state: str) -> None:
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
@@ -917,8 +948,6 @@ class Database:
 
         Returns dict with counts: {'tasks_reset': int, 'events_deleted': int}
         """
-        from sqlalchemy import delete
-
         async with self._session_factory() as session:
             # Reset pipeline
             result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
@@ -935,13 +964,13 @@ class Database:
             # Delete all old tasks so re-planning can create fresh rows
             # with the same prefixed IDs (pipeline_id[:8]-task-N).
             del_tasks = await session.execute(
-                delete(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+                sa_delete(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
             )
             tasks_reset = del_tasks.rowcount
 
             # Delete all pipeline events
             del_result = await session.execute(
-                delete(PipelineEventRow).where(PipelineEventRow.pipeline_id == pipeline_id)
+                sa_delete(PipelineEventRow).where(PipelineEventRow.pipeline_id == pipeline_id)
             )
             events_deleted = del_result.rowcount
 
@@ -1357,8 +1386,6 @@ class Database:
         After inserting, prunes excess lessons if total count exceeds
         MAX_LESSONS, removing lowest-value rows (lowest hit_count, oldest first).
         """
-        from sqlalchemy import delete as sa_delete
-
         now = datetime.now(UTC).isoformat()
         normalized_trigger = self._normalize_trigger(trigger)
         row = LessonRow(
@@ -1379,22 +1406,22 @@ class Database:
             await session.flush()
             lesson_id = row.id
 
-            # Prune excess lessons if over the cap
-            count_result = await session.execute(select(func.count()).select_from(LessonRow))
+            # Prune excess lessons: single DELETE with subquery
+            # Count how many to remove (0 if under cap)
+            count_result = await session.execute(
+                select(func.count()).select_from(LessonRow)
+            )
             total = count_result.scalar() or 0
-            if total > self.MAX_LESSONS:
-                excess = total - self.MAX_LESSONS
-                # Find IDs of the least valuable lessons to delete
-                keep_boundary = await session.execute(
+            excess = total - self.MAX_LESSONS
+            if excess > 0:
+                prune_ids = (
                     select(LessonRow.id)
                     .order_by(LessonRow.hit_count.asc(), LessonRow.created_at.asc())
                     .limit(excess)
+                ).scalar_subquery()
+                await session.execute(
+                    sa_delete(LessonRow).where(LessonRow.id.in_(prune_ids))
                 )
-                ids_to_delete = [r[0] for r in keep_boundary.fetchall()]
-                if ids_to_delete:
-                    await session.execute(
-                        sa_delete(LessonRow).where(LessonRow.id.in_(ids_to_delete))
-                    )
 
             await session.commit()
             return lesson_id
@@ -1458,9 +1485,24 @@ class Database:
         Effective confidence = stored confidence - decay for staleness.
         Token budget is approximate (1 token ~ 4 chars).
         """
-        fetch_limit = max_count * 3
+        # Compute effective confidence in SQL:
+        # CASE WHEN last_hit_at IS NOT NULL
+        #   THEN confidence - MAX(0, (julianday('now') - julianday(last_hit_at)) - 30) / 300
+        #   ELSE confidence - 0.2
+        # END
+        effective_conf = case(
+            (
+                LessonRow.last_hit_at.isnot(None),
+                LessonRow.confidence - func.max(
+                    0,
+                    (func.julianday("now") - func.julianday(LessonRow.last_hit_at) - 30)
+                ) / 300,
+            ),
+            else_=LessonRow.confidence - 0.2,
+        ).label("effective_confidence")
+
         async with self._session_factory() as session:
-            query = select(LessonRow)
+            query = select(LessonRow, effective_conf)
             conditions = []
             if project_dir:
                 conditions.append(
@@ -1470,36 +1512,19 @@ class Database:
                 conditions.append(LessonRow.scope == "global")
             if categories:
                 conditions.append(LessonRow.category.in_(categories))
-            if conditions:
-                query = query.where(*conditions)
-            query = query.order_by(LessonRow.hit_count.desc()).limit(fetch_limit)
-            result = await session.execute(query)
-            rows = list(result.scalars().all())
 
-        # Rank by effective confidence (confidence - staleness decay)
-        now = datetime.now(UTC)
-        scored = []
-        for row in rows:
-            days = 90
-            if row.last_hit_at:
-                try:
-                    last_hit = datetime.fromisoformat(row.last_hit_at)
-                    if last_hit.tzinfo is None:
-                        last_hit = last_hit.replace(tzinfo=UTC)
-                    days = (now - last_hit).days
-                except (ValueError, TypeError):
-                    pass
-            effective = getattr(row, "confidence", 0.5) - max(0, (days - 30)) / 300
-            if effective >= 0.1:
-                scored.append((effective, row))
-        scored.sort(key=lambda x: -x[0])
-        ranked = [r for _, r in scored[:max_count]]
+            # Filter: effective_confidence >= 0.1
+            conditions.append(effective_conf >= 0.1)
+            query = query.where(*conditions)
+            query = query.order_by(effective_conf.desc()).limit(max_count)
+            result = await session.execute(query)
+            rows = [row[0] for row in result.all()]
 
         # Apply token budget
         char_budget = max_tokens * 4
         total_chars = 0
         filtered = []
-        for row in ranked:
+        for row in rows:
             row_chars = len(row.title) + len(row.content) + len(row.resolution)
             if total_chars + row_chars > char_budget:
                 break
@@ -1518,12 +1543,10 @@ class Database:
         import logging as _logging
         from datetime import timedelta  # noqa: F811
 
-        from sqlalchemy import delete
-
         _logger = _logging.getLogger("forge")
         cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         async with self._session_factory() as session:
-            result = await session.execute(delete(LessonRow).where(LessonRow.last_hit_at < cutoff))
+            result = await session.execute(sa_delete(LessonRow).where(LessonRow.last_hit_at < cutoff))
             await session.commit()
             count = result.rowcount
             if count:
@@ -1546,29 +1569,24 @@ class Database:
 
     async def delete_lesson(self, lesson_id: str) -> bool:
         """Delete a lesson by exact ID. Returns True if deleted."""
-        from sqlalchemy import delete
-
         async with self._session_factory() as session:
-            result = await session.execute(delete(LessonRow).where(LessonRow.id == lesson_id))
+            result = await session.execute(sa_delete(LessonRow).where(LessonRow.id == lesson_id))
             await session.commit()
             return result.rowcount > 0
 
     async def clear_lessons(self, project_dir: str | None = None) -> int:
         """Delete lessons. If project_dir given, only project-scoped. Otherwise all."""
-        from sqlalchemy import delete
-        from sqlalchemy import func as sa_func
-
         async with self._session_factory() as session:
             if project_dir:
                 count_q = (
-                    select(sa_func.count())
+                    select(func.count())
                     .select_from(LessonRow)
                     .where(LessonRow.project_dir == project_dir)
                 )
-                del_q = delete(LessonRow).where(LessonRow.project_dir == project_dir)
+                del_q = sa_delete(LessonRow).where(LessonRow.project_dir == project_dir)
             else:
-                count_q = select(sa_func.count()).select_from(LessonRow)
-                del_q = delete(LessonRow)
+                count_q = select(func.count()).select_from(LessonRow)
+                del_q = sa_delete(LessonRow)
             count = (await session.execute(count_q)).scalar() or 0
             await session.execute(del_q)
             await session.commit()
@@ -1647,17 +1665,22 @@ class Database:
             else:
                 pipeline.duration_s = 0.0
 
-            # Sum task-level metrics
-            result = await session.execute(
-                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            # Sum task-level metrics with SQL aggregates
+            agg = await session.execute(
+                select(
+                    func.coalesce(func.sum(TaskRow.input_tokens), 0),
+                    func.coalesce(func.sum(TaskRow.output_tokens), 0),
+                    func.count(case((TaskRow.state == "done", 1))),
+                    func.count(case((TaskRow.state == "error", 1))),
+                    func.coalesce(func.sum(TaskRow.retry_count), 0),
+                ).where(TaskRow.pipeline_id == pipeline_id)
             )
-            tasks = list(result.scalars().all())
-
-            pipeline.total_input_tokens = sum(t.input_tokens or 0 for t in tasks)
-            pipeline.total_output_tokens = sum(t.output_tokens or 0 for t in tasks)
-            pipeline.tasks_succeeded = sum(1 for t in tasks if t.state == "done")
-            pipeline.tasks_failed = sum(1 for t in tasks if t.state == "error")
-            pipeline.total_retries = sum(t.retry_count or 0 for t in tasks)
+            row = agg.one()
+            pipeline.total_input_tokens = row[0]
+            pipeline.total_output_tokens = row[1]
+            pipeline.tasks_succeeded = row[2]
+            pipeline.tasks_failed = row[3]
+            pipeline.total_retries = row[4]
 
             await session.commit()
 
@@ -1668,13 +1691,24 @@ class Database:
             if not pipeline:
                 return {}
 
+            # Fetch only the columns needed for per-task metrics
+            task_cols = [
+                TaskRow.id, TaskRow.title, TaskRow.state,
+                TaskRow.started_at, TaskRow.completed_at,
+                TaskRow.agent_duration_s, TaskRow.review_duration_s,
+                TaskRow.lint_duration_s, TaskRow.merge_duration_s,
+                TaskRow.cost_usd, TaskRow.agent_cost_usd, TaskRow.review_cost_usd,
+                TaskRow.input_tokens, TaskRow.output_tokens,
+                TaskRow.retry_count, TaskRow.num_turns, TaskRow.max_turns,
+                TaskRow.error_message,
+            ]
             result = await session.execute(
-                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+                select(*task_cols).where(TaskRow.pipeline_id == pipeline_id)
             )
-            tasks = list(result.scalars().all())
+            rows = result.all()
 
             task_metrics = []
-            for t in tasks:
+            for t in rows:
                 task_metrics.append(
                     {
                         "id": t.id,
@@ -1722,13 +1756,25 @@ class Database:
             if not pipeline:
                 return None
 
+            # Fetch only needed columns for export
+            export_cols = [
+                TaskRow.id, TaskRow.title, TaskRow.description, TaskRow.state,
+                TaskRow.files, TaskRow.assigned_agent,
+                TaskRow.cost_usd, TaskRow.agent_cost_usd, TaskRow.review_cost_usd,
+                TaskRow.retry_count, TaskRow.input_tokens, TaskRow.output_tokens,
+                TaskRow.started_at, TaskRow.completed_at,
+                TaskRow.agent_duration_s, TaskRow.review_duration_s,
+                TaskRow.lint_duration_s, TaskRow.merge_duration_s,
+                TaskRow.num_turns, TaskRow.error_message,
+                TaskRow.complexity, TaskRow.repo_id,
+            ]
             result = await session.execute(
-                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+                select(*export_cols).where(TaskRow.pipeline_id == pipeline_id)
             )
-            tasks = list(result.scalars().all())
+            rows = result.all()
 
             task_list = []
-            for t in tasks:
+            for t in rows:
                 task_list.append(
                     {
                         "id": t.id,
@@ -1808,10 +1854,10 @@ class Database:
                 for p in pipelines
             ]
 
-    async def get_pipeline_analytics(self) -> dict:
-        """Aggregate analytics across all pipelines."""
+    async def get_pipeline_analytics(self, limit: int = 500) -> dict:
+        """Aggregate analytics across recent pipelines (default last 500)."""
         async with self._session_factory() as session:
-            stmt = select(PipelineRow).order_by(PipelineRow.created_at.desc())
+            stmt = select(PipelineRow).order_by(PipelineRow.created_at.desc()).limit(limit)
             result = await session.execute(stmt)
             pipelines = list(result.scalars().all())
 
@@ -1872,28 +1918,23 @@ class Database:
         """Delete pipelines and associated tasks older than N days. Returns count of deleted pipelines."""
         from datetime import timedelta
 
-        from sqlalchemy import delete
-
         cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
         cutoff_iso = cutoff.isoformat()
 
         async with self._session_factory() as session:
-            # Find pipeline IDs to delete
-            stmt = select(PipelineRow.id).where(PipelineRow.created_at < cutoff_iso)
-            result = await session.execute(stmt)
-            pipeline_ids = [row[0] for row in result.all()]
+            # Use subquery to batch-delete tasks and pipelines in two statements
+            old_ids_subq = (
+                select(PipelineRow.id).where(PipelineRow.created_at < cutoff_iso)
+            ).scalar_subquery()
 
-            if not pipeline_ids:
-                return 0
-
-            # Delete associated tasks first
+            # Delete associated tasks first (uses pipeline_id index)
             await session.execute(
-                delete(TaskRow).where(TaskRow.pipeline_id.in_(pipeline_ids))
+                sa_delete(TaskRow).where(TaskRow.pipeline_id.in_(old_ids_subq))
             )
 
             # Delete pipelines
             del_result = await session.execute(
-                delete(PipelineRow).where(PipelineRow.id.in_(pipeline_ids))
+                sa_delete(PipelineRow).where(PipelineRow.created_at < cutoff_iso)
             )
             await session.commit()
             return del_result.rowcount

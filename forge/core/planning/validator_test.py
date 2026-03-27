@@ -57,7 +57,8 @@ class TestFileOwnership:
         conflicts = [i for i in result.issues if i.category == "file_conflict"]
         assert len(conflicts) == 0
 
-    def test_multiple_independent_conflicts_reported(self):
+    def test_multiple_independent_conflicts_reports_first(self):
+        """Early-return optimization: reports the first conflict found."""
         graph = _graph(
             _task("t1", ["a.py", "b.py"]),
             _task("t2", ["a.py"]),
@@ -65,7 +66,8 @@ class TestFileOwnership:
         )
         result = validate_plan(graph, _empty_map())
         majors = [i for i in result.issues if i.category == "file_conflict"]
-        assert len(majors) == 2
+        assert len(majors) == 1
+        assert result.status == "fail"
 
 
 class TestDependencyValidity:

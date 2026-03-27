@@ -9,7 +9,7 @@ class Scheduler:
     @staticmethod
     def ready_tasks(tasks: list[TaskRecord]) -> list[TaskRecord]:
         """Return tasks that are TODO and have all dependencies DONE."""
-        done_ids = {t.id for t in tasks if t.state == TaskState.DONE}
+        done_ids = frozenset(t.id for t in tasks if t.state == TaskState.DONE)
         return [
             t
             for t in tasks

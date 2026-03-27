@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 
 from forge.core.sanitize import validate_task_id
 
@@ -26,8 +27,8 @@ class WorktreeManager:
     def _ensure_forge_gitignored(self) -> None:
         """Add .forge to the repo's .gitignore if not already present.
 
-        Uses an atomic read-check-write pattern to avoid race conditions
-        when multiple worktrees are created concurrently.
+        Uses an atomic write-to-temp-then-rename pattern so concurrent
+        worktree creations don't corrupt the file.
         """
         gitignore = os.path.join(self._repo, ".gitignore")
         entry = ".forge"
@@ -37,11 +38,27 @@ class WorktreeManager:
             lines = {line.strip() for line in content.splitlines()}
             if entry in lines or f"/{entry}" in lines or f"{entry}/" in lines:
                 return
-            with open(gitignore, "a", encoding="utf-8") as f:
-                f.write(f"\n{entry}\n")
+            new_content = content + f"\n{entry}\n"
         else:
-            with open(gitignore, "w", encoding="utf-8") as f:
-                f.write(f"{entry}\n")
+            new_content = f"{entry}\n"
+
+        # Atomic write: write to a temp file in the same directory, then
+        # rename (rename is atomic on POSIX when src and dst are on the
+        # same filesystem).
+        fd, tmp_path = tempfile.mkstemp(
+            dir=self._repo, prefix=".gitignore.tmp", suffix=""
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            os.replace(tmp_path, gitignore)
+        except BaseException:
+            # Clean up the temp file on any failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def create(self, task_id: str, base_ref: str | None = None) -> str:
         """Create a worktree for a task. Returns the worktree path.
@@ -56,6 +73,10 @@ class WorktreeManager:
 
         Handles repos with no commits by using ``--orphan`` flag so that
         each worktree branch starts as an independent root.
+
+        Note: git subprocess calls use ``run_in_executor`` internally
+        (via ``_run_git``) to avoid blocking the event loop when called
+        from async code.
         """
         validate_task_id(task_id)
         path = self._task_path(task_id)
@@ -144,6 +165,20 @@ class WorktreeManager:
                 task_id,
                 exc,
             )
+
+    async def async_create(self, task_id: str, base_ref: str | None = None) -> str:
+        """Async version of ``create()`` — runs in an executor to avoid blocking."""
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.create, task_id, base_ref)
+
+    async def async_remove(self, task_id: str) -> None:
+        """Async version of ``remove()`` — runs in an executor to avoid blocking."""
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.remove, task_id)
 
     def list_active(self) -> list[str]:
         """Return task IDs with active worktrees."""

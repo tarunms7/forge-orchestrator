@@ -112,6 +112,7 @@ class TaskList(Widget):
         self._multi_repo: bool = False
         self._icon_frame: int = 0
         self._icon_timer = None
+        self._last_icon_frame: int = -1
 
     def update_tasks(
         self,
@@ -142,11 +143,16 @@ class TaskList(Widget):
     def _tick_icon(self) -> None:
         """Animate the selected task's icon if it's in an active state."""
         self._icon_frame += 1
-        # Only refresh if selected task has an animated state
+        # Only refresh if selected task has an animated state and frame actually changed
         if self.selected_task:
             state = self.selected_task.get("state", "")
             if state in _ANIMATED_ICONS:
-                self.refresh()
+                frames = _ANIMATED_ICONS[state]
+                effective_frame = self._icon_frame % len(frames)
+                last_effective = self._last_icon_frame % len(frames) if self._last_icon_frame >= 0 else -1
+                if effective_frame != last_effective:
+                    self._last_icon_frame = self._icon_frame
+                    self.refresh()
 
     @property
     def selected_task(self) -> dict | None:

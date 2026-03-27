@@ -399,11 +399,30 @@ class PipelineScreen(Screen):
                     except Exception:
                         pass
             return
+        # Fast path: cost/elapsed only need progress bar update
+        if field == "cost":
+            try:
+                state = self._state
+                self.query_one(PipelineProgress).update_progress(
+                    state.done_count, state.total_count, state.total_cost_usd,
+                    state.elapsed_seconds, state.phase,
+                )
+            except Exception:
+                pass
+            return
+        if field == "elapsed":
+            try:
+                state = self._state
+                self.query_one(PipelineProgress).update_progress(
+                    state.done_count, state.total_count, state.total_cost_usd,
+                    state.elapsed_seconds, state.phase,
+                )
+            except Exception:
+                pass
+            return
         if field in (
             "tasks",
-            "cost",
             "phase",
-            "elapsed",
             "planner_output",
             "contracts_output",
             "planning",

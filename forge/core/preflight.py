@@ -78,31 +78,60 @@ async def run_preflight(
     report = PreflightReport()
 
     # Run fast sync checks first
-    report.checks.append(_check_git_installed())
-    report.checks.append(_check_claude_cli())
+    git_check = _check_git_installed()
+    claude_check = _check_claude_cli()
+    report.checks.append(git_check)
+    report.checks.append(claude_check)
     report.checks.append(_check_gh_cli())
     report.checks.append(_check_disk_space(project_dir))
 
-    # Run async checks concurrently
-    async_checks = await asyncio.gather(
-        _check_git_repo(project_dir, repos),
-        _check_base_branch(project_dir, base_branch, repos),
-        _check_working_tree_clean(project_dir, repos),
-        _check_claude_auth(),
-        return_exceptions=True,
-    )
-    for result in async_checks:
-        if isinstance(result, CheckResult):
-            report.checks.append(result)
-        elif isinstance(result, Exception):
-            report.checks.append(
-                CheckResult(
-                    name="async_check",
-                    passed=False,
-                    message=f"Check failed unexpectedly: {result}",
-                    severity="warning",
-                )
+    # Early exit: skip git-dependent checks if git is missing
+    git_available = git_check.passed
+    claude_available = claude_check.passed
+
+    # Build async check list, skipping checks whose prerequisite is missing
+    async_tasks: list[asyncio.Task] = []
+    if git_available:
+        async_tasks.append(_check_git_repo(project_dir, repos))
+        async_tasks.append(_check_base_branch(project_dir, base_branch, repos))
+        async_tasks.append(_check_working_tree_clean(project_dir, repos))
+    else:
+        report.checks.append(
+            CheckResult(
+                name="git_checks_skipped",
+                passed=False,
+                message="Skipped git repo/branch/tree checks — git not installed",
+                fix_hint="Install git first, then re-run preflight",
             )
+        )
+
+    if claude_available:
+        async_tasks.append(_check_claude_auth())
+    else:
+        report.checks.append(
+            CheckResult(
+                name="claude_auth_skipped",
+                passed=False,
+                message="Skipped Claude auth check — CLI not installed",
+                severity="warning",
+                fix_hint="Install Claude CLI first",
+            )
+        )
+
+    if async_tasks:
+        async_checks = await asyncio.gather(*async_tasks, return_exceptions=True)
+        for result in async_checks:
+            if isinstance(result, CheckResult):
+                report.checks.append(result)
+            elif isinstance(result, Exception):
+                report.checks.append(
+                    CheckResult(
+                        name="async_check",
+                        passed=False,
+                        message=f"Check failed unexpectedly: {result}",
+                        severity="warning",
+                    )
+                )
 
     return report
 
@@ -196,20 +225,23 @@ async def _check_git_repo(project_dir: str, repos: dict | None = None) -> CheckR
     else:
         dirs_to_check.append(("default", project_dir))
 
-    failed = []
-    for repo_id, path in dirs_to_check:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-parse",
-            "--git-dir",
-            cwd=path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
-        if proc.returncode != 0:
-            label = f"{repo_id} ({path})" if repo_id != "default" else path
-            failed.append(label)
+    async def _check_one_repo(repo_id: str, path: str) -> str | None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--git-dir",
+                cwd=path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                return f"{repo_id} ({path})" if repo_id != "default" else path
+        except (TimeoutError, OSError):
+            return f"{repo_id} ({path})" if repo_id != "default" else path
+        return None
+
+    results = await asyncio.gather(*(_check_one_repo(rid, p) for rid, p in dirs_to_check))
+    failed = [r for r in results if r is not None]
 
     if failed:
         return CheckResult(
@@ -234,33 +266,35 @@ async def _check_base_branch(
     else:
         dirs_to_check.append(("default", project_dir, base_branch))
 
-    missing = []
-    for repo_id, path, branch in dirs_to_check:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "rev-parse",
-            "--verify",
-            f"refs/heads/{branch}",
-            cwd=path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=5)
-        if proc.returncode != 0:
-            # Also check remote
-            proc2 = await asyncio.create_subprocess_exec(
-                "git",
-                "rev-parse",
-                "--verify",
-                f"refs/remotes/origin/{branch}",
+    async def _check_one_branch(repo_id: str, path: str, branch: str) -> str | None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--verify", f"refs/heads/{branch}",
                 cwd=path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await asyncio.wait_for(proc2.communicate(), timeout=5)
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode == 0:
+                return None
+            # Also check remote
+            proc2 = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}",
+                cwd=path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc2.communicate(), timeout=10)
             if proc2.returncode != 0:
-                label = f"{repo_id}:{branch}" if repo_id != "default" else branch
-                missing.append(label)
+                return f"{repo_id}:{branch}" if repo_id != "default" else branch
+        except (TimeoutError, OSError):
+            return f"{repo_id}:{branch}" if repo_id != "default" else branch
+        return None
+
+    results = await asyncio.gather(
+        *(_check_one_branch(rid, p, b) for rid, p, b in dirs_to_check)
+    )
+    missing = [r for r in results if r is not None]
 
     if missing:
         return CheckResult(
@@ -281,21 +315,26 @@ async def _check_working_tree_clean(project_dir: str, repos: dict | None = None)
     else:
         dirs_to_check.append(("default", project_dir))
 
-    dirty = []
-    for repo_id, path in dirs_to_check:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "status",
-            "--porcelain",
-            cwd=path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        if stdout.strip():
-            count = len(stdout.strip().split(b"\n"))
+    async def _check_one_tree(repo_id: str, path: str) -> str | None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "--porcelain",
+                cwd=path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if stdout.strip():
+                count = len(stdout.strip().split(b"\n"))
+                label = repo_id if repo_id != "default" else os.path.basename(path)
+                return f"{label} ({count} files)"
+        except (TimeoutError, OSError):
             label = repo_id if repo_id != "default" else os.path.basename(path)
-            dirty.append(f"{label} ({count} files)")
+            return f"{label} (check timed out)"
+        return None
+
+    results = await asyncio.gather(*(_check_one_tree(rid, p) for rid, p in dirs_to_check))
+    dirty = [r for r in results if r is not None]
 
     if dirty:
         return CheckResult(

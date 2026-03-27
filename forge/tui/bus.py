@@ -130,9 +130,7 @@ class EmbeddedSource:
         if not self._connected:
             return
         for event_type, handler in self._bridge_handlers.items():
-            handlers = self._emitter._handlers.get(event_type, [])
-            if handler in handlers:
-                handlers.remove(handler)
+            self._emitter.off(event_type, handler)
         self._bridge_handlers.clear()
         self._connected = False
 

@@ -37,6 +37,17 @@ class IntegrationCheckResult:
     is_regression: bool  # True only if baseline was green (exit=0) and this is red
 
 
+_MAX_OUTPUT = 10_000
+_HALF_OUTPUT = _MAX_OUTPUT // 2
+
+
+def _truncate_output(text: str) -> str:
+    """Truncate long output preserving both beginning (error context) and end (final state)."""
+    if len(text) <= _MAX_OUTPUT:
+        return text
+    return text[:_HALF_OUTPUT] + "\n...truncated...\n" + text[-_HALF_OUTPUT:]
+
+
 _SKIPPED = IntegrationCheckResult(
     status="skipped",
     exit_code=None,
@@ -76,13 +87,15 @@ async def run_health_check(
         - status="infra_error" if the command can't be started (not found, etc.)
     """
     start = time.monotonic()
+    proc = None
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        async with asyncio.timeout(10):
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             proc.communicate(),
             timeout=timeout_seconds,
@@ -95,8 +108,8 @@ async def run_health_check(
         return IntegrationCheckResult(
             status="passed" if exit_code == 0 else "failed",
             exit_code=exit_code,
-            stdout=stdout[-10_000:],  # cap output to avoid memory bloat
-            stderr=stderr[-10_000:],
+            stdout=_truncate_output(stdout),
+            stderr=_truncate_output(stderr),
             elapsed_seconds=elapsed,
             is_regression=False,  # caller sets this based on baseline
         )
@@ -104,11 +117,12 @@ async def run_health_check(
     except TimeoutError:
         elapsed = time.monotonic() - start
         # Kill the process if it's still running
-        try:
-            proc.kill()  # type: ignore[possibly-undefined]
-            await proc.wait()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
+        if proc is not None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
         return IntegrationCheckResult(
             status="timeout",
             exit_code=None,
@@ -161,7 +175,7 @@ async def _temp_health_worktree(project_dir: str, ref: str):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, create_stderr = await create_proc.communicate()
+    _, create_stderr = await asyncio.wait_for(create_proc.communicate(), timeout=30)
     if create_proc.returncode != 0:
         err_msg = (
             create_stderr.decode("utf-8", errors="replace") if create_stderr else "unknown error"
@@ -183,9 +197,72 @@ async def _temp_health_worktree(project_dir: str, ref: str):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await remove_proc.communicate()
+            _, rm_stderr = await asyncio.wait_for(remove_proc.communicate(), timeout=30)
+            if remove_proc.returncode != 0:
+                err_msg = rm_stderr.decode("utf-8", errors="replace") if rm_stderr else "unknown"
+                logger.error(
+                    "Failed to remove health check worktree at %s: %s", wt_path, err_msg
+                )
+        except TimeoutError:
+            logger.error(
+                "Timed out removing health check worktree at %s — may need manual cleanup",
+                wt_path,
+            )
         except Exception:
-            logger.warning("Failed to remove health check worktree at %s", wt_path)
+            logger.error(
+                "Unexpected error removing health check worktree at %s", wt_path, exc_info=True
+            )
+
+
+# ── Stale worktree garbage collection ────────────────────────────────
+
+_STALE_AGE_SECONDS = 24 * 60 * 60  # 24 hours
+
+
+async def cleanup_stale_worktrees(project_dir: str) -> int:
+    """Remove health-check worktrees older than 24 hours.
+
+    Should be called at pipeline start to prevent accumulation from
+    previous runs that crashed before cleanup.
+
+    Returns:
+        Number of stale worktrees removed.
+    """
+    worktree_base = os.path.join(project_dir, ".forge", "worktrees")
+    if not os.path.isdir(worktree_base):
+        return 0
+
+    removed = 0
+    now = time.time()
+    for entry in os.listdir(worktree_base):
+        if not entry.startswith("_health-check-"):
+            continue
+        wt_path = os.path.join(worktree_base, entry)
+        if not os.path.isdir(wt_path):
+            continue
+        try:
+            age = now - os.path.getmtime(wt_path)
+        except OSError:
+            continue
+        if age < _STALE_AGE_SECONDS:
+            continue
+
+        logger.info("Removing stale health-check worktree: %s (age %.1fh)", entry, age / 3600)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "worktree", "remove", "--force", wt_path,
+                cwd=project_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=30)
+            removed += 1
+        except Exception:
+            logger.warning("Could not remove stale worktree %s", wt_path, exc_info=True)
+
+    if removed:
+        logger.info("Cleaned up %d stale health-check worktree(s)", removed)
+    return removed
 
 
 # ── Pipeline-level functions ─────────────────────────────────────────

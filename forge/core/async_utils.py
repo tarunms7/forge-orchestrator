@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from collections.abc import Coroutine
 from typing import Any
@@ -16,7 +17,7 @@ def safe_create_task(
 ) -> asyncio.Task:
     """Create an asyncio task with automatic exception logging."""
     task = asyncio.create_task(coro, name=name)
-    task.add_done_callback(lambda t: _log_task_exception(t, logger))
+    task.add_done_callback(functools.partial(_log_task_exception, logger=logger))
     return task
 
 

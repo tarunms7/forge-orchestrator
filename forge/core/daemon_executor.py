@@ -1593,6 +1593,7 @@ class ExecutorMixin:
         """Run agent with batched streaming callback."""
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
+        _MAX_BATCH_SIZE = 50
 
         # RuntimeGuard — detects wasteful retry loops
         guard = RuntimeGuard()
@@ -1623,7 +1624,7 @@ class ExecutorMixin:
 
             _batch.append(text)
             now = time.monotonic()
-            if now - _last_flush[0] >= 0.1:
+            if now - _last_flush[0] >= 0.1 or len(_batch) >= _MAX_BATCH_SIZE:
                 for line in _batch:
                     await self._emit(
                         "task:agent_output",
@@ -1646,10 +1647,12 @@ class ExecutorMixin:
 
         conventions_md = _load_conventions_md(self._project_dir)
 
-        # Collect completed dependency info
+        # Collect completed dependency info (parallel fetch)
         if hasattr(task, "depends_on") and task.depends_on:
-            for dep_id in task.depends_on:
-                dep_task = await db.get_task(dep_id)
+            dep_tasks = await asyncio.gather(
+                *(db.get_task(dep_id) for dep_id in task.depends_on)
+            )
+            for dep_task in dep_tasks:
                 if dep_task and dep_task.state == TaskState.DONE.value:
                     completed_deps.append(
                         {

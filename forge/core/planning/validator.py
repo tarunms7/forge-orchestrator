@@ -27,7 +27,9 @@ def validate_plan(
     # Structural checks cannot auto-fix issues (that requires LLM reasoning).
     # The minor_fixes list is populated by the LLM validator stage downstream.
     minor_fixes: list[MinorFix] = []
-    issues.extend(_check_file_ownership(graph))
+    # Compute transitive deps once — reused by file-ownership check
+    transitive_deps = _build_transitive_deps(graph)
+    issues.extend(_check_file_ownership(graph, transitive_deps))
     issues.extend(_check_dependency_validity(graph))
     issues.extend(_check_cycles(graph))
     issues.extend(_check_task_granularity(graph))
@@ -60,13 +62,15 @@ def _build_transitive_deps(graph: TaskGraph) -> dict[str, set[str]]:
     return transitive
 
 
-def _check_file_ownership(graph: TaskGraph) -> list[ValidationIssue]:
+def _check_file_ownership(
+    graph: TaskGraph, transitive_deps: dict[str, set[str]]
+) -> list[ValidationIssue]:
     """Detect when two independent tasks share the same file.
 
     Uses ``(task.repo, file_path)`` as the composite key so that files
-    in different repos don't conflict.
+    in different repos don't conflict.  Returns on the first conflict
+    found since one issue is enough to trigger a re-plan.
     """
-    transitive_deps = _build_transitive_deps(graph)
     issues: list[ValidationIssue] = []
 
     # Build (repo, file) -> list of owner task IDs
@@ -79,7 +83,7 @@ def _check_file_ownership(graph: TaskGraph) -> list[ValidationIssue]:
     for (_repo, file_path), owners in file_owners.items():
         if len(owners) < 2:
             continue
-        # Check each pair of owners
+        # Check each pair of owners — early return on first conflict
         for i in range(len(owners)):
             for j in range(i + 1, len(owners)):
                 task_a = owners[i]
@@ -89,7 +93,7 @@ def _check_file_ownership(graph: TaskGraph) -> list[ValidationIssue]:
                     continue
                 if task_a in transitive_deps.get(task_b, set()):
                     continue
-                issues.append(
+                return [
                     ValidationIssue(
                         severity="major",
                         category="file_conflict",
@@ -100,7 +104,7 @@ def _check_file_ownership(graph: TaskGraph) -> list[ValidationIssue]:
                         ),
                         suggested_fix=f"Make '{task_b}' depend on '{task_a}', or rename the conflicting file.",
                     )
-                )
+                ]
 
     return issues
 

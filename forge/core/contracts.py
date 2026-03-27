@@ -83,8 +83,13 @@ class ContractSet(BaseModel):
 
     def contracts_for_task(self, task_id: str) -> TaskContracts:
         """Get only the contracts relevant to a specific task."""
-        producing_apis = [c for c in self.api_contracts if c.producer_task_id == task_id]
-        consuming_apis = [c for c in self.api_contracts if task_id in c.consumer_task_ids]
+        producing_apis: list[APIContract] = []
+        consuming_apis: list[APIContract] = []
+        for c in self.api_contracts:
+            if c.producer_task_id == task_id:
+                producing_apis.append(c)
+            if task_id in c.consumer_task_ids:
+                consuming_apis.append(c)
         relevant_types = [t for t in self.type_contracts if task_id in t.used_by_tasks]
         return TaskContracts(
             producing=producing_apis,
