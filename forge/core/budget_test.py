@@ -89,3 +89,20 @@ class TestCheckBudget:
         db = _make_db(pipeline_cost=0.3, pipeline_budget=0.0)
         settings = _make_settings(budget_limit_usd=1.0)
         await check_budget(db, "pipe-1", settings)
+
+    async def test_timeout_on_slow_db(self):
+        """Budget check should raise TimeoutError if DB is too slow."""
+        import asyncio
+
+        db = AsyncMock()
+
+        async def _slow(*args, **kwargs):
+            await asyncio.sleep(60)
+            return 0.0
+
+        db.get_pipeline_cost = _slow
+        db.get_pipeline_budget = _slow
+        settings = _make_settings(budget_limit_usd=1.0)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await check_budget(db, "pipe-1", settings)
