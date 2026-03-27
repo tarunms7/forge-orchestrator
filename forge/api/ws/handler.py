@@ -12,6 +12,12 @@ from forge.api.ws.manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
+# Heartbeat interval (seconds) — server sends a ping to detect dead clients
+HEARTBEAT_INTERVAL = 30
+# Receive timeout (seconds) — if no message (including pong) within this window,
+# the connection is considered dead
+RECEIVE_TIMEOUT = 60
+
 
 async def _safe_close(websocket: WebSocket, code: int = 1000, reason: str = "") -> None:
     """Close a WebSocket without raising on already-disconnected sockets."""
@@ -35,6 +41,10 @@ async def websocket_endpoint(
     avoids exposing the token in URL query parameters (server logs,
     browser history, etc.).
 
+    A heartbeat ping is sent every ``HEARTBEAT_INTERVAL`` seconds.  If
+    no message is received within ``RECEIVE_TIMEOUT`` seconds the
+    connection is considered dead and closed.
+
     Args:
         websocket: The incoming WebSocket connection.
         pipeline_id: Pipeline to subscribe to (from URL path).
@@ -46,7 +56,7 @@ async def websocket_endpoint(
 
     # ── Read auth from the first message ─────────────────────────────
     try:
-        auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
+        auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=3.0)
         token = auth_message.get("token")
         if not token:
             await _safe_close(websocket, code=4001, reason="Missing token")
@@ -74,10 +84,23 @@ async def websocket_endpoint(
 
     try:
         while True:
-            # Keep connection alive; ignore client messages for now
-            await websocket.receive_json()
-    except WebSocketDisconnect:
-        manager.disconnect(websocket, pipeline_id=pipeline_id)
+            try:
+                # Wait for a client message with a timeout so dead
+                # connections are detected even if no data is flowing.
+                await asyncio.wait_for(
+                    websocket.receive_json(), timeout=RECEIVE_TIMEOUT
+                )
+            except TimeoutError:
+                # No message within the timeout window — send a ping to
+                # check if the connection is still alive.
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break  # Connection dead
+            except WebSocketDisconnect:
+                break
     except Exception:
         # Catch any unexpected transport errors
-        manager.disconnect(websocket, pipeline_id=pipeline_id)
+        pass
+    finally:
+        manager.disconnect(websocket, pipeline_id=pipeline_id, user_id=user_id)

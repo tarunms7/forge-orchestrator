@@ -96,3 +96,55 @@ def test_create_cleans_up_directory_on_failure(manager, git_repo):
 
     # Directory should be cleaned up
     assert not os.path.isdir(expected_path)
+
+
+def test_atomic_gitignore_write_new_file(manager, git_repo):
+    """_ensure_forge_gitignored creates .gitignore atomically."""
+    gitignore_path = git_repo / ".gitignore"
+    # Remove any existing .gitignore
+    if gitignore_path.exists():
+        gitignore_path.unlink()
+
+    manager._ensure_forge_gitignored()
+
+    content = gitignore_path.read_text()
+    assert ".forge" in content
+
+
+def test_atomic_gitignore_no_duplicate(manager, git_repo):
+    """Calling _ensure_forge_gitignored twice doesn't duplicate the entry."""
+    manager._ensure_forge_gitignored()
+    manager._ensure_forge_gitignored()
+
+    gitignore_path = git_repo / ".gitignore"
+    content = gitignore_path.read_text()
+    assert content.count(".forge") == 1
+
+
+def test_atomic_gitignore_appends_to_existing(manager, git_repo):
+    """_ensure_forge_gitignored appends to an existing .gitignore."""
+    gitignore_path = git_repo / ".gitignore"
+    gitignore_path.write_text("node_modules\n")
+
+    manager._ensure_forge_gitignored()
+
+    content = gitignore_path.read_text()
+    assert "node_modules" in content
+    assert ".forge" in content
+
+
+@pytest.mark.asyncio
+async def test_async_create_worktree(manager, git_repo):
+    """async_create runs create() in an executor without blocking."""
+    path = await manager.async_create("task-async-1")
+    assert os.path.isdir(path)
+    assert os.path.exists(os.path.join(path, "README.md"))
+
+
+@pytest.mark.asyncio
+async def test_async_remove_worktree(manager):
+    """async_remove runs remove() in an executor without blocking."""
+    path = await manager.async_create("task-async-2")
+    assert os.path.isdir(path)
+    await manager.async_remove("task-async-2")
+    assert not os.path.isdir(path)
