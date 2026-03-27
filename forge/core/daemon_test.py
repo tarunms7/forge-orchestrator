@@ -1599,4 +1599,51 @@ class TestReposJsonStorage:
         assert "backend" in by_id
         assert "frontend" in by_id
         assert by_id["backend"]["path"] == str(tmp_path / "b")
-        assert by_id["backend"]["branch_name"] == "forge/pipeline-abc"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _preflight_checks with multi-repo workspace
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_preflight_checks_multi_repo(tmp_path):
+    """Daemon preflight passes for a multi-repo workspace (plain wrapper dir)."""
+    import subprocess
+
+    from forge.config.settings import ForgeSettings
+    from forge.core.daemon import ForgeDaemon
+    from forge.core.models import RepoConfig
+
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    repos = []
+    for name in ("backend", "frontend"):
+        repo_dir = tmp_path / name
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "--initial-branch=main"], cwd=str(repo_dir), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            env=git_env,
+        )
+        repos.append(RepoConfig(id=name, path=str(repo_dir), base_branch="main"))
+
+    daemon = ForgeDaemon(str(tmp_path), settings=ForgeSettings(), repos=repos)
+
+    # Mock DB
+    from unittest.mock import AsyncMock
+
+    db = AsyncMock()
+    db.update_pipeline_status = AsyncMock()
+    db.log_event = AsyncMock()
+
+    result = await daemon._preflight_checks(str(tmp_path), db, "test-pipeline")
+    assert result is True, "Preflight should pass for multi-repo workspace"

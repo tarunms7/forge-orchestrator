@@ -454,82 +454,110 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         Only sets values that are ``None`` — an empty string means the user
         explicitly wants to skip, so it is never overridden.
         """
+        # For multi-repo, check each repo. For single-repo, check project_dir.
+        dirs_to_scan = (
+            [rc.path for rc in self._repos.values()]
+            if len(self._repos) > 1
+            else [project_dir]
+        )
+
         # --- build_cmd ---
         if self._settings.build_cmd is None:
-            pkg_json = os.path.join(project_dir, "package.json")
-            if os.path.exists(pkg_json):
-                try:
-                    with open(pkg_json, encoding="utf-8") as fh:
-                        data = json.load(fh)
-                    if data.get("scripts", {}).get("build"):
-                        self._settings.build_cmd = "npm run build"
-                        logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
-                except (json.JSONDecodeError, OSError):
-                    logger.debug("Failed to read package.json for build_cmd auto-detection")
+            for scan_dir in dirs_to_scan:
+                pkg_json = os.path.join(scan_dir, "package.json")
+                if os.path.exists(pkg_json):
+                    try:
+                        with open(pkg_json, encoding="utf-8") as fh:
+                            data = json.load(fh)
+                        if data.get("scripts", {}).get("build"):
+                            self._settings.build_cmd = "npm run build"
+                            logger.info("Auto-detected build_cmd: %s", self._settings.build_cmd)
+                            break
+                    except (json.JSONDecodeError, OSError):
+                        logger.debug("Failed to read package.json for build_cmd auto-detection")
 
         # --- test_cmd ---
         if self._settings.test_cmd is None:
-            pyproject = os.path.join(project_dir, "pyproject.toml")
-            if os.path.exists(pyproject):
-                try:
-                    with open(pyproject, encoding="utf-8") as fh:
-                        content = fh.read()
-                    if "[tool.pytest]" in content or "[tool.pytest.ini_options]" in content:
-                        self._settings.test_cmd = "python -m pytest"
-                        logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
-                except OSError:
-                    logger.debug("Failed to read pyproject.toml for test_cmd auto-detection")
+            for scan_dir in dirs_to_scan:
+                pyproject = os.path.join(scan_dir, "pyproject.toml")
+                if os.path.exists(pyproject):
+                    try:
+                        with open(pyproject, encoding="utf-8") as fh:
+                            content = fh.read()
+                        if "[tool.pytest]" in content or "[tool.pytest.ini_options]" in content:
+                            self._settings.test_cmd = "python -m pytest"
+                            logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
+                            break
+                    except OSError:
+                        logger.debug("Failed to read pyproject.toml for test_cmd auto-detection")
 
         if self._settings.test_cmd is None:
-            makefile = os.path.join(project_dir, "Makefile")
-            if os.path.exists(makefile):
-                try:
-                    with open(makefile, encoding="utf-8") as fh:
-                        content = fh.read()
-                    if re.search(r"^test[:\s]", content, re.MULTILINE):
-                        self._settings.test_cmd = "make test"
-                        logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
-                except OSError:
-                    logger.debug("Failed to read Makefile for test_cmd auto-detection")
+            for scan_dir in dirs_to_scan:
+                makefile = os.path.join(scan_dir, "Makefile")
+                if os.path.exists(makefile):
+                    try:
+                        with open(makefile, encoding="utf-8") as fh:
+                            content = fh.read()
+                        if re.search(r"^test[:\s]", content, re.MULTILINE):
+                            self._settings.test_cmd = "make test"
+                            logger.info("Auto-detected test_cmd: %s", self._settings.test_cmd)
+                            break
+                    except OSError:
+                        logger.debug("Failed to read Makefile for test_cmd auto-detection")
 
     async def _preflight_checks(self, project_dir: str, db: Database, pipeline_id: str) -> bool:
         """Run pre-execution validation. Returns True if all checks pass."""
         self._auto_detect_commands(project_dir)
         errors = []
 
-        # Valid git repo?
-        result = await async_subprocess(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=project_dir,
+        # Determine which directories to check — repo paths for multi-repo,
+        # project_dir for single-repo.
+        multi = len(self._repos) > 1
+        check_dirs = (
+            [(rid, rc.path) for rid, rc in self._repos.items()]
+            if multi
+            else [("default", project_dir)]
         )
-        if result.returncode != 0:
-            errors.append("Not a git repository")
 
-        # Ensure at least one commit exists (worktrees need valid HEAD)
-        has_commits_result = await async_subprocess(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_dir,
-        )
-        if has_commits_result.returncode != 0:
-            console.print("[dim]  Creating initial commit (empty repo)...[/dim]")
-            await async_subprocess(
-                ["git", "commit", "--allow-empty", "-m", "chore: initial commit (forge)"],
-                cwd=project_dir,
+        for repo_id, repo_path in check_dirs:
+            label = f" [{repo_id}]" if multi else ""
+
+            # Valid git repo?
+            result = await async_subprocess(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=repo_path,
             )
+            if result.returncode != 0:
+                errors.append(f"Not a git repository{label}: {repo_path}")
+                continue  # Skip remaining checks for this repo
 
-        # Git remote (warning only)
-        result = await async_subprocess(
-            ["git", "remote"],
-            cwd=project_dir,
-        )
-        if not result.stdout.strip():
-            console.print(
-                "[yellow]  Warning: No git remote configured. PR creation will be skipped.[/yellow]"
+            # Ensure at least one commit exists (worktrees need valid HEAD)
+            has_commits_result = await async_subprocess(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_path,
             )
+            if has_commits_result.returncode != 0:
+                console.print(f"[dim]  Creating initial commit{label} (empty repo)...[/dim]")
+                await async_subprocess(
+                    ["git", "commit", "--allow-empty", "-m", "chore: initial commit (forge)"],
+                    cwd=repo_path,
+                )
 
-        # gh CLI auth (optional)
+            # Git remote (warning only)
+            result = await async_subprocess(
+                ["git", "remote"],
+                cwd=repo_path,
+            )
+            if not result.stdout.strip():
+                console.print(
+                    f"[yellow]  Warning: No git remote configured{label}. PR creation will be skipped.[/yellow]"
+                )
+
+        # gh CLI auth (optional, check once)
         if shutil.which("gh"):
-            result = await async_subprocess(["gh", "auth", "status"], cwd=project_dir)
+            result = await async_subprocess(
+                ["gh", "auth", "status"], cwd=check_dirs[0][1]
+            )
             if result.returncode != 0:
                 console.print(
                     "[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]"
