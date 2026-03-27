@@ -585,6 +585,13 @@ class PipelineScreen(Screen):
         self._refresh_integration_badge()
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+        # Inject merge substatus into task dicts for display
+        for t in ordered_tasks:
+            substatus = state.merge_substatus.get(t["id"])
+            if substatus:
+                t["merge_substatus"] = substatus
+            else:
+                t.pop("merge_substatus", None)
         task_list.update_tasks(
             ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo
         )
@@ -636,7 +643,17 @@ class PipelineScreen(Screen):
                 )
         else:
             agent_output.clear_error_detail()
-            agent_output.update_output(None, None, None, [])
+            # During planning/contracts phases, show planner output even if
+            # transiently empty — never show "No task selected" before tasks exist.
+            if state.phase in ("planning", "planned", "contracts"):
+                agent_output.update_output(
+                    "planner",
+                    "Planning",
+                    "planning",
+                    state.planner_output or ["⚙ Initializing planner..."],
+                )
+            else:
+                agent_output.update_output(None, None, None, [])
 
         # Update diff for selected task
         diff_viewer = self.query_one(DiffViewer)

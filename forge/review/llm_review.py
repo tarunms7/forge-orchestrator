@@ -134,11 +134,12 @@ async def gate2_llm_review(
 
     options = ClaudeCodeOptions(
         system_prompt=system_prompt,
-        # max_turns=4 gives headroom: 1 turn for review + up to 3 for
-        # rate_limit_event recovery / tool use.  max_turns=2 was too
-        # tight — a single rate-limit event consumed both turns, leaving
-        # no room for the actual review and causing empty responses.
-        max_turns=4,
+        # Reviewers need the same power as agents.  Large diffs require
+        # many Read/Glob/Grep calls, and rate_limit_events consume turns
+        # silently.  max_turns=4 was far too tight — a single rate-limit
+        # event + a few file reads exhausted all turns before the review
+        # could even start, causing persistent empty responses.
+        max_turns=75,
         model=model,
         allowed_tools=["Read", "Glob", "Grep"],
         permission_mode="acceptEdits",
@@ -146,11 +147,11 @@ async def gate2_llm_review(
     if worktree_path:
         options.cwd = worktree_path
 
-    # Retry the SDK call up to 3 times if the result is empty.
-    # Empty results are transient SDK issues (rate limits, timeouts) —
-    # retrying the review is much cheaper than retrying the entire task.
-    review_timeout_seconds = 180  # 3 min — gives headroom for slow SDK responses
-    max_review_attempts = 3
+    # Retry the SDK call if the result is empty.  With max_turns=75 and
+    # 600s timeout, each attempt should succeed.  2 attempts is enough —
+    # if the first fails under these generous limits, it's a real issue.
+    review_timeout_seconds = 600  # 10 min — same as agent timeout
+    max_review_attempts = 2
     for attempt in range(1, max_review_attempts + 1):
         try:
             result = await asyncio.wait_for(
@@ -201,13 +202,21 @@ async def gate2_llm_review(
         if result_text:
             return (_parse_review_result(result_text), cost_info)
 
+        # Log diagnostic details to help debug empty responses
+        _diag_parts = [f"attempt {attempt}/{max_review_attempts}"]
+        if result is not None:
+            if hasattr(result, "num_turns"):
+                _diag_parts.append(f"turns={result.num_turns}")
+            if hasattr(result, "duration_ms"):
+                _diag_parts.append(f"duration={result.duration_ms}ms")
+            if hasattr(result, "duration_api_ms"):
+                _diag_parts.append(f"api_duration={result.duration_api_ms}ms")
         logger.warning(
-            "L2 review returned empty result (attempt %d/%d)",
-            attempt,
-            max_review_attempts,
+            "L2 review returned empty result (%s)",
+            ", ".join(_diag_parts),
         )
         if attempt < max_review_attempts:
-            await asyncio.sleep(2)  # Brief pause before retrying
+            await asyncio.sleep(3)
 
     # All attempts returned empty — auto-pass with warning rather than
     # retrying the entire task.  Empty results are transient SDK issues

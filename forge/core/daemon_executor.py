@@ -1404,6 +1404,13 @@ class ExecutorMixin:
 
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
+        # Emit progress so TUI shows what's happening during MERGING state
+        await self._emit(
+            "task:merge_progress",
+            {"task_id": task_id, "step": "rebasing"},
+            db=db,
+            pipeline_id=pid,
+        )
         # Hold the lock for the entire first-attempt + retry sequence so no
         # other task's merge can interleave between the two attempts.
         merge_t0 = time.monotonic()
@@ -1843,6 +1850,12 @@ class ExecutorMixin:
             from forge.core.integration import effective_enabled, run_post_merge_check
 
             if effective_enabled(integration_config.post_merge):
+                await self._emit(
+                    "task:merge_progress",
+                    {"task_id": task_id, "step": "integration_check"},
+                    db=db,
+                    pipeline_id=pid,
+                )
                 baseline_exit = getattr(self, "_baseline_exit_code", None)
                 # Use the actual pipeline branch name (merge target)
                 mw = getattr(self, "_merge_worker", None)
@@ -1935,6 +1948,12 @@ class ExecutorMixin:
                     )
 
         # ── Mark task DONE (existing logic) ─────────────────────────
+        await self._emit(
+            "task:merge_progress",
+            {"task_id": task_id, "step": "finalizing"},
+            db=db,
+            pipeline_id=pid,
+        )
         await db.update_task_state(task_id, TaskState.DONE.value)
 
         # Extract and store implementation summary for downstream tasks
