@@ -2,13 +2,13 @@
 
 import logging
 import os
-import re
 from collections.abc import Callable
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.errors import SdkCallError
 from forge.core.planner import PlannerLLM
+from forge.core.sanitize import extract_json_block
 from forge.core.sdk_helpers import SdkResult, sdk_query
 
 logger = logging.getLogger("forge.planner")
@@ -173,7 +173,7 @@ class ClaudePlannerLLM(PlannerLLM):
         )
 
         result_text = result.result if result and result.result else ""
-        extracted = _extract_json(result_text)
+        extracted = extract_json_block(result_text) or result_text
         logger.info(
             "Extracted JSON (%d chars): %s",
             len(extracted),
@@ -213,41 +213,8 @@ class ClaudePlannerLLM(PlannerLLM):
 
 
 def _extract_json(text: str) -> str:
-    """Extract JSON from response, stripping markdown fences if present."""
-    text = text.strip()
-    match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if match:
-        return match.group(1)
-    start = text.find("{")
-    if start == -1:
-        return text
-    # Use string-aware brace counter to find the matching closing brace.
-    # This avoids the greedy rfind("}") which can include trailing garbage
-    # when the response contains text after the JSON object.
-    brace_depth = 0
-    in_string = False
-    escape_next = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            continue
-        if ch == '"' and not escape_next:
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            brace_depth += 1
-        elif ch == "}":
-            brace_depth -= 1
-            if brace_depth == 0:
-                return text[start : i + 1]
-    # Fallback: no balanced closing brace found — use rfind
-    end = text.rfind("}")
-    if end != -1:
-        return text[start : end + 1]
-    return text
+    """Extract JSON from response, stripping markdown fences if present.
+
+    .. deprecated:: Use :func:`forge.core.sanitize.extract_json_block` directly.
+    """
+    return extract_json_block(text) or text

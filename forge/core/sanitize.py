@@ -1,7 +1,8 @@
-"""Input validation for task and repo identifiers used in path/branch construction.
+"""Input validation and text sanitization utilities.
 
-Prevents path traversal and injection attacks by validating IDs against strict
-regex patterns before they are used to build filesystem paths or git branch names.
+Provides:
+- Path traversal / injection prevention for task and repo IDs.
+- JSON extraction from mixed text (LLM responses with markdown fences, prose, etc.).
 """
 
 from __future__ import annotations
@@ -51,3 +52,61 @@ def validate_repo_id(repo_id: str) -> str:
     if not _REPO_ID_RE.match(repo_id):
         raise UnsafeInputError(f"repo_id contains invalid characters or uppercase: {repo_id!r}")
     return repo_id
+
+
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def extract_json_block(text: str) -> str | None:
+    """Extract the outermost JSON object from *text*.
+
+    Handles three common LLM output patterns:
+    1. JSON inside markdown fences (```json ... ```)
+    2. Bare JSON with surrounding prose
+    3. No JSON at all (returns ``None``)
+
+    Uses a string-aware brace counter so nested braces inside JSON strings
+    don't break extraction.
+    """
+    text = text.strip()
+    if not text:
+        return None
+
+    # 1) Try markdown fences first
+    match = _FENCED_JSON_RE.search(text)
+    if match:
+        return match.group(1)
+
+    # 2) Find first '{' then use brace-counter to find matching '}'
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    brace_depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+            if brace_depth == 0:
+                return text[start : i + 1]
+
+    # Fallback: unbalanced braces — use rfind
+    end = text.rfind("}")
+    if end != -1:
+        return text[start : end + 1]
+    return None
