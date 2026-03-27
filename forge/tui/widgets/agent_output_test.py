@@ -554,6 +554,57 @@ def test_incremental_state_reset_on_update_unified():
     assert widget._rendered_review_count == 0
 
 
+def test_sync_streaming_rebuilds_rendered_parts():
+    """sync_streaming must rebuild _rendered_parts from entries so subsequent
+    append_unified calls don't start from empty and lose all previous content.
+
+    Regression test: sync_streaming used to clear _rendered_parts to [],
+    causing the output panel to show only new lines after any state change
+    triggered _refresh_all during streaming.
+    """
+    from forge.tui.widgets.agent_output import format_unified_incremental
+
+    widget = AgentOutput()
+    # Simulate 3 lines streamed via append_unified
+    entries = [("agent", "line 1"), ("agent", "line 2"), ("review", "review note")]
+    widget._unified_entries = list(entries)
+    widget._streaming = True
+
+    # Manually build expected rendered_parts
+    expected_parts = []
+    section = None
+    review_count = 0
+    for i, (src, line) in enumerate(entries):
+        text, section, review_count = format_unified_incremental(
+            src, line, current_section=section, review_count=review_count, is_first=(i == 0)
+        )
+        expected_parts.append(text)
+
+    # Call sync_streaming (what _refresh_all does during streaming)
+    widget.sync_streaming("t1", "Task 1", "in_progress", entries)
+
+    # _rendered_parts must be rebuilt, NOT empty
+    assert len(widget._rendered_parts) == 3
+    assert widget._rendered_parts == expected_parts
+    assert widget._rendered_section == "review"
+    assert widget._rendered_review_count == 1
+
+    # Now append a new line — it should be the 4th entry, not the 1st
+    widget._unified_entries.append(("agent", "line 4"))
+    text, widget._rendered_section, widget._rendered_review_count = format_unified_incremental(
+        "agent",
+        "line 4",
+        current_section=widget._rendered_section,
+        review_count=widget._rendered_review_count,
+        is_first=False,
+    )
+    widget._rendered_parts.append(text)
+
+    assert len(widget._rendered_parts) == 4
+    assert "AGENT" in widget._rendered_parts[3]  # New section header since it switched back
+    assert "line 4" in widget._rendered_parts[3]
+
+
 # ── Breathing pulse spinner tests ──────────────────────────────────────
 
 

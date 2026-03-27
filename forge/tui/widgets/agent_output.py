@@ -562,31 +562,43 @@ class AgentOutput(Widget):
         Unlike update_unified(), this preserves the streaming indicator and avoids
         the double-render caused by set_streaming(False) then set_streaming(True).
         Use this when _refresh_all() is called while the task is actively streaming.
+
+        IMPORTANT: Rebuilds _rendered_parts from entries so subsequent append_unified
+        calls correctly append to existing content instead of starting from empty.
         """
         self._task_id = task_id
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
         self._lines = []
-        # Reset incremental state so next append starts fresh
-        self._rendered_parts = []
-        self._rendered_section = None
-        self._rendered_review_count = 0
         # Reset fade animation
         self._fade_step = len(_FADE_STEPS)
         if self._fade_timer is not None:
             self._fade_timer.stop()
             self._fade_timer = None
-        try:
-            self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
-            self.query_one("#agent-content", Static).update(
-                format_unified_output(
-                    entries,
-                    self._spinner_frame,
-                    streaming=self._streaming,
-                    typing_frame=self._typing_frame,
+        # Rebuild incremental buffer from entries so append_unified doesn't
+        # start from empty and lose all previous content
+        self._rendered_parts = []
+        self._rendered_section = None
+        self._rendered_review_count = 0
+        for i, (src, line) in enumerate(entries):
+            text, self._rendered_section, self._rendered_review_count = (
+                format_unified_incremental(
+                    src,
+                    line,
+                    current_section=self._rendered_section,
+                    review_count=self._rendered_review_count,
+                    is_first=(i == 0),
                 )
             )
+            self._rendered_parts.append(text)
+        try:
+            self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
+            full = "\n".join(self._rendered_parts)
+            if self._streaming:
+                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
+                full += f"\n[#58a6ff]● Typing{cursor}[/]"
+            self.query_one("#agent-content", Static).update(full)
         except Exception:
             pass
         # Ensure streaming stays on without toggling
