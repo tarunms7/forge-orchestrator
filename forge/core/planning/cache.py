@@ -1,10 +1,12 @@
 """Persistent CodebaseMap cache with incremental scouting support."""
 
 from __future__ import annotations
+
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from forge.core.planning.models import CodebaseMap, CodebaseMapMeta
 
 logger = logging.getLogger("forge.planning.cache")
@@ -26,7 +28,7 @@ class CodebaseMapCache:
         os.makedirs(self._forge_dir, exist_ok=True)
         _atomic_write(self._map_path, codebase_map.model_dump_json(indent=2))
         meta = CodebaseMapMeta(
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             git_commit=git_commit, git_branch=git_branch,
             scout_model=scout_model, file_hashes=file_hashes,
         )
@@ -68,7 +70,7 @@ class CodebaseMapCache:
             return "full"
         try:
             created = datetime.fromisoformat(meta.created_at)
-            age_days = (datetime.now(timezone.utc) - created).days
+            age_days = (datetime.now(UTC) - created).days
             if age_days > _MAX_AGE_DAYS:
                 return "full"
         except (ValueError, TypeError):
