@@ -1663,6 +1663,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
             except Exception:
                 logger.debug("Failed to mark timed-out task %s as error", task_id)
+            # Clean up worktree that _execute_task couldn't clean (it was cancelled)
+            try:
+                worktree_mgr.remove(task_id)
+            except Exception:
+                logger.debug("Worktree cleanup after timeout for %s (may not exist)", task_id)
         except asyncio.CancelledError:
             logger.info("Task %s was cancelled (shutdown)", task_id)
             raise
@@ -1911,6 +1916,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await self._on_task_answered(data=data, db=db)
 
         self._events.on("task:answer", _answer_handler)
+        # Store reference immediately after registration so _cleanup_answer_handler
+        # can find it if called concurrently.
+        self._current_answer_handler = _answer_handler
 
         # Recover tasks that were answered while daemon was down
         if pipeline_id:
@@ -1918,10 +1926,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         if pipeline_id:
             await db.set_executor_info(pipeline_id, pid=os.getpid(), token=self._executor_token)
-        self._current_answer_handler = _answer_handler
         while True:
             # Reap completed tasks from the pool
-            done_ids = [tid for tid, atask in self._active_tasks.items() if atask.done()]
+            # Snapshot via list() — protects against RuntimeError if a concurrent
+            # event handler (e.g. _on_task_answered) mutates _active_tasks.
+            done_ids = [tid for tid, atask in list(self._active_tasks.items()) if atask.done()]
             for tid in done_ids:
                 async with self._active_tasks_lock:
                     atask = self._active_tasks.pop(tid, None)

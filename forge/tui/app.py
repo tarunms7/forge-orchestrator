@@ -206,7 +206,9 @@ class ForgeApp(App):
 
     async def on_unmount(self) -> None:
         """Clean up state change callback to prevent leaks."""
-        self._state.remove_change_callback(self._state_cb)
+        cb = getattr(self, "_state_cb", None)
+        if cb is not None:
+            self._state.remove_change_callback(cb)
 
     # Fields that change frequently and don't need a full screen refresh
     _HIGH_FREQ_FIELDS = frozenset({"agent_output", "review_output", "cost", "elapsed", "followup_output"})

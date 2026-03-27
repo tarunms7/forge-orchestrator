@@ -79,7 +79,7 @@ async def websocket_endpoint(
     try:
         await websocket.send_json({"type": "auth_ok", "user_id": user_id})
     except Exception:
-        manager.disconnect(websocket, pipeline_id=pipeline_id)
+        manager.disconnect(websocket, pipeline_id=pipeline_id, user_id=user_id)
         return
 
     try:

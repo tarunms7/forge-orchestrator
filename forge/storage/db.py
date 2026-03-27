@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    and_,
     case,
     func,
     or_,
@@ -1414,14 +1415,18 @@ class Database:
             total = count_result.scalar() or 0
             excess = total - self.MAX_LESSONS
             if excess > 0:
-                prune_ids = (
+                # Materialize IDs first — SQLite doesn't support LIMIT in
+                # DELETE ... WHERE id IN (SELECT ... LIMIT N) subqueries.
+                id_result = await session.execute(
                     select(LessonRow.id)
                     .order_by(LessonRow.hit_count.asc(), LessonRow.created_at.asc())
                     .limit(excess)
-                ).scalar_subquery()
-                await session.execute(
-                    sa_delete(LessonRow).where(LessonRow.id.in_(prune_ids))
                 )
+                ids_to_prune = [row[0] for row in id_result.all()]
+                if ids_to_prune:
+                    await session.execute(
+                        sa_delete(LessonRow).where(LessonRow.id.in_(ids_to_prune))
+                    )
 
             await session.commit()
             return lesson_id
@@ -1545,7 +1550,20 @@ class Database:
         _logger = _logging.getLogger("forge")
         cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         async with self._session_factory() as session:
-            result = await session.execute(sa_delete(LessonRow).where(LessonRow.last_hit_at < cutoff))
+            # Prune lessons older than cutoff.  Also prune lessons that were
+            # never hit (last_hit_at IS NULL) if their created_at is older
+            # than the cutoff — the old Python code treated these as 90-day-old.
+            result = await session.execute(
+                sa_delete(LessonRow).where(
+                    or_(
+                        LessonRow.last_hit_at < cutoff,
+                        and_(
+                            LessonRow.last_hit_at.is_(None),
+                            LessonRow.created_at < cutoff,
+                        ),
+                    )
+                )
+            )
             await session.commit()
             count = result.rowcount
             if count:
@@ -1921,19 +1939,24 @@ class Database:
         cutoff_iso = cutoff.isoformat()
 
         async with self._session_factory() as session:
-            # Use subquery to batch-delete tasks and pipelines in two statements
-            old_ids_subq = (
+            # Materialize old pipeline IDs first, then batch-delete tasks
+            # and pipelines.  Using a subquery with IN() is not reliably
+            # supported on all SQLite versions, so we materialize.
+            id_result = await session.execute(
                 select(PipelineRow.id).where(PipelineRow.created_at < cutoff_iso)
-            ).scalar_subquery()
+            )
+            old_ids = [row[0] for row in id_result.all()]
+            if not old_ids:
+                return 0
 
             # Delete associated tasks first (uses pipeline_id index)
             await session.execute(
-                sa_delete(TaskRow).where(TaskRow.pipeline_id.in_(old_ids_subq))
+                sa_delete(TaskRow).where(TaskRow.pipeline_id.in_(old_ids))
             )
 
             # Delete pipelines
             del_result = await session.execute(
-                sa_delete(PipelineRow).where(PipelineRow.created_at < cutoff_iso)
+                sa_delete(PipelineRow).where(PipelineRow.id.in_(old_ids))
             )
             await session.commit()
             return del_result.rowcount
