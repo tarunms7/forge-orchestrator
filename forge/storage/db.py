@@ -1485,11 +1485,10 @@ class Database:
         Effective confidence = stored confidence - decay for staleness.
         Token budget is approximate (1 token ~ 4 chars).
         """
-        # Compute effective confidence in SQL:
-        # CASE WHEN last_hit_at IS NOT NULL
-        #   THEN confidence - MAX(0, (julianday('now') - julianday(last_hit_at)) - 30) / 300
-        #   ELSE confidence - 0.2
-        # END
+        # Compute effective confidence in SQL.
+        # NOTE: Uses SQLite-specific functions (julianday, scalar MAX).
+        # If migrating to PostgreSQL, rewrite with EXTRACT(EPOCH FROM ...) / 86400
+        # and GREATEST() instead of MAX().
         effective_conf = case(
             (
                 LessonRow.last_hit_at.isnot(None),

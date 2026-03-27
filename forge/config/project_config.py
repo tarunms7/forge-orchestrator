@@ -10,7 +10,6 @@ forge.toml values override ForgeSettings defaults but env vars always win.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import os
 import re
@@ -424,7 +423,6 @@ def load_repo_configs(repos: dict[str, RepoConfig]) -> dict[str, ProjectConfig]:
 _REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
-@functools.lru_cache(maxsize=32)
 def auto_detect_base_branch(repo_path: str) -> str:
     """Detect the base branch for a git repo.
 
@@ -432,7 +430,21 @@ def auto_detect_base_branch(repo_path: str) -> str:
     Forge branches off 'develop'. If on 'main', Forge branches off 'main'.
 
     Falls back to 'main'/'master' only for detached HEAD or empty repos.
+
+    Results are cached for 60 seconds per repo path to avoid repeated
+    subprocess calls, but stale results are refreshed automatically.
     """
+    import time
+
+    cache = getattr(auto_detect_base_branch, "_cache", None)
+    if cache is None:
+        auto_detect_base_branch._cache = {}
+        cache = auto_detect_base_branch._cache
+    entry = cache.get(repo_path)
+    if entry is not None:
+        cached_val, cached_at = entry
+        if time.monotonic() - cached_at < 60:
+            return cached_val
     # 1. Current branch — this is what the user is working on
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -442,6 +454,7 @@ def auto_detect_base_branch(repo_path: str) -> str:
     )
     branch = result.stdout.strip() if result.returncode == 0 else ""
     if branch and branch != "HEAD":
+        cache[repo_path] = (branch, time.monotonic())
         return branch
 
     # 2. Symbolic ref (works before first commit)
@@ -452,7 +465,9 @@ def auto_detect_base_branch(repo_path: str) -> str:
         text=True,
     )
     if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
+        val = result.stdout.strip()
+        cache[repo_path] = (val, time.monotonic())
+        return val
 
     # 3. Last resort for truly empty/detached repos
     for candidate in ("main", "master"):
@@ -462,8 +477,10 @@ def auto_detect_base_branch(repo_path: str) -> str:
             capture_output=True,
         )
         if check.returncode == 0:
+            cache[repo_path] = (candidate, time.monotonic())
             return candidate
 
+    cache[repo_path] = ("main", time.monotonic())
     return "main"
 
 

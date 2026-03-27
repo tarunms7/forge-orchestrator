@@ -256,7 +256,12 @@ async def cleanup_stale_worktrees(project_dir: str) -> int:
                 stderr=asyncio.subprocess.PIPE,
             )
             await asyncio.wait_for(proc.communicate(), timeout=30)
-            removed += 1
+            if proc.returncode == 0:
+                removed += 1
+            else:
+                logger.warning(
+                    "git worktree remove failed for %s (exit %d)", wt_path, proc.returncode
+                )
         except Exception:
             logger.warning("Could not remove stale worktree %s", wt_path, exc_info=True)
 

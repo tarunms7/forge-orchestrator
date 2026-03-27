@@ -84,7 +84,7 @@ async def websocket_endpoint(
 
     try:
         missed_heartbeats = 0
-        max_missed = RECEIVE_TIMEOUT // HEARTBEAT_INTERVAL  # 2 missed → dead
+        max_missed = max(1, RECEIVE_TIMEOUT // HEARTBEAT_INTERVAL)  # ≥1 to avoid instant kill
         while True:
             try:
                 # Wait for a client message; timeout at HEARTBEAT_INTERVAL

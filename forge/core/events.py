@@ -73,6 +73,12 @@ class EventEmitter:
             try:
                 await handler(data)
             except Exception:
+                # Auto-rotate the window on increment so that a failure
+                # occurring right after a stale read starts a fresh window.
+                now = time.monotonic()
+                if now - self._window_start >= _COUNTER_WINDOW_SECONDS:
+                    self._failed_count = 0
+                    self._window_start = now
                 self._failed_count += 1
                 logger.exception("Error in handler for event %r", event)
 

@@ -212,6 +212,10 @@ class TestExtractJsonBlock:
     def test_unbalanced_no_closing_brace(self):
         assert extract_json_block('{"key": "value"') is None
 
+    def test_nested_json_in_fence(self):
+        text = '```json\n{"tasks": [{"id": 1, "deps": {"a": 2}}]}\n```'
+        assert extract_json_block(text) == '{"tasks": [{"id": 1, "deps": {"a": 2}}]}'
+
     def test_unbalanced_braces_fallback(self):
         text = '{"key": "value"} extra { junk'
         result = extract_json_block(text)

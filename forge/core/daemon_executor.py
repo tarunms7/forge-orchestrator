@@ -1020,6 +1020,9 @@ class ExecutorMixin:
         await db.assign_task(task_id, agent_id)
         logger.info("Resuming task %s after human answer (agent=%s)", task_id, agent_id)
 
+        # Invalidate task cache — task state changed from AWAITING_INPUT
+        self._cached_tasks = None
+
         atask = asyncio.create_task(
             self._safe_execute_resume(
                 db,

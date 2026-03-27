@@ -54,7 +54,7 @@ def validate_repo_id(repo_id: str) -> str:
     return repo_id
 
 
-_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 
 
 def extract_json_block(text: str) -> str | None:

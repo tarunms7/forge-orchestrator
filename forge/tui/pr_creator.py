@@ -82,119 +82,127 @@ async def auto_format_branch(project_dir: str, branch: str) -> bool:
     Returns True if formatting was applied, False otherwise.
     Completely non-fatal — if anything fails, PR creation proceeds.
     """
-    with tempfile.TemporaryDirectory(prefix="forge-format-") as tmp_dir:
+    tmp_dir = tempfile.mkdtemp(prefix="forge-format-")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "worktree",
+            "add",
+            tmp_dir,
+            branch,
+            cwd=project_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        if proc.returncode != 0:
+            logger.warning("Could not create format worktree: %s", stderr.decode())
+            return False
+
+        # Detect and run formatters
+        formatters = _detect_formatters(tmp_dir)
+        if not formatters:
+            logger.debug("No formatters detected for this project")
+            return False
+
+        for name, cmd, cwd in formatters:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, fmt_stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+                if proc.returncode == 0:
+                    logger.info("Formatter %s completed: %s", name, stdout.decode().strip()[:200])
+                else:
+                    logger.warning(
+                        "Formatter %s failed (exit %d): %s",
+                        name,
+                        proc.returncode,
+                        fmt_stderr.decode()[:200],
+                    )
+            except TimeoutError:
+                logger.warning("Formatter %s timed out after 120s", name)
+            except Exception as e:
+                logger.warning("Formatter %s error: %s", name, e)
+
+        # Check if any files actually changed
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "diff",
+            "--quiet",
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode == 0:
+            # No changes — formatters ran but nothing to commit
+            return False
+
+        # Stage and commit
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "add",
+            "-A",
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "diff",
+            "--cached",
+            "--quiet",
+            cwd=tmp_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "commit",
+                "-m",
+                "style: auto-format code before PR",
+                cwd=tmp_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=30)
+            logger.info("Committed auto-format changes on %s", branch)
+            return True
+
+        return False
+    except Exception as e:
+        logger.warning("Auto-format failed (non-fatal): %s", e)
+        return False
+    finally:
+        # Remove the git worktree first, then clean up the directory.
+        # Order matters: git worktree remove handles both bookkeeping and
+        # directory deletion.  shutil.rmtree is a fallback for the directory
+        # only, in case the git command fails.
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git",
                 "worktree",
-                "add",
+                "remove",
                 tmp_dir,
-                branch,
+                "--force",
                 cwd=project_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-            if proc.returncode != 0:
-                logger.warning("Could not create format worktree: %s", stderr.decode())
-                return False
-
-            # Detect and run formatters
-            formatters = _detect_formatters(tmp_dir)
-            if not formatters:
-                logger.debug("No formatters detected for this project")
-                return False
-
-            for name, cmd, cwd in formatters:
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        cwd=cwd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    stdout, fmt_stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-                    if proc.returncode == 0:
-                        logger.info("Formatter %s completed: %s", name, stdout.decode().strip()[:200])
-                    else:
-                        logger.warning(
-                            "Formatter %s failed (exit %d): %s",
-                            name,
-                            proc.returncode,
-                            fmt_stderr.decode()[:200],
-                        )
-                except TimeoutError:
-                    logger.warning("Formatter %s timed out after 120s", name)
-                except Exception as e:
-                    logger.warning("Formatter %s error: %s", name, e)
-
-            # Check if any files actually changed
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "diff",
-                "--quiet",
-                cwd=tmp_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
             await asyncio.wait_for(proc.communicate(), timeout=30)
-            if proc.returncode == 0:
-                # No changes — formatters ran but nothing to commit
-                return False
-
-            # Stage and commit
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "add",
-                "-A",
-                cwd=tmp_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=30)
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "diff",
-                "--cached",
-                "--quiet",
-                cwd=tmp_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=30)
-            if proc.returncode != 0:
-                proc = await asyncio.create_subprocess_exec(
-                    "git",
-                    "commit",
-                    "-m",
-                    "style: auto-format code before PR",
-                    cwd=tmp_dir,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(proc.communicate(), timeout=30)
-                logger.info("Committed auto-format changes on %s", branch)
-                return True
-
-            return False
         except Exception as e:
-            logger.warning("Auto-format failed (non-fatal): %s", e)
-            return False
-        finally:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "git",
-                    "worktree",
-                    "remove",
-                    tmp_dir,
-                    "--force",
-                    cwd=project_dir,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(proc.communicate(), timeout=30)
-            except Exception as e:
-                logger.warning("Failed to remove format worktree %s: %s", tmp_dir, e)
+            logger.warning("Failed to remove format worktree %s: %s", tmp_dir, e)
+        # Fallback: remove directory if git worktree remove didn't clean it
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 async def push_branch(project_dir: str, branch: str) -> bool:
