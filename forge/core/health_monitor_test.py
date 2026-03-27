@@ -158,6 +158,31 @@ class TestHealthMonitor:
         assert len(stuck_tasks) == 0
 
     @pytest.mark.asyncio
+    async def test_cleans_up_terminal_task_tracking(self):
+        """Terminal-state tasks should have their tracking entries removed."""
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [
+            _make_task("t1", "done"),
+            _make_task("t2", "error"),
+            _make_task("t3", "cancelled"),
+            _make_task("t4", "in_progress"),
+        ]
+
+        monitor = PipelineHealthMonitor(db=db, pipeline_id="p1")
+        # Pre-populate tracking entries
+        for tid in ("t1", "t2", "t3", "t4"):
+            monitor._task_last_output[tid] = time.monotonic()
+
+        await monitor._check_health()
+
+        # Terminal tasks should be cleaned up
+        assert "t1" not in monitor._task_last_output
+        assert "t2" not in monitor._task_last_output
+        assert "t3" not in monitor._task_last_output
+        # Active task should remain
+        assert "t4" in monitor._task_last_output
+
+    @pytest.mark.asyncio
     async def test_run_loop_stops(self):
         """Monitor loop should stop when stop() is called."""
         db = AsyncMock()

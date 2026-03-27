@@ -188,3 +188,88 @@ async def test_failed_count_increments_on_handler_error():
     assert emitter.failed_count() == 1
     await emitter.emit("test", {})
     assert emitter.failed_count() == 2
+
+
+@pytest.mark.asyncio
+async def test_max_handler_limit():
+    """Registering more than max_handlers should raise ValueError."""
+    from forge.core.events import EventEmitter
+
+    emitter = EventEmitter(max_handlers=3)
+    for _ in range(3):
+        emitter.on("evt", AsyncMock())
+
+    with pytest.raises(ValueError, match="Max handler limit"):
+        emitter.on("evt", AsyncMock())
+
+
+@pytest.mark.asyncio
+async def test_max_handler_limit_default():
+    """Default max_handlers should be 50."""
+    from forge.core.events import DEFAULT_MAX_HANDLERS, EventEmitter
+
+    emitter = EventEmitter()
+    assert emitter._max_handlers == DEFAULT_MAX_HANDLERS == 50
+
+
+@pytest.mark.asyncio
+async def test_emit_snapshot_protects_against_concurrent_off():
+    """off() during emit() should not skip remaining handlers."""
+    from forge.core.events import EventEmitter
+
+    emitter = EventEmitter()
+    call_order = []
+
+    async def handler_a(data):
+        call_order.append("a")
+        # Remove handler_b during iteration
+        emitter.off("evt", handler_b)
+
+    async def handler_b(data):
+        call_order.append("b")
+
+    emitter.on("evt", handler_a)
+    emitter.on("evt", handler_b)
+    await emitter.emit("evt", None)
+
+    # Both should have been called despite off() during emit
+    assert call_order == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_reset_counters():
+    """reset_counters() should zero out the failure count."""
+    from forge.core.events import EventEmitter
+
+    emitter = EventEmitter()
+
+    async def bad(data):
+        raise RuntimeError("fail")
+
+    emitter.on("x", bad)
+    await emitter.emit("x", {})
+    assert emitter.failed_count() >= 1
+
+    emitter.reset_counters()
+    assert emitter.failed_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_count_windowed_reset(monkeypatch):
+    """failed_count() should auto-reset after the window elapses."""
+    import forge.core.events as events_mod
+    from forge.core.events import EventEmitter
+
+    emitter = EventEmitter()
+
+    async def bad(data):
+        raise RuntimeError("fail")
+
+    emitter.on("x", bad)
+    await emitter.emit("x", {})
+    assert emitter.failed_count() == 1
+
+    # Simulate window expiry by shifting the window start back
+    emitter._window_start -= events_mod._COUNTER_WINDOW_SECONDS + 1
+    # Next call should reset and return 0
+    assert emitter.failed_count() == 0

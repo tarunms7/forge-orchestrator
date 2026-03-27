@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from forge.core.errors import ForgeError
@@ -33,8 +34,8 @@ async def check_budget(
     Raises:
         BudgetExceededError: If the budget is exceeded.
     """
-    spent = await db.get_pipeline_cost(pipeline_id)
-    limit = await db.get_pipeline_budget(pipeline_id)
+    spent = await asyncio.wait_for(db.get_pipeline_cost(pipeline_id), timeout=5)
+    limit = await asyncio.wait_for(db.get_pipeline_budget(pipeline_id), timeout=5)
 
     # Fall back to global setting if no pipeline-level budget
     if limit <= 0:
