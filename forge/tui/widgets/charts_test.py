@@ -43,7 +43,7 @@ def test_render_sparkline_ascending() -> None:
     result = render_sparkline(values, width=8)
     bar_raw = _strip_markup(result.split("\n")[0])
     # Each character should be ≤ the next (ascending).
-    for a, b in zip(bar_raw, bar_raw[1:]):
+    for a, b in zip(bar_raw, bar_raw[1:], strict=False):
         assert a <= b, f"Expected ascending: {bar_raw}"
 
 
