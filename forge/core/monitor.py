@@ -36,7 +36,7 @@ class ResourceMonitor:
             mem = psutil.virtual_memory()
             disk = psutil.disk_usage("/")
             return ResourceSnapshot(
-                cpu_percent=psutil.cpu_percent(interval=0.1),
+                cpu_percent=psutil.cpu_percent(interval=0),
                 memory_available_pct=mem.available / mem.total * 100,
                 disk_free_gb=disk.free / (1024**3),
             )

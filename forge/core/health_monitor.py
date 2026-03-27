@@ -67,6 +67,11 @@ class PipelineHealthMonitor:
     def stop(self) -> None:
         """Signal the monitor to stop."""
         self._running = False
+        self.cleanup()
+
+    def cleanup(self) -> None:
+        """Clear all tracked task state to prevent memory leaks."""
+        self._task_last_output.clear()
 
     async def run(self) -> None:
         """Main monitoring loop. Runs until stop() is called."""
