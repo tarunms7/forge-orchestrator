@@ -3,6 +3,7 @@
 from __future__ import annotations
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from forge.core.planning.models import CodebaseMap, CodebaseMapMeta
 
@@ -19,18 +20,18 @@ class CodebaseMapCache:
         self._forge_dir = forge_dir
         self._map_path = os.path.join(forge_dir, _MAP_FILE)
         self._meta_path = os.path.join(forge_dir, _META_FILE)
+        self._cached_meta: CodebaseMapMeta | None = None
 
     def save(self, codebase_map: CodebaseMap, *, git_commit: str, git_branch: str, file_hashes: dict[str, str], scout_model: str = "sonnet") -> None:
         os.makedirs(self._forge_dir, exist_ok=True)
-        with open(self._map_path, "w", encoding="utf-8") as f:
-            f.write(codebase_map.model_dump_json(indent=2))
+        _atomic_write(self._map_path, codebase_map.model_dump_json(indent=2))
         meta = CodebaseMapMeta(
             created_at=datetime.now(timezone.utc).isoformat(),
             git_commit=git_commit, git_branch=git_branch,
             scout_model=scout_model, file_hashes=file_hashes,
         )
-        with open(self._meta_path, "w", encoding="utf-8") as f:
-            f.write(meta.model_dump_json(indent=2))
+        _atomic_write(self._meta_path, meta.model_dump_json(indent=2))
+        self._cached_meta = meta
 
     def load(self) -> CodebaseMap | None:
         if not os.path.isfile(self._map_path):
@@ -43,11 +44,15 @@ class CodebaseMapCache:
             return None
 
     def load_meta(self) -> CodebaseMapMeta | None:
+        if self._cached_meta is not None:
+            return self._cached_meta
         if not os.path.isfile(self._meta_path):
             return None
         try:
             with open(self._meta_path, encoding="utf-8") as f:
-                return CodebaseMapMeta.model_validate_json(f.read())
+                meta = CodebaseMapMeta.model_validate_json(f.read())
+            self._cached_meta = meta
+            return meta
         except Exception:
             logger.warning("Failed to load cache metadata from %s", self._meta_path)
             return None
@@ -76,8 +81,25 @@ class CodebaseMapCache:
         return "incremental"
 
     def clear(self) -> None:
+        self._cached_meta = None
         for path in (self._map_path, self._meta_path):
             try:
                 os.remove(path)
             except FileNotFoundError:
                 pass
+
+
+def _atomic_write(path: str, content: str) -> None:
+    """Write *content* to *path* atomically via a temp file + os.replace."""
+    dir_name = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise

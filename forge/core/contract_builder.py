@@ -2,13 +2,13 @@
 
 import json
 import logging
-import re
 from collections.abc import Callable
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.contracts import ContractSet, IntegrationHint
 from forge.core.models import TaskGraph
+from forge.core.sanitize import extract_json_block
 from forge.core.sdk_helpers import SdkResult, sdk_query
 
 logger = logging.getLogger("forge.contracts")
@@ -117,7 +117,7 @@ class ContractBuilderLLM:
 
         self._last_sdk_result = result
         result_text = result.result if result and result.result else ""
-        return _extract_json(result_text)
+        return extract_json_block(result_text) or ""
 
     def _build_prompt(
         self,
@@ -226,39 +226,25 @@ class ContractBuilder:
 
         # Validate that all referenced task IDs exist in the graph
         task_ids = {t.id for t in graph.tasks}
-        for api in contract_set.api_contracts:
-            if api.producer_task_id not in task_ids:
-                return (
-                    None,
-                    f"API contract {api.id} references unknown producer task: {api.producer_task_id}",
-                )
-            for consumer_id in api.consumer_task_ids:
-                if consumer_id not in task_ids:
-                    return (
-                        None,
-                        f"API contract {api.id} references unknown consumer task: {consumer_id}",
-                    )
-
-        for type_contract in contract_set.type_contracts:
-            for task_id in type_contract.used_by_tasks:
-                if task_id not in task_ids:
-                    return (
-                        None,
-                        f"Type contract {type_contract.name} references unknown task: {task_id}",
-                    )
+        error = _validate_task_refs(contract_set, task_ids)
+        if error:
+            return None, error
 
         return contract_set, None
 
 
-def _extract_json(text: str) -> str:
-    """Extract JSON from response, stripping markdown fences if present."""
-    text = text.strip()
-    # Use greedy .* so nested braces aren't truncated
-    match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    if match:
-        return match.group(1)
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1:
-        return text[start : end + 1]
-    return text
+def _validate_task_refs(contract_set: ContractSet, task_ids: set[str]) -> str | None:
+    """Return an error string if any contract references an unknown task ID."""
+    for api in contract_set.api_contracts:
+        if api.producer_task_id not in task_ids:
+            return f"API contract {api.id} references unknown producer task: {api.producer_task_id}"
+        for consumer_id in api.consumer_task_ids:
+            if consumer_id not in task_ids:
+                return f"API contract {api.id} references unknown consumer task: {consumer_id}"
+
+    for type_contract in contract_set.type_contracts:
+        for task_id in type_contract.used_by_tasks:
+            if task_id not in task_ids:
+                return f"Type contract {type_contract.name} references unknown task: {task_id}"
+
+    return None

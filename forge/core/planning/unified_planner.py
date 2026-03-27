@@ -28,6 +28,7 @@ from forge.agents.adapter import _build_question_protocol
 from forge.core.models import TaskGraph
 from forge.core.planning.models import ValidationResult
 from forge.core.planning.validator import validate_plan
+from forge.core.sanitize import extract_json_block
 from forge.core.sdk_helpers import sdk_query
 
 logger = logging.getLogger("forge.planning.unified")
@@ -285,10 +286,9 @@ class UnifiedPlanner:
         # Find ALL fenced JSON blocks and try each (last is usually best)
         blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
         if not blocks:
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if start != -1 and end != -1:
-                blocks = [raw[start : end + 1]]
+            extracted = extract_json_block(raw)
+            if extracted:
+                blocks = [extracted]
 
         last_error: str | None = None
         for candidate in reversed(blocks):

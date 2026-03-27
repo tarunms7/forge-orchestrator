@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM, _extract_json
+from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
+from forge.core.sanitize import extract_json_block as _extract_json_block
 from forge.core.contracts import ContractType, IntegrationHint
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 
@@ -78,27 +79,27 @@ def _valid_contract_json() -> str:
     )
 
 
-# -- _extract_json tests --------------------------------------------------
+# -- _extract_json_block tests --------------------------------------------------
 
 
 class TestExtractJson:
     def test_plain_json(self):
-        result = _extract_json('{"key": "value"}')
+        result = _extract_json_block('{"key": "value"}')
         assert result == '{"key": "value"}'
 
     def test_json_in_markdown_fence(self):
         text = '```json\n{"key": "value"}\n```'
-        result = _extract_json(text)
+        result = _extract_json_block(text)
         assert result == '{"key": "value"}'
 
     def test_json_with_surrounding_text(self):
         text = 'Here is the output:\n{"key": "value"}\nDone.'
-        result = _extract_json(text)
+        result = _extract_json_block(text)
         assert result == '{"key": "value"}'
 
     def test_empty_string(self):
-        result = _extract_json("")
-        assert result == ""
+        result = _extract_json_block("")
+        assert result is None
 
 
 # -- ContractBuilder._parse_and_validate tests ----------------------------
@@ -281,5 +282,5 @@ class TestExtractJsonNestedBraces:
         """Greedy regex should capture the full JSON with nested braces."""
         nested = '{"outer": {"inner": {"deep": "value"}}}'
         text = f"```json\n{nested}\n```"
-        result = _extract_json(text)
+        result = _extract_json_block(text)
         assert result == nested

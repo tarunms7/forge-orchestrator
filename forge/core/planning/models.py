@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+
 from pydantic import BaseModel, Field
 
 
@@ -38,6 +40,7 @@ class CodebaseMap(BaseModel):
     risks: list[str] = Field(default_factory=list)
 
     @staticmethod
+    @functools.lru_cache(maxsize=256)
     def _normalize_path(p: str) -> str:
         """Normalize a file path for comparison (strip ./, trailing /, collapse //)."""
         import posixpath

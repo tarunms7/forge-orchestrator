@@ -1,9 +1,10 @@
-"""Tests for forge.core.sanitize — task_id and repo_id validation."""
+"""Tests for forge.core.sanitize — task_id/repo_id validation and JSON extraction."""
 
 import pytest
 
 from forge.core.sanitize import (
     UnsafeInputError,
+    extract_json_block,
     validate_repo_id,
     validate_task_id,
 )
@@ -167,3 +168,51 @@ class TestUnsafeInputError:
     def test_catchable_as_value_error(self):
         with pytest.raises(ValueError):
             raise UnsafeInputError("test")
+
+
+# ── extract_json_block ─────────────────────────────────────────────────
+
+
+class TestExtractJsonBlock:
+    def test_plain_json(self):
+        assert extract_json_block('{"key": "value"}') == '{"key": "value"}'
+
+    def test_json_in_markdown_fence(self):
+        assert extract_json_block('```json\n{"k": 1}\n```') == '{"k": 1}'
+
+    def test_json_in_bare_fence(self):
+        assert extract_json_block('```\n{"k": 1}\n```') == '{"k": 1}'
+
+    def test_trailing_text_stripped(self):
+        assert extract_json_block('{"a": 1} trailing') == '{"a": 1}'
+
+    def test_leading_text_stripped(self):
+        assert extract_json_block('Here is output:\n{"a": 1}') == '{"a": 1}'
+
+    def test_braces_in_strings(self):
+        text = '{"desc": "handle {x} cases", "n": 1} extra'
+        assert extract_json_block(text) == '{"desc": "handle {x} cases", "n": 1}'
+
+    def test_escaped_quotes(self):
+        text = r'{"msg": "say \"hi\"", "n": 1} tail'
+        result = extract_json_block(text)
+        assert result is not None
+        assert result.endswith("}")
+        assert "tail" not in result
+
+    def test_nested_objects(self):
+        assert extract_json_block('{"a": {"b": {"c": 1}}} x') == '{"a": {"b": {"c": 1}}}'
+
+    def test_empty_string(self):
+        assert extract_json_block("") is None
+
+    def test_no_json(self):
+        assert extract_json_block("no json here") is None
+
+    def test_unbalanced_no_closing_brace(self):
+        assert extract_json_block('{"key": "value"') is None
+
+    def test_unbalanced_braces_fallback(self):
+        text = '{"key": "value"} extra { junk'
+        result = extract_json_block(text)
+        assert result == '{"key": "value"}'
