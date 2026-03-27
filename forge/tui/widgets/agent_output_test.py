@@ -610,6 +610,33 @@ def test_fade_reset_on_update_unified():
     assert widget._fade_timer is None
 
 
+def test_fade_color_wrapping_produces_valid_rich_markup():
+    """Wrapping a rendered part in fade color should produce valid Rich markup."""
+    from rich.console import Console
+    from io import StringIO
+    from forge.tui.widgets.agent_output import _FADE_STEPS, format_unified_incremental
+
+    # Generate a typical rendered part (agent line with markdown)
+    text, _, _ = format_unified_incremental(
+        "agent", "Creating `auth/jwt.py`...", current_section=None, review_count=0, is_first=True
+    )
+    # Wrap in fade color (what _update_content does)
+    for fade_color in _FADE_STEPS:
+        wrapped = f"[{fade_color}]{text}[/]"
+        console = Console(file=StringIO(), force_terminal=True)
+        # Should not raise — valid markup
+        console.print(wrapped)
+
+    # Test with review section too
+    text2, _, _ = format_unified_incremental(
+        "review", "Code looks **good**", current_section="agent", review_count=0, is_first=False
+    )
+    for fade_color in _FADE_STEPS:
+        wrapped = f"[{fade_color}]{text2}[/]"
+        console = Console(file=StringIO(), force_terminal=True)
+        console.print(wrapped)
+
+
 def test_append_unified_starts_fade():
     """append_unified should attempt to start fade-in animation.
 

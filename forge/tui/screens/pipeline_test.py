@@ -692,6 +692,48 @@ def test_phase_banner_scramble_animation_state():
     assert banner._resolved_count == 0
 
 
+def test_phase_banner_scramble_progression():
+    """_tick_scramble should resolve characters left-to-right and terminate."""
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    banner = PhaseBanner()
+    # Trigger phase change — set_interval fails pre-compose, so set state manually
+    banner.update_phase("executing")
+    # Pre-compose: timer creation fails, _animating is set to False
+    # But target_text is set correctly — we can test the tick logic directly
+    assert banner._target_text != ""
+    target_len = len(banner._target_text)
+    assert target_len > 0
+
+    # Simulate animation manually
+    banner._animating = True
+    banner._resolved_count = 0
+    for i in range(target_len):
+        banner._tick_scramble()
+        assert banner._resolved_count == i + 1
+
+    # After resolving all chars, animation should be done
+    assert banner._animating is False
+
+
+def test_phase_banner_scramble_interrupted_by_new_phase():
+    """A new phase change mid-animation should reset target text."""
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    banner = PhaseBanner()
+    banner.update_phase("executing")
+    old_target = banner._target_text
+
+    # Simulate partial animation
+    banner._animating = True
+    banner._resolved_count = 2
+
+    # New phase should reset
+    banner.update_phase("review")
+    assert banner._resolved_count == 0
+    assert banner._target_text != old_target
+
+
 def test_phase_banner_render_static():
     """PhaseBanner renders correctly in non-animated state."""
     from forge.tui.screens.pipeline import PhaseBanner

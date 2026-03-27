@@ -540,14 +540,13 @@ class AgentOutput(Widget):
         )
         self._rendered_parts.append(text)
 
-        # Start fade-in for the last line
+        # Start fade-in for the last line (reuse timer to avoid churn)
         self._fade_step = 0
-        if self._fade_timer is not None:
-            self._fade_timer.stop()
-        try:
-            self._fade_timer = self.set_interval(_FADE_INTERVAL, self._tick_fade)
-        except Exception:
-            self._fade_step = len(_FADE_STEPS)  # Skip fade if not composed
+        if self._fade_timer is None:
+            try:
+                self._fade_timer = self.set_interval(_FADE_INTERVAL, self._tick_fade)
+            except Exception:
+                self._fade_step = len(_FADE_STEPS)  # Skip fade if not composed
 
         self._update_content()
 
