@@ -154,3 +154,96 @@ async def test_preflight_bad_base_branch(tmp_path):
     assert branch_check is not None
     assert not branch_check.passed
     assert "nonexistent-branch-xyz" in branch_check.message
+
+
+@pytest.mark.asyncio
+async def test_run_preflight_super_repo(tmp_path):
+    """Preflight passes when project_dir is a plain folder with git repos inside."""
+    import subprocess
+
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    # Create two sub-repos inside a plain (non-git) folder
+    for name in ("backend", "frontend"):
+        repo_dir = tmp_path / name
+        repo_dir.mkdir()
+        subprocess.run(
+            ["git", "init", "--initial-branch=main"], cwd=str(repo_dir), capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            env=git_env,
+        )
+
+    from forge.core.models import RepoConfig
+
+    repos = {
+        "backend": RepoConfig(id="backend", path=str(tmp_path / "backend"), base_branch="main"),
+        "frontend": RepoConfig(id="frontend", path=str(tmp_path / "frontend"), base_branch="main"),
+    }
+
+    report = await run_preflight(str(tmp_path), repos=repos)
+
+    # Git repo check must pass (checking sub-repos, not the wrapper)
+    git_check = next((c for c in report.checks if c.name == "git_repo"), None)
+    assert git_check is not None
+    assert git_check.passed, f"git_repo check failed: {git_check.message}"
+
+    # Base branch check must pass
+    branch_check = next((c for c in report.checks if c.name == "base_branch"), None)
+    assert branch_check is not None
+    assert branch_check.passed, f"base_branch check failed: {branch_check.message}"
+
+    # Overall must pass
+    assert report.passed, f"Preflight failed: {report.summary()}"
+
+
+@pytest.mark.asyncio
+async def test_run_preflight_super_repo_git_wrapper(tmp_path):
+    """Preflight passes when project_dir is a git-init'd wrapper with repos inside."""
+    import subprocess
+
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    # Init the wrapper (but no commits, no tracked files)
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True)
+
+    for name in ("backend", "frontend"):
+        repo_dir = tmp_path / name
+        repo_dir.mkdir()
+        subprocess.run(
+            ["git", "init", "--initial-branch=main"], cwd=str(repo_dir), capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            env=git_env,
+        )
+
+    from forge.core.models import RepoConfig
+
+    repos = {
+        "backend": RepoConfig(id="backend", path=str(tmp_path / "backend"), base_branch="main"),
+        "frontend": RepoConfig(id="frontend", path=str(tmp_path / "frontend"), base_branch="main"),
+    }
+
+    report = await run_preflight(str(tmp_path), repos=repos)
+    git_check = next((c for c in report.checks if c.name == "git_repo"), None)
+    assert git_check is not None
+    assert git_check.passed, f"git_repo check failed: {git_check.message}"
+    assert report.passed, f"Preflight failed: {report.summary()}"

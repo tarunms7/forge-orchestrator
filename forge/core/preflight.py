@@ -85,7 +85,7 @@ async def run_preflight(
 
     # Run async checks concurrently
     async_checks = await asyncio.gather(
-        _check_git_repo(project_dir),
+        _check_git_repo(project_dir, repos),
         _check_base_branch(project_dir, base_branch, repos),
         _check_working_tree_clean(project_dir, repos),
         _check_claude_auth(),
@@ -184,25 +184,43 @@ def _check_disk_space(project_dir: str) -> CheckResult:
         )
 
 
-async def _check_git_repo(project_dir: str) -> CheckResult:
-    """Verify we're inside a git repository."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "rev-parse",
-        "--git-dir",
-        cwd=project_dir,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
-    if proc.returncode != 0:
+async def _check_git_repo(project_dir: str, repos: dict | None = None) -> CheckResult:
+    """Verify git repositories are accessible.
+
+    Multi-repo: checks each repo path. Single-repo: checks project_dir.
+    """
+    dirs_to_check = []
+    if repos and len(repos) > 1:
+        for repo_id, rc in repos.items():
+            dirs_to_check.append((repo_id, rc.path))
+    else:
+        dirs_to_check.append(("default", project_dir))
+
+    failed = []
+    for repo_id, path in dirs_to_check:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "rev-parse",
+            "--git-dir",
+            cwd=path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode != 0:
+            label = f"{repo_id} ({path})" if repo_id != "default" else path
+            failed.append(label)
+
+    if failed:
         return CheckResult(
             name="git_repo",
             passed=False,
-            message=f"Not a git repository: {project_dir}",
-            fix_hint="Run `git init` or navigate to a git repository",
+            message=f"Not a git repository: {', '.join(failed)}",
+            fix_hint="Run `git init` or check repo paths in .forge/workspace.toml",
         )
-    return CheckResult(name="git_repo", passed=True, message="Git repository detected")
+    count = len(dirs_to_check)
+    msg = f"{count} git repositories detected" if count > 1 else "Git repository detected"
+    return CheckResult(name="git_repo", passed=True, message=msg)
 
 
 async def _check_base_branch(
@@ -210,7 +228,7 @@ async def _check_base_branch(
 ) -> CheckResult:
     """Verify the base branch exists."""
     dirs_to_check = []
-    if repos and len(repos) > 1:
+    if repos:
         for repo_id, rc in repos.items():
             dirs_to_check.append((repo_id, rc.path, rc.base_branch or base_branch))
     else:
@@ -257,7 +275,7 @@ async def _check_base_branch(
 async def _check_working_tree_clean(project_dir: str, repos: dict | None = None) -> CheckResult:
     """Warn if working tree has uncommitted changes."""
     dirs_to_check = []
-    if repos and len(repos) > 1:
+    if repos:
         for repo_id, rc in repos.items():
             dirs_to_check.append((repo_id, rc.path))
     else:
