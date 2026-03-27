@@ -93,7 +93,7 @@ async def create_pr(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
 
     if proc.returncode != 0:
         raise RuntimeError(f"gh pr create failed: {stderr.decode().strip()}")

@@ -34,6 +34,10 @@ class ConnectionManager:
     async def connect(self, websocket: Any, *, user_id: str, pipeline_id: str) -> bool:
         """Accept a WebSocket connection and register it for a pipeline.
 
+        This is the primary entry point when the caller controls the accept
+        lifecycle.  For already-accepted sockets (e.g. handler-side auth),
+        use ``register()`` instead.
+
         Returns:
             True if the connection was accepted, False if rejected due to
             the per-user connection limit.
@@ -48,21 +52,28 @@ class ConnectionManager:
             )
             return False
         await websocket.accept()
-        self.active_connections[pipeline_id].append(websocket)
+        if websocket not in self.active_connections[pipeline_id]:
+            self.active_connections[pipeline_id].append(websocket)
         self._user_connections[user_id].add(websocket)
         logger.info("WS connected: user=%s pipeline=%s", user_id, pipeline_id)
         return True
 
     def register(self, websocket: Any, *, user_id: str, pipeline_id: str) -> None:
-        """Register an already-accepted WebSocket connection for a pipeline."""
-        self.active_connections[pipeline_id].append(websocket)
+        """Register an already-accepted WebSocket for a pipeline.
+
+        Use this when the WebSocket was accepted externally (e.g. the
+        handler accepted it for auth negotiation).  For the full
+        accept-and-register flow, use ``connect()`` instead.
+        """
+        if websocket not in self.active_connections[pipeline_id]:
+            self.active_connections[pipeline_id].append(websocket)
         self._user_connections[user_id].add(websocket)
         logger.info("WS registered: user=%s pipeline=%s", user_id, pipeline_id)
 
     def disconnect(self, websocket: Any, *, pipeline_id: str, user_id: str | None = None) -> None:
         """Remove a WebSocket connection from a pipeline's list."""
         conns = self.active_connections.get(pipeline_id, [])
-        if websocket in conns:
+        while websocket in conns:
             conns.remove(websocket)
             logger.info("WS disconnected: pipeline=%s", pipeline_id)
         # Remove from user tracking (scan all users if user_id not provided)

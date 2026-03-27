@@ -108,3 +108,40 @@ class TestConnectionManager:
 
         assert len(ws_p1.sent) == 1
         assert len(ws_p2.sent) == 0
+
+    async def test_connect_idempotent_no_duplicates(self):
+        """Connecting the same websocket twice should not create duplicates."""
+        from forge.api.ws.manager import ConnectionManager
+
+        mgr = ConnectionManager()
+        ws = FakeWebSocket()
+        await mgr.connect(ws, user_id="u1", pipeline_id="p1")
+        # Manually add again via register (simulating double-registration)
+        mgr.register(ws, user_id="u1", pipeline_id="p1")
+
+        assert mgr.active_connections["p1"].count(ws) == 1
+
+    async def test_disconnect_removes_all_duplicates(self):
+        """disconnect() with while-loop removes all copies if duplicates exist."""
+        from forge.api.ws.manager import ConnectionManager
+
+        mgr = ConnectionManager()
+        ws = FakeWebSocket()
+        # Force duplicates by bypassing the idempotent check
+        mgr.active_connections["p1"].append(ws)
+        mgr.active_connections["p1"].append(ws)
+        assert mgr.active_connections["p1"].count(ws) == 2
+
+        mgr.disconnect(ws, pipeline_id="p1")
+        assert ws not in mgr.active_connections["p1"]
+
+    async def test_register_idempotent(self):
+        """register() should not add a websocket that's already in the list."""
+        from forge.api.ws.manager import ConnectionManager
+
+        mgr = ConnectionManager()
+        ws = FakeWebSocket()
+        mgr.register(ws, user_id="u1", pipeline_id="p1")
+        mgr.register(ws, user_id="u1", pipeline_id="p1")
+
+        assert mgr.active_connections["p1"].count(ws) == 1

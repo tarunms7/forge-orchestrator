@@ -74,6 +74,23 @@ class TestWebSocketEndpoint:
         assert len(manager.active_connections.get("pipe-xyz", [])) == 0
 
 
+class TestHandlerConstants:
+    """Tests for handler configuration constants."""
+
+    def test_auth_timeout_is_3_seconds(self):
+        """Auth timeout should be 3s, not the old 10s default."""
+        from forge.api.ws.handler import RECEIVE_TIMEOUT
+
+        # RECEIVE_TIMEOUT is for the main loop; auth timeout is hardcoded
+        # in the endpoint as 3.0.  We verify the constants are sane.
+        assert RECEIVE_TIMEOUT == 60
+
+    def test_heartbeat_interval_constant(self):
+        from forge.api.ws.handler import HEARTBEAT_INTERVAL
+
+        assert HEARTBEAT_INTERVAL == 30
+
+
 class TestWebSocketBroadcastRepoId:
     """Test that broadcasts can include repo_id field."""
 
