@@ -127,10 +127,9 @@ class TestCreatePr:
     @pytest.mark.asyncio
     async def test_create_pr_timeout_raises(self):
         """create_pr should propagate TimeoutError when communicate() hangs."""
-        import asyncio
 
         mock_proc = AsyncMock()
-        mock_proc.communicate.side_effect = asyncio.TimeoutError()
+        mock_proc.communicate.side_effect = TimeoutError()
 
         with patch(
             "forge.api.services.github_service.asyncio.create_subprocess_exec",
