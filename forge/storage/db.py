@@ -1796,9 +1796,100 @@ class Database:
                     "tasks_failed": p.tasks_failed or 0,
                     "total_retries": p.total_retries or 0,
                     "created_at": p.created_at,
+                    "total_tasks": (p.tasks_succeeded or 0) + (p.tasks_failed or 0),
                 }
                 for p in pipelines
             ]
+
+    async def get_pipeline_analytics(self) -> dict:
+        """Aggregate analytics across all pipelines."""
+        async with self._session_factory() as session:
+            stmt = select(PipelineRow).order_by(PipelineRow.created_at.desc())
+            result = await session.execute(stmt)
+            pipelines = list(result.scalars().all())
+
+            total = len(pipelines)
+            passed = 0
+            failed = 0
+            partial = 0
+            cancelled = 0
+            other = 0
+
+            for p in pipelines:
+                s = p.status or ""
+                if s in ("done", "complete"):
+                    passed += 1
+                elif s == "error":
+                    failed += 1
+                elif s == "cancelled":
+                    cancelled += 1
+                else:
+                    succ = p.tasks_succeeded or 0
+                    fail = p.tasks_failed or 0
+                    if succ > 0 and fail > 0:
+                        partial += 1
+                    else:
+                        other += 1
+
+            # Current streak: consecutive successes from most recent
+            current_streak = 0
+            for p in pipelines:
+                if (p.status or "") in ("done", "complete"):
+                    current_streak += 1
+                else:
+                    break
+
+            # Longest streak: scan oldest-first
+            longest_streak = 0
+            streak = 0
+            for p in reversed(pipelines):
+                if (p.status or "") in ("done", "complete"):
+                    streak += 1
+                    if streak > longest_streak:
+                        longest_streak = streak
+                else:
+                    streak = 0
+
+            return {
+                "total": total,
+                "passed": passed,
+                "failed": failed,
+                "partial": partial,
+                "cancelled": cancelled,
+                "other": other,
+                "current_streak": current_streak,
+                "longest_streak": longest_streak,
+            }
+
+    async def purge_old_pipelines(self, older_than_days: int = 30) -> int:
+        """Delete pipelines and associated tasks older than N days. Returns count of deleted pipelines."""
+        from datetime import timedelta
+
+        from sqlalchemy import delete
+
+        cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+        cutoff_iso = cutoff.isoformat()
+
+        async with self._session_factory() as session:
+            # Find pipeline IDs to delete
+            stmt = select(PipelineRow.id).where(PipelineRow.created_at < cutoff_iso)
+            result = await session.execute(stmt)
+            pipeline_ids = [row[0] for row in result.all()]
+
+            if not pipeline_ids:
+                return 0
+
+            # Delete associated tasks first
+            await session.execute(
+                delete(TaskRow).where(TaskRow.pipeline_id.in_(pipeline_ids))
+            )
+
+            # Delete pipelines
+            del_result = await session.execute(
+                delete(PipelineRow).where(PipelineRow.id.in_(pipeline_ids))
+            )
+            await session.commit()
+            return del_result.rowcount
 
     async def get_retry_summary(self, pipeline_id: str | None = None) -> list[dict]:
         """Aggregate retry counts and error messages across tasks, grouped by error pattern.

@@ -280,3 +280,185 @@ async def test_get_pipeline_export_data(db):
     assert t2["files"] == []
     assert t2["complexity"] == "low"
     assert t2["repo_id"] == "default"
+
+
+# ── Pipeline analytics tests ─────────────────────────────────────────
+
+
+async def test_get_pipeline_analytics_empty(db):
+    """get_pipeline_analytics on empty DB returns all zeros."""
+    result = await db.get_pipeline_analytics()
+    assert result == {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "partial": 0,
+        "cancelled": 0,
+        "other": 0,
+        "current_streak": 0,
+        "longest_streak": 0,
+    }
+
+
+async def _create_pipeline_with_status(db, pid, status, tasks_succeeded=0, tasks_failed=0):
+    """Helper: create a pipeline and set its status and task counts."""
+    await db.create_pipeline(
+        id=pid, description=f"Pipeline {pid}", project_dir="/tmp", model_strategy="auto"
+    )
+    await db.update_pipeline_status(pid, status)
+    # Update task counts directly
+    from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
+
+    async with db._session_factory() as session:
+        await session.execute(
+            update(PipelineRow)
+            .where(PipelineRow.id == pid)
+            .values(tasks_succeeded=tasks_succeeded, tasks_failed=tasks_failed)
+        )
+        await session.commit()
+
+
+async def test_get_pipeline_analytics_mixed(db):
+    """get_pipeline_analytics returns correct counts and streaks for mixed statuses."""
+    # Create pipelines in order (created_at is set automatically in order)
+    await _create_pipeline_with_status(db, "p1", "done")       # pass
+    await _create_pipeline_with_status(db, "p2", "error")      # fail
+    await _create_pipeline_with_status(db, "p3", "complete")   # pass
+    await _create_pipeline_with_status(db, "p4", "cancelled")  # cancelled
+    await _create_pipeline_with_status(db, "p5", "executing", tasks_succeeded=2, tasks_failed=1)  # partial
+    await _create_pipeline_with_status(db, "p6", "planning")   # other (no tasks)
+    await _create_pipeline_with_status(db, "p7", "done")       # pass — most recent
+    await _create_pipeline_with_status(db, "p8", "complete")   # pass — most recent
+
+    result = await db.get_pipeline_analytics()
+    assert result["total"] == 8
+    assert result["passed"] == 4  # p1, p3, p7, p8
+    assert result["failed"] == 1  # p2
+    assert result["cancelled"] == 1  # p4
+    assert result["partial"] == 1  # p5
+    assert result["other"] == 1  # p6
+    # Most recent are p8(complete), p7(done) — current streak = 2
+    assert result["current_streak"] == 2
+    # Longest streak scanning oldest-first: p1(done)=1, p2(error) resets,
+    # p3(complete)=1, p4(cancelled) resets, ..., p7(done)=1, p8(complete)=2
+    assert result["longest_streak"] == 2
+
+
+async def test_get_pipeline_analytics_all_passing(db):
+    """All-passing pipelines: current_streak == longest_streak == total."""
+    await _create_pipeline_with_status(db, "p1", "done")
+    await _create_pipeline_with_status(db, "p2", "complete")
+    await _create_pipeline_with_status(db, "p3", "done")
+
+    result = await db.get_pipeline_analytics()
+    assert result["current_streak"] == 3
+    assert result["longest_streak"] == 3
+
+
+# ── Purge old pipelines tests ────────────────────────────────────────
+
+
+async def test_purge_old_pipelines_deletes_old(db):
+    """purge_old_pipelines deletes old pipelines and keeps recent ones."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
+
+    # Create two pipelines
+    await db.create_pipeline(
+        id="old-pipe", description="Old", project_dir="/tmp", model_strategy="auto"
+    )
+    await db.create_pipeline(
+        id="new-pipe", description="New", project_dir="/tmp", model_strategy="auto"
+    )
+
+    # Set old-pipe's created_at to 60 days ago
+    old_date = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    async with db._session_factory() as session:
+        await session.execute(
+            update(PipelineRow).where(PipelineRow.id == "old-pipe").values(created_at=old_date)
+        )
+        await session.commit()
+
+    deleted = await db.purge_old_pipelines(older_than_days=30)
+    assert deleted == 1
+
+    # old-pipe should be gone, new-pipe should remain
+    assert await db.get_pipeline("old-pipe") is None
+    assert await db.get_pipeline("new-pipe") is not None
+
+
+async def test_purge_old_pipelines_deletes_tasks(db):
+    """purge_old_pipelines also deletes associated tasks."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
+
+    await db.create_pipeline(
+        id="old-pipe", description="Old", project_dir="/tmp", model_strategy="auto"
+    )
+    await db.create_task(
+        id="task-old",
+        title="Old task",
+        description="Belongs to old pipeline",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="old-pipe",
+    )
+
+    old_date = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    async with db._session_factory() as session:
+        await session.execute(
+            update(PipelineRow).where(PipelineRow.id == "old-pipe").values(created_at=old_date)
+        )
+        await session.commit()
+
+    deleted = await db.purge_old_pipelines(older_than_days=30)
+    assert deleted == 1
+
+    # Task should also be gone
+    task = await db.get_task("task-old")
+    assert task is None
+
+
+async def test_purge_old_pipelines_nothing_to_delete(db):
+    """purge_old_pipelines returns 0 when nothing is old enough."""
+    await db.create_pipeline(
+        id="recent", description="Recent", project_dir="/tmp", model_strategy="auto"
+    )
+    deleted = await db.purge_old_pipelines(older_than_days=30)
+    assert deleted == 0
+
+
+# ── Pipeline trends total_tasks test ─────────────────────────────────
+
+
+async def test_get_pipeline_trends_includes_total_tasks(db):
+    """get_pipeline_trends includes total_tasks field."""
+    from sqlalchemy import update
+
+    from forge.storage.db import PipelineRow
+
+    await db.create_pipeline(
+        id="t-pipe", description="Trend test", project_dir="/tmp", model_strategy="auto"
+    )
+    async with db._session_factory() as session:
+        await session.execute(
+            update(PipelineRow)
+            .where(PipelineRow.id == "t-pipe")
+            .values(tasks_succeeded=3, tasks_failed=1)
+        )
+        await session.commit()
+
+    trends = await db.get_pipeline_trends()
+    assert len(trends) == 1
+    assert trends[0]["total_tasks"] == 4
+    assert trends[0]["tasks_succeeded"] == 3
+    assert trends[0]["tasks_failed"] == 1
