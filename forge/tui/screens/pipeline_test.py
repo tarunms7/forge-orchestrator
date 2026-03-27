@@ -677,3 +677,26 @@ async def test_refresh_all_preserves_streaming_flag():
             mock_update.assert_not_called()
         # Streaming must still be True — no off/on toggle
         assert agent_output._streaming is True
+
+
+# ── Scramble-resolve animation tests ──────────────────────────────
+
+
+def test_phase_banner_scramble_animation_state():
+    """PhaseBanner should have scramble animation state after phase change."""
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    banner = PhaseBanner()
+    # Direct state check (no compose needed)
+    assert banner._animating is False
+    assert banner._resolved_count == 0
+
+
+def test_phase_banner_render_static():
+    """PhaseBanner renders correctly in non-animated state."""
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    banner = PhaseBanner()
+    banner._phase = "executing"
+    result = banner.render()
+    assert "E  X  E  C  U  T  I  O  N" in result
