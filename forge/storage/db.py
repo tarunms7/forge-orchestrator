@@ -19,11 +19,13 @@ from sqlalchemy import (
     String,
     Text,
     case,
-    delete as sa_delete,
     func,
     or_,
     select,
     text,
+)
+from sqlalchemy import (
+    delete as sa_delete,
 )
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
