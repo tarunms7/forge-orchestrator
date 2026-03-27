@@ -2,6 +2,7 @@
 
 import { Fragment } from "react";
 import type { PipelineState } from "@/stores/taskStore";
+import { useTaskStore } from "@/stores/taskStore";
 
 const STEPS: { key: PipelineState["phase"]; label: string }[] = [
   { key: "planning", label: "Plan" },
@@ -59,6 +60,7 @@ export default function PipelineProgress({
 }) {
   const currentIndex = PHASE_ORDER[phase];
   const isPaused = phase === "paused";
+  const ciFixStatus = useTaskStore((s) => s.ciFixStatus);
 
   return (
     <div className="progress-track">
@@ -98,6 +100,26 @@ export default function PipelineProgress({
                 </div>
                 <div className="step-label" style={isPausedStep ? { color: "var(--amber)" } : undefined}>
                   {isPausedStep ? "Paused" : step.label}
+                  {step.key === "complete" && ciFixStatus !== "idle" && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        marginLeft: 4,
+                        verticalAlign: "middle",
+                        background:
+                          ciFixStatus === "passed" ? "var(--green)" :
+                          ciFixStatus === "exhausted" || ciFixStatus === "error" ? "var(--red)" :
+                          "var(--amber)",
+                        ...(ciFixStatus === "watching" || ciFixStatus === "fixing"
+                          ? { animation: "pulse 2s infinite" }
+                          : {}),
+                      }}
+                      title={`CI: ${ciFixStatus}`}
+                    />
+                  )}
                 </div>
               </div>
 

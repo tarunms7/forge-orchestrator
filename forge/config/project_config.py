@@ -134,6 +134,17 @@ enabled = false
 # cmd = "pytest tests/ --tb=short" # Full command (include venv if needed)
 # timeout_seconds = 300            # Max seconds before the check is killed
 # on_failure = "ask"               # "ask" | "ignore_and_continue" | "stop_pipeline"
+
+# ── CI Auto-Fix ──────────────────────────────────────────────────────
+# After PR creation, watch CI checks and auto-fix failures.
+# Requires: gh CLI authenticated, CI configured on the repo.
+[ci_fix]
+enabled = false              # Enable CI watching + auto-fix after PR creation
+# max_retries = 3            # Max fix attempts before giving up (1-10)
+# poll_timeout_seconds = 1800 # Max time to wait for CI checks (30 min)
+# poll_interval_seconds = 30  # Base polling interval (exponential backoff)
+# budget_usd = 0.0           # Budget for fix agents (0 = use pipeline budget)
+# model = "sonnet"           # Model for the fix agent
 '''
 
 
@@ -221,6 +232,24 @@ class IntegrationConfig:
 
 
 @dataclass
+class CIFixConfig:
+    """Configuration for CI auto-fix after PR creation."""
+    enabled: bool = False
+    max_retries: int = 3
+    poll_timeout_seconds: int = 1800
+    poll_interval_seconds: int = 30
+    budget_usd: float = 0.0
+    model: str = "sonnet"
+
+    def __post_init__(self):
+        self.max_retries = max(1, min(10, self.max_retries))
+        self.poll_timeout_seconds = max(60, self.poll_timeout_seconds)
+        self.poll_interval_seconds = max(10, min(120, self.poll_interval_seconds))
+        if self.model not in ("sonnet", "opus", "haiku"):
+            self.model = "sonnet"
+
+
+@dataclass
 class ProjectConfig:
     """Parsed .forge/forge.toml configuration."""
 
@@ -231,6 +260,7 @@ class ProjectConfig:
     agents: AgentConfig = field(default_factory=AgentConfig)
     instructions: str = ""
     integration: IntegrationConfig = field(default_factory=IntegrationConfig)
+    ci_fix: CIFixConfig = field(default_factory=CIFixConfig)
 
     @classmethod
     def from_toml(cls, path: str) -> ProjectConfig:
@@ -256,6 +286,7 @@ class ProjectConfig:
         integration_raw = data.get("integration", {})
         post_merge_raw = integration_raw.get("post_merge", {})
         final_gate_raw = integration_raw.get("final_gate", {})
+        ci_fix_raw = data.get("ci_fix", {})
 
         return cls(
             lint=CheckConfig(
@@ -299,6 +330,14 @@ class ProjectConfig:
                     on_failure=final_gate_raw.get("on_failure", "ask"),
                 ),
             ),
+            ci_fix=CIFixConfig(
+                enabled=ci_fix_raw.get("enabled", False),
+                max_retries=ci_fix_raw.get("max_retries", 3),
+                poll_timeout_seconds=ci_fix_raw.get("poll_timeout_seconds", 1800),
+                poll_interval_seconds=ci_fix_raw.get("poll_interval_seconds", 30),
+                budget_usd=ci_fix_raw.get("budget_usd", 0.0),
+                model=ci_fix_raw.get("model", "sonnet"),
+            ),
         )
 
     @classmethod
@@ -340,6 +379,14 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
         settings.test_cmd = config.tests.cmd
     if config.build.cmd and "FORGE_BUILD_CMD" not in env:
         settings.build_cmd = config.build.cmd
+
+    # CI fix settings
+    if "FORGE_CI_FIX_ENABLED" not in env:
+        settings.ci_fix_enabled = config.ci_fix.enabled
+    if "FORGE_CI_FIX_MAX_RETRIES" not in env:
+        settings.ci_fix_max_retries = config.ci_fix.max_retries
+    if "FORGE_CI_FIX_BUDGET_USD" not in env:
+        settings.ci_fix_budget_usd = config.ci_fix.budget_usd
 
     # Disabled checks → set command to None (skip the gate)
     if not config.lint.enabled:

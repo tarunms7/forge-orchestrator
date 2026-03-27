@@ -25,6 +25,7 @@ from forge.api.models.schemas import (
     TaskListItem,
     TaskStatusResponse,
 )
+from forge.core.ci_watcher import CIFixConfig as CIFixRuntimeConfig, run_ci_fix_loop, parse_pr_info
 from forge.api.security.dependencies import get_current_user
 from forge.core.async_utils import safe_create_task
 from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
@@ -792,6 +793,23 @@ async def execute_pipeline(
                             "pr_url": pr_url,
                         },
                     )
+
+                    # Start CI auto-fix if enabled
+                    pipeline = await forge_db.get_pipeline(pipeline_id)
+                    ci_fix_enabled = getattr(pipeline, "ci_fix_enabled", False)
+                    if not ci_fix_enabled:
+                        # Check project config
+                        from forge.config.project_config import ProjectConfig
+                        project_dir = getattr(pipeline, "project_dir", None) or os.getcwd()
+                        pconfig = ProjectConfig.load(project_dir)
+                        ci_fix_enabled = pconfig.ci_fix.enabled
+
+                    if ci_fix_enabled and pr_url:
+                        safe_create_task(
+                            _run_ci_fix(forge_db, pipeline_id, pr_url, ws_manager),
+                            logger=logger,
+                            name=f"ci-fix-{pipeline_id}",
+                        )
                 except Exception as pr_exc:
                     logger.warning("Auto-PR failed for %s: %s", pipeline_id, pr_exc)
                     await ws_manager.broadcast(
@@ -822,6 +840,71 @@ async def execute_pipeline(
         request.app.state.pending_graphs.pop(pipeline_id, None)
 
     return {"status": "executing", "pipeline_id": pipeline_id}
+
+
+# In-memory store for CI fix cancel events
+_ci_fix_cancel_events: dict[str, asyncio.Event] = {}
+
+
+async def _run_ci_fix(
+    forge_db: "Database",
+    pipeline_id: str,
+    pr_url: str,
+    ws_manager,
+) -> None:
+    """Background task: watch CI checks and auto-fix failures."""
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if not pipeline:
+        return
+
+    project_dir = pipeline.project_dir or os.getcwd()
+    branch = pipeline.branch_name or ""
+    base_branch = pipeline.base_branch or "main"
+
+    if not branch:
+        logger.warning("No branch name for pipeline %s — skipping CI fix", pipeline_id)
+        return
+
+    # Load CI fix config from project config
+    from forge.config.project_config import ProjectConfig
+    pconfig = ProjectConfig.load(project_dir)
+    ci_config = pconfig.ci_fix
+
+    config = CIFixRuntimeConfig(
+        max_retries=ci_config.max_retries,
+        poll_timeout_seconds=ci_config.poll_timeout_seconds,
+        poll_interval_seconds=ci_config.poll_interval_seconds,
+        budget_usd=ci_config.budget_usd,
+        model=ci_config.model,
+    )
+
+    cancel_event = asyncio.Event()
+    _ci_fix_cancel_events[pipeline_id] = cancel_event
+
+    async def emit_fn(event_type: str, payload: dict):
+        await ws_manager.broadcast(pipeline_id, {"type": event_type, **payload})
+
+    try:
+        result = await run_ci_fix_loop(
+            config=config,
+            pr_url=pr_url,
+            project_dir=project_dir,
+            branch=branch,
+            base_branch=base_branch,
+            db=forge_db,
+            pipeline_id=pipeline_id,
+            emit_fn=emit_fn,
+            cancel_event=cancel_event,
+        )
+        logger.info("CI fix completed for %s: %s (cost=$%.2f)", pipeline_id, result.final_status, result.total_cost_usd)
+    except Exception:
+        logger.exception("CI fix loop failed for %s", pipeline_id)
+        await ws_manager.broadcast(pipeline_id, {
+            "type": "pipeline:ci_fix_error",
+            "error": "CI fix loop crashed",
+        })
+    finally:
+        _ci_fix_cancel_events.pop(pipeline_id, None)
 
 
 @router.post("/{pipeline_id}/pr")
@@ -989,6 +1072,74 @@ async def create_pr(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── CI Auto-Fix endpoints ────────────────────────────────────────────
+
+
+@router.post("/{pipeline_id}/ci-fix")
+async def start_ci_fix(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Manually trigger CI auto-fix on an existing PR."""
+    forge_db = _get_forge_db(request)
+    if forge_db is None:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+    if not pipeline.pr_url:
+        raise HTTPException(status_code=400, detail="No PR URL — create a PR first")
+
+    # Check if already running
+    if pipeline_id in _ci_fix_cancel_events:
+        raise HTTPException(status_code=409, detail="CI fix already running")
+
+    # Parse optional body
+    body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+    max_retries = body.get("max_retries", 3)
+    budget_usd = body.get("budget_usd", 0.0)
+
+    # Enable CI fix on the pipeline
+    await forge_db.update_pipeline_ci_fix(
+        pipeline_id,
+        ci_fix_enabled=True,
+        ci_fix_status="watching",
+        ci_fix_attempt=0,
+        ci_fix_max_retries=max_retries,
+    )
+
+    ws_manager = request.app.state.ws_manager
+    safe_create_task(
+        _run_ci_fix(forge_db, pipeline_id, pipeline.pr_url, ws_manager),
+        logger=logger,
+        name=f"ci-fix-{pipeline_id}",
+    )
+
+    return {"status": "started", "pipeline_id": pipeline_id}
+
+
+@router.post("/{pipeline_id}/ci-fix/cancel")
+async def cancel_ci_fix(
+    pipeline_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Cancel an in-progress CI fix loop."""
+    cancel_event = _ci_fix_cancel_events.get(pipeline_id)
+    if not cancel_event:
+        raise HTTPException(status_code=404, detail="No CI fix running for this pipeline")
+
+    cancel_event.set()
+
+    forge_db = _get_forge_db(request)
+    if forge_db:
+        await forge_db.update_pipeline_ci_fix(pipeline_id, ci_fix_status="cancelled")
+
+    return {"status": "cancelled", "pipeline_id": pipeline_id}
 
 
 # ── Task approval endpoints ──────────────────────────────────────────
@@ -1876,6 +2027,10 @@ async def get_task_status(
             estimated_cost_usd=pipeline.estimated_cost_usd,
             github_issue_url=getattr(pipeline, "github_issue_url", None),
             github_issue_number=getattr(pipeline, "github_issue_number", None),
+            ci_fix_status=getattr(pipeline, "ci_fix_status", None),
+            ci_fix_attempt=getattr(pipeline, "ci_fix_attempt", 0),
+            ci_fix_max_retries=getattr(pipeline, "ci_fix_max_retries", 3),
+            ci_fix_cost_usd=getattr(pipeline, "ci_fix_cost_usd", 0.0),
         )
 
     # Fallback: in-memory

@@ -83,6 +83,21 @@ export interface PipelineState {
   githubIssueNumber: number | null;
   worktreesCleaned: boolean;
 
+  /* CI Auto-Fix state */
+  ciFixStatus: "idle" | "watching" | "fixing" | "passed" | "exhausted" | "cancelled" | "error";
+  ciFixAttempt: number;
+  ciFixMaxRetries: number;
+  ciFixCostUsd: number;
+  ciFixChecks: Array<{name: string; status: string; conclusion: string}>;
+  ciFixHistory: Array<{
+    attempt: number;
+    status: string;
+    failedChecks: string[];
+    fixSummary?: string;
+    costUsd: number;
+    timestamp: string;
+  }>;
+
   /* Plan editing state */
   editedTasks: EditableTask[] | null;
   planValidation: ValidationResult;
@@ -176,6 +191,12 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   githubIssueUrl: null,
   githubIssueNumber: null,
   worktreesCleaned: false,
+  ciFixStatus: "idle",
+  ciFixAttempt: 0,
+  ciFixMaxRetries: 3,
+  ciFixCostUsd: 0,
+  ciFixChecks: [],
+  ciFixHistory: [],
   editedTasks: null,
   planValidation: { valid: true, errors: [] },
   ...INITIAL_FOLLOWUP,
@@ -339,6 +360,10 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       budgetLimitUsd: (data.budget_limit_usd as number) || 0,
       githubIssueUrl: (data.github_issue_url as string) ?? null,
       githubIssueNumber: (data.github_issue_number as number) ?? null,
+      ciFixStatus: (data as any).ci_fix_status || "idle",
+      ciFixAttempt: (data as any).ci_fix_attempt || 0,
+      ciFixMaxRetries: (data as any).ci_fix_max_retries || 3,
+      ciFixCostUsd: (data as any).ci_fix_cost_usd || 0,
     });
   },
   reset: () =>
@@ -358,6 +383,12 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       githubIssueUrl: null,
       githubIssueNumber: null,
       worktreesCleaned: false,
+      ciFixStatus: "idle",
+      ciFixAttempt: 0,
+      ciFixMaxRetries: 3,
+      ciFixCostUsd: 0,
+      ciFixChecks: [],
+      ciFixHistory: [],
       editedTasks: null,
       planValidation: { valid: true, errors: [] },
       ...INITIAL_FOLLOWUP,
@@ -711,6 +742,68 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
 
         case "pipeline:preflight_failed":
           return { phase: "idle" as PipelineState["phase"], timeline: newTimeline };
+
+        case "pipeline:ci_watching":
+          return { ciFixStatus: "watching" as const, timeline: newTimeline };
+
+        case "pipeline:ci_check_update":
+          return {
+            ciFixChecks: (data.checks as Array<{name: string; status: string; conclusion: string}>) || [],
+            timeline: newTimeline,
+          };
+
+        case "pipeline:ci_passed":
+          sendNotification("CI Passed", "All CI checks are green!");
+          return { ciFixStatus: "passed" as const, timeline: newTimeline };
+
+        case "pipeline:ci_failed": {
+          const failedChecks = ((data.failed_checks as Array<{name: string}>) || []).map(c => c.name);
+          return {
+            ciFixStatus: "fixing" as const,
+            ciFixAttempt: (data.attempt as number) || 0,
+            ciFixMaxRetries: (data.max_retries as number) || 3,
+            ciFixHistory: [...state.ciFixHistory, {
+              attempt: (data.attempt as number) || 0,
+              status: "failed",
+              failedChecks,
+              costUsd: 0,
+              timestamp: new Date().toISOString(),
+            }],
+            timeline: newTimeline,
+          };
+        }
+
+        case "pipeline:ci_fixing":
+          return {
+            ciFixStatus: "fixing" as const,
+            ciFixAttempt: (data.attempt as number) || 0,
+            timeline: newTimeline,
+          };
+
+        case "pipeline:ci_fix_pushed":
+          return {
+            ciFixStatus: "watching" as const,
+            ciFixCostUsd: state.ciFixCostUsd + ((data.cost_usd as number) || 0),
+            ciFixHistory: [...state.ciFixHistory, {
+              attempt: (data.attempt as number) || 0,
+              status: "fix_pushed",
+              failedChecks: [],
+              fixSummary: (data.summary as string) || "",
+              costUsd: (data.cost_usd as number) || 0,
+              timestamp: new Date().toISOString(),
+            }],
+            timeline: newTimeline,
+          };
+
+        case "pipeline:ci_fix_exhausted":
+          sendNotification("CI Fix Failed", "Max retries exceeded — CI still failing");
+          return { ciFixStatus: "exhausted" as const, timeline: newTimeline };
+
+        case "pipeline:ci_fix_cancelled":
+          return { ciFixStatus: "cancelled" as const, timeline: newTimeline };
+
+        case "pipeline:ci_fix_error":
+          return { ciFixStatus: "error" as const, timeline: newTimeline };
 
         default:
           return { timeline: newTimeline };

@@ -79,6 +79,12 @@ class RejectRequest(BaseModel):
     reason: str | None = None
 
 
+class CIFixRequest(BaseModel):
+    """Request body for manually triggering CI auto-fix."""
+    max_retries: int = Field(default=3, ge=1, le=10, description="Max fix attempts")
+    budget_usd: float = Field(default=0.0, ge=0, description="Budget for fix agents (0=unlimited)")
+
+
 class PipelineResponse(BaseModel):
     """Response returned when a pipeline is created."""
 
@@ -107,6 +113,10 @@ class TaskStatusResponse(BaseModel):
     repo_id: str = Field(
         default="default", description="Repository identifier for this status context."
     )
+    ci_fix_status: str | None = None
+    ci_fix_attempt: int = 0
+    ci_fix_max_retries: int = 3
+    ci_fix_cost_usd: float = 0.0
 
 
 class TaskListItem(BaseModel):

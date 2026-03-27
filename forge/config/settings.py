@@ -83,6 +83,11 @@ class ForgeSettings(BaseSettings):
     question_timeout: int = 1800  # seconds before auto-decide (30 min)
     auto_pr: bool = False  # skip final approval, auto-create PR
 
+    # CI Auto-Fix
+    ci_fix_enabled: bool = False
+    ci_fix_max_retries: int = 3
+    ci_fix_budget_usd: float = 0.0
+
     # GitHub webhook integration
     github_webhook_secret: str = ""
     github_allowed_repos: list[str] = []

@@ -7,6 +7,7 @@ import { useTaskStore } from "@/stores/taskStore";
 import { useAuthStore } from "@/stores/authStore";
 import { apiPost } from "@/lib/api";
 import { CopyButton } from "@/components/CopyButton";
+import CIFixPanel from "./CIFixPanel";
 
 function buildResultsSummary(tasks: TaskState[]): string {
   const header = `Task Results\n${"=".repeat(60)}`;
@@ -52,6 +53,7 @@ export default function CompletionSummary({
   const githubIssueUrl = useTaskStore((s) => s.githubIssueUrl);
   const githubIssueNumber = useTaskStore((s) => s.githubIssueNumber);
   const followUpStatus = useTaskStore((s) => s.followUpStatus);
+  const ciFixStatus = useTaskStore((s) => s.ciFixStatus);
 
   // Local fallback for manual PR creation (if auto-PR fails)
   const [manualPrLoading, setManualPrLoading] = useState(false);
@@ -189,6 +191,27 @@ export default function CompletionSummary({
           ) : (
             <button type="button" onClick={handleRetryPR} className="btn btn-primary">
               Create PR
+            </button>
+          )}
+          {prUrl && ciFixStatus === "idle" && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!token || !pipelineId) return;
+                try {
+                  await apiPost(`/tasks/${pipelineId}/ci-fix`, {}, token);
+                  useTaskStore.setState({ ciFixStatus: "watching" });
+                } catch (err) {
+                  console.warn("Failed to start CI fix:", err);
+                }
+              }}
+              className="btn btn-ghost"
+              style={{ fontSize: 13 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Watch CI
             </button>
           )}
         </div>
@@ -412,6 +435,8 @@ export default function CompletionSummary({
           </span>
         )}
       </div>
+
+      <CIFixPanel pipelineId={pipelineId} />
     </div>
   );
 }
