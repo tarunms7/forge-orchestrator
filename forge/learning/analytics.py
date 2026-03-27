@@ -17,6 +17,9 @@ async def get_lesson_effectiveness(db: Database, project_dir: str | None = None)
     Each dict contains: id, title, category, hit_count, confidence, scope, last_hit_at.
     If project_dir is given, only lessons matching that project (or global) are returned.
     """
+    # TODO: Move project_dir filtering into the DB query (add a filtered
+    # list_lessons method to Database) to avoid fetching all rows when only
+    # a subset is needed.  db.py is currently out of scope for this change.
     rows = await db.list_all_lessons()  # already sorted by hit_count desc
 
     if project_dir is not None:

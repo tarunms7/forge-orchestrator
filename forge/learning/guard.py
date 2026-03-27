@@ -3,9 +3,19 @@
 import hashlib
 import logging
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 
 logger = logging.getLogger("forge.learning")
+
+# Pre-compiled regex patterns for normalize_command()
+_RE_REDIRECT = re.compile(r"\s*2>&1\s*(\|.*)?$")
+_RE_TAIL = re.compile(r"\s*\|\s*tail\s+-\d+$")
+_RE_HEAD = re.compile(r"\s*\|\s*head\s+-\d+$")
+_RE_TMP_PATH = re.compile(r"/tmp/[^\s]+")
+_RE_VAR_PATH = re.compile(r"/var/folders/[^\s]+")
+_RE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_RE_TIMESTAMP = re.compile(r"\b\d{10,}\b")
 
 
 @dataclass
@@ -42,20 +52,16 @@ def normalize_command(command: str) -> str:
     """
     cmd = command.strip()
     # Strip output redirection
-    cmd = re.sub(r"\s*2>&1\s*(\|.*)?$", "", cmd)
-    cmd = re.sub(r"\s*\|\s*tail\s+-\d+$", "", cmd)
-    cmd = re.sub(r"\s*\|\s*head\s+-\d+$", "", cmd)
+    cmd = _RE_REDIRECT.sub("", cmd)
+    cmd = _RE_TAIL.sub("", cmd)
+    cmd = _RE_HEAD.sub("", cmd)
     # Strip temp paths
-    cmd = re.sub(r"/tmp/[^\s]+", "/tmp/TEMP", cmd)
-    cmd = re.sub(r"/var/folders/[^\s]+", "/var/TEMP", cmd)
+    cmd = _RE_TMP_PATH.sub("/tmp/TEMP", cmd)
+    cmd = _RE_VAR_PATH.sub("/var/TEMP", cmd)
     # Strip UUIDs
-    cmd = re.sub(
-        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-        "UUID",
-        cmd,
-    )
+    cmd = _RE_UUID.sub("UUID", cmd)
     # Strip timestamp-like numbers (but not port numbers or small integers)
-    cmd = re.sub(r"\b\d{10,}\b", "TIMESTAMP", cmd)
+    cmd = _RE_TIMESTAMP.sub("TIMESTAMP", cmd)
     return cmd
 
 
@@ -109,12 +115,15 @@ class RuntimeGuard:
             await original_on_msg(msg)
     """
 
+    _MAX_PENDING = 500  # LRU eviction threshold for tracking dicts
+
     def __init__(self, max_attempts: int = 3):
         self._max_attempts = max_attempts
         # Track pending tool uses: tool_use_id -> (command, normalized_command)
-        self._pending_bash: dict[str, tuple[str, str]] = {}
+        # Uses OrderedDict for LRU eviction at _MAX_PENDING entries.
+        self._pending_bash: OrderedDict[str, tuple[str, str]] = OrderedDict()
         # Track approach attempts: approach_signature -> list[FailureRecord]
-        self._approach_attempts: dict[str, list[FailureRecord]] = {}
+        self._approach_attempts: OrderedDict[str, list[FailureRecord]] = OrderedDict()
         # Public state
         self.warning_issued: bool = False
         self.triggered: bool = False
@@ -145,6 +154,8 @@ class RuntimeGuard:
                 if tool_id and cmd:
                     norm = normalize_command(cmd)
                     self._pending_bash[tool_id] = (cmd, norm)
+                    if len(self._pending_bash) > self._MAX_PENDING:
+                        self._pending_bash.popitem(last=False)
 
             # Check tool results for failures
             if hasattr(block, "tool_use_id") and hasattr(block, "is_error"):
@@ -169,6 +180,9 @@ class RuntimeGuard:
                         attempt_number=len(self._approach_attempts.get(sig, [])) + 1,
                     )
                     self._approach_attempts.setdefault(sig, []).append(record)
+                    self._approach_attempts.move_to_end(sig)
+                    if len(self._approach_attempts) > self._MAX_PENDING:
+                        self._approach_attempts.popitem(last=False)
                     self.failures.append(record)
 
                     attempts = self._approach_attempts[sig]
