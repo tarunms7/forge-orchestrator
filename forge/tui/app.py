@@ -201,12 +201,23 @@ class ForgeApp(App):
         self.push_screen(
             HomeScreen(recent_pipelines=recent, repos=self._repos, project_dir=self._project_dir)
         )
-        self._state.on_change(self._on_state_change)
+        self._state_cb = self._on_state_change
+        self._state.on_change(self._state_cb)
+
+    async def on_unmount(self) -> None:
+        """Clean up state change callback to prevent leaks."""
+        self._state.remove_change_callback(self._state_cb)
+
+    # Fields that change frequently and don't need a full screen refresh
+    _HIGH_FREQ_FIELDS = frozenset({"agent_output", "review_output", "cost", "elapsed", "followup_output"})
 
     def _on_state_change(self, field: str) -> None:
         """Refresh current screen and auto-capture screenshots."""
         try:
-            self.screen.refresh()
+            if field in self._HIGH_FREQ_FIELDS:
+                self.call_after_refresh(self.screen.refresh)
+            else:
+                self.screen.refresh()
         except Exception:
             pass
         # Auto-capture at key moments

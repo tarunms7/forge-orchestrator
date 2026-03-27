@@ -48,9 +48,7 @@ class TuiState:
         ] = {}  # task_id → gate_name → {status, details}
         self.pr_url: str | None = None
         self.question_history: dict[str, list[dict]] = {}  # task_id → [Q&A pairs]
-        self.review_output: dict[str, list[str]] = defaultdict(
-            list
-        )  # task_id → streaming LLM review lines
+        self.review_output: dict[str, list[str]] = {}  # task_id → streaming LLM review lines
         self.unified_log: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.streaming_task_ids: set[str] = set()  # tasks currently emitting streaming output
         self.pipeline_branch: str = ""  # branch where task work is merged
@@ -167,22 +165,22 @@ class TuiState:
         tid = data.get("task_id", "")
         line = data.get("line", "")
         lines = self.agent_output[tid]
+        if len(lines) >= self._max_output_lines:
+            del lines[: len(lines) - self._max_output_lines + 10]
         lines.append(line)
-        if len(lines) > self._max_output_lines:
-            del lines[: len(lines) - self._max_output_lines]
         # Unified log
         ulog = self.unified_log[tid]
+        if len(ulog) >= self._max_output_lines:
+            del ulog[: len(ulog) - self._max_output_lines + 10]
         ulog.append(("agent", line))
-        if len(ulog) > self._max_output_lines:
-            del ulog[: len(ulog) - self._max_output_lines]
         if tid:
             self.streaming_task_ids.add(tid)
         self._notify("agent_output")
 
     def _on_planner_output(self, data: dict) -> None:
+        if len(self.planner_output) >= self._max_output_lines:
+            del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
         self.planner_output.append(data.get("line", ""))
-        if len(self.planner_output) > self._max_output_lines:
-            del self.planner_output[: len(self.planner_output) - self._max_output_lines]
         self._notify("planner_output")
 
     def _on_cost_update(self, data: dict) -> None:
@@ -316,15 +314,19 @@ class TuiState:
         task_id = data.get("task_id")
         line = data.get("line", "")
         if task_id:
+            if task_id not in self.review_output:
+                if task_id not in self.tasks:
+                    logger.warning("review_llm_output for unexpected task_id=%r", task_id)
+                self.review_output[task_id] = []
             lines = self.review_output[task_id]
+            if len(lines) >= self._max_output_lines:
+                del lines[: len(lines) - self._max_output_lines + 10]
             lines.append(line)
-            if len(lines) > self._max_output_lines:
-                del lines[: len(lines) - self._max_output_lines]
             # Unified log
             ulog = self.unified_log[task_id]
+            if len(ulog) >= self._max_output_lines:
+                del ulog[: len(ulog) - self._max_output_lines + 10]
             ulog.append(("review", line))
-            if len(ulog) > self._max_output_lines:
-                del ulog[: len(ulog) - self._max_output_lines]
             self.streaming_task_ids.add(task_id)
             self._notify("review_output")
 
@@ -344,9 +346,9 @@ class TuiState:
         self._notify("budget_exceeded")
 
     def _on_contracts_output(self, data: dict) -> None:
+        if len(self.contracts_output) >= self._max_output_lines:
+            del self.contracts_output[: len(self.contracts_output) - self._max_output_lines + 10]
         self.contracts_output.append(data.get("line", ""))
-        if len(self.contracts_output) > self._max_output_lines:
-            del self.contracts_output[: len(self.contracts_output) - self._max_output_lines]
         self._notify("contracts_output")
 
     def _on_contracts_ready(self, data: dict) -> None:
@@ -425,7 +427,10 @@ class TuiState:
     def _on_followup_output(self, data: dict) -> None:
         tid = data.get("task_id")
         if tid:
-            self.followup_output[tid].append(data.get("line", ""))
+            lines = self.followup_output[tid]
+            if len(lines) >= self._max_output_lines:
+                del lines[: len(lines) - self._max_output_lines + 10]
+            lines.append(data.get("line", ""))
             self._notify("followup_output")
 
     def _on_slot_acquired(self, data: dict) -> None:
@@ -460,9 +465,9 @@ class TuiState:
                 self.planner_output.append(f"─── {stage} ───")
             self._notify("planning_stage")
         line = data.get("line", "")
+        if len(self.planner_output) >= self._max_output_lines:
+            del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
         self.planner_output.append(line)
-        if len(self.planner_output) > self._max_output_lines:
-            del self.planner_output[: len(self.planner_output) - self._max_output_lines]
         self._notify("planner_output")
 
     # ── Integration health check handlers ──────────────────────────
