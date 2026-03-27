@@ -1112,12 +1112,11 @@ class TestExecuteBranchCreation:
                 _mock_completed(0, "abc123\n"),  # git rev-parse HEAD
                 _mock_completed(0, "origin\n"),  # git remote
                 _mock_completed(0),  # gh auth status
-                # execute() branch creation
-                _mock_completed(0),  # git branch -f pipeline_branch base_branch
             ]
         )
 
         daemon._emit = AsyncMock()
+        create_branches_mock = AsyncMock()
 
         with (
             patch("forge.core.daemon.async_subprocess", async_sub),
@@ -1136,6 +1135,7 @@ class TestExecuteBranchCreation:
             patch("forge.core.daemon.MergeWorker"),
             patch("forge.core.daemon.ResourceMonitor") as MockMon,
             patch.object(daemon, "_init_repos", new_callable=AsyncMock),
+            patch.object(daemon, "_create_pipeline_branches", create_branches_mock),
         ):
             MockMon.return_value.take_snapshot = AsyncMock(return_value=MagicMock())
             MockMon.return_value.can_dispatch = MagicMock(return_value=True)
@@ -1143,12 +1143,8 @@ class TestExecuteBranchCreation:
             plan = MagicMock(tasks=[_make_task(TaskState.TODO.value, "task-1")])
             await daemon.execute(plan, db, "pipe-1", resume=False)
 
-        # Verify git branch -f was called (one of the async_subprocess calls)
-        branch_calls = [
-            c for c in async_sub.call_args_list if len(c.args[0]) >= 3 and c.args[0][1] == "branch"
-        ]
-        assert len(branch_calls) >= 1
-        assert "-f" in branch_calls[0].args[0]
+        # Verify _create_pipeline_branches was called for branch creation
+        create_branches_mock.assert_called_once()
 
     async def test_resume_verifies_branch_exists(self, tmp_path):
         """On resume, execute() checks if the pipeline branch exists."""

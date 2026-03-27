@@ -1138,7 +1138,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Use the base branch stored by the TUI (user's explicit choice).
         # Fall back to detecting the current checkout only if not stored.
         base_branch = getattr(pipeline_record, "base_branch", None) or await _get_current_branch(
-            self._project_dir
+            next(iter(self._repos.values())).path
         )
         custom_branch = getattr(pipeline_record, "branch_name", None) if pipeline_record else None
         if custom_branch and custom_branch.strip():
@@ -1157,54 +1157,33 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             "pipeline:branch_resolved", {"branch": pipeline_branch}, db=db, pipeline_id=pid
         )
 
-        # Isolated pipeline branch — code reaches main only through a PR.
-        # On resume/retry the branch already exists and may contain merged
-        # task changes — force-resetting it would DESTROY that work.
-        if not resume:
-            result = await async_subprocess(
-                ["git", "branch", "-f", pipeline_branch, base_branch],
-                cwd=self._project_dir,
-            )
-            if result.returncode != 0:
-                raise subprocess.CalledProcessError(
-                    result.returncode,
-                    ["git", "branch", "-f", pipeline_branch, base_branch],
-                    result.stdout,
-                    result.stderr,
-                )
-            await db.set_pipeline_base_branch(pid, base_branch)
-        else:
-            # Verify the branch still exists (safety check)
-            branch_check = await async_subprocess(
-                ["git", "rev-parse", "--verify", pipeline_branch],
-                cwd=self._project_dir,
-            )
-            if branch_check.returncode != 0:
-                # Branch was deleted — recreate it from base
-                console.print(
-                    f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]"
-                )
-                result = await async_subprocess(
-                    ["git", "branch", "-f", pipeline_branch, base_branch],
-                    cwd=self._project_dir,
-                )
-                if result.returncode != 0:
-                    raise subprocess.CalledProcessError(
-                        result.returncode,
-                        ["git", "branch", "-f", pipeline_branch, base_branch],
-                        result.stdout,
-                        result.stderr,
-                    )
-        console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
-
         # Set up per-repo infrastructure (worktree managers, merge workers, pipeline branches)
         self._setup_per_repo_infra(pipeline_branch)
 
-        # Create pipeline branches in all repos (multi-repo)
-        # For single-repo, the branch was already created above; _create_pipeline_branches
-        # is idempotent (git branch -f) so safe to call for all repos.
-        if len(self._repos) > 1 and not resume:
+        # Create pipeline branches in all repos.
+        # _create_pipeline_branches is idempotent (git branch -f).
+        if not resume:
             await self._create_pipeline_branches()
+            await db.set_pipeline_base_branch(pid, base_branch)
+        else:
+            # Verify the branch still exists in at least one repo
+            branch_exists = False
+            for rc in self._repos.values():
+                branch_check = await async_subprocess(
+                    ["git", "rev-parse", "--verify", pipeline_branch],
+                    cwd=rc.path,
+                )
+                if branch_check.returncode == 0:
+                    branch_exists = True
+                    break
+
+            if not branch_exists:
+                console.print(
+                    f"[yellow]Pipeline branch {pipeline_branch} missing — recreating from {base_branch}[/yellow]"
+                )
+                await self._create_pipeline_branches()
+
+        console.print(f"[dim]Merge target: {pipeline_branch} (base: {base_branch})[/dim]")
 
         # Load per-repo configs for review gates (build/test/lint commands)
         self._repo_configs = load_repo_configs(self._repos)
