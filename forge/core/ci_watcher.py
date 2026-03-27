@@ -13,9 +13,10 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from forge.core.daemon_helpers import async_subprocess
 
@@ -308,7 +309,7 @@ async def dispatch_fix_agent(
     model: str = "sonnet",
     max_turns: int = 50,
     base_branch: str = "main",
-) -> "SdkResult | None":
+) -> SdkResult | None:
     """Dispatch a Claude agent to fix CI failures.
 
     The agent works in project_dir on the given branch, reads failure logs,
@@ -357,7 +358,7 @@ async def run_ci_fix_loop(
     project_dir: str,
     branch: str,
     base_branch: str = "main",
-    db: "Database | None" = None,
+    db: Database | None = None,
     pipeline_id: str = "",
     emit_fn: Callable | None = None,
     cancel_event: asyncio.Event | None = None,
