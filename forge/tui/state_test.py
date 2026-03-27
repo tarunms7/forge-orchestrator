@@ -1183,6 +1183,7 @@ def test_remove_change_callback():
     """remove_change_callback prevents future notifications."""
     state = TuiState()
     changes = []
+
     def cb(field):
         changes.append(field)
     state.on_change(cb)
