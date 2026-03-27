@@ -1222,9 +1222,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             baseline_cfg = (
                 integration_config.post_merge if pm_enabled else integration_config.final_gate
             )
+            # Use first repo path for integration checks (integration commands
+            # run in a worktree of a real git repo, not the workspace wrapper).
+            _integration_repo_path = next(iter(self._repos.values())).path
             baseline_exit = await capture_baseline(
                 baseline_cfg,
-                self._project_dir,
+                _integration_repo_path,
                 base_branch,
             )
 
@@ -1310,9 +1313,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 db=db,
                 pipeline_id=pid,
             )
+            _fg_repo_path = next(iter(self._repos.values())).path
             fg_result = await run_final_gate(
                 self._integration_config.final_gate,
-                self._project_dir,
+                _fg_repo_path,
                 pipeline_branch,
             )
             await self._emit(
