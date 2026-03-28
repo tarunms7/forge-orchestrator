@@ -134,7 +134,7 @@ function QualityPresetSelector({
               key={preset.value}
               type="button"
               onClick={() => onSelect(preset.value)}
-              className={`relative flex flex-col items-start gap-2 rounded-lg border p-4 text-left transition ${
+              className={`relative flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition ${
                 isSelected
                   ? "border-accent bg-surface-3/70"
                   : "border-border-color bg-surface-1 hover:border-border-color/80 hover:bg-surface-3/50"
@@ -343,7 +343,7 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           onChange={(e) => onChange({ ...value, description: e.target.value })}
           maxLength={MAX_DESCRIPTION_LENGTH}
           placeholder="Build a REST API with user authentication, CRUD endpoints for posts, and unit tests..."
-          className="mt-1 block w-full resize-y rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          className="mt-1 block w-full resize-y rounded-xl border border-border-color bg-surface-3 px-4 py-1.5 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
         <div className="mt-1 flex items-center justify-between text-xs text-text-dim">
           <span>Supports markdown formatting</span>
@@ -541,7 +541,7 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
               key={option.value}
               type="button"
               onClick={() => onChange({ ...value, priority: option.value })}
-              className={`rounded-lg border px-4 py-1.5 text-sm font-medium transition ${
+              className={`rounded-xl border px-4 py-1.5 text-sm font-medium transition ${
                 value.priority === option.value
                   ? option.color
                   : "border-border-color bg-surface-3 text-text-tertiary hover:border-border-color/80"
@@ -564,7 +564,7 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           value={value.branchName}
           onChange={(e) => onChange({ ...value, branchName: e.target.value })}
           placeholder="forge/my-feature-branch"
-          className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          className="mt-1 block w-full rounded-xl border border-border-color bg-surface-3 px-4 py-1.5 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
         {(() => {
           const branchError = validateBranchName(value.branchName);
@@ -589,7 +589,7 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           value={value.buildCmd}
           onChange={(e) => onChange({ ...value, buildCmd: e.target.value })}
           placeholder="npm run build"
-          className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-mono text-sm"
+          className="mt-1 block w-full rounded-xl border border-border-color bg-surface-3 px-4 py-1.5 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-mono text-sm"
         />
         <p className="mt-1 text-xs text-text-dim">
           Runs before lint check. Overrides FORGE_BUILD_CMD env var for this pipeline.
@@ -607,7 +607,7 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           value={value.testCmd}
           onChange={(e) => onChange({ ...value, testCmd: e.target.value })}
           placeholder="pytest"
-          className="mt-1 block w-full rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-mono text-sm"
+          className="mt-1 block w-full rounded-xl border border-border-color bg-surface-3 px-4 py-1.5 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent font-mono text-sm"
         />
         <p className="mt-1 text-xs text-text-dim">
           Runs after lint, before LLM review. Overrides FORGE_TEST_CMD env var for this pipeline.
@@ -626,7 +626,7 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
           onChange={(e) => onChange({ ...value, additionalContext: e.target.value })}
           maxLength={MAX_CONTEXT_LENGTH}
           placeholder="Preferred libraries, coding style, or constraints..."
-          className="mt-1 block w-full resize-y rounded-lg border border-border-color bg-surface-3 px-4 py-2 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          className="mt-1 block w-full resize-y rounded-xl border border-border-color bg-surface-3 px-4 py-1.5 text-text-primary placeholder:text-text-dim focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
         <div className="mt-1 text-right text-xs text-text-dim">
           {value.additionalContext.length}/{MAX_CONTEXT_LENGTH}
