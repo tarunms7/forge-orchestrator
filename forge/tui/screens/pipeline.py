@@ -8,8 +8,8 @@ import random
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.message import Message
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Input
@@ -55,7 +55,7 @@ class PhaseBanner(Widget):
     DEFAULT_CSS = """
     PhaseBanner {
         width: 1fr;
-        height: 5;
+        height: 3;
         content-align: center middle;
         text-align: center;
         background: #0d1117;
@@ -236,15 +236,20 @@ class IntegrationBadge(Widget):
         super().__init__()
         self._degraded = False
         self._checking = False
+        self._check_label = "Integration check running…"
 
-    def update(self, *, degraded: bool = False, checking: bool = False) -> None:
+    def update(
+        self, *, degraded: bool = False, checking: bool = False, label: str | None = None
+    ) -> None:
         self._degraded = degraded
         self._checking = checking
+        if label:
+            self._check_label = label
         self.refresh()
 
     def render(self) -> str:
         if self._checking:
-            return "[#d2a8ff]⧗ Integration check running...[/]"
+            return f"[#d2a8ff]⧗ {self._check_label}[/]"
         if self._degraded:
             return "[bold #d29922]⚠ Pipeline Degraded[/]"
         return ""
@@ -273,7 +278,7 @@ class PipelineScreen(Screen):
     }
     PipelineScreen > PhaseBanner {
         width: 100%;
-        height: 5;
+        height: 3;
         content-align: center middle;
         text-align: center;
         background: #0d1117;
@@ -289,9 +294,9 @@ class PipelineScreen(Screen):
         width: 100%;
     }
     #left-panel {
-        width: 38;
-        min-width: 32;
-        max-width: 48;
+        width: 32;
+        min-width: 28;
+        max-width: 40;
         border-right: tall #21262d;
         background: #0d1117;
         layout: vertical;
@@ -637,13 +642,20 @@ class PipelineScreen(Screen):
         except Exception:
             return
         state = self._state
-        # Check if any integration check is currently running
+        # Check if any integration check is currently running + set descriptive label
+        label = "Integration check running…"
         checking = any(c.get("status") == "running" for c in state.integration_checks.values())
+        if checking:
+            label = "Running post-merge integration check…"
         if not checking and state.integration_baseline:
             checking = state.integration_baseline.get("status") == "running"
+            if checking:
+                label = "Running baseline check (pre-execution)…"
         if not checking and state.integration_final_gate:
             checking = state.integration_final_gate.get("status") == "running"
-        badge.update(degraded=state.integration_degraded, checking=checking)
+            if checking:
+                label = "Running final integration gate…"
+        badge.update(degraded=state.integration_degraded, checking=checking, label=label)
 
     def _refresh_all(self) -> None:
         state = self._state
