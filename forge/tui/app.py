@@ -16,7 +16,7 @@ from forge.core.async_utils import safe_create_task
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.final_approval import FinalApprovalScreen
 from forge.tui.screens.home import HomeScreen, PromptTextArea
-from forge.tui.screens.pipeline import PipelineScreen
+from forge.tui.screens.pipeline import PhaseBanner, PipelineScreen
 from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
@@ -987,7 +987,7 @@ class ForgeApp(App):
         self._daemon_task.add_done_callback(self._on_daemon_done)
 
     async def _run_contracts_and_execute(self) -> None:
-        """Generate contracts then execute — runs as background task."""
+        """Generate contracts then start countdown — runs as background task."""
         try:
             self._state.apply_event(
                 "pipeline:phase_changed",
@@ -1002,7 +1002,23 @@ class ForgeApp(App):
             logger.error("Contract generation failed: %s", e, exc_info=True)
             self._state.apply_event("pipeline:error", {"error": str(e)})
             return
-        await self._run_execute()
+        # Contracts done — start launch countdown
+        self._state.apply_event(
+            "pipeline:phase_changed",
+            {"phase": "countdown"},
+        )
+        try:
+            pipeline_screen = self.query_one(PipelineScreen)
+            pipeline_screen.query_one(PhaseBanner).start_countdown(5)
+        except Exception:
+            # If screen query fails (e.g. screen not mounted), skip countdown
+            logger.debug("Could not start countdown, proceeding to execute", exc_info=True)
+            await self._run_execute()
+
+    async def on_phase_banner_countdown_complete(self, event: PhaseBanner.CountdownComplete) -> None:
+        """Countdown finished — start execution."""
+        self._daemon_task = asyncio.create_task(self._run_execute())
+        self._daemon_task.add_done_callback(self._on_daemon_done)
 
     async def on_plan_approval_screen_plan_cancelled(self, event) -> None:
         """User cancelled the plan — clean up and return to HomeScreen."""

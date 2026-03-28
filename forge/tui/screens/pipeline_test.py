@@ -497,32 +497,29 @@ async def test_read_only_shows_banner():
 
 
 @pytest.mark.asyncio
-async def test_contracts_streaming_output():
-    """contracts:output events stream into AgentOutput during contracts phase."""
+async def test_contracts_phase_shows_preparing():
+    """Contracts phase shows a static preparing message (no streaming output)."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
         state.apply_event("pipeline:phase_changed", {"phase": "contracts"})
-        state.apply_event("contracts:output", {"line": "Building contracts..."})
-        state.apply_event("contracts:output", {"line": "Analyzing interfaces..."})
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
         assert agent_output._task_id == "contracts"
-        assert len(agent_output._lines) == 2
-        assert "Building contracts..." in agent_output._lines[0]
+        assert any("parallel execution" in line for line in agent_output._lines)
 
 
 @pytest.mark.asyncio
-async def test_contracts_fallback_placeholder():
-    """Without contracts_output, contracts phase shows fallback placeholder."""
+async def test_countdown_phase_shows_preparing():
+    """Countdown phase shows the same preparing message as contracts."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        state.apply_event("pipeline:phase_changed", {"phase": "contracts"})
+        state.apply_event("pipeline:phase_changed", {"phase": "countdown"})
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
         assert agent_output._task_id == "contracts"
-        assert any("Building API contracts" in line for line in agent_output._lines)
+        assert any("parallel execution" in line for line in agent_output._lines)
 
 
 # ── Error detail display tests ──────────────────────────────────
