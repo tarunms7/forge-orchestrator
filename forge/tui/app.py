@@ -16,7 +16,7 @@ from forge.core.async_utils import safe_create_task
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.final_approval import FinalApprovalScreen
 from forge.tui.screens.home import HomeScreen, PromptTextArea
-from forge.tui.screens.pipeline import PipelineScreen
+from forge.tui.screens.pipeline import PhaseBanner, PipelineScreen
 from forge.tui.screens.plan_approval import PlanApprovalScreen
 from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
@@ -987,7 +987,11 @@ class ForgeApp(App):
         self._daemon_task.add_done_callback(self._on_daemon_done)
 
     async def _run_contracts_and_execute(self) -> None:
-        """Generate contracts then execute — runs as background task."""
+        """Generate contracts, run countdown, then execute.
+
+        This coroutine stays alive through the entire lifecycle so that
+        _daemon_task remains active (quit guards, elapsed timer all work).
+        """
         try:
             self._state.apply_event(
                 "pipeline:phase_changed",
@@ -1002,7 +1006,36 @@ class ForgeApp(App):
             logger.error("Contract generation failed: %s", e, exc_info=True)
             self._state.apply_event("pipeline:error", {"error": str(e)})
             return
+
+        # Contracts done — run launch countdown (keeps this coroutine alive)
+        self._state.apply_event(
+            "pipeline:phase_changed",
+            {"phase": "countdown"},
+        )
+        try:
+            pipeline_screen = self.query_one(PipelineScreen)
+            banner = pipeline_screen.query_one(PhaseBanner)
+            # Create event that the countdown message handler will set
+            self._countdown_done = asyncio.Event()
+            banner.start_countdown(5)
+            # Wait for countdown to complete (or cancellation)
+            await self._countdown_done.wait()
+        except asyncio.CancelledError:
+            raise  # Let cancellation propagate cleanly
+        except Exception:
+            logger.debug("Could not run countdown, proceeding to execute", exc_info=True)
+
+        # Execute — phase transitions to "executing" inside _run_execute
         await self._run_execute()
+
+    def on_phase_banner_countdown_complete(self, event: PhaseBanner.CountdownComplete) -> None:
+        """Countdown finished — unblock _run_contracts_and_execute."""
+        # Guard: only proceed if we're still in countdown phase
+        if self._state.phase != "countdown":
+            return
+        countdown_done = getattr(self, "_countdown_done", None)
+        if countdown_done is not None:
+            countdown_done.set()
 
     async def on_plan_approval_screen_plan_cancelled(self, event) -> None:
         """User cancelled the plan — clean up and return to HomeScreen."""

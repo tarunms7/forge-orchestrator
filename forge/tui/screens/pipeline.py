@@ -8,6 +8,7 @@ import random
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.message import Message
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widget import Widget
@@ -36,7 +37,6 @@ _SIDEBAR_HIDDEN_PHASES = frozenset(
         "idle",
         "planning",
         "planned",
-        "contracts",
         "final_approval",
         "complete",
         "pr_creating",
@@ -63,6 +63,9 @@ class PhaseBanner(Widget):
     }
     """
 
+    class CountdownComplete(Message):
+        """Emitted when the launch countdown reaches zero."""
+
     def __init__(self) -> None:
         super().__init__()
         self._phase = "idle"
@@ -74,6 +77,9 @@ class PhaseBanner(Widget):
         self._resolved_count: int = 0
         self._scramble_timer = None
         self._animating: bool = False
+        # Countdown state
+        self._countdown_value: int = 0
+        self._countdown_timer = None
 
     def update_phase(self, phase: str) -> None:
         old_phase = self._phase
@@ -118,12 +124,52 @@ class PhaseBanner(Widget):
     def on_unmount(self) -> None:
         if self._scramble_timer is not None:
             self._scramble_timer.stop()
+        if self._countdown_timer is not None:
+            self._countdown_timer.stop()
 
     def set_read_only_banner(self, text: str | None) -> None:
         self._read_only_banner = text
         self.refresh()
 
+    def stop_countdown(self) -> None:
+        """Cancel any running countdown without firing CountdownComplete."""
+        self._countdown_value = 0
+        if self._countdown_timer is not None:
+            self._countdown_timer.stop()
+            self._countdown_timer = None
+        self.refresh()
+
+    def start_countdown(self, seconds: int = 5) -> None:
+        """Start a visual countdown before execution."""
+        self._countdown_value = seconds
+        # Stop any scramble animation
+        self._animating = False
+        if self._scramble_timer is not None:
+            self._scramble_timer.stop()
+            self._scramble_timer = None
+        if self._countdown_timer is not None:
+            self._countdown_timer.stop()
+        self._countdown_timer = self.set_interval(1.0, self._tick_countdown)
+        self.refresh()
+
+    def _tick_countdown(self) -> None:
+        """Tick the countdown down by one second."""
+        self._countdown_value -= 1
+        if self._countdown_value <= 0:
+            if self._countdown_timer is not None:
+                self._countdown_timer.stop()
+                self._countdown_timer = None
+            self.post_message(self.CountdownComplete())
+        self.refresh()
+
     def render(self) -> str:
+        # Countdown takes priority over everything
+        if self._countdown_value > 0:
+            return (
+                f"[bold #e3b341]⚡  L A U N C H I N G   I N[/]\n"
+                f"[bold #f0883e]  {self._countdown_value}  [/]"
+            )
+
         if self._animating and self._target_text:
             # Build partially-resolved text
             resolved = self._target_text[: self._resolved_count]
@@ -604,13 +650,18 @@ class PipelineScreen(Screen):
         self._refresh_integration_badge()
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
-        # Inject merge substatus into task dicts for display
+        # Inject merge substatus and preparing flag into task dicts for display
+        is_preparing = state.phase in ("contracts", "countdown")
         for t in ordered_tasks:
             substatus = state.merge_substatus.get(t["id"])
             if substatus:
                 t["merge_substatus"] = substatus
             else:
                 t.pop("merge_substatus", None)
+            if is_preparing:
+                t["_preparing"] = True
+            else:
+                t.pop("_preparing", None)
         task_list.update_tasks(
             ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo
         )
@@ -641,30 +692,19 @@ class PipelineScreen(Screen):
             planning_q = state.pending_questions.get("__planning__")
             if planning_q:
                 self._auto_switch_planning_chat(planning_q)
-        elif state.phase == "contracts":
+        elif state.phase in ("contracts", "countdown"):
             agent_output.clear_error_detail()
-            if state.contracts_output:
-                agent_output.update_output(
-                    "contracts",
-                    "⚙ Contracts",
-                    "contracts",
-                    state.contracts_output,
-                )
-            else:
-                agent_output.update_output(
-                    "contracts",
-                    "Generating Contracts",
-                    "contracts",
-                    [
-                        "⚙ Building API contracts...",
-                        "  This enables tasks to run in parallel instead of sequentially.",
-                    ],
-                )
+            agent_output.update_output(
+                "contracts",
+                "Preparing",
+                "contracts",
+                ["⚙ Building task contracts for parallel execution…"],
+            )
         else:
             agent_output.clear_error_detail()
             # During planning/contracts phases, show planner output even if
             # transiently empty — never show "No task selected" before tasks exist.
-            if state.phase in ("planning", "planned", "contracts"):
+            if state.phase in ("planning", "planned", "contracts", "countdown"):
                 agent_output.update_output(
                     "planner",
                     "Planning",

@@ -497,32 +497,96 @@ async def test_read_only_shows_banner():
 
 
 @pytest.mark.asyncio
-async def test_contracts_streaming_output():
-    """contracts:output events stream into AgentOutput during contracts phase."""
+async def test_contracts_phase_shows_preparing():
+    """Contracts phase shows a static preparing message (no streaming output)."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
         state.apply_event("pipeline:phase_changed", {"phase": "contracts"})
-        state.apply_event("contracts:output", {"line": "Building contracts..."})
-        state.apply_event("contracts:output", {"line": "Analyzing interfaces..."})
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
         assert agent_output._task_id == "contracts"
-        assert len(agent_output._lines) == 2
-        assert "Building contracts..." in agent_output._lines[0]
+        assert any("parallel execution" in line for line in agent_output._lines)
 
 
 @pytest.mark.asyncio
-async def test_contracts_fallback_placeholder():
-    """Without contracts_output, contracts phase shows fallback placeholder."""
+async def test_countdown_phase_shows_preparing():
+    """Countdown phase shows the same preparing message as contracts."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
-        state.apply_event("pipeline:phase_changed", {"phase": "contracts"})
+        state.apply_event("pipeline:phase_changed", {"phase": "countdown"})
         await pilot.pause()
         agent_output = app.screen.query_one("AgentOutput")
         assert agent_output._task_id == "contracts"
-        assert any("Building API contracts" in line for line in agent_output._lines)
+        assert any("parallel execution" in line for line in agent_output._lines)
+
+
+# ── Countdown tests ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_countdown_banner_renders_number():
+    """PhaseBanner shows 'LAUNCHING IN N' during countdown."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        banner = app.screen.query_one("PhaseBanner")
+        banner.start_countdown(3)
+        await pilot.pause()
+        rendered = banner.render()
+        assert "L A U N C H I N G" in rendered
+        assert "3" in rendered
+
+
+@pytest.mark.asyncio
+async def test_countdown_ticks_and_fires_complete():
+    """Countdown ticks down and posts CountdownComplete when reaching zero."""
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        banner = app.screen.query_one("PhaseBanner")
+        banner.start_countdown(2)
+        # Tick twice (interval is 1s, but we can trigger manually)
+        banner._tick_countdown()  # 2 → 1
+        assert banner._countdown_value == 1
+        rendered = banner.render()
+        assert "1" in rendered
+        banner._tick_countdown()  # 1 → 0, fires CountdownComplete
+        assert banner._countdown_value == 0
+        assert banner._countdown_timer is None  # Timer stopped
+
+
+@pytest.mark.asyncio
+async def test_stop_countdown_prevents_complete():
+    """stop_countdown cancels the timer without firing CountdownComplete."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        banner = app.screen.query_one("PhaseBanner")
+        banner.start_countdown(5)
+        assert banner._countdown_value == 5
+        banner.stop_countdown()
+        assert banner._countdown_value == 0
+        assert banner._countdown_timer is None
+
+
+@pytest.mark.asyncio
+async def test_preparing_gear_on_tasks_during_contracts():
+    """Tasks show purple gear indicator during contracts/countdown phases."""
+    from forge.tui.widgets.task_list import format_task_line
+
+    task = {"id": "t1", "title": "Build API", "state": "todo", "_preparing": True}
+    line = format_task_line(task, selected=False)
+    assert "⚙" in line  # purple gear indicator
+
+    # Without _preparing, no gear
+    task_normal = {"id": "t2", "title": "Build API", "state": "todo"}
+    line_normal = format_task_line(task_normal, selected=False)
+    # Should not have the purple gear (only the normal icon)
+    assert line_normal.count("⚙") <= 1  # at most the state icon, not the suffix
 
 
 # ── Error detail display tests ──────────────────────────────────

@@ -47,7 +47,9 @@ def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False, ic
     files_changed = task.get("files_changed", [])
     file_count = len(files_changed) if files_changed else 0
 
-    if state == "error":
+    if task.get("_preparing") and state == "todo":
+        suffix_parts.append("[#a371f7]⚙[/]")
+    elif state == "error":
         suffix_parts.append("⚠")
     elif state == "merging":
         _MERGE_STEP_LABELS = {
