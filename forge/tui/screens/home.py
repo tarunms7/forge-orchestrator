@@ -79,7 +79,8 @@ class HomeScreen(Screen):
         align: center top;
     }
     #home-container {
-        width: 120;
+        width: 1fr;
+        max-width: 120;
         height: 1fr;
         padding: 0 2;
     }
@@ -92,7 +93,7 @@ class HomeScreen(Screen):
         margin: 1 0;
     }
     #prompt-input {
-        height: 7;
+        height: 5;
         border: tall #30363d;
         background: #161b22;
         width: 1fr;
@@ -102,7 +103,7 @@ class HomeScreen(Screen):
     }
     #shortcuts-panel {
         width: 32;
-        height: 7;
+        height: 5;
         border: tall #30363d;
         background: #161b22;
         margin-left: 1;
@@ -116,6 +117,7 @@ class HomeScreen(Screen):
     .branch-field {
         width: 1fr;
         height: auto;
+        max-height: 10;
     }
     .workspace-repo-row {
         width: 100%;

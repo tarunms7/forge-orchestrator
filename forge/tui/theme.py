@@ -97,6 +97,7 @@ PHASE_DISPLAY: dict[str, tuple[str, str]] = {
     "in_progress": ("⚡ Execution", ACCENT_ORANGE),
     "review": ("🔍 Review", ACCENT_CYAN),
     "in_review": ("🔍 Review", ACCENT_CYAN),
+    "merging": ("◈ Merging", ACCENT_CYAN),
     "final_approval": ("◎ Final Approval", ACCENT_ORANGE),
     "pr_creating": ("⚙ Creating PR", ACCENT_PURPLE),
     "pr_created": ("✔ PR Created", ACCENT_GREEN),

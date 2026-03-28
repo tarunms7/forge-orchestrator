@@ -599,6 +599,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         planner_model = select_model(strategy, "planner", "high")
         console.print(f"[dim]Strategy: {strategy} | Planner: {planner_model}[/dim]")
 
+        async def _planner_progress(msg: str) -> None:
+            """Emit a planner progress message to fill visual gaps."""
+            if pipeline_id:
+                await self._emit(
+                    "planner:output", {"line": msg}, db=db, pipeline_id=pipeline_id
+                )
+            else:
+                await self._events.emit("planner:output", {"line": msg})
+
+        await _planner_progress("Analyzing codebase structure…")
+
         # Load template config from pipeline for prompt modifiers
         planner_prompt_modifier = ""
         if pipeline_id:
@@ -670,6 +681,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 logger.info("Excluding repos from planning: %s", ", ".join(sorted(excluded_repos)))
 
         # Run snapshot gathering in a thread to avoid blocking the event loop
+        await _planner_progress("Gathering project snapshot…")
         if len(planning_repos) == 1:
             repo = next(iter(planning_repos.values()))
             self._snapshot = await asyncio.get_running_loop().run_in_executor(
@@ -699,6 +711,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             user_input=user_input,
             total_files=self._snapshot.total_files if self._snapshot else 0,
         )
+
+        await _planner_progress("Building task graph…")
 
         if use_deep:
             from forge.core.planning.unified_planner import UnifiedPlanner
@@ -878,6 +892,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         pipeline_id=pipeline_id,
                     )
 
+        await _planner_progress("Validating plan…")
+
         # Emit pipeline cost estimate
         if pipeline_id and graph.tasks:
             estimated = await estimate_pipeline_cost(
@@ -1041,6 +1057,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """
         pid = pipeline_id or getattr(self, "_pipeline_id", None) or str(uuid.uuid4())
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
+        # Reset phase-emission guards so review/merging phases emit correctly
+        self._review_phase_emitted = False
+        self._merging_phase_emitted = False
         prefix = pid[:8]
 
         # Multi-repo: validate repos and resolve base branches

@@ -269,6 +269,12 @@ class ExecutorMixin:
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
         )
+        # Emit pipeline-level merging phase on first task entering merge
+        if not getattr(self, "_merging_phase_emitted", False):
+            self._merging_phase_emitted = True
+            await self._emit(
+                "pipeline:phase_changed", {"phase": "merging"}, db=db, pipeline_id=pid
+            )
         branch = f"forge/{validate_task_id(task_id)}"
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
@@ -406,6 +412,13 @@ class ExecutorMixin:
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
+        # Emit startup message so TUI shows progress before first SDK output
+        await self._emit(
+            "task:agent_output",
+            {"task_id": task_id, "line": f"⚙ Starting agent ({agent_model})…"},
+            db=db,
+            pipeline_id=pid,
+        )
         agent_t0 = time.monotonic()
         result = await self._stream_agent(
             runtime,
@@ -1250,6 +1263,12 @@ class ExecutorMixin:
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "in_review"}, db=db, pipeline_id=pid
         )
+        # Emit pipeline-level review phase on first task entering review
+        if not getattr(self, "_review_phase_emitted", False):
+            self._review_phase_emitted = True
+            await self._emit(
+                "pipeline:phase_changed", {"phase": "review"}, db=db, pipeline_id=pid
+            )
         # Resolve per-pipeline build/test commands for review gates
         pipeline = await db.get_pipeline(pid) if pid else None
         self._pipeline_build_cmd = getattr(pipeline, "build_cmd", None) if pipeline else None
@@ -1396,6 +1415,12 @@ class ExecutorMixin:
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
         )
+        # Emit pipeline-level merging phase on first task entering merge
+        if not getattr(self, "_merging_phase_emitted", False):
+            self._merging_phase_emitted = True
+            await self._emit(
+                "pipeline:phase_changed", {"phase": "merging"}, db=db, pipeline_id=pid
+            )
         branch = f"forge/{validate_task_id(task_id)}"
 
         # Ensure worktree is clean before merge — commits staged changes,
