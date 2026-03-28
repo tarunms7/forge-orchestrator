@@ -131,6 +131,14 @@ class PhaseBanner(Widget):
         self._read_only_banner = text
         self.refresh()
 
+    def stop_countdown(self) -> None:
+        """Cancel any running countdown without firing CountdownComplete."""
+        self._countdown_value = 0
+        if self._countdown_timer is not None:
+            self._countdown_timer.stop()
+            self._countdown_timer = None
+        self.refresh()
+
     def start_countdown(self, seconds: int = 5) -> None:
         """Start a visual countdown before execution."""
         self._countdown_value = seconds
@@ -157,11 +165,9 @@ class PhaseBanner(Widget):
     def render(self) -> str:
         # Countdown takes priority over everything
         if self._countdown_value > 0:
-            n = self._countdown_value
-            spaced_n = f"  {n}  " if n < 10 else f"  {n}  "
             return (
                 f"[bold #e3b341]⚡  L A U N C H I N G   I N[/]\n"
-                f"[bold #f0883e]{spaced_n}[/]"
+                f"[bold #f0883e]  {self._countdown_value}  [/]"
             )
 
         if self._animating and self._target_text:
