@@ -450,8 +450,11 @@ class PipelineScreen(Screen):
             try:
                 state = self._state
                 self.query_one(PipelineProgress).update_progress(
-                    state.done_count, state.total_count, state.total_cost_usd,
-                    state.elapsed_seconds, state.phase,
+                    state.done_count,
+                    state.total_count,
+                    state.total_cost_usd,
+                    state.elapsed_seconds,
+                    state.phase,
                 )
             except Exception:
                 pass
@@ -460,8 +463,11 @@ class PipelineScreen(Screen):
             try:
                 state = self._state
                 self.query_one(PipelineProgress).update_progress(
-                    state.done_count, state.total_count, state.total_cost_usd,
-                    state.elapsed_seconds, state.phase,
+                    state.done_count,
+                    state.total_count,
+                    state.total_cost_usd,
+                    state.elapsed_seconds,
+                    state.phase,
                 )
             except Exception:
                 pass

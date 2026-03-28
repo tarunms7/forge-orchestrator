@@ -323,14 +323,16 @@ async def _create_pipeline_with_status(db, pid, status, tasks_succeeded=0, tasks
 async def test_get_pipeline_analytics_mixed(db):
     """get_pipeline_analytics returns correct counts and streaks for mixed statuses."""
     # Create pipelines in order (created_at is set automatically in order)
-    await _create_pipeline_with_status(db, "p1", "done")       # pass
-    await _create_pipeline_with_status(db, "p2", "error")      # fail
-    await _create_pipeline_with_status(db, "p3", "complete")   # pass
+    await _create_pipeline_with_status(db, "p1", "done")  # pass
+    await _create_pipeline_with_status(db, "p2", "error")  # fail
+    await _create_pipeline_with_status(db, "p3", "complete")  # pass
     await _create_pipeline_with_status(db, "p4", "cancelled")  # cancelled
-    await _create_pipeline_with_status(db, "p5", "executing", tasks_succeeded=2, tasks_failed=1)  # partial
-    await _create_pipeline_with_status(db, "p6", "planning")   # other (no tasks)
-    await _create_pipeline_with_status(db, "p7", "done")       # pass — most recent
-    await _create_pipeline_with_status(db, "p8", "complete")   # pass — most recent
+    await _create_pipeline_with_status(
+        db, "p5", "executing", tasks_succeeded=2, tasks_failed=1
+    )  # partial
+    await _create_pipeline_with_status(db, "p6", "planning")  # other (no tasks)
+    await _create_pipeline_with_status(db, "p7", "done")  # pass — most recent
+    await _create_pipeline_with_status(db, "p8", "complete")  # pass — most recent
 
     result = await db.get_pipeline_analytics()
     assert result["total"] == 8

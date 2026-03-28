@@ -93,12 +93,10 @@ def format_markdown(data: dict) -> str:
     else:
         # Table header
         lines.append(
-            "| Task ID | Title | Status | Cost | Duration "
-            "| Retries | Files Changed | Agent |"
+            "| Task ID | Title | Status | Cost | Duration | Retries | Files Changed | Agent |"
         )
         lines.append(
-            "|---------|-------|--------|------|----------"
-            "|---------|---------------|-------|"
+            "|---------|-------|--------|------|----------|---------|---------------|-------|"
         )
 
         for t in tasks:
@@ -146,19 +144,21 @@ def format_csv(data: dict) -> str:
     writer.writerow(headers)
 
     for t in data.get("tasks", []):
-        writer.writerow([
-            t.get("id", ""),
-            t.get("title", ""),
-            t.get("state", ""),
-            t.get("cost_usd", 0.0),
-            _task_total_duration(t),
-            t.get("retry_count", 0),
-            len(t.get("files", [])),
-            t.get("assigned_agent") or "",
-            t.get("complexity", ""),
-            t.get("input_tokens", 0),
-            t.get("output_tokens", 0),
-            t.get("error_message") or "",
-        ])
+        writer.writerow(
+            [
+                t.get("id", ""),
+                t.get("title", ""),
+                t.get("state", ""),
+                t.get("cost_usd", 0.0),
+                _task_total_duration(t),
+                t.get("retry_count", 0),
+                len(t.get("files", [])),
+                t.get("assigned_agent") or "",
+                t.get("complexity", ""),
+                t.get("input_tokens", 0),
+                t.get("output_tokens", 0),
+                t.get("error_message") or "",
+            ]
+        )
 
     return output.getvalue()

@@ -28,7 +28,13 @@ _TIMEOUT_PATTERNS = ("timeout", "max turns", "timed out")
 _GUARD_PATTERNS = ("guardtriggered", "retry loop")
 _NETWORK_PATTERNS = ("connection", "network", "dns", "socket", "eof")
 _NO_CHANGES_PATTERNS = ("no changes", "no diff")
-_INFRA_TEST_PATTERNS = ("command not found", "no module named", "importerror", "modulenotfounderror", "filenotfounderror")
+_INFRA_TEST_PATTERNS = (
+    "command not found",
+    "no module named",
+    "importerror",
+    "modulenotfounderror",
+    "filenotfounderror",
+)
 
 
 @dataclass

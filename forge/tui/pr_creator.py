@@ -120,7 +120,9 @@ async def auto_format_branch(project_dir: str, branch: str) -> bool:
                     )
                     stdout, fmt_stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
                     if proc.returncode == 0:
-                        logger.info("Formatter %s completed: %s", name, stdout.decode().strip()[:200])
+                        logger.info(
+                            "Formatter %s completed: %s", name, stdout.decode().strip()[:200]
+                        )
                     else:
                         logger.warning(
                             "Formatter %s failed (exit %d): %s",

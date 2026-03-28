@@ -877,6 +877,7 @@ async def _run_ci_fix(
 
     # Load CI fix config from project config
     from forge.config.project_config import ProjectConfig
+
     pconfig = ProjectConfig.load(project_dir)
     ci_config = pconfig.ci_fix
 
@@ -906,13 +907,21 @@ async def _run_ci_fix(
             emit_fn=emit_fn,
             cancel_event=cancel_event,
         )
-        logger.info("CI fix completed for %s: %s (cost=$%.2f)", pipeline_id, result.final_status, result.total_cost_usd)
+        logger.info(
+            "CI fix completed for %s: %s (cost=$%.2f)",
+            pipeline_id,
+            result.final_status,
+            result.total_cost_usd,
+        )
     except Exception:
         logger.exception("CI fix loop failed for %s", pipeline_id)
-        await ws_manager.broadcast(pipeline_id, {
-            "type": "pipeline:ci_fix_error",
-            "error": "CI fix loop crashed",
-        })
+        await ws_manager.broadcast(
+            pipeline_id,
+            {
+                "type": "pipeline:ci_fix_error",
+                "error": "CI fix loop crashed",
+            },
+        )
     finally:
         _ci_fix_cancel_events.pop(pipeline_id, None)
 

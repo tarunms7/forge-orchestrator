@@ -99,9 +99,7 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
             if state in ("merging", "awaiting_approval"):
                 # Check review gates — if all passed, show green
                 gates = t.get("review_gates", {})
-                all_passed = gates and all(
-                    g.get("status") == "passed" for g in gates.values()
-                )
+                all_passed = gates and all(g.get("status") == "passed" for g in gates.values())
                 if all_passed:
                     lines.append(
                         f"{indent}[{ACCENT_GREEN}]✅[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]"

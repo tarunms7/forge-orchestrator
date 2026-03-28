@@ -228,7 +228,9 @@ async def _check_git_repo(project_dir: str, repos: dict | None = None) -> CheckR
     async def _check_one_repo(repo_id: str, path: str) -> str | None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--git-dir",
+                "git",
+                "rev-parse",
+                "--git-dir",
                 cwd=path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -269,7 +271,10 @@ async def _check_base_branch(
     async def _check_one_branch(repo_id: str, path: str, branch: str) -> str | None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--verify", f"refs/heads/{branch}",
+                "git",
+                "rev-parse",
+                "--verify",
+                f"refs/heads/{branch}",
                 cwd=path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -279,7 +284,10 @@ async def _check_base_branch(
                 return None
             # Also check remote
             proc2 = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}",
+                "git",
+                "rev-parse",
+                "--verify",
+                f"refs/remotes/origin/{branch}",
                 cwd=path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -291,9 +299,7 @@ async def _check_base_branch(
             return f"{repo_id}:{branch}" if repo_id != "default" else branch
         return None
 
-    results = await asyncio.gather(
-        *(_check_one_branch(rid, p, b) for rid, p, b in dirs_to_check)
-    )
+    results = await asyncio.gather(*(_check_one_branch(rid, p, b) for rid, p, b in dirs_to_check))
     missing = [r for r in results if r is not None]
 
     if missing:
@@ -318,7 +324,9 @@ async def _check_working_tree_clean(project_dir: str, repos: dict | None = None)
     async def _check_one_tree(repo_id: str, path: str) -> str | None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "status", "--porcelain",
+                "git",
+                "status",
+                "--porcelain",
                 cwd=path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

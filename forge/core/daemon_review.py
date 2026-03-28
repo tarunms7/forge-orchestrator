@@ -1339,9 +1339,7 @@ class ReviewMixin:
                     description="list lint-modified files",
                 )
                 modified_by_lint = {
-                    f.strip()
-                    for f in modified_result.stdout.strip().split("\n")
-                    if f.strip()
+                    f.strip() for f in modified_result.stdout.strip().split("\n") if f.strip()
                 }
                 # Only stage files that overlap with this task's changed_files
                 in_scope_lint_fixes = sorted(modified_by_lint & set(changed_files))

@@ -57,9 +57,7 @@ def render_sparkline(
         # All values equal → mid-height bar.
         bar = _BLOCKS[3] * width
     else:
-        bar = "".join(
-            _BLOCKS[int((v - lo) / span * 7)] for v in sampled
-        )
+        bar = "".join(_BLOCKS[int((v - lo) / span * 7)] for v in sampled)
 
     sparkline_bar = f"[{color}]{bar}[/]"
 
@@ -150,6 +148,7 @@ def format_stats_line(
 
 
 # ── Private helpers ──────────────────────────────────────────────────
+
 
 def _default_cost_fmt(x: float) -> str:
     return f"${x:.2f}"

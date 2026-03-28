@@ -338,7 +338,10 @@ class AgentOutput(Widget):
         if self._rendered_parts:
             # Skip update if content hasn't changed (only cursor frame differs)
             content_hash = hash(tuple(self._rendered_parts))
-            if content_hash == self._last_content_hash and self._typing_frame % len(_TYPING_FRAMES) != 0:
+            if (
+                content_hash == self._last_content_hash
+                and self._typing_frame % len(_TYPING_FRAMES) != 0
+            ):
                 return
             self._last_content_hash = content_hash
             self._update_content()
@@ -589,14 +592,12 @@ class AgentOutput(Widget):
         self._rendered_section = None
         self._rendered_review_count = 0
         for i, (src, line) in enumerate(entries):
-            text, self._rendered_section, self._rendered_review_count = (
-                format_unified_incremental(
-                    src,
-                    line,
-                    current_section=self._rendered_section,
-                    review_count=self._rendered_review_count,
-                    is_first=(i == 0),
-                )
+            text, self._rendered_section, self._rendered_review_count = format_unified_incremental(
+                src,
+                line,
+                current_section=self._rendered_section,
+                review_count=self._rendered_review_count,
+                is_first=(i == 0),
             )
             self._rendered_parts.append(text)
         try:

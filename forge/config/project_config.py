@@ -236,6 +236,7 @@ class IntegrationConfig:
 @dataclass
 class CIFixConfig:
     """Configuration for CI auto-fix after PR creation."""
+
     enabled: bool = False
     max_retries: int = 3
     poll_timeout_seconds: int = 1800
@@ -765,7 +766,10 @@ async def validate_repos_startup_async(repos: list) -> None:
         """Validate a single repo. Returns error message or None."""
         if not is_single_default:
             proc = await asyncio.create_subprocess_exec(
-                "git", "diff", "--cached", "--quiet",
+                "git",
+                "diff",
+                "--cached",
+                "--quiet",
                 cwd=repo.path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -778,7 +782,9 @@ async def validate_repos_startup_async(repos: list) -> None:
                 )
 
         proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "HEAD",
+            "git",
+            "rev-parse",
+            "HEAD",
             cwd=repo.path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
@@ -786,7 +792,10 @@ async def validate_repos_startup_async(repos: list) -> None:
         await proc.wait()
         if proc.returncode == 0:
             proc2 = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--verify", f"refs/heads/{repo.base_branch}",
+                "git",
+                "rev-parse",
+                "--verify",
+                f"refs/heads/{repo.base_branch}",
                 cwd=repo.path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,

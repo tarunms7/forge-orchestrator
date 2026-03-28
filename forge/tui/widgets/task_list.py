@@ -23,7 +23,9 @@ def _escape(text: str | None) -> str:
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
-def format_task_line(task: dict, *, selected: bool, multi_repo: bool = False, icon_frame: int = 0) -> str:
+def format_task_line(
+    task: dict, *, selected: bool, multi_repo: bool = False, icon_frame: int = 0
+) -> str:
     state = task.get("state", "todo")
     # Use animated icon for selected active tasks
     if selected and state in _ANIMATED_ICONS:
@@ -151,7 +153,9 @@ class TaskList(Widget):
             if state in _ANIMATED_ICONS:
                 frames = _ANIMATED_ICONS[state]
                 effective_frame = self._icon_frame % len(frames)
-                last_effective = self._last_icon_frame % len(frames) if self._last_icon_frame >= 0 else -1
+                last_effective = (
+                    self._last_icon_frame % len(frames) if self._last_icon_frame >= 0 else -1
+                )
                 if effective_frame != last_effective:
                     self._last_icon_frame = self._icon_frame
                     self.refresh()

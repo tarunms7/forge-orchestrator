@@ -200,9 +200,7 @@ async def _temp_health_worktree(project_dir: str, ref: str):
             _, rm_stderr = await asyncio.wait_for(remove_proc.communicate(), timeout=30)
             if remove_proc.returncode != 0:
                 err_msg = rm_stderr.decode("utf-8", errors="replace") if rm_stderr else "unknown"
-                logger.error(
-                    "Failed to remove health check worktree at %s: %s", wt_path, err_msg
-                )
+                logger.error("Failed to remove health check worktree at %s: %s", wt_path, err_msg)
         except TimeoutError:
             logger.error(
                 "Timed out removing health check worktree at %s — may need manual cleanup",
@@ -250,7 +248,11 @@ async def cleanup_stale_worktrees(project_dir: str) -> int:
         logger.info("Removing stale health-check worktree: %s (age %.1fh)", entry, age / 3600)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "git", "worktree", "remove", "--force", wt_path,
+                "git",
+                "worktree",
+                "remove",
+                "--force",
+                wt_path,
                 cwd=project_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

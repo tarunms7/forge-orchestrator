@@ -89,9 +89,7 @@ async def websocket_endpoint(
             try:
                 # Wait for a client message; timeout at HEARTBEAT_INTERVAL
                 # so we can send proactive pings on that cadence.
-                await asyncio.wait_for(
-                    websocket.receive_json(), timeout=HEARTBEAT_INTERVAL
-                )
+                await asyncio.wait_for(websocket.receive_json(), timeout=HEARTBEAT_INTERVAL)
                 missed_heartbeats = 0  # Got a message — connection alive
             except TimeoutError:
                 # No message within the heartbeat window — send a ping.

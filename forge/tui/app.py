@@ -209,7 +209,9 @@ class ForgeApp(App):
         self._state.remove_change_callback(self._state_cb)
 
     # Fields that change frequently and don't need a full screen refresh
-    _HIGH_FREQ_FIELDS = frozenset({"agent_output", "review_output", "cost", "elapsed", "followup_output"})
+    _HIGH_FREQ_FIELDS = frozenset(
+        {"agent_output", "review_output", "cost", "elapsed", "followup_output"}
+    )
 
     def _on_state_change(self, field: str) -> None:
         """Refresh current screen and auto-capture screenshots."""
