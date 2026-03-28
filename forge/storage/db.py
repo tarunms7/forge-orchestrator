@@ -187,7 +187,7 @@ class PipelineRow(Base):
     # Multi-repo workspace support
     repos_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # CI Auto-Fix
-    ci_fix_enabled: Mapped[bool] = mapped_column(default=False)
+    ci_fix_enabled: Mapped[bool] = mapped_column(default=True)
     ci_fix_status: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     ci_fix_attempt: Mapped[int] = mapped_column(default=0)
     ci_fix_max_retries: Mapped[int] = mapped_column(default=3)
