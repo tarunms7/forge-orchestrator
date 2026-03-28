@@ -141,7 +141,7 @@ enabled = false
 # After PR creation, watch CI checks and auto-fix failures.
 # Requires: gh CLI authenticated, CI configured on the repo.
 [ci_fix]
-enabled = false              # Enable CI watching + auto-fix after PR creation
+enabled = true               # Watch CI after PR creation and auto-fix failures
 # max_retries = 3            # Max fix attempts before giving up (1-10)
 # poll_timeout_seconds = 1800 # Max time to wait for CI checks (30 min)
 # poll_interval_seconds = 30  # Base polling interval (exponential backoff)
@@ -236,7 +236,7 @@ class IntegrationConfig:
 @dataclass
 class CIFixConfig:
     """Configuration for CI auto-fix after PR creation."""
-    enabled: bool = False
+    enabled: bool = True
     max_retries: int = 3
     poll_timeout_seconds: int = 1800
     poll_interval_seconds: int = 30
@@ -333,7 +333,7 @@ class ProjectConfig:
                 ),
             ),
             ci_fix=CIFixConfig(
-                enabled=ci_fix_raw.get("enabled", False),
+                enabled=ci_fix_raw.get("enabled", True),
                 max_retries=ci_fix_raw.get("max_retries", 3),
                 poll_timeout_seconds=ci_fix_raw.get("poll_timeout_seconds", 1800),
                 poll_interval_seconds=ci_fix_raw.get("poll_interval_seconds", 30),

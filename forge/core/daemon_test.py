@@ -1623,7 +1623,9 @@ async def test_preflight_checks_multi_repo(tmp_path):
     for name in ("backend", "frontend"):
         repo_dir = tmp_path / name
         repo_dir.mkdir()
-        subprocess.run(["git", "init", "--initial-branch=main"], cwd=str(repo_dir), capture_output=True)
+        subprocess.run(
+            ["git", "init", "--initial-branch=main"], cwd=str(repo_dir), capture_output=True
+        )
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
             cwd=str(repo_dir),

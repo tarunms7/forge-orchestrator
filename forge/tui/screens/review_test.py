@@ -81,9 +81,7 @@ async def test_review_screen_j_k_scrolls_diff_viewer():
 def test_refresh_prefers_daemon_diff_over_stale_cache():
     """_refresh should prefer daemon-computed diff over stale cached error."""
     state = TuiState()
-    state.apply_event("pipeline:plan_ready", {
-        "tasks": [{"id": "t1", "title": "Task 1"}]
-    })
+    state.apply_event("pipeline:plan_ready", {"tasks": [{"id": "t1", "title": "Task 1"}]})
     state.selected_task_id = "t1"
     state.tasks["t1"]["state"] = "in_review"
 

@@ -81,6 +81,7 @@ class RejectRequest(BaseModel):
 
 class CIFixRequest(BaseModel):
     """Request body for manually triggering CI auto-fix."""
+
     max_retries: int = Field(default=3, ge=1, le=10, description="Max fix attempts")
     budget_usd: float = Field(default=0.0, ge=0, description="Budget for fix agents (0=unlimited)")
 

@@ -38,9 +38,10 @@ def _decode_output(raw: str | bytes) -> str:
 @dataclass
 class CICheck:
     """One GitHub Actions check/status."""
+
     name: str
-    status: str       # "queued", "in_progress", "completed", "waiting", etc.
-    conclusion: str   # "success", "failure", "cancelled", "skipped", "neutral", ""
+    status: str  # "queued", "in_progress", "completed", "waiting", etc.
+    conclusion: str  # "success", "failure", "cancelled", "skipped", "neutral", ""
     run_id: str = ""
 
     @property
@@ -59,6 +60,7 @@ class CICheck:
 @dataclass
 class CIFixAttempt:
     """Record of one fix attempt."""
+
     attempt: int
     failed_checks: list[str]
     fix_summary: str = ""
@@ -73,6 +75,7 @@ class CIFixAttempt:
 @dataclass
 class CIFixResult:
     """Overall result of the CI fix loop."""
+
     final_status: str  # "passed", "exhausted", "cancelled", "error", "timeout"
     attempts: list[CIFixAttempt] = field(default_factory=list)
     total_cost_usd: float = 0.0
@@ -81,6 +84,7 @@ class CIFixResult:
 @dataclass
 class CIFixConfig:
     """Runtime config for the CI fix loop."""
+
     max_retries: int = 3
     poll_timeout_seconds: int = 1800
     poll_interval_seconds: int = 30
@@ -91,9 +95,7 @@ class CIFixConfig:
 
 # ── URL parsing ──────────────────────────────────────────────────────
 
-_PR_URL_RE = re.compile(
-    r"https?://github\.com/(?P<owner_repo>[^/]+/[^/]+)/pull/(?P<number>\d+)"
-)
+_PR_URL_RE = re.compile(r"https?://github\.com/(?P<owner_repo>[^/]+/[^/]+)/pull/(?P<number>\d+)")
 
 
 def parse_pr_info(pr_url: str) -> tuple[str, str]:
@@ -158,15 +160,18 @@ async def poll_ci_checks(
         current_interval = min(current_interval * 1.5, 90)
 
 
-async def _fetch_checks(
-    owner_repo: str, pr_number: str, project_dir: str
-) -> list[CICheck]:
+async def _fetch_checks(owner_repo: str, pr_number: str, project_dir: str) -> list[CICheck]:
     """Run `gh pr checks` and parse the JSON output."""
     result = await async_subprocess(
         [
-            "gh", "pr", "checks", pr_number,
-            "--repo", owner_repo,
-            "--json", "name,state,conclusion,detailsUrl",
+            "gh",
+            "pr",
+            "checks",
+            pr_number,
+            "--repo",
+            owner_repo,
+            "--json",
+            "name,state,conclusion,detailsUrl",
         ],
         cwd=project_dir,
     )
@@ -191,12 +196,14 @@ async def _fetch_checks(
         if run_match:
             run_id = run_match.group(1)
 
-        checks.append(CICheck(
-            name=item.get("name", "unknown"),
-            status=item.get("state", "").lower(),
-            conclusion=item.get("conclusion", "").lower(),
-            run_id=run_id,
-        ))
+        checks.append(
+            CICheck(
+                name=item.get("name", "unknown"),
+                status=item.get("state", "").lower(),
+                conclusion=item.get("conclusion", "").lower(),
+                run_id=run_id,
+            )
+        )
     return checks
 
 
@@ -225,8 +232,12 @@ async def fetch_failure_logs(
 
         result = await async_subprocess(
             [
-                "gh", "run", "view", check.run_id,
-                "--repo", owner_repo,
+                "gh",
+                "run",
+                "view",
+                check.run_id,
+                "--repo",
+                owner_repo,
                 "--log-failed",
             ],
             cwd=project_dir,
@@ -253,9 +264,14 @@ async def check_pr_open(owner_repo: str, pr_number: str, project_dir: str) -> bo
     """Check if the PR is still open (not merged or closed)."""
     result = await async_subprocess(
         [
-            "gh", "pr", "view", pr_number,
-            "--repo", owner_repo,
-            "--json", "state",
+            "gh",
+            "pr",
+            "view",
+            pr_number,
+            "--repo",
+            owner_repo,
+            "--json",
+            "state",
         ],
         cwd=project_dir,
     )
@@ -416,27 +432,40 @@ async def run_ci_fix_loop(
         if cancel_event.is_set():
             await _update_db(ci_fix_status="cancelled")
             await _emit("pipeline:ci_fix_cancelled", {"reason": "User cancelled"})
-            return CIFixResult(final_status="cancelled", attempts=attempts, total_cost_usd=total_cost)
+            return CIFixResult(
+                final_status="cancelled", attempts=attempts, total_cost_usd=total_cost
+            )
 
         # Check if PR is still open
         if not await check_pr_open(owner_repo, pr_number, project_dir):
             logger.info("PR #%s is no longer open — stopping CI fix", pr_number)
             await _update_db(ci_fix_status="cancelled")
             await _emit("pipeline:ci_fix_cancelled", {"reason": "PR closed or merged"})
-            return CIFixResult(final_status="cancelled", attempts=attempts, total_cost_usd=total_cost)
+            return CIFixResult(
+                final_status="cancelled", attempts=attempts, total_cost_usd=total_cost
+            )
 
         # Poll CI checks
         try:
             checks = await poll_ci_checks(
-                owner_repo, pr_number, project_dir,
+                owner_repo,
+                pr_number,
+                project_dir,
                 timeout=config.poll_timeout_seconds,
                 interval=config.poll_interval_seconds,
                 cancel_event=cancel_event,
-                on_update=lambda cs: asyncio.get_event_loop().create_task(
-                    _emit("pipeline:ci_check_update", {
-                        "checks": [asdict(c) for c in cs],
-                    })
-                ) if emit_fn else None,
+                on_update=lambda cs: (
+                    asyncio.get_event_loop().create_task(
+                        _emit(
+                            "pipeline:ci_check_update",
+                            {
+                                "checks": [asdict(c) for c in cs],
+                            },
+                        )
+                    )
+                    if emit_fn
+                    else None
+                ),
             )
         except TimeoutError:
             logger.warning("CI poll timed out for PR #%s", pr_number)
@@ -446,7 +475,9 @@ async def run_ci_fix_loop(
         except asyncio.CancelledError:
             await _update_db(ci_fix_status="cancelled")
             await _emit("pipeline:ci_fix_cancelled", {"reason": "Cancelled during poll"})
-            return CIFixResult(final_status="cancelled", attempts=attempts, total_cost_usd=total_cost)
+            return CIFixResult(
+                final_status="cancelled", attempts=attempts, total_cost_usd=total_cost
+            )
 
         # Check results
         if not checks:
@@ -467,32 +498,46 @@ async def run_ci_fix_loop(
         failed_names = [c.name for c in failed]
         logger.info(
             "CI failed for PR #%s (attempt %d/%d): %s",
-            pr_number, attempt_num, config.max_retries, ", ".join(failed_names),
+            pr_number,
+            attempt_num,
+            config.max_retries,
+            ", ".join(failed_names),
         )
 
-        await _emit("pipeline:ci_failed", {
-            "attempt": attempt_num,
-            "max_retries": config.max_retries,
-            "failed_checks": [{"name": c.name, "conclusion": c.conclusion} for c in failed],
-        })
+        await _emit(
+            "pipeline:ci_failed",
+            {
+                "attempt": attempt_num,
+                "max_retries": config.max_retries,
+                "failed_checks": [{"name": c.name, "conclusion": c.conclusion} for c in failed],
+            },
+        )
 
         # Budget check
         if config.budget_usd > 0 and total_cost >= config.budget_usd:
-            logger.warning("CI fix budget exhausted ($%.2f >= $%.2f)", total_cost, config.budget_usd)
+            logger.warning(
+                "CI fix budget exhausted ($%.2f >= $%.2f)", total_cost, config.budget_usd
+            )
             await _update_db(ci_fix_status="cancelled")
             await _emit("pipeline:ci_fix_cancelled", {"reason": "Budget exhausted"})
-            return CIFixResult(final_status="cancelled", attempts=attempts, total_cost_usd=total_cost)
+            return CIFixResult(
+                final_status="cancelled", attempts=attempts, total_cost_usd=total_cost
+            )
 
         # Fetch failure logs
         failure_logs = await fetch_failure_logs(owner_repo, failed, project_dir)
 
         # Dispatch fix agent
         await _update_db(ci_fix_status="fixing", ci_fix_attempt=attempt_num)
-        await _emit("pipeline:ci_fixing", {"attempt": attempt_num, "max_retries": config.max_retries})
+        await _emit(
+            "pipeline:ci_fixing", {"attempt": attempt_num, "max_retries": config.max_retries}
+        )
 
         try:
             sdk_result = await dispatch_fix_agent(
-                project_dir, branch, failure_logs,
+                project_dir,
+                branch,
+                failure_logs,
                 model=config.model,
                 max_turns=config.max_turns,
                 base_branch=base_branch,
@@ -531,11 +576,14 @@ async def run_ci_fix_loop(
             ci_fix_log=json.dumps([asdict(a) for a in attempts]),
             ci_fix_status="watching",  # Back to watching
         )
-        await _emit("pipeline:ci_fix_pushed", {
-            "attempt": attempt_num,
-            "summary": summary[:200],
-            "cost_usd": cost,
-        })
+        await _emit(
+            "pipeline:ci_fix_pushed",
+            {
+                "attempt": attempt_num,
+                "summary": summary[:200],
+                "cost_usd": cost,
+            },
+        )
 
         # Small delay before re-polling to let GitHub register the new push
         await asyncio.sleep(10)

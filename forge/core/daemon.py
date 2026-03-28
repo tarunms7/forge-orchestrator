@@ -459,9 +459,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """
         # For multi-repo, check each repo. For single-repo, check project_dir.
         dirs_to_scan = (
-            [rc.path for rc in self._repos.values()]
-            if len(self._repos) > 1
-            else [project_dir]
+            [rc.path for rc in self._repos.values()] if len(self._repos) > 1 else [project_dir]
         )
 
         # --- build_cmd ---
@@ -558,9 +556,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         # gh CLI auth (optional, check once)
         if shutil.which("gh"):
-            result = await async_subprocess(
-                ["gh", "auth", "status"], cwd=check_dirs[0][1]
-            )
+            result = await async_subprocess(["gh", "auth", "status"], cwd=check_dirs[0][1])
             if result.returncode != 0:
                 console.print(
                     "[yellow]  Warning: gh CLI not authenticated (PR creation will fail)[/yellow]"

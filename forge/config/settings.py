@@ -84,7 +84,7 @@ class ForgeSettings(BaseSettings):
     auto_pr: bool = False  # skip final approval, auto-create PR
 
     # CI Auto-Fix
-    ci_fix_enabled: bool = False
+    ci_fix_enabled: bool = True
     ci_fix_max_retries: int = 3
     ci_fix_budget_usd: float = 0.0
 

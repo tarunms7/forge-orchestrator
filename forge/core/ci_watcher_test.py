@@ -138,20 +138,22 @@ def test_ci_check_is_success_not_terminal():
 @pytest.mark.asyncio
 @patch("forge.core.ci_watcher.async_subprocess")
 async def test_fetch_checks_parses_json(mock_sub):
-    gh_output = json.dumps([
-        {
-            "name": "build",
-            "state": "COMPLETED",
-            "conclusion": "SUCCESS",
-            "detailsUrl": "https://github.com/o/r/actions/runs/12345/job/1",
-        },
-        {
-            "name": "lint",
-            "state": "COMPLETED",
-            "conclusion": "FAILURE",
-            "detailsUrl": "https://github.com/o/r/actions/runs/67890/job/2",
-        },
-    ])
+    gh_output = json.dumps(
+        [
+            {
+                "name": "build",
+                "state": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "detailsUrl": "https://github.com/o/r/actions/runs/12345/job/1",
+            },
+            {
+                "name": "lint",
+                "state": "COMPLETED",
+                "conclusion": "FAILURE",
+                "detailsUrl": "https://github.com/o/r/actions/runs/67890/job/2",
+            },
+        ]
+    )
     mock_sub.return_value = FakeResult(returncode=0, stdout=gh_output.encode())
 
     checks = await _fetch_checks("o/r", "1", "/tmp")
@@ -185,9 +187,11 @@ async def test_fetch_checks_invalid_json(mock_sub):
 @pytest.mark.asyncio
 @patch("forge.core.ci_watcher.async_subprocess")
 async def test_fetch_checks_no_details_url(mock_sub):
-    gh_output = json.dumps([
-        {"name": "check", "state": "COMPLETED", "conclusion": "SUCCESS"},
-    ])
+    gh_output = json.dumps(
+        [
+            {"name": "check", "state": "COMPLETED", "conclusion": "SUCCESS"},
+        ]
+    )
     mock_sub.return_value = FakeResult(returncode=0, stdout=gh_output.encode())
     checks = await _fetch_checks("o/r", "1", "/tmp")
     assert len(checks) == 1
@@ -328,9 +332,7 @@ async def test_fetch_failure_logs_deduplicates_run_ids(mock_sub):
 @pytest.mark.asyncio
 @patch("forge.core.ci_watcher.async_subprocess")
 async def test_check_pr_open_true(mock_sub):
-    mock_sub.return_value = FakeResult(
-        returncode=0, stdout=json.dumps({"state": "OPEN"}).encode()
-    )
+    mock_sub.return_value = FakeResult(returncode=0, stdout=json.dumps({"state": "OPEN"}).encode())
     assert await check_pr_open("o/r", "1", "/tmp") is True
 
 
@@ -384,8 +386,10 @@ async def test_fix_loop_all_pass_first_poll(mock_poll, mock_pr_open, mock_dispat
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "passed"
@@ -404,8 +408,10 @@ async def test_fix_loop_no_checks(mock_poll, mock_pr_open, mock_dispatch):
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "passed"
@@ -418,7 +424,9 @@ async def test_fix_loop_no_checks(mock_poll, mock_pr_open, mock_dispatch):
 @patch("forge.core.ci_watcher.dispatch_fix_agent", new_callable=AsyncMock)
 @patch("forge.core.ci_watcher.check_pr_open", new_callable=AsyncMock)
 @patch("forge.core.ci_watcher.poll_ci_checks", new_callable=AsyncMock)
-async def test_fix_loop_fail_then_pass(mock_poll, mock_pr_open, mock_dispatch, mock_logs, mock_sleep):
+async def test_fix_loop_fail_then_pass(
+    mock_poll, mock_pr_open, mock_dispatch, mock_logs, mock_sleep
+):
     """CI fails first, fix dispatched, CI passes on second poll -> 'passed'."""
     mock_pr_open.return_value = True
     mock_poll.side_effect = [
@@ -437,8 +445,10 @@ async def test_fix_loop_fail_then_pass(mock_poll, mock_pr_open, mock_dispatch, m
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "passed"
@@ -454,7 +464,9 @@ async def test_fix_loop_fail_then_pass(mock_poll, mock_pr_open, mock_dispatch, m
 @patch("forge.core.ci_watcher.dispatch_fix_agent", new_callable=AsyncMock)
 @patch("forge.core.ci_watcher.check_pr_open", new_callable=AsyncMock)
 @patch("forge.core.ci_watcher.poll_ci_checks", new_callable=AsyncMock)
-async def test_fix_loop_exhausts_retries(mock_poll, mock_pr_open, mock_dispatch, mock_logs, mock_sleep):
+async def test_fix_loop_exhausts_retries(
+    mock_poll, mock_pr_open, mock_dispatch, mock_logs, mock_sleep
+):
     """CI keeps failing through all retries -> 'exhausted'."""
     mock_pr_open.return_value = True
     mock_poll.return_value = [
@@ -469,8 +481,10 @@ async def test_fix_loop_exhausts_retries(mock_poll, mock_pr_open, mock_dispatch,
 
     config = CIFixConfig(max_retries=2, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "exhausted"
@@ -490,8 +504,10 @@ async def test_fix_loop_cancel_event(mock_poll, mock_pr_open, mock_dispatch):
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
         cancel_event=cancel,
     )
 
@@ -510,8 +526,10 @@ async def test_fix_loop_cancel_during_poll(mock_poll, mock_pr_open, mock_dispatc
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "cancelled"
@@ -523,8 +541,10 @@ async def test_fix_loop_invalid_pr_url():
     """Invalid PR URL -> returns 'error' immediately."""
     config = CIFixConfig(max_retries=3)
     result = await run_ci_fix_loop(
-        config=config, pr_url="https://not-github.com/foo",
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url="https://not-github.com/foo",
+        project_dir="/tmp",
+        branch="fix-branch",
     )
     assert result.final_status == "error"
 
@@ -539,8 +559,10 @@ async def test_fix_loop_pr_closed(mock_poll, mock_pr_open, mock_dispatch):
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "cancelled"
@@ -558,8 +580,10 @@ async def test_fix_loop_timeout(mock_poll, mock_pr_open, mock_dispatch):
 
     config = CIFixConfig(max_retries=3, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "timeout"
@@ -572,7 +596,9 @@ async def test_fix_loop_timeout(mock_poll, mock_pr_open, mock_dispatch):
 @patch("forge.core.ci_watcher.dispatch_fix_agent", new_callable=AsyncMock)
 @patch("forge.core.ci_watcher.check_pr_open", new_callable=AsyncMock)
 @patch("forge.core.ci_watcher.poll_ci_checks", new_callable=AsyncMock)
-async def test_fix_loop_agent_exception(mock_poll, mock_pr_open, mock_dispatch, mock_logs, mock_sleep):
+async def test_fix_loop_agent_exception(
+    mock_poll, mock_pr_open, mock_dispatch, mock_logs, mock_sleep
+):
     """Fix agent raises exception -> records attempt, continues to next retry."""
     mock_pr_open.return_value = True
     # Fail on every poll so we keep retrying
@@ -584,8 +610,10 @@ async def test_fix_loop_agent_exception(mock_poll, mock_pr_open, mock_dispatch, 
 
     config = CIFixConfig(max_retries=2, poll_interval_seconds=0)
     result = await run_ci_fix_loop(
-        config=config, pr_url=_VALID_PR_URL,
-        project_dir="/tmp", branch="fix-branch",
+        config=config,
+        pr_url=_VALID_PR_URL,
+        project_dir="/tmp",
+        branch="fix-branch",
     )
 
     assert result.final_status == "exhausted"

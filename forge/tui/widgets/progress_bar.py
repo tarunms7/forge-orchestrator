@@ -155,7 +155,13 @@ def format_task_progress(
             done_count += 1
         elif state == "error":
             segments.append("[#f85149]█[/]")
-        elif state in ("in_progress", "in_review", "merging", "awaiting_approval", "awaiting_input"):
+        elif state in (
+            "in_progress",
+            "in_review",
+            "merging",
+            "awaiting_approval",
+            "awaiting_input",
+        ):
             # Active -- use pulsing orange
             pulse_color = _PULSE_FRAMES[pulse_frame % len(_PULSE_FRAMES)]
             segments.append(f"[{pulse_color}]█[/]")
@@ -206,7 +212,8 @@ class PipelineProgress(Widget):
         self._pulse_frame += 1
         # Only refresh if there's an active task
         if any(
-            t.get("state") in ("in_progress", "in_review", "merging", "awaiting_approval", "awaiting_input")
+            t.get("state")
+            in ("in_progress", "in_review", "merging", "awaiting_approval", "awaiting_input")
             for t in self._tasks
         ):
             self.refresh()
@@ -229,7 +236,10 @@ class PipelineProgress(Widget):
     def render(self) -> str:
         if self._tasks:
             return format_task_progress(
-                self._tasks, self._cost_usd, self._elapsed, self._phase,
+                self._tasks,
+                self._cost_usd,
+                self._elapsed,
+                self._phase,
                 pulse_frame=self._pulse_frame,
             )
         return format_progress(self._done, self._total, self._cost_usd, self._elapsed, self._phase)

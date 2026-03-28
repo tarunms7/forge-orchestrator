@@ -42,6 +42,7 @@ def _remove_worktrees(project_dir: str, worktrees_dir: str) -> list[str]:
         return []
     if not _is_git_repo(project_dir):
         import shutil as _shutil
+
         removed = []
         for name in names:
             wt_path = os.path.join(worktrees_dir, name)

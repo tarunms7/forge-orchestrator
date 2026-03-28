@@ -209,6 +209,7 @@ def format_trend_indicators(trends: list[dict]) -> str:
 # Timestamp formatting
 # ---------------------------------------------------------------------------
 
+
 def _fmt_timestamp(created_at: str | None) -> str:
     """Format ISO datetime to 'Mar 23 10:15'."""
     if not created_at:
@@ -223,6 +224,7 @@ def _fmt_timestamp(created_at: str | None) -> str:
 # ---------------------------------------------------------------------------
 # PurgeConfirmScreen — minimal y/n confirmation
 # ---------------------------------------------------------------------------
+
 
 class PurgeConfirmScreen(Screen):
     """Confirmation screen for purging old pipelines."""
@@ -268,6 +270,7 @@ class PurgeConfirmScreen(Screen):
 # ---------------------------------------------------------------------------
 # PipelineDetailScreen — read-only detail view for a single pipeline
 # ---------------------------------------------------------------------------
+
 
 class PipelineDetailScreen(Screen):
     """Read-only detail view showing full stats for a single pipeline."""
@@ -341,6 +344,7 @@ class PipelineDetailScreen(Screen):
 # ---------------------------------------------------------------------------
 # StatsScreen — main 3-panel dashboard
 # ---------------------------------------------------------------------------
+
 
 class StatsScreen(Screen):
     """Pipeline statistics — interactive 3-panel dashboard."""
@@ -441,8 +445,14 @@ class StatsScreen(Screen):
         table = self.query_one("#pipeline-table", DataTable)
         table.cursor_type = "row"
         table.add_columns(
-            "Timestamp", "Task", "Tasks", "Pass", "Fail",
-            "Cost", "Duration", "Status",
+            "Timestamp",
+            "Task",
+            "Tasks",
+            "Pass",
+            "Fail",
+            "Cost",
+            "Duration",
+            "Status",
         )
 
         await self._load_data()
@@ -504,14 +514,14 @@ class StatsScreen(Screen):
             icon, color = PIPELINE_STATUS_ICONS.get(status, ("?", TEXT_SECONDARY))
             status_badge = f"[{color}]{icon} {status}[/]"
 
-            table.add_row(ts, desc, str(total_tasks), str(succeeded), str(failed), cost, dur, status_badge)
+            table.add_row(
+                ts, desc, str(total_tasks), str(succeeded), str(failed), cost, dur, status_badge
+            )
 
     def _populate_trends(self) -> None:
         """Render cost and duration sparklines."""
         if not self._trends:
-            self.query_one("#cost-sparkline", Static).update(
-                f"[{TEXT_SECONDARY}]No trend data[/]"
-            )
+            self.query_one("#cost-sparkline", Static).update(f"[{TEXT_SECONDARY}]No trend data[/]")
             self.query_one("#duration-sparkline", Static).update("")
             return
 
@@ -546,9 +556,7 @@ class StatsScreen(Screen):
         """Render donut chart and streak info from analytics."""
         a = self._analytics
         if not a:
-            self.query_one("#donut-chart", Static).update(
-                f"[{TEXT_SECONDARY}]No analytics data[/]"
-            )
+            self.query_one("#donut-chart", Static).update(f"[{TEXT_SECONDARY}]No analytics data[/]")
             self.query_one("#streak-info", Static).update("")
             return
 
@@ -616,9 +624,7 @@ class StatsScreen(Screen):
                     retry_summary = await self._db.get_retry_summary(pipeline_id)
                 except Exception:
                     logger.debug("Failed to load retry summary", exc_info=True)
-                self.app.push_screen(
-                    PipelineDetailScreen(stats=stats, retry_summary=retry_summary)
-                )
+                self.app.push_screen(PipelineDetailScreen(stats=stats, retry_summary=retry_summary))
         except Exception:
             logger.debug("Failed to load pipeline detail", exc_info=True)
 

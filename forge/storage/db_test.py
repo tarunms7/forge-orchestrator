@@ -1338,8 +1338,12 @@ async def test_get_tasks_by_ids_basic(db: Database):
     """Batch-fetch returns all matching tasks."""
     for i in range(3):
         await db.create_task(
-            id=f"t-{i}", title=f"Task {i}", description="d",
-            files=[], depends_on=[], complexity="low",
+            id=f"t-{i}",
+            title=f"Task {i}",
+            description="d",
+            files=[],
+            depends_on=[],
+            complexity="low",
         )
     results = await db.get_tasks_by_ids(["t-0", "t-1", "t-2"])
     assert len(results) == 3
@@ -1356,8 +1360,12 @@ async def test_get_tasks_by_ids_empty_input(db: Database):
 async def test_get_tasks_by_ids_missing_ids(db: Database):
     """Missing IDs are silently omitted."""
     await db.create_task(
-        id="t-1", title="T", description="d",
-        files=[], depends_on=[], complexity="low",
+        id="t-1",
+        title="T",
+        description="d",
+        files=[],
+        depends_on=[],
+        complexity="low",
     )
     results = await db.get_tasks_by_ids(["t-1", "nonexistent"])
     assert len(results) == 1
@@ -1367,8 +1375,12 @@ async def test_get_tasks_by_ids_missing_ids(db: Database):
 async def test_get_tasks_by_ids_dedup(db: Database):
     """Duplicate IDs in input produce only one TaskRow per unique ID."""
     await db.create_task(
-        id="t-1", title="T", description="d",
-        files=[], depends_on=[], complexity="low",
+        id="t-1",
+        title="T",
+        description="d",
+        files=[],
+        depends_on=[],
+        complexity="low",
     )
     results = await db.get_tasks_by_ids(["t-1", "t-1", "t-1"])
     assert len(results) == 1

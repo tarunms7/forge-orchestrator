@@ -1186,6 +1186,7 @@ def test_remove_change_callback():
 
     def cb(field):
         changes.append(field)
+
     state.on_change(cb)
     state.apply_event("pipeline:phase_changed", {"phase": "planning"})
     assert len(changes) == 1

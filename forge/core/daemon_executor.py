@@ -1649,9 +1649,7 @@ class ExecutorMixin:
 
         # Collect completed dependency info (parallel fetch)
         if hasattr(task, "depends_on") and task.depends_on:
-            dep_tasks = await asyncio.gather(
-                *(db.get_task(dep_id) for dep_id in task.depends_on)
-            )
+            dep_tasks = await asyncio.gather(*(db.get_task(dep_id) for dep_id in task.depends_on))
             for dep_task in dep_tasks:
                 if dep_task and dep_task.state == TaskState.DONE.value:
                     completed_deps.append(
