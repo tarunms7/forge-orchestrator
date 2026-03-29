@@ -1446,7 +1446,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         self._events.on(event_type, _handler)
         try:
-            await response_event.wait()
+            await asyncio.wait_for(response_event.wait(), timeout=300)
+        except TimeoutError:
+            logger.warning(
+                "Integration response timed out after 300s for %s — defaulting to ignore_and_continue",
+                phase,
+            )
+            response_value["action"] = "ignore_and_continue"
         finally:
             handlers = self._events._handlers.get(event_type, [])
             if _handler in handlers:

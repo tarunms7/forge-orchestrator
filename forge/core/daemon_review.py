@@ -1304,9 +1304,9 @@ class ReviewMixin:
             lint_files = list(changed_files)
         if strategy.supports_file_args and lint_files:
             common_prefix = (
-                os.path.commonpath(changed_files)
-                if len(changed_files) > 1
-                else os.path.dirname(changed_files[0])
+                os.path.commonpath(lint_files)
+                if len(lint_files) > 1
+                else os.path.dirname(lint_files[0])
             )
             # Walk up from common prefix to find a directory with package.json
             # (for JS/TS tools) or pyproject.toml (for Python tools)
@@ -1328,7 +1328,7 @@ class ReviewMixin:
                     lint_cwd = candidate_abs
                     prefix = candidate + "/"
                     lint_files = [
-                        f[len(prefix) :] if f.startswith(prefix) else f for f in changed_files
+                        f[len(prefix) :] if f.startswith(prefix) else f for f in lint_files
                     ]
                     logger.info("Lint cwd adjusted to %s (found config in subdirectory)", candidate)
                     break
