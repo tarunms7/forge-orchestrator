@@ -14,6 +14,7 @@ from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
+from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
 from forge.tui.screens.home import HomeScreen, PromptTextArea
 from forge.tui.screens.pipeline import PhaseBanner, PipelineScreen
@@ -133,6 +134,7 @@ class ForgeApp(App):
         self._cached_pipeline_branch: str = ""
         self._cached_base_branch: str = "main"
         self._force_quit: bool = False
+        self._dry_run_mode: bool = False
 
     async def _init_db(self):
         """Initialize database connection."""
@@ -965,7 +967,28 @@ class ForgeApp(App):
                 }
                 for t in self._graph.tasks
             ]
-            self.push_screen(PlanApprovalScreen(plan_tasks))
+            if self._dry_run_mode:
+                from forge.core.cost_estimator import estimate_pipeline_cost
+                from forge.core.model_router import select_model
+
+                settings = self._settings or ForgeSettings()
+                cost_float = await estimate_pipeline_cost(
+                    len(self._graph.tasks), settings, settings.model_strategy
+                )
+                cost_estimate = {"estimated_cost": cost_float}
+                model_assignments = {
+                    t.id: select_model(
+                        settings.model_strategy,
+                        "agent",
+                        t.complexity.value if hasattr(t.complexity, "value") else t.complexity,
+                    )
+                    for t in self._graph.tasks
+                }
+                self.push_screen(
+                    DryRunScreen(plan_tasks, cost_estimate=cost_estimate, model_assignments=model_assignments)
+                )
+            else:
+                self.push_screen(PlanApprovalScreen(plan_tasks))
         except asyncio.CancelledError:
             logger.info("Planning was cancelled")
             self._state.apply_event("pipeline:error", {"error": "Planning cancelled"})
@@ -987,6 +1010,39 @@ class ForgeApp(App):
         # TUI event loop stays responsive and can show progress.
         self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
         self._daemon_task.add_done_callback(self._on_daemon_done)
+
+    async def on_dry_run_screen_plan_approved(self, event) -> None:
+        """User approved dry-run plan — start full execution."""
+        self.pop_screen()  # Remove DryRunScreen, back to PipelineScreen
+        # If user edited tasks, update self._graph with the edited tasks
+        if event.tasks:
+            from forge.core.models import TaskComplexity
+
+            for orig_task, edit in zip(self._graph.tasks, event.tasks, strict=False):
+                orig_task.title = edit.get("title", orig_task.title)
+                orig_task.description = edit.get("description", orig_task.description)
+                orig_task.files = edit.get("files", orig_task.files)
+                if hasattr(orig_task.complexity, "value"):
+                    orig_task.complexity = TaskComplexity(
+                        edit.get("complexity", orig_task.complexity.value)
+                    )
+        self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
+        self._daemon_task.add_done_callback(self._on_daemon_done)
+
+    async def on_dry_run_screen_plan_cancelled(self, event) -> None:
+        """User cancelled dry-run plan — clean up."""
+        self.pop_screen()  # Remove DryRunScreen
+        self.pop_screen()  # Remove PipelineScreen, back to HomeScreen
+        if self._elapsed_timer:
+            self._elapsed_timer.stop()
+        if self._source:
+            self._source.disconnect()
+        if self._db and self._pipeline_id:
+            try:
+                await self._db.update_pipeline_status(self._pipeline_id, "cancelled")
+            except Exception:
+                logger.debug("Failed to update cancelled status", exc_info=True)
+        self._state = TuiState()
 
     async def _run_contracts_and_execute(self) -> None:
         """Generate contracts, run countdown, then execute.
@@ -1151,7 +1207,7 @@ class ForgeApp(App):
     def _is_modal_screen(self) -> bool:
         """Check if the active screen is a modal that shouldn't be switched away from."""
         try:
-            return isinstance(self.screen, (PlanApprovalScreen, FinalApprovalScreen))
+            return isinstance(self.screen, (PlanApprovalScreen, FinalApprovalScreen, DryRunScreen))
         except Exception:
             return False
 
