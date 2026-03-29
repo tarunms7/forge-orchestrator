@@ -513,7 +513,7 @@ class TestAttemptMergeLockBehavior:
         """When the first merge attempt succeeds, _get_merge_lock is entered exactly once."""
         mixin = self._make_mixin()
         mixin._emit = AsyncMock()
-        mixin._run_review = AsyncMock(return_value=(True, None))
+        mixin._run_review = AsyncMock(return_value=(True, None, False))
         mixin._ensure_clean_for_rebase = AsyncMock()
         mixin._emit_merge_success = AsyncMock()
         mixin._emit_merge_failure = AsyncMock()
@@ -567,7 +567,7 @@ class TestAttemptMergeLockBehavior:
         """When the first merge fails and retry succeeds, _merge_lock is still entered only once."""
         mixin = self._make_mixin()
         mixin._emit = AsyncMock()
-        mixin._run_review = AsyncMock(return_value=(True, None))
+        mixin._run_review = AsyncMock(return_value=(True, None, False))
         mixin._ensure_clean_for_rebase = AsyncMock()
         mixin._emit_merge_success = AsyncMock()
         mixin._emit_merge_failure = AsyncMock()
@@ -632,7 +632,7 @@ class TestAttemptMergeLockBehavior:
         """When both merge attempts fail, _merge_lock is still entered only once."""
         mixin = self._make_mixin()
         mixin._emit = AsyncMock()
-        mixin._run_review = AsyncMock(return_value=(True, None))
+        mixin._run_review = AsyncMock(return_value=(True, None, False))
         mixin._ensure_clean_for_rebase = AsyncMock()
         mixin._emit_merge_success = AsyncMock()
         mixin._emit_merge_failure = AsyncMock()
