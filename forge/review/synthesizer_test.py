@@ -116,6 +116,34 @@ def test_synthesis_all_pass_low_confidence_is_uncertain():
     assert verdict == "UNCERTAIN"
 
 
+def test_synthesis_fail_high_confidence_beats_uncertain():
+    """High-confidence FAIL takes priority over UNCERTAIN from another chunk."""
+    results = [_make_result("UNCERTAIN", 3), _make_result("FAIL", 4)]
+    verdict, _ = _apply_synthesis_rules(results)
+    assert verdict == "FAIL"
+
+
+def test_synthesis_empty_results():
+    """Empty results list returns UNCERTAIN."""
+    verdict, reason = _apply_synthesis_rules([])
+    assert verdict == "UNCERTAIN"
+    assert "No chunk" in reason
+
+
+def test_parse_chunk_json_null_verdict_becomes_uncertain():
+    """JSON with null verdict falls through to UNCERTAIN."""
+    import json as _json
+    raw = _json.dumps({
+        "verdict": None,
+        "confidence": 3,
+        "issues": [],
+        "cross_chunk_concerns": [],
+        "summary": "Unclear.",
+    })
+    result = _parse_chunk_json(raw, chunk_index=1)
+    assert result.verdict == "UNCERTAIN"
+
+
 # ── _deduplicate_issues ───────────────────────────────────────────────────
 
 def test_deduplicate_removes_exact_duplicates():

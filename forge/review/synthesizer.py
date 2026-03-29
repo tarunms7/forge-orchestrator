@@ -173,17 +173,18 @@ def _apply_synthesis_rules(
     """Determine overall verdict from chunk results.
 
     Returns (verdict, reason_string).
+
+    Priority order (from spec):
+    1. FAIL with confidence >= 3 -> FAIL (confirmed defect beats uncertainty)
+    2. FAIL with confidence <= 2 -> UNCERTAIN (low-confidence FAIL is uncertain)
+    3. Any UNCERTAIN -> UNCERTAIN
+    4. All PASS but any confidence <= 2 -> UNCERTAIN
+    5. All PASS with confidence >= 3 -> PASS
     """
     if not results:
         return "UNCERTAIN", "No chunk results to aggregate."
 
-    for r in results:
-        if r.verdict == "UNCERTAIN":
-            return (
-                "UNCERTAIN",
-                f"Chunk {r.chunk_index} verdict is UNCERTAIN (confidence {r.confidence}).",
-            )
-
+    # Check for high-confidence FAILs first — a confirmed defect blocks regardless
     for r in results:
         if r.verdict == "FAIL":
             if r.confidence >= 3:
@@ -193,6 +194,14 @@ def _apply_synthesis_rules(
                     f"Chunk {r.chunk_index} FAIL with low confidence ({r.confidence}/5) — "
                     "treating as UNCERTAIN."
                 )
+
+    # Then check for UNCERTAIN
+    for r in results:
+        if r.verdict == "UNCERTAIN":
+            return (
+                "UNCERTAIN",
+                f"Chunk {r.chunk_index} verdict is UNCERTAIN (confidence {r.confidence}).",
+            )
 
     # All PASS — check confidence
     low_conf = [r for r in results if r.confidence <= 2]
@@ -235,7 +244,7 @@ def _format_chunks_for_synthesis(
         if chunk and len(chunk.files) > 4:
             file_list += f" (+{len(chunk.files) - 4} more)"
         risk = f" [{chunk.risk_label}]" if chunk else ""
-        total_chunks = results[-1].chunk_index if results else "?"
+        total_chunks = chunks[-1].total if chunks else (results[-1].chunk_index if results else "?")
 
         lines.append(
             f"**Chunk {result.chunk_index}/{total_chunks}**"
