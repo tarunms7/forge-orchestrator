@@ -36,6 +36,18 @@ thoroughly and respond with EXACTLY one of:
 
 PASS: <explanation covering what you verified>
 FAIL: <specific issues with file paths and line references>
+UNCERTAIN: <specific concerns you cannot resolve from the diff alone>
+
+## When to use UNCERTAIN
+- You see code that MIGHT be correct but depends on context you don't have
+- The task spec is ambiguous and the code matches ONE valid interpretation
+- You found something suspicious but can't confirm it's a bug without seeing the caller
+- The diff is too large to review thoroughly and you need human guidance
+
+Do NOT use UNCERTAIN for:
+- Code that is clearly wrong — use FAIL
+- Code that is clearly correct — use PASS
+- Style preferences — use PASS (not your job)
 
 ## Review Checklist (evaluate ALL categories)
 
@@ -219,19 +231,19 @@ async def gate2_llm_review(
         if attempt < max_review_attempts:
             await asyncio.sleep(2**attempt + random.uniform(0, 1))
 
-    # All attempts returned empty — auto-pass with warning rather than
-    # retrying the entire task.  Empty results are transient SDK issues
-    # (rate limits, overload), not code quality signals.  Retrying the
-    # whole task would just regenerate the same diff and hit the same issue.
+    # All attempts returned empty — escalate to human instead of auto-passing.
+    # Empty results are transient SDK issues, not code quality signal.
+    # Instead of shipping unreviewed code, ask the human what to do.
     logger.warning(
-        "L2 review returned empty after %d attempts — auto-passing to avoid infinite retry loop",
+        "L2 review returned empty after %d attempts — escalating to human",
         max_review_attempts,
     )
     return (
         GateResult(
-            passed=True,
+            passed=False,
             gate="gate2_llm_review",
-            details=f"Review auto-passed: empty response after {max_review_attempts} attempts (likely transient SDK issue)",
+            details=f"Review could not complete after {max_review_attempts} attempts (likely transient SDK issue). Human review needed.",
+            needs_human=True,
         ),
         cost_info,
     )
@@ -295,20 +307,22 @@ def _build_review_prompt(
             f"```diff\n{delta_snippet}\n```\n\n"
             "The full diff above shows the complete current state.\n\n"
         )
-    parts.append("Review this code. Respond with PASS or FAIL.")
+    parts.append("Review this code. Respond with PASS, FAIL, or UNCERTAIN.")
     return "".join(parts)
 
 
 def _parse_review_result(text: str) -> GateResult:
-    """Parse the LLM reviewer's response to extract a PASS/FAIL verdict.
+    """Parse the LLM reviewer's response to extract a PASS/FAIL/UNCERTAIN verdict.
 
     The parser checks for the verdict in three ways (in order):
-    1. Text starts with PASS/FAIL (ideal format)
-    2. A line starts with PASS/FAIL (verdict buried in analysis)
-    3. PASS or FAIL appears anywhere in the text (fallback)
+    1. Text starts with PASS/FAIL/UNCERTAIN (ideal format)
+    2. A line starts with PASS/FAIL/UNCERTAIN (verdict buried in analysis)
+    3. PASS, FAIL, or UNCERTAIN appears at the start of any line (fallback)
 
     This flexibility is needed because models (especially opus) often
     write detailed analysis before stating their verdict.
+
+    UNCERTAIN returns needs_human=True so the executor routes it to awaiting_input.
     """
     text = text.strip()
     if not text:
@@ -321,6 +335,8 @@ def _parse_review_result(text: str) -> GateResult:
         return GateResult(passed=True, gate="gate2_llm_review", details=text)
     if upper.startswith("FAIL"):
         return GateResult(passed=False, gate="gate2_llm_review", details=text)
+    if upper.startswith("UNCERTAIN"):
+        return GateResult(passed=False, gate="gate2_llm_review", details=text, needs_human=True)
 
     # 2. A line starts with the verdict (opus often writes analysis first)
     for line in text.splitlines():
@@ -329,14 +345,19 @@ def _parse_review_result(text: str) -> GateResult:
             return GateResult(passed=True, gate="gate2_llm_review", details=text)
         if line_upper.startswith("FAIL"):
             return GateResult(passed=False, gate="gate2_llm_review", details=text)
+        if line_upper.startswith("UNCERTAIN"):
+            return GateResult(passed=False, gate="gate2_llm_review", details=text, needs_human=True)
 
-    # 3. Fallback: PASS/FAIL at the start of any line (stricter than "anywhere")
+    # 3. Fallback: PASS/FAIL/UNCERTAIN at the start of any line (stricter than "anywhere")
     pass_match = re.search(r"^PASS\b", upper, re.MULTILINE)
     fail_match = re.search(r"^FAIL\b", upper, re.MULTILINE)
+    uncertain_match = re.search(r"^UNCERTAIN\b", upper, re.MULTILINE)
     if pass_match and not fail_match:
         return GateResult(passed=True, gate="gate2_llm_review", details=text)
     if fail_match and not pass_match:
         return GateResult(passed=False, gate="gate2_llm_review", details=text)
+    if uncertain_match and not pass_match and not fail_match:
+        return GateResult(passed=False, gate="gate2_llm_review", details=text, needs_human=True)
 
     return GateResult(
         passed=False,

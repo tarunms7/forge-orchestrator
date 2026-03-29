@@ -235,7 +235,7 @@ class ExecutorMixin:
             )
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         await self._attempt_merge(
             db,
             merge_worker,
@@ -278,7 +278,7 @@ class ExecutorMixin:
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
@@ -455,7 +455,7 @@ class ExecutorMixin:
                 user message when resuming a paused conversation.
             resume: SDK session ID for conversation continuation (``ClaudeCodeOptions.resume``).
         """
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
@@ -742,6 +742,7 @@ class ExecutorMixin:
             question=question_data["question"],
             suggestions=question_data.get("suggestions"),
             context=question_data.get("context"),
+            source=question_data.get("source"),
         )
 
         # Store session_id and increment questions_asked counter
@@ -1020,7 +1021,7 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
 
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         await self._attempt_merge(
             db,
             merge_worker,
@@ -1095,6 +1096,23 @@ class ExecutorMixin:
         await db.assign_task(task_id, agent_id)
         logger.info("Resuming task %s after human answer (agent=%s)", task_id, agent_id)
 
+        # Get the source of the question to determine routing
+        source = None
+        async with db._session_factory() as session:
+            from forge.storage.db import TaskQuestionRow
+            from sqlalchemy import select as sa_select
+            stmt = sa_select(TaskQuestionRow).where(
+                TaskQuestionRow.task_id == task_id,
+                TaskQuestionRow.answer.isnot(None),
+            ).order_by(TaskQuestionRow.created_at.desc()).limit(1)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row:
+                source = getattr(row, "source", None)
+
+        if source in ("review_escalation", "review_uncertain"):
+            await self._handle_review_answer(db, task_id, agent_id, answer, pipeline_id)
+            return
+
         atask = asyncio.create_task(
             self._safe_execute_resume(
                 db,
@@ -1110,6 +1128,54 @@ class ExecutorMixin:
         )
         async with self._active_tasks_lock:
             self._active_tasks[task_id] = atask
+
+    async def _handle_review_answer(
+        self, db, task_id: str, agent_id: str, answer: str, pipeline_id: str
+    ) -> None:
+        """Route human's answer to a review-escalation question."""
+        from forge.core.model_router import select_model
+
+        answer_lower = answer.lower()
+        pid = pipeline_id
+
+        if "retry" in answer_lower:
+            logger.info("Review answer for %s: retry review", task_id)
+            await db.release_agent(agent_id)
+            await self._handle_retry(db, task_id, self._worktree_mgr, pipeline_id=pid)
+        elif "approve" in answer_lower:
+            logger.info("Review answer for %s: human approved", task_id)
+            task = await db.get_task(task_id)
+            agent_model = select_model(
+                self._strategy, "agent", task.complexity or "medium",
+                retry_count=task.retry_count,
+            )
+            await db.update_task_state(task_id, TaskState.MERGING.value)
+            await self._emit(
+                "task:state_changed",
+                {"task_id": task_id, "state": "merging"},
+                db=db,
+                pipeline_id=pid,
+            )
+            await self._attempt_merge(
+                db, self._merge_worker, task, task_id, agent_id,
+                self._worktree_mgr, agent_model, pid,
+            )
+        elif "reject" in answer_lower:
+            logger.info("Review answer for %s: human rejected, retrying task", task_id)
+            await db.release_agent(agent_id)
+            await self._handle_retry(
+                db, task_id, self._worktree_mgr,
+                review_feedback="Human reviewer rejected the code. Please revise.",
+                pipeline_id=pid,
+            )
+        else:
+            logger.info("Review answer for %s: human provided guidance", task_id)
+            await db.release_agent(agent_id)
+            await self._handle_retry(
+                db, task_id, self._worktree_mgr,
+                review_feedback=f"Human reviewer guidance: {answer}",
+                pipeline_id=pid,
+            )
 
     async def _safe_execute_resume(
         self,
@@ -1340,14 +1406,14 @@ class ExecutorMixin:
         self._pipeline_test_cmd = getattr(pipeline, "test_cmd", None) if pipeline else None
         if no_changes_on_retry:
             console.print(f"[dim]{task_id}: no changes on retry — auto-passing review[/dim]")
-            passed, feedback = True, None
+            passed, feedback, needs_human = True, None, False
         else:
             # Review with automatic re-review on transient failures (empty response,
             # SDK errors) so they don't waste the task's limited retry budget.
             max_re_reviews = 2
-            passed, feedback = False, None
+            passed, feedback, needs_human = False, None, False
             for re_review_attempt in range(max_re_reviews + 1):
-                passed, feedback = await self._run_review(
+                passed, feedback, needs_human = await self._run_review(
                     task,
                     worktree_path,
                     diff,
@@ -1365,6 +1431,40 @@ class ExecutorMixin:
                     )
                     continue
                 break
+            if needs_human:
+                # Determine if this is empty-response or reviewer-uncertainty
+                is_uncertain = feedback and not feedback.startswith("Review could not complete")
+                if is_uncertain:
+                    question_data = {
+                        "question": "The reviewer is uncertain about this code and needs your input.",
+                        "context": feedback,
+                        "suggestions": [
+                            "Approve — the code is correct, reviewer's concern is not applicable",
+                            "Reject — the reviewer's concern is valid, retry the task",
+                            "Provide guidance for the reviewer to re-review with more context",
+                        ],
+                        "source": "review_uncertain",
+                    }
+                else:
+                    question_data = {
+                        "question": (
+                            "Automated review could not complete (SDK returned empty after retries). "
+                            "The agent's diff is preserved. What should I do?"
+                        ),
+                        "context": f"Task: {task.title}. The code changes are ready but could not be reviewed automatically.",
+                        "suggestions": [
+                            "Retry the review now",
+                            "I'll review the diff manually — approve",
+                            "I'll review the diff manually — reject and retry the task",
+                        ],
+                        "source": "review_escalation",
+                    }
+                await self._handle_agent_question(
+                    db, task_id, agent_id, question_data,
+                    session_id=None,
+                    pipeline_id=pid,
+                )
+                return
             if not passed:
                 # Build focused retry feedback: reviewer feedback + changed files + diff snippet.
                 # Include the diff so the retry agent can see what it wrote without re-reading every file.

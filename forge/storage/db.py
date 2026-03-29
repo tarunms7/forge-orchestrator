@@ -266,6 +266,7 @@ class TaskQuestionRow(Base):
     answer: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     answered_by: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     context: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    source: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     created_at: Mapped[str] = mapped_column(
         String,
         default=lambda: datetime.now(UTC).isoformat(),
@@ -1255,6 +1256,7 @@ class Database:
         suggestions: list[str] | None = None,
         context: dict | None = None,
         stage: str | None = None,
+        source: str | None = None,
     ) -> TaskQuestionRow:
         async with self._session_factory() as session:
             row = TaskQuestionRow(
@@ -1264,6 +1266,7 @@ class Database:
                 suggestions=json.dumps(suggestions) if suggestions else None,
                 context=json.dumps(context) if context else None,
                 stage=stage,
+                source=source,
             )
             session.add(row)
             await session.commit()

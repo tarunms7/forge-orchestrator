@@ -78,6 +78,40 @@ class TestSelectModelOverrides:
         assert result == "opus"
 
 
+class TestModelEscalation:
+    """Model escalation on retry 2+ for agent stage."""
+
+    def test_no_escalation_retry_0(self):
+        assert select_model("auto", "agent", "low", retry_count=0) == "sonnet"
+
+    def test_no_escalation_retry_1(self):
+        assert select_model("auto", "agent", "low", retry_count=1) == "sonnet"
+
+    def test_escalation_retry_2_sonnet_to_opus(self):
+        assert select_model("auto", "agent", "low", retry_count=2) == "opus"
+
+    def test_escalation_retry_2_haiku_to_sonnet(self):
+        assert select_model("fast", "agent", "high", retry_count=2) == "sonnet"
+
+    def test_no_escalation_already_opus(self):
+        assert select_model("quality", "agent", "low", retry_count=2) == "opus"
+
+    def test_no_escalation_for_reviewer(self):
+        assert select_model("auto", "reviewer", "low", retry_count=5) == "sonnet"
+
+    def test_no_escalation_for_planner(self):
+        assert select_model("auto", "planner", "low", retry_count=5) == "opus"
+
+    def test_escalation_applies_to_overrides(self):
+        """Override selects haiku, but retry 2+ should escalate it to sonnet."""
+        result = select_model("auto", "agent", "low", overrides={"agent_model_low": "haiku"}, retry_count=2)
+        assert result == "sonnet"
+
+    def test_escalation_retry_3_same_as_2(self):
+        """Escalation is capped at one tier — retry 3 doesn't escalate further."""
+        assert select_model("auto", "agent", "low", retry_count=3) == "opus"
+
+
 class TestSelectModelFallbackLogging:
     """Verify warning logs on unknown strategy/stage/complexity."""
 

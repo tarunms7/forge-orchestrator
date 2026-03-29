@@ -1196,15 +1196,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     pipeline_id=pid,
                     repo_id=task_repo,
                 )
-            # Auto-scale agent pool: create enough agents to saturate
-            # parallelism.  The max width of the DAG (tasks with no deps
-            # or all deps satisfied at t=0) determines how many agents
-            # can usefully run in parallel.  We cap at max_agents to
-            # respect the user's resource budget.
+            # Auto-scale agent pool: use the minimum of independent tasks,
+            # configured max_agents, and total tasks.  This ensures we
+            # never exceed the user's resource budget (max_agents) and
+            # never create idle agents (more agents than tasks that can run).
             independent_count = sum(1 for t in graph.tasks if not t.depends_on)
             self._effective_max_agents = min(
-                max(independent_count, self._settings.max_agents),
-                len(graph.tasks),  # never more agents than tasks
+                independent_count,
+                self._settings.max_agents,
+                len(graph.tasks),
             )
             for i in range(self._effective_max_agents):
                 await db.create_agent(f"{prefix}-agent-{i}")

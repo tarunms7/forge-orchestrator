@@ -193,11 +193,11 @@ Your working directory is {cwd}.{extra_dirs_clause}
   - A CLI flag doesn't exist? Don't try flag variations — read the tool's --help or docs.
   - Tests failing? Read the error output. Don't just re-run hoping for a different result.
   - Import errors? Check what's actually installed, don't retry the same import.
-- If you cannot make something work after 3 attempts, document what you tried and move on. An honest "this didn't work because X" is infinitely better than burning 20 retries on the same dead end.
+- If you cannot make something work after 3 attempts, STOP and ask for help using FORGE_QUESTION. Explain what you tried, why each attempt failed, and suggest 2-3 options (different approach, skip this part, get specific guidance). An honest question prevents wasted retries and wasted work. DO NOT silently "move on" — if you're stuck, the human can unblock you in seconds.
 
 ## Turn Budget
 You have {max_turns} turns for this task. Manage them wisely:
-- If you're past turn {wrap_up_turn} and not done, STOP coding and write a status summary of what's done, what's remaining, and what the next agent should do.
+- If you're past turn {wrap_up_turn} and not done, STOP coding and emit a FORGE_QUESTION with: what's done, what's remaining, and options (extend with more turns, hand off to next agent, or get specific guidance on the remaining work). Let the human decide.
 - An honest handoff is better than a half-finished hack.
 
 ## Before You Finish
@@ -208,7 +208,7 @@ You have {max_turns} turns for this task. Manage them wisely:
    Max 72 chars. Describe WHAT changed, don't copy the task title.
    ALWAYS use --no-verify to skip pre-commit hooks (the orchestrator runs its own review).
    If the commit fails, STOP TRYING. Do NOT retry with different flags. The orchestrator auto-commits your changes after you finish. Move on.
-4. If nothing meaningful to do (files don't exist, task already done), make no changes."""
+4. If nothing meaningful to do (files don't exist, task already done), make no changes and commit with message "chore: no changes needed — <reason>". The reviewer will see the empty diff and your reasoning. This is a valid outcome."""
 
 
 def _build_conventions_block(

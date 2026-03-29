@@ -716,10 +716,12 @@ class TestParseForgeQuestion:
         result = _parse_forge_question(text)
         assert result is None
 
-    def test_question_mid_output_ignored(self):
+    def test_question_mid_output_with_trailing_text_accepted(self):
+        """Trailing text after valid question JSON is now accepted (marker + valid JSON = question)."""
         text = 'FORGE_QUESTION:\n{"question": "?", "suggestions": ["A"]}\n\nThen I continued working and wrote code.'
         result = _parse_forge_question(text)
-        assert result is None
+        assert result is not None
+        assert result["question"] == "?"
 
     def test_empty_text_returns_none(self):
         result = _parse_forge_question("")
@@ -728,6 +730,64 @@ class TestParseForgeQuestion:
     def test_none_text_returns_none(self):
         result = _parse_forge_question(None)
         assert result is None
+
+    def test_question_with_long_trailing_text_now_accepted(self):
+        """Trailing text after valid JSON should NOT cause the question to be dropped."""
+        text = (
+            'FORGE_QUESTION:\n{"question": "Which pattern?", "suggestions": ["A", "B"]}\n\n'
+            "I'll pause here and wait for your guidance on this. "
+            "Meanwhile I've set up the basic structure so we can proceed quickly once you decide."
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Which pattern?"
+
+    def test_question_with_no_suggestions_accepted(self):
+        """Questions without suggestions should be accepted (no restriction on content)."""
+        text = 'FORGE_QUESTION:\n{"question": "What should the TTL be?"}'
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "What should the TTL be?"
+
+    def test_question_with_many_suggestions_accepted(self):
+        """No limit on number of suggestions."""
+        suggestions = [f"Option {i}" for i in range(10)]
+        import json
+        text = f'FORGE_QUESTION:\n{json.dumps({"question": "Pick one", "suggestions": suggestions})}'
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert len(result["suggestions"]) == 10
+
+    def test_question_with_extra_keys_accepted(self):
+        """Extra keys beyond question/suggestions should be preserved (forward-compatible)."""
+        text = 'FORGE_QUESTION:\n{"question": "?", "suggestions": ["A"], "impact": "high", "custom_field": 42}'
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["custom_field"] == 42
+
+    def test_malformed_json_logs_warning(self, caplog):
+        """Malformed JSON after marker should log a warning."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="forge"):
+            result = _parse_forge_question("FORGE_QUESTION:\n{not valid json}")
+        assert result is None
+        assert "FORGE_QUESTION marker found but JSON parse failed" in caplog.text
+
+    def test_missing_question_key_logs_warning(self, caplog):
+        """Valid JSON without 'question' key should log a warning."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="forge"):
+            result = _parse_forge_question('FORGE_QUESTION:\n{"suggestions": ["A"]}')
+        assert result is None
+        assert "missing 'question' key" in caplog.text
+
+    def test_brace_matching_failure_logs_warning(self, caplog):
+        """Unmatched braces should log a warning."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="forge"):
+            result = _parse_forge_question("FORGE_QUESTION:\n{unclosed")
+        assert result is None
+        assert "brace matching failed" in caplog.text
 
     def test_braces_inside_json_strings_ignored(self):
         """Braces inside JSON string values should not confuse the brace counter."""

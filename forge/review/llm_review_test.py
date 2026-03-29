@@ -16,7 +16,7 @@ class TestBuildReviewPrompt:
         assert "Task: Add login" in prompt
         assert "Description: Implement JWT login" in prompt
         assert "diff --git a/auth.py" in prompt
-        assert "PASS or FAIL" in prompt
+        assert "PASS, FAIL, or UNCERTAIN" in prompt
 
     def test_includes_project_context(self):
         """Project context appears before the task spec."""
@@ -140,7 +140,7 @@ class TestBuildReviewPrompt:
         assert prompt.index("Task: Add webhook") < prompt.index("File scope")
         assert prompt.index("File scope") < prompt.index("full diff here")
         assert prompt.index("PRIOR REVIEW CONTEXT") < prompt.index("CHANGES SINCE LAST REVIEW")
-        assert prompt.index("CHANGES SINCE LAST REVIEW") < prompt.index("PASS or FAIL")
+        assert prompt.index("CHANGES SINCE LAST REVIEW") < prompt.index("PASS, FAIL, or UNCERTAIN")
 
 
 class TestParseReviewResult:
@@ -372,3 +372,78 @@ class TestCustomReviewFocusSeparator:
         assert len(captured_options) == 1
         system_prompt = captured_options[0].system_prompt
         assert "\n\nFocus on error handling paths." in system_prompt
+
+
+class TestUncertainVerdict:
+    """UNCERTAIN verdict should return needs_human=True."""
+
+    def test_uncertain_at_start(self):
+        result = _parse_review_result("UNCERTAIN: Can't tell if edge case is handled without seeing caller")
+        assert result.passed is False
+        assert result.needs_human is True
+        assert "edge case" in result.details
+
+    def test_uncertain_on_line(self):
+        text = "Analysis:\nThe code looks reasonable but...\nUNCERTAIN: Missing context about the caller's intent"
+        result = _parse_review_result(text)
+        assert result.passed is False
+        assert result.needs_human is True
+
+    def test_pass_still_works(self):
+        result = _parse_review_result("PASS: All checks verified")
+        assert result.passed is True
+        assert result.needs_human is False
+
+    def test_fail_still_works(self):
+        result = _parse_review_result("FAIL: Bug on line 42")
+        assert result.passed is False
+        assert result.needs_human is False
+
+    def test_unclear_response_still_fails_not_uncertain(self):
+        result = _parse_review_result("I'm not sure what to think about this code")
+        assert result.passed is False
+        assert result.needs_human is False
+
+
+class TestEmptyReviewEscalation:
+    """Empty L2 review should escalate to human, not auto-pass."""
+
+    @pytest.mark.asyncio
+    async def test_empty_review_returns_needs_human(self):
+        """Empty SDK response should return needs_human=True, not passed=True."""
+        mock_result = MagicMock()
+        mock_result.result = ""
+        mock_result.cost_usd = 0
+        mock_result.input_tokens = 0
+        mock_result.output_tokens = 0
+        mock_result.num_turns = 0
+        mock_result.duration_ms = 100
+        mock_result.duration_api_ms = 50
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            gate_result, cost_info = await gate2_llm_review(
+                "Test task", "Test desc", "diff --git a/test.py", model="sonnet"
+            )
+
+        assert gate_result.passed is False
+        assert gate_result.needs_human is True
+        assert "Human review needed" in gate_result.details
+
+    @pytest.mark.asyncio
+    async def test_successful_review_no_needs_human(self):
+        """Successful review should not set needs_human."""
+        mock_result = MagicMock()
+        mock_result.result = "PASS: Looks good"
+        mock_result.cost_usd = 0.01
+        mock_result.input_tokens = 100
+        mock_result.output_tokens = 50
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            gate_result, cost_info = await gate2_llm_review(
+                "Test task", "Test desc", "diff --git a/test.py", model="sonnet"
+            )
+
+        assert gate_result.passed is True
+        assert gate_result.needs_human is False

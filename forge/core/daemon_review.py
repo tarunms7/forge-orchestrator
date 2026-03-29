@@ -768,7 +768,7 @@ class ReviewMixin:
         pipeline_branch: str | None = None,
         delta_diff: str | None = None,
         repo_id: str | None = None,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str | None, bool]:
         """Run the 3-gate review pipeline.
 
         Args:
@@ -779,8 +779,10 @@ class ReviewMixin:
                 on the fix rather than re-reading the full accumulated diff.
 
         Returns:
-            (passed, feedback) — feedback is a string with failure details
-            if any gate failed, None if all passed.
+            (passed, feedback, needs_human) — feedback is a string with
+            failure details if any gate failed, None if all passed.
+            needs_human is True when the review could not complete and
+            should be escalated to human decision.
         """
         feedback_parts: list[str] = []
         gate_timeout = self._settings.agent_timeout_seconds // 2
@@ -843,7 +845,7 @@ class ReviewMixin:
                         )
                     except Exception:
                         pass
-                    return False, "\n\n".join(feedback_parts)
+                    return False, "\n\n".join(feedback_parts), False
             else:
                 console.print("[green]  Gate 0 (build) passed[/green]")
         else:
@@ -928,7 +930,7 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
-                return False, "\n\n".join(feedback_parts)
+                return False, "\n\n".join(feedback_parts), False
         else:
             console.print("[green]  L1 passed[/green]")
 
@@ -1005,7 +1007,7 @@ class ReviewMixin:
                         )
                     except Exception:
                         pass
-                    return False, "\n\n".join(feedback_parts)
+                    return False, "\n\n".join(feedback_parts), False
             console.print("[green]  Gate 1.5 (test) passed[/green]")
         else:
             console.print("[dim]  Gate 1.5 (test): skipped — no test command configured[/dim]")
@@ -1163,6 +1165,15 @@ class ReviewMixin:
                 db=db,
                 pipeline_id=pipeline_id,
             )
+            if gate2_result.needs_human:
+                console.print(f"[yellow]  L2: escalating to human — {gate2_result.details[:100]}[/yellow]")
+                try:
+                    await db.set_task_timing(
+                        task.id, review_duration_s=time.monotonic() - review_t0
+                    )
+                except Exception:
+                    pass
+                return False, gate2_result.details, True
             if not gate2_result.passed:
                 console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
                 prefix = "[RETRIABLE] " if gate2_result.retriable else ""
@@ -1175,7 +1186,7 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
-                return False, "\n\n".join(feedback_parts)
+                return False, "\n\n".join(feedback_parts), False
             console.print("[green]  L2 passed[/green]")
 
             # Extra review pass: run L2 a second time if configured
@@ -1263,7 +1274,7 @@ class ReviewMixin:
                             )
                         except Exception:
                             pass
-                        return False, "\n\n".join(feedback_parts)
+                        return False, "\n\n".join(feedback_parts), False
                 else:
                     console.print("[green]  L2 (extra pass) passed[/green]")
 
@@ -1275,7 +1286,7 @@ class ReviewMixin:
             await db.set_task_timing(task.id, review_duration_s=review_elapsed)
         except Exception:
             logger.debug("Failed to record review_duration_s for %s", task.id, exc_info=True)
-        return True, None
+        return True, None, False
 
     async def _run_lint_gate(
         self,

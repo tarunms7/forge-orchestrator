@@ -71,8 +71,8 @@ async def async_subprocess(
 def _parse_forge_question(text: str | None) -> dict | None:
     """Parse a FORGE_QUESTION block from agent output.
 
-    Returns dict with at least 'question' and 'suggestions' keys, or None.
-    Only matches if the marker appears near the end of output (agent stopped to ask).
+    Returns dict with at least a 'question' key (string), or None.
+    No restrictions on additional keys — accepts any valid JSON with a 'question' field.
     """
     if not text:
         return None
@@ -83,16 +83,13 @@ def _parse_forge_question(text: str | None) -> dict | None:
 
     after_marker = text[marker_idx + len(_FORGE_QUESTION_MARKER) :].strip()
 
-    # Check nothing substantial follows the JSON (agent continued working)
     # Strip markdown fences if present
     json_text = after_marker
-    fence_match = re.match(r"```(?:json)?\s*\n?(.*?)\n?\s*```\s*$", json_text, re.DOTALL)
+    fence_match = re.match(r"```(?:json)?\s*\n?(.*?)\n?\s*```", json_text, re.DOTALL)
     if fence_match:
         json_text = fence_match.group(1).strip()
     else:
-        # Check if there's significant text after the JSON block
         # Find the closing brace using string-aware matching
-        # (ignore braces inside JSON string values)
         brace_depth = 0
         json_end = -1
         in_string = False
@@ -117,20 +114,37 @@ def _parse_forge_question(text: str | None) -> dict | None:
                     json_end = i + 1
                     break
         if json_end == -1:
+            logger.warning(
+                "FORGE_QUESTION marker found but JSON brace matching failed. "
+                "Raw text after marker: %s",
+                after_marker[:500],
+            )
             return None
-        trailing = json_text[json_end:].strip()
-        if len(trailing) > 20:  # significant trailing text = agent continued
-            return None
+        # Accept the question regardless of trailing text.
+        # If the marker is present and JSON is valid, the agent intended to ask.
         json_text = json_text[:json_end]
 
     try:
         data = _json.loads(json_text)
-    except (_json.JSONDecodeError, ValueError):
+    except (_json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "FORGE_QUESTION marker found but JSON parse failed: %s. Raw JSON text: %s",
+            exc,
+            json_text[:500],
+        )
         return None
 
     if not isinstance(data, dict):
+        logger.warning(
+            "FORGE_QUESTION JSON parsed but is not a dict (got %s)",
+            type(data).__name__,
+        )
         return None
     if "question" not in data or not isinstance(data["question"], str):
+        logger.warning(
+            "FORGE_QUESTION JSON parsed but missing 'question' key. Keys found: %s",
+            list(data.keys()),
+        )
         return None
 
     return data

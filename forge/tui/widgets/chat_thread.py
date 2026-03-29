@@ -28,11 +28,26 @@ def format_work_log(lines: list[str]) -> str:
 
 
 def format_question_card(question: dict) -> str:
-    """Format a question card with clear visual structure."""
+    """Format a question card with clear visual structure.
+
+    Header changes based on question source:
+    - review_escalation: "Review Could Not Complete"
+    - review_uncertain: "Reviewer Is Uncertain"
+    - default: "Question from Agent" (or Planner for planning phase)
+    """
     q = question.get("question", "")
     ctx = question.get("context", "")
+    source = question.get("source")
+
+    if source == "review_escalation":
+        header = "Review Could Not Complete"
+    elif source == "review_uncertain":
+        header = "Reviewer Is Uncertain"
+    else:
+        header = "Question from Agent"
+
     parts = []
-    parts.append(f"[bold {ACCENT_ORANGE}]━━━ Question from Planner ━━━[/]")
+    parts.append(f"[bold {ACCENT_ORANGE}]━━━ {_escape(header)} ━━━[/]")
     parts.append("")
     if ctx:
         parts.append(f"[{TEXT_SECONDARY}]{_escape(ctx)}[/]")
