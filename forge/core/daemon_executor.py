@@ -9,7 +9,7 @@ import os
 import time
 from datetime import UTC, datetime
 
-from forge.core.budget import check_budget
+from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
     _build_retry_prompt,
@@ -281,7 +281,7 @@ class ExecutorMixin:
         await self._ensure_clean_for_rebase(worktree_path, task_id)
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
-        async with self._merge_lock:
+        async with self._get_merge_lock(repo_id):
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
             await self._emit_merge_success(
@@ -321,7 +321,7 @@ class ExecutorMixin:
     ) -> str | None:
         """Create or reuse a worktree. Returns path or ``None`` on failure."""
         try:
-            return worktree_mgr.create(task_id, base_ref=base_ref)
+            return await worktree_mgr.async_create(task_id, base_ref=base_ref)
         except ValueError:
             wt = self._worktree_path(repo_id, task_id)
             if os.path.isdir(wt):
@@ -561,7 +561,10 @@ class ExecutorMixin:
                 description="commit staged before rebase",
             )
 
-        # 2. Stash any remaining working tree dirt (untracked files, modifications)
+        # 2. Commit any remaining working tree dirt (untracked files, modifications).
+        # Previously this used `git stash` but stashes were never popped,
+        # silently losing agent work product. Committing is safer — the content
+        # is preserved in the branch history and survives rebase.
         status = await _run_git(
             ["status", "--porcelain"],
             cwd=worktree_path,
@@ -570,10 +573,21 @@ class ExecutorMixin:
         )
         if status.stdout.strip():
             await _run_git(
-                ["stash", "push", "--include-untracked", "-m", "forge-pre-rebase-cleanup"],
+                ["add", "-A"],
                 cwd=worktree_path,
                 check=False,
-                description="stash working tree before rebase",
+                description="stage remaining changes before rebase",
+            )
+            await _run_git(
+                [
+                    "commit",
+                    "--no-verify",
+                    "-m",
+                    f"chore({task_id}): preserve uncommitted changes before rebase",
+                ],
+                cwd=worktree_path,
+                check=False,
+                description="commit remaining changes before rebase",
             )
 
     # -- auto-commit safety net -------------------------------------------
@@ -1439,7 +1453,7 @@ class ExecutorMixin:
         # Hold the lock for the entire first-attempt + retry sequence so no
         # other task's merge can interleave between the two attempts.
         merge_t0 = time.monotonic()
-        async with self._merge_lock:
+        async with self._get_merge_lock():
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
             if not merge_result.success:
                 console.print(
@@ -1498,7 +1512,7 @@ class ExecutorMixin:
         if not retry_result.conflicting_files:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
-        async with self._merge_lock:
+        async with self._get_merge_lock():
             prep = await merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
             await self._try_race_resolved_merge(
@@ -1516,7 +1530,7 @@ class ExecutorMixin:
             task_id, worktree_path, prep.conflicting_files, agent_model, db=db
         )
         if resolved:
-            async with self._merge_lock:
+            async with self._get_merge_lock():
                 final = await merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
                 await self._emit_merge_success(
@@ -1570,7 +1584,7 @@ class ExecutorMixin:
         task_after = await db.get_task(task_id)
         if task_after and task_after.state in (TaskState.DONE.value, TaskState.ERROR.value):
             try:
-                worktree_mgr.remove(task_id)
+                await worktree_mgr.async_remove(task_id)
             except Exception as exc:
                 logger.warning("Worktree cleanup failed for %s: %s", task_id, exc)
         await db.release_agent(agent_id)
@@ -1623,6 +1637,9 @@ class ExecutorMixin:
         # RuntimeGuard — detects wasteful retry loops
         guard = RuntimeGuard()
 
+        _last_budget_check = [time.monotonic()]
+        _BUDGET_CHECK_INTERVAL = 30  # seconds between mid-execution budget checks
+
         async def _on_msg(msg):
             # Check for retry loops BEFORE processing
             try:
@@ -1637,6 +1654,15 @@ class ExecutorMixin:
                     )
             except GuardTriggered:
                 raise  # Let it propagate to the outer try/except
+
+            # Periodic budget enforcement — checked every 30s, not every message
+            now_budget = time.monotonic()
+            if now_budget - _last_budget_check[0] >= _BUDGET_CHECK_INTERVAL:
+                _last_budget_check[0] = now_budget
+                try:
+                    await check_budget(db, pid, self._settings)
+                except BudgetExceededError:
+                    raise  # Propagate to cancel the agent
 
             text = _extract_activity(msg)
             if not text:
@@ -1829,7 +1855,7 @@ class ExecutorMixin:
         pre_merge_ref: str | None = None,
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
-        async with self._merge_lock:
+        async with self._get_merge_lock():
             ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
             await self._emit_merge_success(

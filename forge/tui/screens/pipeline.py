@@ -1130,10 +1130,23 @@ class PipelineScreen(Screen):
         if not task or task.get("state") != "error":
             return
         tid = task["id"]
+        safe_create_task(self._retry_task(tid), name=f"retry-{tid}")
+
+    async def _retry_task(self, task_id: str) -> None:
+        """Reset an errored task to 'todo' and let the daemon re-dispatch it."""
         try:
-            self.app._bus.emit("task:retry", {"task_id": tid})
+            db = getattr(self.app, "_db", None)
+            if not db:
+                logger.warning("Cannot retry task %s: no database connection", task_id)
+                return
+            await db.update_task_state(task_id, "todo")
+            # Update TUI state immediately so user sees the change
+            if task_id in self._state.tasks:
+                self._state.tasks[task_id]["state"] = "todo"
+                self._state._notify("tasks")
+            logger.info("Task %s reset to 'todo' for retry", task_id)
         except Exception:
-            logger.debug("Failed to emit task:retry", exc_info=True)
+            logger.exception("Failed to retry task %s", task_id)
 
     def action_skip_task(self) -> None:
         """Skip the selected errored task (only active for error-state tasks)."""
@@ -1143,10 +1156,22 @@ class PipelineScreen(Screen):
         if not task or task.get("state") != "error":
             return
         tid = task["id"]
+        safe_create_task(self._skip_task(tid), name=f"skip-{tid}")
+
+    async def _skip_task(self, task_id: str) -> None:
+        """Mark an errored task as cancelled so the pipeline can proceed."""
         try:
-            self.app._bus.emit("task:skip", {"task_id": tid})
+            db = getattr(self.app, "_db", None)
+            if not db:
+                logger.warning("Cannot skip task %s: no database connection", task_id)
+                return
+            await db.update_task_state(task_id, "cancelled")
+            if task_id in self._state.tasks:
+                self._state.tasks[task_id]["state"] = "cancelled"
+                self._state._notify("tasks")
+            logger.info("Task %s skipped (cancelled)", task_id)
         except Exception:
-            logger.debug("Failed to emit task:skip", exc_info=True)
+            logger.exception("Failed to skip task %s", task_id)
 
     def action_pop_screen(self) -> None:
         """Esc — only active in read-only mode."""

@@ -770,9 +770,10 @@ class TestLintGateAutoFix:
 
         async def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
+            result.returncode = 0
             if args == ["diff"]:
                 result.stdout = diff_output
-            elif args == ["diff", "--cached", "--name-only"]:
+            elif "--name-only" in args:
                 result.stdout = "foo.py\n"
             else:
                 result.stdout = ""
@@ -789,7 +790,7 @@ class TestLintGateAutoFix:
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch(
-                "forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()
+                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[self._ruff_strategy()]
             ),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -825,7 +826,7 @@ class TestLintGateAutoFix:
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch(
-                "forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()
+                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[self._ruff_strategy()]
             ),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -837,7 +838,7 @@ class TestLintGateAutoFix:
             result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
-        assert result.details == "Lint clean"
+        assert "Lint clean" in result.details
         assert "auto-fixed" not in result.details
 
     @pytest.mark.asyncio
@@ -852,7 +853,7 @@ class TestLintGateAutoFix:
                 return_value=["foo.py"],
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.detect_lint_strategy", return_value=None),
+            patch("forge.core.daemon_review.detect_all_lint_strategies", return_value=[]),
         ):
             result = await mixin._run_lint_gate("/repo")
 
@@ -891,7 +892,7 @@ class TestLintGateAutoFix:
                 return_value=["main.go"],
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.detect_lint_strategy", return_value=gofmt_strategy),
+            patch("forge.core.daemon_review.detect_all_lint_strategies", return_value=[gofmt_strategy]),
             patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/gofmt"),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -916,9 +917,10 @@ class TestLintGateAutoFix:
 
         async def fake_run_git(args, cwd=None, check=True, description=""):
             result = MagicMock()
+            result.returncode = 0
             if args == ["diff"]:
                 result.stdout = diff_output
-            elif args == ["diff", "--cached", "--name-only"]:
+            elif "--name-only" in args:
                 result.stdout = "foo.py\n"
             else:
                 result.stdout = ""
@@ -935,7 +937,7 @@ class TestLintGateAutoFix:
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch(
-                "forge.core.daemon_review.detect_lint_strategy", return_value=self._ruff_strategy()
+                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[self._ruff_strategy()]
             ),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -947,7 +949,7 @@ class TestLintGateAutoFix:
             result = await mixin._run_lint_gate("/repo")
 
         assert result.passed is True
-        assert result.details.startswith("Lint clean (auto-fixed:")
+        assert "Lint clean (auto-fixed:" in result.details
         assert "removed 1 unused import" in result.details
 
 

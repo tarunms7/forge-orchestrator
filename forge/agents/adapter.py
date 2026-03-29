@@ -178,9 +178,11 @@ Your working directory is {cwd}.{extra_dirs_clause}
 
 ## Boundaries
 - Only modify files listed in File Scope above (plus their test files). Out-of-scope changes are auto-reverted.
+- Only read and write files within your working directory ({cwd}). Do NOT access files outside this directory, including home directory files (~/.ssh, ~/.env, ~/.config), system files (/etc, /usr), or other users' directories.
 - If contracts are specified above, implement them exactly as defined.
 - Follow existing code style — read before you write.
 - Do NOT run: git push, git branch, git rebase, git checkout, git reset. The orchestrator manages branches.
+- Do NOT use subprocess, os.system, or similar to run blocked commands indirectly.
 - You CAN and SHOULD run: git diff, git status, git log to verify your own work.
 
 ## Command Retry Discipline

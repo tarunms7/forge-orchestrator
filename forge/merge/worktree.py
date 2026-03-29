@@ -98,6 +98,23 @@ class WorktreeManager:
             == 0
         )
 
+        # Delete stale branch from a previous attempt (retry scenario).
+        # Without this, `git worktree add -b` fails with "branch already exists".
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
+            cwd=self._repo,
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            logger.info("Deleting stale branch %s from previous attempt", branch)
+            subprocess.run(
+                ["git", "branch", "-D", branch],
+                cwd=self._repo,
+                capture_output=True,
+                timeout=10,
+            )
+
         if has_commits:
             cmd = ["git", "worktree", "add", "-b", branch, path]
             # Base on the pipeline branch so dependent tasks inherit merged files

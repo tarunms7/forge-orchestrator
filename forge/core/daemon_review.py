@@ -7,6 +7,7 @@ import logging
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -30,6 +31,48 @@ console = make_console()
 
 
 # ---------------------------------------------------------------------------
+# Shell command helpers
+# ---------------------------------------------------------------------------
+
+
+async def _async_shell(
+    cmd: str,
+    cwd: str,
+    *,
+    timeout: float = 30,
+) -> subprocess.CompletedProcess[str]:
+    """Run a shell command string (supports &&, ||, pipes, redirects).
+
+    Unlike async_subprocess which uses create_subprocess_exec (no shell),
+    this uses create_subprocess_shell for commands with shell operators.
+    """
+    import asyncio
+
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        cwd=cwd,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise TimeoutError(f"Command timed out after {timeout}s: {cmd}")
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=proc.returncode or 0,
+        stdout=stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else "",
+        stderr=stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else "",
+    )
+
+
+# ---------------------------------------------------------------------------
 # LintStrategy — language-agnostic lint gate
 # ---------------------------------------------------------------------------
 
@@ -45,6 +88,7 @@ class LintStrategy:
     commit_msg: str = "fix: auto-fix lint issues"
     tool_check: str | None = None  # Binary to verify exists via shutil.which()
     check_via_output: bool = False  # True = non-empty stdout means failure
+    extensions: set[str] | None = None  # File extensions this linter handles (e.g. {".py"})
 
 
 # Language fallbacks — ordered by priority for tiebreaking
@@ -57,6 +101,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             fix_cmd=[sys.executable, "-m", "ruff", "check", "--fix"],
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (ruff)",
+            extensions={".py", ".pyi"},
             # ruff is a core dependency — no tool_check needed
         ),
     ),
@@ -69,6 +114,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (eslint)",
             tool_check="npx",
+            extensions={".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"},
         ),
     ),
     (
@@ -81,6 +127,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             commit_msg="fix: auto-fix lint issues (gofmt)",
             tool_check="gofmt",
             check_via_output=True,
+            extensions={".go"},
         ),
     ),
     (
@@ -92,6 +139,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=False,
             commit_msg="fix: auto-fix lint issues (clippy)",
             tool_check="cargo",
+            extensions={".rs"},
         ),
     ),
     (
@@ -103,6 +151,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (rubocop)",
             tool_check="rubocop",
+            extensions={".rb"},
         ),
     ),
     (
@@ -114,6 +163,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (ktlint)",
             tool_check="ktlint",
+            extensions={".kt", ".kts"},
         ),
     ),
     (
@@ -125,6 +175,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (swiftlint)",
             tool_check="swiftlint",
+            extensions={".swift"},
         ),
     ),
     (
@@ -136,6 +187,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (shellcheck)",
             tool_check="shellcheck",
+            extensions={".sh", ".bash"},
         ),
     ),
 ]
@@ -251,6 +303,42 @@ def detect_lint_strategy(
 
     # 6. No linter found
     return None
+
+
+def detect_all_lint_strategies(
+    worktree_path: str,
+    changed_files: list[str],
+    lint_cmd_override: str | None = None,
+    lint_fix_cmd_override: str | None = None,
+) -> list[LintStrategy]:
+    """Detect ALL applicable lint strategies for mixed-language changes.
+
+    Unlike detect_lint_strategy (returns first match), this returns a strategy
+    for each language that has changed files. Useful for repos with Python + TS + Go.
+    """
+    # User override or project-level config takes precedence (single strategy)
+    single = detect_lint_strategy(
+        worktree_path, changed_files, lint_cmd_override, lint_fix_cmd_override
+    )
+    if single and single.name in ("custom", "pre-commit", "npm-lint", "make-lint"):
+        return [single] if single else []
+
+    # Language fallback — return ALL matching strategies
+    ext_counts: dict[str, int] = {}
+    for f in changed_files:
+        _, ext = os.path.splitext(f)
+        if ext:
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+    strategies: list[LintStrategy] = []
+    for extensions, strategy in _LANGUAGE_FALLBACKS:
+        count = sum(ext_counts.get(ext, 0) for ext in extensions)
+        if count > 0:
+            if strategy.tool_check and not shutil.which(strategy.tool_check):
+                continue
+            strategies.append(strategy)
+
+    return strategies
 
 
 def _summarize_auto_fix(diff_text: str) -> str:
@@ -514,8 +602,16 @@ class ReviewMixin:
             await gate_sem.acquire()
         try:
             try:
-                parts = shlex.split(cmd)
-                proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
+                # Use shell=True for commands with shell operators (&&, ||, ;, |)
+                # so they execute correctly. Plain commands use exec for safety.
+                # Use space-padded operators to avoid false matches in file paths
+                # or arguments (e.g., "echo hello|world" shouldn't trigger shell).
+                _shell_operators = (" && ", " || ", " ; ", " | ", " > ", " >> ", " < ")
+                if any(op in f" {cmd} " for op in _shell_operators):
+                    proc = await _async_shell(cmd, cwd=worktree_path, timeout=timeout)
+                else:
+                    parts = shlex.split(cmd)
+                    proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
             except TimeoutError:
                 return GateResult(
                     passed=False,
@@ -1205,35 +1301,69 @@ class ReviewMixin:
         lint_cmd_override = self._resolve_lint_cmd(repo_id=repo_id)
         lint_fix_cmd_override = self._resolve_lint_fix_cmd(repo_id=repo_id)
 
-        strategy = detect_lint_strategy(
+        strategies = detect_all_lint_strategies(
             worktree_path,
             changed_files,
             lint_cmd_override=lint_cmd_override,
             lint_fix_cmd_override=lint_fix_cmd_override,
         )
 
-        if strategy is None:
+        if not strategies:
             return GateResult(passed=True, gate="gate1_auto_check", details="No linter detected")
 
-        # Verify tool is installed
-        if strategy.tool_check and not shutil.which(strategy.tool_check):
+        # Run each strategy against its matching files. Fail if ANY strategy fails.
+        all_passed = True
+        all_details: list[str] = []
+        for strategy in strategies:
+            result = await self._run_single_lint(
+                worktree_path, strategy, changed_files, pipeline_branch, db
+            )
+            if not result.passed:
+                all_passed = False
+            all_details.append(f"{strategy.name}: {result.details}")
+
+        if all_passed:
             return GateResult(
                 passed=True,
                 gate="gate1_auto_check",
-                details=f"No linter available for {strategy.name} (install {strategy.tool_check})",
+                details="; ".join(all_details),
             )
+        return GateResult(
+            passed=False,
+            gate="gate1_auto_check",
+            details="\n".join(all_details),
+            retriable=True,
+        )
 
-        # Determine the correct cwd for the linter.  When changed files live
-        # inside a subdirectory that has its own package.json (e.g. web/),
-        # tools like ESLint must run from that subdirectory so they find
-        # their config and node_modules.
+    async def _run_single_lint(
+        self,
+        worktree_path: str,
+        strategy: LintStrategy,
+        changed_files: list[str],
+        pipeline_branch: str | None,
+        db=None,
+    ) -> GateResult:
+        """Run a single lint strategy against its matching files."""
         lint_cwd = worktree_path
-        lint_files = list(changed_files)
-        if strategy.supports_file_args and changed_files:
+        # Filter files to only those matching the linter's supported extensions.
+        if strategy.extensions and strategy.supports_file_args:
+            lint_files = [
+                f for f in changed_files
+                if os.path.splitext(f)[1].lower() in strategy.extensions
+            ]
+            if not lint_files:
+                return GateResult(
+                    passed=True,
+                    gate="gate1_auto_check",
+                    details=f"No {strategy.name}-eligible files changed",
+                )
+        else:
+            lint_files = list(changed_files)
+        if strategy.supports_file_args and lint_files:
             common_prefix = (
-                os.path.commonpath(changed_files)
-                if len(changed_files) > 1
-                else os.path.dirname(changed_files[0])
+                os.path.commonpath(lint_files)
+                if len(lint_files) > 1
+                else os.path.dirname(lint_files[0])
             )
             # Walk up from common prefix to find a directory with package.json
             # (for JS/TS tools) or pyproject.toml (for Python tools)
@@ -1255,7 +1385,7 @@ class ReviewMixin:
                     lint_cwd = candidate_abs
                     prefix = candidate + "/"
                     lint_files = [
-                        f[len(prefix) :] if f.startswith(prefix) else f for f in changed_files
+                        f[len(prefix) :] if f.startswith(prefix) else f for f in lint_files
                     ]
                     logger.info("Lint cwd adjusted to %s (found config in subdirectory)", candidate)
                     break
