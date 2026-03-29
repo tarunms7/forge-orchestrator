@@ -98,6 +98,13 @@ async def gate2_llm_review(
     sibling_context: str | None = None,
     custom_review_focus: str = "",
     on_message: Callable[[Any], Awaitable[None]] | None = None,
+    # NEW: callback for review progress events (strategy_selected, chunk_started, etc.)
+    on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
+    # NEW: adaptive review config (from ReviewConfig)
+    adaptive_review: bool = True,
+    medium_diff_threshold: int = 400,
+    large_diff_threshold: int = 2000,
+    max_chunk_lines: int = 600,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -125,6 +132,63 @@ async def gate2_llm_review(
             cost_info,
         )
 
+    # ── Strategy selection ────────────────────────────────────────────────
+    from forge.review.strategy import (
+        ReviewStrategy,
+        build_risk_map_header,
+        score_files,
+        select_strategy,
+    )
+    from forge.review.strategy import (
+        build_diff_chunks as build_chunks,
+    )
+    from forge.review.synthesizer import run_chunked_review
+
+    strategy = select_strategy(
+        diff,
+        medium_diff_threshold,
+        large_diff_threshold,
+        adaptive=adaptive_review,
+    )
+
+    if on_review_event:
+        from forge.review.strategy import count_diff_lines
+        payload: dict = {
+            "strategy": strategy.value,
+            "diff_lines": count_diff_lines(diff),
+        }
+        if strategy == ReviewStrategy.TIER3:
+            # Pre-compute chunk count for TUI
+            _scores = score_files(diff)
+            _chunks = build_chunks(_scores, diff, max_chunk_lines)
+            payload["chunk_count"] = len(_chunks)
+        await on_review_event("review:strategy_selected", payload)
+
+    # ── Tier 3: multi-chunk map-reduce ────────────────────────────────────
+    if strategy == ReviewStrategy.TIER3:
+        file_scores = score_files(diff)
+        chunks = build_chunks(file_scores, diff, max_chunk_lines)
+        return await run_chunked_review(
+            chunks,
+            file_scores,
+            diff,
+            task_title,
+            task_description,
+            model=model,
+            worktree_path=worktree_path,
+            sibling_context=sibling_context,
+            prior_feedback=prior_feedback,
+            delta_diff=delta_diff,
+            on_message=on_message,
+            on_review_event=on_review_event,
+        )
+
+    # Tier 2: build risk map header (pure Python, no LLM cost)
+    risk_map = ""
+    if strategy == ReviewStrategy.TIER2:
+        file_scores_t2 = score_files(diff)
+        risk_map = build_risk_map_header(file_scores_t2)
+
     prompt = _build_review_prompt(
         task_title,
         task_description,
@@ -135,6 +199,7 @@ async def gate2_llm_review(
         allowed_files=allowed_files,
         delta_diff=delta_diff,
         sibling_context=sibling_context,
+        risk_map_header=risk_map,
     )
 
     system_prompt = REVIEW_SYSTEM_PROMPT
@@ -181,6 +246,7 @@ async def gate2_llm_review(
                         gate="gate2_llm_review",
                         details=f"Review timed out after {max_review_attempts} attempts",
                         retriable=True,
+                        review_strategy=strategy.value,
                     ),
                     cost_info,
                 )
@@ -196,6 +262,7 @@ async def gate2_llm_review(
                         gate="gate2_llm_review",
                         details=f"SDK error during review after {max_review_attempts} attempts: {e}",
                         retriable=True,
+                        review_strategy=strategy.value,
                     ),
                     cost_info,
                 )
@@ -209,7 +276,9 @@ async def gate2_llm_review(
 
         result_text = result.result if result and result.result else ""
         if result_text:
-            return (_parse_review_result(result_text), cost_info)
+            result_gate = _parse_review_result(result_text)
+            result_gate.review_strategy = strategy.value
+            return result_gate, cost_info
 
         # Log diagnostic details to help debug empty responses
         _diag_parts = [f"attempt {attempt}/{max_review_attempts}"]
@@ -240,6 +309,7 @@ async def gate2_llm_review(
             gate="gate2_llm_review",
             details=f"Review could not complete after {max_review_attempts} attempts (likely transient SDK issue). Human review needed.",
             needs_human=True,
+            review_strategy=strategy.value,
         ),
         cost_info,
     )
@@ -256,6 +326,7 @@ def _build_review_prompt(
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
+    risk_map_header: str = "",  # NEW: Tier 2 risk prioritisation header
 ) -> str:
     parts = []
     if project_context:
@@ -274,6 +345,8 @@ def _build_review_prompt(
             "If the diff contains changes to files outside this list (excluding related test files), "
             "FAIL immediately with 'OUT OF SCOPE' and list the violating files.\n\n"
         )
+    if risk_map_header:
+        parts.append(f"{risk_map_header}\n\n")
     parts.append(
         f"Git diff of changes:\n```diff\n{diff}\n```\n\n",
     )
