@@ -249,14 +249,14 @@ class MergeMixin:
                 await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": error_msg},
                     db=db,
                     pipeline_id=pipeline_id,
                 )
             else:
                 await self._events.emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": error_msg},
                 )
             # Only clean up worktree when we're done with the task entirely
             try:
@@ -321,18 +321,19 @@ class MergeMixin:
                 await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
             except Exception:
                 logger.debug("Failed to record error/timing for %s", task_id, exc_info=True)
+            merge_error_msg = "Max merge retries exceeded"
             if pipeline_id:
                 await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": merge_error_msg},
                     db=db,
                     pipeline_id=pipeline_id,
                 )
             else:
                 await self._events.emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": merge_error_msg},
                 )
             try:
                 await worktree_mgr.async_remove(task_id)
