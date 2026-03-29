@@ -158,7 +158,7 @@ class TestFormatTaskDetail:
         result = _format_task_detail(task, _sample_tasks(), None)
         # Dependencies section should show "none"
         lines = result.split("\n")
-        dep_idx = next(i for i, l in enumerate(lines) if "Dependencies" in l)
+        dep_idx = next(i for i, line in enumerate(lines) if "Dependencies" in line)
         assert "none" in lines[dep_idx]
 
 
@@ -326,7 +326,6 @@ class TestDryRunEditFlow:
         screen._editing = "description"
         assert screen._is_editing()
         # action_cursor_down should be a no-op when editing
-        original_cursor = screen._cursor
         # Can't call action_cursor_down without mounting, but verify guard
         assert screen._is_editing()
 
