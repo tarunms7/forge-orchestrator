@@ -149,7 +149,14 @@ class TestFormatTaskDetail:
         assert "Agent model" not in result
 
     def test_no_files_shows_none(self):
-        task = {"id": "t1", "title": "T", "description": "", "files": [], "complexity": "low", "depends_on": []}
+        task = {
+            "id": "t1",
+            "title": "T",
+            "description": "",
+            "files": [],
+            "complexity": "low",
+            "depends_on": [],
+        }
         result = _format_task_detail(task, [task], None)
         assert "none" in result
 
@@ -265,25 +272,34 @@ class TestDryRunMessages:
 
 class TestDryRunCycleComplexity:
     def test_cycle_low_to_medium(self):
-        screen = DryRunScreen([{"id": "t", "title": "T", "complexity": "low", "files": [], "depends_on": []}])
+        screen = DryRunScreen(
+            [{"id": "t", "title": "T", "complexity": "low", "files": [], "depends_on": []}]
+        )
         task = screen._tasks[0]
         from forge.tui.screens.plan_approval import _COMPLEXITY_ORDER
+
         idx = _COMPLEXITY_ORDER.index(task["complexity"])
         task["complexity"] = _COMPLEXITY_ORDER[(idx + 1) % len(_COMPLEXITY_ORDER)]
         assert task["complexity"] == "medium"
 
     def test_cycle_medium_to_high(self):
-        screen = DryRunScreen([{"id": "t", "title": "T", "complexity": "medium", "files": [], "depends_on": []}])
+        screen = DryRunScreen(
+            [{"id": "t", "title": "T", "complexity": "medium", "files": [], "depends_on": []}]
+        )
         task = screen._tasks[0]
         from forge.tui.screens.plan_approval import _COMPLEXITY_ORDER
+
         idx = _COMPLEXITY_ORDER.index(task["complexity"])
         task["complexity"] = _COMPLEXITY_ORDER[(idx + 1) % len(_COMPLEXITY_ORDER)]
         assert task["complexity"] == "high"
 
     def test_cycle_high_to_low(self):
-        screen = DryRunScreen([{"id": "t", "title": "T", "complexity": "high", "files": [], "depends_on": []}])
+        screen = DryRunScreen(
+            [{"id": "t", "title": "T", "complexity": "high", "files": [], "depends_on": []}]
+        )
         task = screen._tasks[0]
         from forge.tui.screens.plan_approval import _COMPLEXITY_ORDER
+
         idx = _COMPLEXITY_ORDER.index(task["complexity"])
         task["complexity"] = _COMPLEXITY_ORDER[(idx + 1) % len(_COMPLEXITY_ORDER)]
         assert task["complexity"] == "low"

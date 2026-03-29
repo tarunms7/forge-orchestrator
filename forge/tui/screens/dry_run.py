@@ -58,7 +58,9 @@ def _build_dag_with_models(tasks: list[dict], model_assignments: dict[str, str] 
 
         if deps:
             dep_str = ", ".join(_escape(d) for d in deps if d in task_map)
-            lines.append(f"  [{color}]\u25cf[/] {escaped_id}: {escaped_title}{model_tag} [#8b949e]\u2190 {dep_str}[/]")
+            lines.append(
+                f"  [{color}]\u25cf[/] {escaped_id}: {escaped_title}{model_tag} [#8b949e]\u2190 {dep_str}[/]"
+            )
         else:
             lines.append(f"  [{color}]\u25cf[/] {escaped_id}: {escaped_title}{model_tag}")
     return "\n".join(lines)

@@ -753,7 +753,10 @@ class TestParseForgeQuestion:
         """No limit on number of suggestions."""
         suggestions = [f"Option {i}" for i in range(10)]
         import json
-        text = f'FORGE_QUESTION:\n{json.dumps({"question": "Pick one", "suggestions": suggestions})}'
+
+        text = (
+            f"FORGE_QUESTION:\n{json.dumps({'question': 'Pick one', 'suggestions': suggestions})}"
+        )
         result = _parse_forge_question(text)
         assert result is not None
         assert len(result["suggestions"]) == 10
@@ -768,6 +771,7 @@ class TestParseForgeQuestion:
     def test_malformed_json_logs_warning(self, caplog):
         """Malformed JSON after marker should log a warning."""
         import logging
+
         with caplog.at_level(logging.WARNING, logger="forge"):
             result = _parse_forge_question("FORGE_QUESTION:\n{not valid json}")
         assert result is None
@@ -776,6 +780,7 @@ class TestParseForgeQuestion:
     def test_missing_question_key_logs_warning(self, caplog):
         """Valid JSON without 'question' key should log a warning."""
         import logging
+
         with caplog.at_level(logging.WARNING, logger="forge"):
             result = _parse_forge_question('FORGE_QUESTION:\n{"suggestions": ["A"]}')
         assert result is None
@@ -784,6 +789,7 @@ class TestParseForgeQuestion:
     def test_brace_matching_failure_logs_warning(self, caplog):
         """Unmatched braces should log a warning."""
         import logging
+
         with caplog.at_level(logging.WARNING, logger="forge"):
             result = _parse_forge_question("FORGE_QUESTION:\n{unclosed")
         assert result is None

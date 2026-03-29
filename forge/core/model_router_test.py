@@ -104,7 +104,9 @@ class TestModelEscalation:
 
     def test_escalation_applies_to_overrides(self):
         """Override selects haiku, but retry 2+ should escalate it to sonnet."""
-        result = select_model("auto", "agent", "low", overrides={"agent_model_low": "haiku"}, retry_count=2)
+        result = select_model(
+            "auto", "agent", "low", overrides={"agent_model_low": "haiku"}, retry_count=2
+        )
         assert result == "sonnet"
 
     def test_escalation_retry_3_same_as_2(self):

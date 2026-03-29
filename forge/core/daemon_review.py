@@ -56,9 +56,7 @@ async def _async_shell(
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
         proc.kill()
         await proc.communicate()
@@ -1166,7 +1164,9 @@ class ReviewMixin:
                 pipeline_id=pipeline_id,
             )
             if gate2_result.needs_human:
-                console.print(f"[yellow]  L2: escalating to human — {gate2_result.details[:100]}[/yellow]")
+                console.print(
+                    f"[yellow]  L2: escalating to human — {gate2_result.details[:100]}[/yellow]"
+                )
                 try:
                     await db.set_task_timing(
                         task.id, review_duration_s=time.monotonic() - review_t0
@@ -1359,8 +1359,7 @@ class ReviewMixin:
         # Filter files to only those matching the linter's supported extensions.
         if strategy.extensions and strategy.supports_file_args:
             lint_files = [
-                f for f in changed_files
-                if os.path.splitext(f)[1].lower() in strategy.extensions
+                f for f in changed_files if os.path.splitext(f)[1].lower() in strategy.extensions
             ]
             if not lint_files:
                 return GateResult(

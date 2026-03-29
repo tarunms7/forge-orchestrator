@@ -235,7 +235,9 @@ class ExecutorMixin:
             )
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
+        agent_model = select_model(
+            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        )
         await self._attempt_merge(
             db,
             merge_worker,
@@ -278,7 +280,9 @@ class ExecutorMixin:
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
+        agent_model = select_model(
+            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        )
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
@@ -286,9 +290,7 @@ class ExecutorMixin:
         # Emit pipeline-level merging phase on first task entering merge
         if not getattr(self, "_merging_phase_emitted", False):
             self._merging_phase_emitted = True
-            await self._emit(
-                "pipeline:phase_changed", {"phase": "merging"}, db=db, pipeline_id=pid
-            )
+            await self._emit("pipeline:phase_changed", {"phase": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{validate_task_id(task_id)}"
         # Ensure worktree is clean before merge — commits staged changes,
         # stashes untracked files, so rebase never hits "uncommitted changes"
@@ -396,8 +398,7 @@ class ExecutorMixin:
             description="abort rebase",
         )
         console.print(
-            f"[yellow]  {task_id}: clean rebase had conflicts — "
-            f"retrying with -X theirs[/yellow]"
+            f"[yellow]  {task_id}: clean rebase had conflicts — retrying with -X theirs[/yellow]"
         )
 
         # Attempt 2: auto-resolve conflicts in favour of upstream
@@ -455,7 +456,9 @@ class ExecutorMixin:
                 user message when resuming a paused conversation.
             resume: SDK session ID for conversation continuation (``ClaudeCodeOptions.resume``).
         """
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
+        agent_model = select_model(
+            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        )
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
@@ -1021,7 +1024,9 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
 
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
+        agent_model = select_model(
+            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        )
         await self._attempt_merge(
             db,
             merge_worker,
@@ -1101,10 +1106,16 @@ class ExecutorMixin:
         async with db._session_factory() as session:
             from forge.storage.db import TaskQuestionRow
             from sqlalchemy import select as sa_select
-            stmt = sa_select(TaskQuestionRow).where(
-                TaskQuestionRow.task_id == task_id,
-                TaskQuestionRow.answer.isnot(None),
-            ).order_by(TaskQuestionRow.created_at.desc()).limit(1)
+
+            stmt = (
+                sa_select(TaskQuestionRow)
+                .where(
+                    TaskQuestionRow.task_id == task_id,
+                    TaskQuestionRow.answer.isnot(None),
+                )
+                .order_by(TaskQuestionRow.created_at.desc())
+                .limit(1)
+            )
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row:
                 source = getattr(row, "source", None)
@@ -1146,7 +1157,9 @@ class ExecutorMixin:
             logger.info("Review answer for %s: human approved", task_id)
             task = await db.get_task(task_id)
             agent_model = select_model(
-                self._strategy, "agent", task.complexity or "medium",
+                self._strategy,
+                "agent",
+                task.complexity or "medium",
                 retry_count=task.retry_count,
             )
             await db.update_task_state(task_id, TaskState.MERGING.value)
@@ -1157,14 +1170,22 @@ class ExecutorMixin:
                 pipeline_id=pid,
             )
             await self._attempt_merge(
-                db, self._merge_worker, task, task_id, agent_id,
-                self._worktree_mgr, agent_model, pid,
+                db,
+                self._merge_worker,
+                task,
+                task_id,
+                agent_id,
+                self._worktree_mgr,
+                agent_model,
+                pid,
             )
         elif "reject" in answer_lower:
             logger.info("Review answer for %s: human rejected, retrying task", task_id)
             await db.release_agent(agent_id)
             await self._handle_retry(
-                db, task_id, self._worktree_mgr,
+                db,
+                task_id,
+                self._worktree_mgr,
                 review_feedback="Human reviewer rejected the code. Please revise.",
                 pipeline_id=pid,
             )
@@ -1172,7 +1193,9 @@ class ExecutorMixin:
             logger.info("Review answer for %s: human provided guidance", task_id)
             await db.release_agent(agent_id)
             await self._handle_retry(
-                db, task_id, self._worktree_mgr,
+                db,
+                task_id,
+                self._worktree_mgr,
                 review_feedback=f"Human reviewer guidance: {answer}",
                 pipeline_id=pid,
             )
@@ -1397,9 +1420,7 @@ class ExecutorMixin:
         # Emit pipeline-level review phase on first task entering review
         if not getattr(self, "_review_phase_emitted", False):
             self._review_phase_emitted = True
-            await self._emit(
-                "pipeline:phase_changed", {"phase": "review"}, db=db, pipeline_id=pid
-            )
+            await self._emit("pipeline:phase_changed", {"phase": "review"}, db=db, pipeline_id=pid)
         # Resolve per-pipeline build/test commands for review gates
         pipeline = await db.get_pipeline(pid) if pid else None
         self._pipeline_build_cmd = getattr(pipeline, "build_cmd", None) if pipeline else None
@@ -1460,7 +1481,10 @@ class ExecutorMixin:
                         "source": "review_escalation",
                     }
                 await self._handle_agent_question(
-                    db, task_id, agent_id, question_data,
+                    db,
+                    task_id,
+                    agent_id,
+                    question_data,
                     session_id=None,
                     pipeline_id=pid,
                 )
@@ -1583,9 +1607,7 @@ class ExecutorMixin:
         # Emit pipeline-level merging phase on first task entering merge
         if not getattr(self, "_merging_phase_emitted", False):
             self._merging_phase_emitted = True
-            await self._emit(
-                "pipeline:phase_changed", {"phase": "merging"}, db=db, pipeline_id=pid
-            )
+            await self._emit("pipeline:phase_changed", {"phase": "merging"}, db=db, pipeline_id=pid)
         branch = f"forge/{validate_task_id(task_id)}"
 
         # Ensure worktree is clean before merge — commits staged changes,

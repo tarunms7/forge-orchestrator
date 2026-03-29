@@ -609,9 +609,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         async def _planner_progress(msg: str) -> None:
             """Emit a planner progress message to fill visual gaps."""
             if pipeline_id:
-                await self._emit(
-                    "planner:output", {"line": msg}, db=db, pipeline_id=pipeline_id
-                )
+                await self._emit("planner:output", {"line": msg}, db=db, pipeline_id=pipeline_id)
             else:
                 await self._events.emit("planner:output", {"line": msg})
 
@@ -787,9 +785,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     now = time.monotonic()
                     if now - _last_token_update[0] >= 2.0:
                         _last_token_update[0] = now
-                        token_line = (
-                            f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
-                        )
+                        token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
                         if pipeline_id:
                             await self._emit(
                                 "planner:output",

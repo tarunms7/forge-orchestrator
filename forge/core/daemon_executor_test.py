@@ -66,7 +66,12 @@ class TestRebaseWorktree:
         # 1st: clean rebase, 2nd: abort, 3rd: rebase -X theirs
         assert mock_git.call_args_list[0].args[0] == ["rebase", "forge/pipeline-abc"]
         assert mock_git.call_args_list[1].args[0] == ["rebase", "--abort"]
-        assert mock_git.call_args_list[2].args[0] == ["rebase", "-X", "theirs", "forge/pipeline-abc"]
+        assert mock_git.call_args_list[2].args[0] == [
+            "rebase",
+            "-X",
+            "theirs",
+            "forge/pipeline-abc",
+        ]
 
     async def test_rebase_all_attempts_fail_does_not_raise(self):
         """If both clean and -X theirs rebase fail, no exception propagates."""
