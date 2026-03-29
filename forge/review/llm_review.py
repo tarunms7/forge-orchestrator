@@ -219,19 +219,19 @@ async def gate2_llm_review(
         if attempt < max_review_attempts:
             await asyncio.sleep(2**attempt + random.uniform(0, 1))
 
-    # All attempts returned empty — auto-pass with warning rather than
-    # retrying the entire task.  Empty results are transient SDK issues
-    # (rate limits, overload), not code quality signals.  Retrying the
-    # whole task would just regenerate the same diff and hit the same issue.
+    # All attempts returned empty — escalate to human instead of auto-passing.
+    # Empty results are transient SDK issues, not code quality signal.
+    # Instead of shipping unreviewed code, ask the human what to do.
     logger.warning(
-        "L2 review returned empty after %d attempts — auto-passing to avoid infinite retry loop",
+        "L2 review returned empty after %d attempts — escalating to human",
         max_review_attempts,
     )
     return (
         GateResult(
-            passed=True,
+            passed=False,
             gate="gate2_llm_review",
-            details=f"Review auto-passed: empty response after {max_review_attempts} attempts (likely transient SDK issue)",
+            details=f"Review could not complete after {max_review_attempts} attempts (likely transient SDK issue). Human review needed.",
+            needs_human=True,
         ),
         cost_info,
     )

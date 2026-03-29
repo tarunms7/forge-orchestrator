@@ -17,6 +17,9 @@ class GateResult:
         False  # True = environment/infra failure (missing module, wrong Python, cmd not found)
     )
     # — skip this gate instead of consuming a retry
+    needs_human: bool = (
+        False  # True = escalate to awaiting_input for human decision
+    )
 
 
 @dataclass

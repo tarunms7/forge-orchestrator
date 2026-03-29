@@ -372,3 +372,47 @@ class TestCustomReviewFocusSeparator:
         assert len(captured_options) == 1
         system_prompt = captured_options[0].system_prompt
         assert "\n\nFocus on error handling paths." in system_prompt
+
+
+class TestEmptyReviewEscalation:
+    """Empty L2 review should escalate to human, not auto-pass."""
+
+    @pytest.mark.asyncio
+    async def test_empty_review_returns_needs_human(self):
+        """Empty SDK response should return needs_human=True, not passed=True."""
+        mock_result = MagicMock()
+        mock_result.result = ""
+        mock_result.cost_usd = 0
+        mock_result.input_tokens = 0
+        mock_result.output_tokens = 0
+        mock_result.num_turns = 0
+        mock_result.duration_ms = 100
+        mock_result.duration_api_ms = 50
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            gate_result, cost_info = await gate2_llm_review(
+                "Test task", "Test desc", "diff --git a/test.py", model="sonnet"
+            )
+
+        assert gate_result.passed is False
+        assert gate_result.needs_human is True
+        assert "Human review needed" in gate_result.details
+
+    @pytest.mark.asyncio
+    async def test_successful_review_no_needs_human(self):
+        """Successful review should not set needs_human."""
+        mock_result = MagicMock()
+        mock_result.result = "PASS: Looks good"
+        mock_result.cost_usd = 0.01
+        mock_result.input_tokens = 100
+        mock_result.output_tokens = 50
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            gate_result, cost_info = await gate2_llm_review(
+                "Test task", "Test desc", "diff --git a/test.py", model="sonnet"
+            )
+
+        assert gate_result.passed is True
+        assert gate_result.needs_human is False
