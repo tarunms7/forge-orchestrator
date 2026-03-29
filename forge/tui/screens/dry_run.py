@@ -27,7 +27,7 @@ from forge.tui.theme import (
     TEXT_MUTED,
     TEXT_SECONDARY,
 )
-from forge.tui.widgets.dag import _escape, build_dag_text
+from forge.tui.widgets.dag import _escape
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _COMPLEXITY_COLORS = {
@@ -98,7 +98,7 @@ def _format_task_detail(
         lines.append(f"[bold]Files:[/] [{TEXT_MUTED}]none[/]")
 
     if deps:
-        lines.append(f"[bold]Dependencies:[/]")
+        lines.append("[bold]Dependencies:[/]")
         for dep_id in deps:
             dep_task = task_map.get(dep_id)
             dep_title = dep_task.get("title", dep_id) if dep_task else dep_id
