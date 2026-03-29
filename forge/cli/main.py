@@ -102,6 +102,13 @@ def init(project_dir: str) -> None:
 )
 @click.option("--deep-plan", is_flag=True, default=False, help="Force multi-pass deep planning")
 @click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Plan only — show task graph without executing agents",
+)
+@click.option(
     "--repo",
     multiple=True,
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
@@ -114,6 +121,7 @@ def run(
     strategy: str | None,
     spec: str | None,
     deep_plan: bool,
+    dry_run: bool,
     repo: tuple[str, ...],
 ) -> None:
     """Run Forge to execute a task.
@@ -164,7 +172,11 @@ def run(
             click.echo(f"  ⚠ {w.name}: {w.message}", err=True)
 
         daemon = ForgeDaemon(project_dir, settings=settings)
-        await daemon.run(task, spec_path=spec, deep_plan=deep_plan)
+        if dry_run:
+            result = await daemon.dry_run(task, spec_path=spec, deep_plan=deep_plan)
+            _print_dry_run(result)
+        else:
+            await daemon.run(task, spec_path=spec, deep_plan=deep_plan)
 
     try:
         asyncio.run(_run_with_preflight())
@@ -192,11 +204,18 @@ def run(
     help="Model routing: auto, fast, quality",
 )
 @click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Launch TUI in dry-run (plan-only) mode",
+)
+@click.option(
     "--repo",
     multiple=True,
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
 )
-def tui(project_dir: str, strategy: str | None, repo: tuple[str, ...]) -> None:
+def tui(project_dir: str, strategy: str | None, dry_run: bool, repo: tuple[str, ...]) -> None:
     """Launch the Forge terminal UI."""
     project_dir = os.path.abspath(project_dir)
     forge_dir = os.path.join(project_dir, ".forge")
@@ -224,6 +243,8 @@ def tui(project_dir: str, strategy: str | None, repo: tuple[str, ...]) -> None:
         settings.model_strategy = strategy
 
     app = ForgeApp(project_dir=project_dir, settings=settings)
+    if dry_run:
+        app._dry_run_mode = True  # noqa: SLF001 — wired by task-3's ForgeApp changes
     app.run()
 
 
@@ -479,6 +500,61 @@ def upgrade() -> None:
     else:
         new_version = "latest"
     click.echo(f"Done. {new_version}")
+
+
+def _print_dry_run(result: dict) -> None:
+    """Format and print dry-run plan summary using Rich."""
+    from rich.console import Console
+    from rich.panel import Panel
+
+    console = Console()
+    graph = result["graph"]
+    cost = result["cost_estimate"]
+    model_assignments = result["model_assignments"]
+
+    _COMPLEXITY_COLORS = {"low": "green", "medium": "yellow", "high": "red"}
+
+    console.print()
+    console.print(Panel("[bold cyan]DRY RUN — Plan Summary[/]", expand=False))
+    console.print()
+
+    for i, task in enumerate(graph.tasks, 1):
+        complexity = task.complexity.value if hasattr(task.complexity, "value") else task.complexity
+        color = _COMPLEXITY_COLORS.get(complexity, "white")
+        model = model_assignments.get(task.id, "unknown")
+
+        console.print(f"  [bold cyan]{i}. {task.title}[/]  [{color}]{complexity}[/]")
+        if task.description:
+            console.print(f"     [dim]{task.description[:120]}[/]")
+        if task.files:
+            console.print(f"     [dim]Files:[/] {', '.join(task.files[:8])}")
+            if len(task.files) > 8:
+                console.print(f"           [dim]… and {len(task.files) - 8} more[/]")
+        if task.depends_on:
+            console.print(f"     [dim]Depends on:[/] {', '.join(task.depends_on)}")
+        console.print(f"     [dim]Model:[/] {model}")
+        console.print()
+
+    # Footer summary
+    tasks = graph.tasks
+    complexity_counts: dict[str, int] = {}
+    for t in tasks:
+        c = t.complexity.value if hasattr(t.complexity, "value") else t.complexity
+        complexity_counts[c] = complexity_counts.get(c, 0) + 1
+
+    parts = [f"[bold]{len(tasks)} tasks[/]"]
+    for level in ("low", "medium", "high"):
+        n = complexity_counts.get(level, 0)
+        if n:
+            color = _COMPLEXITY_COLORS.get(level, "white")
+            parts.append(f"[{color}]{n} {level}[/]")
+    if cost > 0:
+        parts.append(f"[green]~${cost:.2f}[/]")
+
+    console.print("  " + " · ".join(parts))
+    console.print()
+    console.print("  [dim]Run without --dry-run to execute[/]")
+    console.print()
 
 
 def _write_if_missing(path: str, content: str) -> None:

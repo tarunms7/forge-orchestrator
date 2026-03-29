@@ -1633,6 +1633,52 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         finally:
             await db.close()
 
+    async def dry_run(
+        self, user_input: str, spec_path: str | None = None, deep_plan: bool = False
+    ) -> dict:
+        """Plan-only mode: build the task graph without executing agents.
+
+        Returns a dict with the planned graph, cost estimate, and model assignments.
+        Creates a pipeline in DB with status 'dry_run'.
+        """
+        from forge.core.paths import forge_db_url
+
+        db = Database(forge_db_url())
+        await db.initialize()
+        try:
+            self._pipeline_id = str(uuid.uuid4())
+            await db.create_pipeline(
+                id=self._pipeline_id,
+                description=user_input,
+                project_dir=self._project_dir,
+                model_strategy=self._strategy,
+                budget_limit_usd=self._settings.budget_limit_usd,
+                project_path=self._project_dir,
+                project_name=os.path.basename(self._project_dir),
+            )
+            graph = await self.plan(
+                user_input,
+                db,
+                pipeline_id=self._pipeline_id,
+                spec_path=spec_path,
+                deep_plan=deep_plan,
+            )
+            cost = await estimate_pipeline_cost(
+                len(graph.tasks), self._settings, self._strategy
+            )
+            model_assignments = {
+                t.id: select_model(self._strategy, "agent", t.complexity.value)
+                for t in graph.tasks
+            }
+            await db.update_pipeline_status(self._pipeline_id, "dry_run")
+            return {
+                "graph": graph,
+                "cost_estimate": cost,
+                "model_assignments": model_assignments,
+            }
+        finally:
+            await db.close()
+
     async def _check_question_timeouts(self, db: Database, pipeline_id: str) -> None:
         """Auto-answer expired questions so waiting tasks can resume."""
         try:
