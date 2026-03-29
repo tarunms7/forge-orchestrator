@@ -136,6 +136,7 @@ async def gate2_llm_review(
     from forge.review.strategy import (
         ReviewStrategy,
         build_risk_map_header,
+        count_diff_lines,
         score_files,
         select_strategy,
     )
@@ -151,26 +152,27 @@ async def gate2_llm_review(
         adaptive=adaptive_review,
     )
 
+    # Pre-compute file scores and chunks for Tier 3 (reused for both event payload and review)
+    _t3_file_scores = None
+    _t3_chunks = None
+    if strategy == ReviewStrategy.TIER3:
+        _t3_file_scores = score_files(diff)
+        _t3_chunks = build_chunks(_t3_file_scores, diff, max_chunk_lines)
+
     if on_review_event:
-        from forge.review.strategy import count_diff_lines
         payload: dict = {
             "strategy": strategy.value,
             "diff_lines": count_diff_lines(diff),
         }
         if strategy == ReviewStrategy.TIER3:
-            # Pre-compute chunk count for TUI
-            _scores = score_files(diff)
-            _chunks = build_chunks(_scores, diff, max_chunk_lines)
-            payload["chunk_count"] = len(_chunks)
+            payload["chunk_count"] = len(_t3_chunks)
         await on_review_event("review:strategy_selected", payload)
 
     # ── Tier 3: multi-chunk map-reduce ────────────────────────────────────
     if strategy == ReviewStrategy.TIER3:
-        file_scores = score_files(diff)
-        chunks = build_chunks(file_scores, diff, max_chunk_lines)
         return await run_chunked_review(
-            chunks,
-            file_scores,
+            _t3_chunks,
+            _t3_file_scores,
             diff,
             task_title,
             task_description,
