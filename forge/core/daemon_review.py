@@ -305,6 +305,42 @@ def detect_lint_strategy(
     return None
 
 
+def detect_all_lint_strategies(
+    worktree_path: str,
+    changed_files: list[str],
+    lint_cmd_override: str | None = None,
+    lint_fix_cmd_override: str | None = None,
+) -> list[LintStrategy]:
+    """Detect ALL applicable lint strategies for mixed-language changes.
+
+    Unlike detect_lint_strategy (returns first match), this returns a strategy
+    for each language that has changed files. Useful for repos with Python + TS + Go.
+    """
+    # User override or project-level config takes precedence (single strategy)
+    single = detect_lint_strategy(
+        worktree_path, changed_files, lint_cmd_override, lint_fix_cmd_override
+    )
+    if single and single.name in ("custom", "pre-commit", "npm-lint", "make-lint"):
+        return [single] if single else []
+
+    # Language fallback — return ALL matching strategies
+    ext_counts: dict[str, int] = {}
+    for f in changed_files:
+        _, ext = os.path.splitext(f)
+        if ext:
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+    strategies: list[LintStrategy] = []
+    for extensions, strategy in _LANGUAGE_FALLBACKS:
+        count = sum(ext_counts.get(ext, 0) for ext in extensions)
+        if count > 0:
+            if strategy.tool_check and not shutil.which(strategy.tool_check):
+                continue
+            strategies.append(strategy)
+
+    return strategies
+
+
 def _summarize_auto_fix(diff_text: str) -> str:
     """Produce a brief human-readable summary of an auto-fix diff.
 
@@ -1263,32 +1299,51 @@ class ReviewMixin:
         lint_cmd_override = self._resolve_lint_cmd(repo_id=repo_id)
         lint_fix_cmd_override = self._resolve_lint_fix_cmd(repo_id=repo_id)
 
-        strategy = detect_lint_strategy(
+        strategies = detect_all_lint_strategies(
             worktree_path,
             changed_files,
             lint_cmd_override=lint_cmd_override,
             lint_fix_cmd_override=lint_fix_cmd_override,
         )
 
-        if strategy is None:
+        if not strategies:
             return GateResult(passed=True, gate="gate1_auto_check", details="No linter detected")
 
-        # Verify tool is installed
-        if strategy.tool_check and not shutil.which(strategy.tool_check):
+        # Run each strategy against its matching files. Fail if ANY strategy fails.
+        all_passed = True
+        all_details: list[str] = []
+        for strategy in strategies:
+            result = await self._run_single_lint(
+                worktree_path, strategy, changed_files, pipeline_branch, db
+            )
+            if not result.passed:
+                all_passed = False
+            all_details.append(f"{strategy.name}: {result.details}")
+
+        if all_passed:
             return GateResult(
                 passed=True,
                 gate="gate1_auto_check",
-                details=f"No linter available for {strategy.name} (install {strategy.tool_check})",
+                details="; ".join(all_details),
             )
+        return GateResult(
+            passed=False,
+            gate="gate1_auto_check",
+            details="\n".join(all_details),
+            retriable=True,
+        )
 
-        # Determine the correct cwd for the linter.  When changed files live
-        # inside a subdirectory that has its own package.json (e.g. web/),
-        # tools like ESLint must run from that subdirectory so they find
-        # their config and node_modules.
+    async def _run_single_lint(
+        self,
+        worktree_path: str,
+        strategy: LintStrategy,
+        changed_files: list[str],
+        pipeline_branch: str | None,
+        db=None,
+    ) -> GateResult:
+        """Run a single lint strategy against its matching files."""
         lint_cwd = worktree_path
         # Filter files to only those matching the linter's supported extensions.
-        # Without this, non-code files (.bin, .txt, .scm, .md) get passed to the
-        # linter and cause spurious failures (e.g., ruff chokes on binary files).
         if strategy.extensions and strategy.supports_file_args:
             lint_files = [
                 f for f in changed_files

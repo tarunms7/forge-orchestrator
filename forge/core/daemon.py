@@ -220,7 +220,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._events = event_emitter or EventEmitter()
         self._strategy = self._settings.model_strategy
         self._snapshot: ProjectSnapshot | None = None
-        self._merge_lock = asyncio.Lock()
+        self._merge_locks: dict[str, asyncio.Lock] = {}  # per-repo merge locks
+        self._merge_lock = asyncio.Lock()  # default lock for single-repo backwards compat
         # Limit concurrent subprocess-heavy gates (lint, build, test) to prevent
         # CPU saturation when multiple agents run ESLint/tsc/pytest simultaneously.
         self._gate_semaphore = asyncio.Semaphore(2)
@@ -241,6 +242,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             }
 
         # Lessons use the central DB — no separate initialization needed
+
+    def _get_merge_lock(self, repo_id: str = "default") -> asyncio.Lock:
+        """Return a per-repo merge lock. Independent repos don't block each other."""
+        if repo_id not in self._merge_locks:
+            self._merge_locks[repo_id] = asyncio.Lock()
+        return self._merge_locks[repo_id]
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB.
@@ -1784,7 +1791,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         except Exception:
             logger.exception("Failed to mark crashed task %s as error", task_id)
         try:
-            worktree_mgr.remove(task_id)
+            await worktree_mgr.async_remove(task_id)
         except Exception as cleanup_err:
             logger.warning("Failed to clean up worktree for task %s: %s", task_id, cleanup_err)
         if pipeline_id:

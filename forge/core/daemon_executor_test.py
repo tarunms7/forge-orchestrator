@@ -330,7 +330,7 @@ class TestWorktreePathThreading:
         mixin = self._make_mixin()
 
         worktree_mgr = MagicMock()
-        worktree_mgr.create = MagicMock(side_effect=ValueError("already exists"))
+        worktree_mgr.async_create = AsyncMock(side_effect=ValueError("already exists"))
 
         db = AsyncMock()
         db.update_task_state = AsyncMock()
@@ -433,7 +433,7 @@ class TestWorktreePathThreading:
 
         worktree_mgr = MagicMock()
         # Simulate worktree creation failure to trigger _worktree_path fallback
-        worktree_mgr.create = MagicMock(side_effect=ValueError("exists"))
+        worktree_mgr.async_create = AsyncMock(side_effect=ValueError("exists"))
 
         merge_worker = MagicMock()
         merge_worker._main = "main"
@@ -459,7 +459,7 @@ class TestWorktreePathThreading:
         mixin = self._make_mixin()
 
         worktree_mgr = MagicMock()
-        worktree_mgr.create = MagicMock(side_effect=ValueError("exists"))
+        worktree_mgr.async_create = AsyncMock(side_effect=ValueError("exists"))
 
         db = AsyncMock()
         db.update_task_state = AsyncMock()
