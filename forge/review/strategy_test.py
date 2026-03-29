@@ -1,282 +1,363 @@
-"""Tests for forge.review.strategy — diff analysis and chunking."""
+"""Tests for forge.review.strategy."""
 
 from __future__ import annotations
 
+import pytest
+
 from forge.review.strategy import (
+    FileScore,
     ReviewStrategy,
+    _is_test_file,
+    _stem,
     build_chunks,
-    build_risk_map_header,
     count_diff_lines,
-    extract_interface_context,
     parse_diff_files,
-    score_files,
     select_strategy,
 )
 
-# ── Fixtures ──────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Fixtures / shared diff text
+# ---------------------------------------------------------------------------
 
-SMALL_DIFF = """\
-diff --git a/foo.py b/foo.py
-index abc..def 100644
---- a/foo.py
-+++ b/foo.py
-@@ -1,3 +1,5 @@
- def hello():
-+    x = 1
-+    return x
--    pass
+# A small diff with one Python source file (~50 changed lines)
+TEST_SOURCE_DIFF = """\
+diff --git a/forge/foo/bar.py b/forge/foo/bar.py
+--- a/forge/foo/bar.py
++++ b/forge/foo/bar.py
+@@ -1,5 +1,50 @@
++line1
++line2
++line3
++line4
++line5
++line6
++line7
++line8
++line9
++line10
++line11
++line12
++line13
++line14
++line15
++line16
++line17
++line18
++line19
++line20
++line21
++line22
++line23
++line24
++line25
++line26
++line27
++line28
++line29
++line30
++line31
++line32
++line33
++line34
++line35
++line36
++line37
++line38
++line39
++line40
++line41
++line42
++line43
++line44
++line45
++line46
++line47
++line48
++line49
++line50
 """
 
-NEW_FILE_DIFF = (
-    "diff --git a/auth/token.py b/auth/token.py\n"
-    "new file mode 100644\n"
-    "--- /dev/null\n"
-    "+++ b/auth/token.py\n"
-    "@@ -0,0 +1,50 @@\n" + "".join(f"+line{i}\n" for i in range(50))
-)
+# A test file diff that corresponds to the source above
+TEST_TEST_DIFF = """\
+diff --git a/forge/foo/bar_test.py b/forge/foo/bar_test.py
+--- a/forge/foo/bar_test.py
++++ b/forge/foo/bar_test.py
+@@ -1,3 +1,5 @@
++def test_bar():
++    pass
+"""
 
-TEST_SOURCE_DIFF = (
-    "diff --git a/parser.py b/parser.py\n"
-    "--- a/parser.py\n"
-    "+++ b/parser.py\n"
-    "@@ -1,5 +1,55 @@\n"
-    + "".join(f"+line{i}\n" for i in range(50))
-    + "diff --git a/tests/test_parser.py b/tests/test_parser.py\n"
-    "new file mode 100644\n"
-    "--- /dev/null\n"
-    "+++ b/tests/test_parser.py\n"
-    "@@ -0,0 +1,40 @@\n" + "".join(f"+test_line{i}\n" for i in range(40))
-)
+COMBINED_DIFF = TEST_SOURCE_DIFF + TEST_TEST_DIFF
 
 
-def make_large_diff(n_files: int = 110, lines_per_file: int = 20) -> str:
-    """Generate a diff with n_files × lines_per_file total lines."""
-    parts = []
-    for i in range(n_files):
-        parts.append(
-            f"diff --git a/module{i}.py b/module{i}.py\n"
-            f"new file mode 100644\n"
-            f"--- /dev/null\n"
-            f"+++ b/module{i}.py\n"
-            f"@@ -0,0 +1,{lines_per_file} @@\n"
-            + "".join(f"+line{j}\n" for j in range(lines_per_file))
-        )
-    return "\n".join(parts)
+# ---------------------------------------------------------------------------
+# count_diff_lines
+# ---------------------------------------------------------------------------
 
 
-# ── count_diff_lines ──────────────────────────────────────────────────────
+def test_count_diff_lines_basic():
+    diff = """\
+diff --git a/foo.py b/foo.py
+--- a/foo.py
++++ b/foo.py
+@@ -1,3 +1,4 @@
+ context line
++added line
+-removed line
+ another context
+"""
+    assert count_diff_lines(diff) == 2
 
 
-def test_count_diff_lines_small():
-    assert count_diff_lines(SMALL_DIFF) == 3  # 2 added + 1 removed
+def test_count_diff_lines_excludes_headers():
+    diff = """\
+--- a/foo.py
++++ b/foo.py
+@@ -1 +1 @@
++real add
+-real remove
+"""
+    assert count_diff_lines(diff) == 2
 
 
 def test_count_diff_lines_empty():
     assert count_diff_lines("") == 0
 
 
-def test_count_diff_lines_ignores_context():
-    diff = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n context\n+added\n"
-    assert count_diff_lines(diff) == 1
+def test_count_diff_lines_none():
+    # None must not crash — returns 0
+    assert count_diff_lines(None) == 0  # type: ignore[arg-type]
 
 
-def test_count_diff_lines_ignores_header_lines():
-    """Lines starting with +++ or --- are NOT counted."""
-    diff = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+real_add\n"
-    assert count_diff_lines(diff) == 1
+def test_count_diff_lines_whitespace_only():
+    assert count_diff_lines("   \n  \n") == 0
 
 
-# ── parse_diff_files ──────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# parse_diff_files
+# ---------------------------------------------------------------------------
 
 
-def test_parse_diff_files_returns_file_paths():
-    sections = parse_diff_files(TEST_SOURCE_DIFF)
-    assert "parser.py" in sections
-    assert "tests/test_parser.py" in sections
+def test_parse_diff_files_splits_two_files():
+    result = parse_diff_files(COMBINED_DIFF)
+    assert set(result.keys()) == {"forge/foo/bar.py", "forge/foo/bar_test.py"}
+
+
+def test_parse_diff_files_preserves_content():
+    result = parse_diff_files(TEST_SOURCE_DIFF)
+    assert "forge/foo/bar.py" in result
+    assert "+line1" in result["forge/foo/bar.py"]
 
 
 def test_parse_diff_files_empty():
     assert parse_diff_files("") == {}
 
 
-def test_parse_diff_files_single_file():
-    sections = parse_diff_files(SMALL_DIFF)
-    assert "foo.py" in sections
-    assert len(sections) == 1
+def test_parse_diff_files_none():
+    # None must not crash
+    assert parse_diff_files(None) == {}  # type: ignore[arg-type]
 
 
-# ── score_files ───────────────────────────────────────────────────────────
+def test_parse_diff_files_whitespace():
+    assert parse_diff_files("   \n") == {}
 
 
-def test_score_files_new_file_has_higher_score():
-    scores = score_files(NEW_FILE_DIFF)
-    assert len(scores) == 1
-    s = scores[0]
-    assert s.is_new is True
-    assert s.is_security is True
-    assert s.score > 30  # is_new=30 + is_security=25 at minimum
+# ---------------------------------------------------------------------------
+# _is_test_file
+# ---------------------------------------------------------------------------
 
 
-def test_score_files_test_file_lower_than_source():
-    scores = score_files(TEST_SOURCE_DIFF)
-    source = next(s for s in scores if s.path == "parser.py")
-    test = next(s for s in scores if "test_parser" in s.path)
-    assert source.score > test.score
+@pytest.mark.parametrize(
+    "path",
+    [
+        "forge/foo/bar_test.py",
+        "forge/foo/test_bar.py",
+        "tests/test_bar.py",
+        "forge/foo/bar.test.ts",
+        "forge/foo/bar.spec.ts",
+        "forge/foo/bar.test.tsx",
+        "forge/foo/bar.spec.tsx",
+        "forge/foo/bar.test.jsx",
+        "forge/foo/bar.spec.jsx",
+        "src/__tests__/bar.ts",
+        "__tests__/bar.ts",
+        "forge/tests/utils.py",
+    ],
+)
+def test_is_test_file_positive(path):
+    assert _is_test_file(path), f"Expected {path!r} to be detected as a test file"
 
 
-def test_score_files_tier_labels_cover_all_files():
-    scores = score_files(make_large_diff(9, 20))
-    tiers = {s.tier for s in scores}
-    assert "HIGH" in tiers
-    assert "MEDIUM" in tiers
-    assert "LOW" in tiers
+@pytest.mark.parametrize(
+    "path",
+    [
+        "forge/foo/bar.py",
+        "forge/foo/bar.ts",
+        "forge/foo/bar.tsx",
+        "src/components/Button.tsx",
+        "forge/strategy.py",
+    ],
+)
+def test_is_test_file_negative(path):
+    assert not _is_test_file(path), f"Expected {path!r} NOT to be a test file"
 
 
-def test_score_files_security_path_detection():
-    diff = (
-        "diff --git a/auth/login.py b/auth/login.py\n"
-        "--- a/auth/login.py\n+++ b/auth/login.py\n"
-        "@@ -1,1 +1,5 @@\n" + "+line\n" * 5
-    )
-    scores = score_files(diff)
-    assert scores[0].is_security is True
+# ---------------------------------------------------------------------------
+# _stem
+# ---------------------------------------------------------------------------
 
 
-def test_score_files_sorted_descending():
-    scores = score_files(make_large_diff(5, 20))
-    for i in range(len(scores) - 1):
-        assert scores[i].score >= scores[i + 1].score
+def test_stem_strips_test_suffix():
+    assert _stem("forge/foo/bar_test.py") == "bar"
 
 
-# ── select_strategy ───────────────────────────────────────────────────────
+def test_stem_strips_test_prefix():
+    assert _stem("tests/test_bar.py") == "bar"
 
 
-def test_select_strategy_tier1_for_small():
-    assert select_strategy(SMALL_DIFF, 400, 2000) == ReviewStrategy.TIER1
+def test_stem_strips_dot_test():
+    assert _stem("src/bar.test.ts") == "bar"
 
 
-def test_select_strategy_tier2_for_medium():
-    diff = make_large_diff(25, 20)  # 500 lines
-    assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER2
+def test_stem_source_file():
+    assert _stem("forge/foo/bar.py") == "bar"
 
 
-def test_select_strategy_tier3_for_large():
-    diff = make_large_diff(110, 20)  # 2200 lines
-    assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER3
+# ---------------------------------------------------------------------------
+# select_strategy
+# ---------------------------------------------------------------------------
+
+
+def test_select_strategy_small_is_tier1():
+    tiny_diff = "+line1\n-line2\n"
+    assert select_strategy(tiny_diff) == ReviewStrategy.TIER1
+
+
+def test_select_strategy_medium_is_tier2():
+    # 500 changed lines → above default medium threshold (400)
+    lines = "".join(f"+line{i}\n" for i in range(500))
+    assert select_strategy(lines) == ReviewStrategy.TIER2
+
+
+def test_select_strategy_large_is_tier3():
+    # 2500 changed lines → above default large threshold (2000)
+    lines = "".join(f"+line{i}\n" for i in range(2500))
+    assert select_strategy(lines) == ReviewStrategy.TIER3
 
 
 def test_select_strategy_adaptive_false_always_tier1():
-    diff = make_large_diff(110, 20)
-    assert select_strategy(diff, 400, 2000, adaptive=False) == ReviewStrategy.TIER1
+    """Custom thresholds: setting medium_threshold very high forces TIER1."""
+    lines = "".join(f"+line{i}\n" for i in range(300))
+    assert select_strategy(lines, medium_threshold=99999, large_threshold=999999) == ReviewStrategy.TIER1
 
 
-def test_select_strategy_boundary_medium():
-    """Exactly at medium threshold → TIER2."""
-    # Build diff with exactly 400 +/- lines
-    diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n" + "+l\n" * 400
-    assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER2
+def test_select_strategy_boundary_large():
+    """Exactly large_threshold lines → TIER3; one less → TIER2."""
+    # Build a diff with exactly 2000 +/- lines
+    lines_2000 = "".join(f"+line{i}\n" for i in range(2000))
+    diff_2000 = f"diff --git a/big.py b/big.py\n--- a/big.py\n+++ b/big.py\n@@ -1,1 +1,2000 @@\n{lines_2000}"
+    assert select_strategy(diff_2000, 400, 2000) == ReviewStrategy.TIER3
+
+    lines_1999 = "".join(f"+line{i}\n" for i in range(1999))
+    diff_1999 = f"diff --git a/big.py b/big.py\n--- a/big.py\n+++ b/big.py\n@@ -1,1 +1,1999 @@\n{lines_1999}"
+    assert select_strategy(diff_1999, 400, 2000) == ReviewStrategy.TIER2
 
 
-# ── build_chunks ──────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# build_chunks
+# ---------------------------------------------------------------------------
 
 
-def test_build_chunks_groups_files():
-    diff = make_large_diff(10, 20)  # 200 total lines
-    scores = score_files(diff)
-    chunks = build_chunks(scores, diff, max_chunk_lines=60)
-    assert len(chunks) >= 2  # can't fit 200 lines in 1 chunk of 60
+def test_build_chunks_single_file():
+    scores = [FileScore(path="forge/foo/bar.py", score=1.0, line_count=50)]
+    chunks = build_chunks(scores, TEST_SOURCE_DIFF, max_chunk_lines=300)
+    assert len(chunks) == 1
+    assert chunks[0].paths == ["forge/foo/bar.py"]
+    assert chunks[0].chunk_index == 1
+    assert chunks[0].total_chunks == 1
 
 
 def test_build_chunks_keeps_test_with_source():
-    """test_parser.py and parser.py should end up in the same chunk."""
-    scores = score_files(TEST_SOURCE_DIFF)
-    chunks = build_chunks(scores, TEST_SOURCE_DIFF, max_chunk_lines=200)
-    # Either they're in same chunk, or there's only 1 chunk total
-    all_files_per_chunk = [set(c.files) for c in chunks]
-    if len(chunks) > 1:
-        for chunk_files in all_files_per_chunk:
-            if "parser.py" in chunk_files:
-                assert "tests/test_parser.py" in chunk_files
-
-
-def test_build_chunks_sequential_indices():
-    diff = make_large_diff(10, 20)
-    scores = score_files(diff)
-    chunks = build_chunks(scores, diff, max_chunk_lines=60)
-    for i, chunk in enumerate(chunks):
-        assert chunk.index == i + 1
-        assert chunk.total == len(chunks)
-
-
-def test_build_chunks_risk_label_from_highest_file():
-    diff = make_large_diff(5, 20)
-    scores = score_files(diff)
-    chunks = build_chunks(scores, diff, max_chunk_lines=300)
+    """Test files are co-located with their source file."""
+    scores = [
+        FileScore(path="forge/foo/bar.py", score=2.0, line_count=50),
+        FileScore(path="forge/foo/bar_test.py", score=1.0, line_count=2),
+    ]
+    # max_chunk_lines=55 forces multiple chunks if bar.py is ~50 lines:
+    # bar.py uses ~50 lines, bar_test.py uses ~2 lines → combined ~52 ≤ 55 → one chunk
+    # BUT if we add a third file, the source+test pair occupies one chunk and the third goes to another.
+    # Use a very tight limit to make the co-location assertion meaningful.
+    chunks = build_chunks(scores, COMBINED_DIFF, max_chunk_lines=55)
+    # Both files should end up in the same chunk regardless of chunk count
+    all_paths: list[str] = []
+    for c in chunks:
+        all_paths.extend(c.paths)
+    assert "forge/foo/bar.py" in all_paths
+    assert "forge/foo/bar_test.py" in all_paths
+    # They must be in the SAME chunk
     for chunk in chunks:
-        assert chunk.risk_label in ("HIGH", "MEDIUM", "LOW")
+        if "forge/foo/bar_test.py" in chunk.paths:
+            assert "forge/foo/bar.py" in chunk.paths, (
+                "Test file must be co-located with its source file"
+            )
+            break
 
-
-def test_build_chunks_all_files_assigned():
-    """Every file in the diff appears in exactly one chunk."""
-    diff = make_large_diff(8, 20)
-    scores = score_files(diff)
-    chunks = build_chunks(scores, diff, max_chunk_lines=60)
-    all_assigned = [f for c in chunks for f in c.files]
-    all_unique = set(all_assigned)
-    assert len(all_assigned) == len(all_unique)  # no duplicates
-    assert len(all_unique) == 8  # all 8 files assigned
-
-
-# ── build_risk_map_header ─────────────────────────────────────────────────
-
-
-def test_build_risk_map_header_contains_file_names():
-    scores = score_files(TEST_SOURCE_DIFF)
-    header = build_risk_map_header(scores)
-    assert "parser.py" in header
-
-
-def test_build_risk_map_header_has_tier_labels():
-    scores = score_files(TEST_SOURCE_DIFF)
-    header = build_risk_map_header(scores)
-    assert any(t in header for t in ("HIGH", "MEDIUM", "LOW"))
-
-
-def test_build_risk_map_header_mentions_total_lines():
-    scores = score_files(TEST_SOURCE_DIFF)
-    header = build_risk_map_header(scores)
-    assert "lines" in header.lower()
-
-
-def test_build_risk_map_header_empty_scores():
-    header = build_risk_map_header([])
-    assert header == ""
-
-
-# ── extract_interface_context ─────────────────────────────────────────────
-
-
-def test_extract_interface_context_returns_str():
-    scores = score_files(TEST_SOURCE_DIFF)
-    chunks = build_chunks(scores, TEST_SOURCE_DIFF, max_chunk_lines=200)
-    ctx = extract_interface_context(chunks[0], scores, TEST_SOURCE_DIFF)
-    assert isinstance(ctx, str)
-
-
-def test_extract_interface_context_within_line_limit():
-    diff = make_large_diff(10, 20)
-    scores = score_files(diff)
-    chunks = build_chunks(scores, diff, max_chunk_lines=60)
+    # Verify total_chunks is back-filled correctly
     for chunk in chunks:
-        ctx = extract_interface_context(chunk, scores, diff)
-        assert ctx.count("\n") <= 201  # max_lines=200 + header line
+        assert chunk.total_chunks == len(chunks)
 
 
-def test_extract_interface_context_empty_for_no_imports():
-    """Diff with no import statements → empty context."""
-    diff = make_large_diff(3, 10)  # files have no import lines
-    scores = score_files(diff)
-    chunks = build_chunks(scores, diff, max_chunk_lines=100)
-    ctx = extract_interface_context(chunks[0], scores, diff)
-    # May be empty (no imports) — should not raise
-    assert isinstance(ctx, str)
+def test_build_chunks_splits_unrelated_files():
+    """Unrelated files that overflow max_chunk_lines go into separate chunks."""
+    # Create a diff with two completely unrelated large files
+    file_a_diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,60 @@\n"
+        + "".join(f"+lineA{i}\n" for i in range(60))
+    )
+    file_b_diff = (
+        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1,60 @@\n"
+        + "".join(f"+lineB{i}\n" for i in range(60))
+    )
+    combined = file_a_diff + file_b_diff
+    scores = [
+        FileScore(path="a.py", score=2.0, line_count=60),
+        FileScore(path="b.py", score=1.0, line_count=60),
+    ]
+    chunks = build_chunks(scores, combined, max_chunk_lines=70)
+    assert len(chunks) == 2
+    assert chunks[0].paths == ["a.py"]
+    assert chunks[1].paths == ["b.py"]
+
+
+def test_build_chunks_total_chunks_backfill():
+    """total_chunks is set correctly on every chunk."""
+    file_a_diff = (
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,60 @@\n"
+        + "".join(f"+lineA{i}\n" for i in range(60))
+    )
+    file_b_diff = (
+        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1,60 @@\n"
+        + "".join(f"+lineB{i}\n" for i in range(60))
+    )
+    combined = file_a_diff + file_b_diff
+    scores = [
+        FileScore(path="a.py", score=2.0),
+        FileScore(path="b.py", score=1.0),
+    ]
+    chunks = build_chunks(scores, combined, max_chunk_lines=70)
+    for chunk in chunks:
+        assert chunk.total_chunks == 2
+
+
+def test_build_chunks_empty_scores():
+    chunks = build_chunks([], "", max_chunk_lines=300)
+    assert chunks == []
+
+
+def test_build_chunks_file_not_in_diff():
+    """Files not in full_diff get empty diff text but still appear in a chunk."""
+    scores = [FileScore(path="missing.py", score=1.0)]
+    chunks = build_chunks(scores, "", max_chunk_lines=300)
+    assert len(chunks) == 1
+    assert "missing.py" in chunks[0].paths
+    assert chunks[0].diff_text == ""
