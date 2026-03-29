@@ -378,7 +378,9 @@ class TestUncertainVerdict:
     """UNCERTAIN verdict should return needs_human=True."""
 
     def test_uncertain_at_start(self):
-        result = _parse_review_result("UNCERTAIN: Can't tell if edge case is handled without seeing caller")
+        result = _parse_review_result(
+            "UNCERTAIN: Can't tell if edge case is handled without seeing caller"
+        )
         assert result.passed is False
         assert result.needs_human is True
         assert "edge case" in result.details

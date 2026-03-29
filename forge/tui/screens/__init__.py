@@ -1,5 +1,6 @@
 """Forge TUI screens."""
 
+from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
 from forge.tui.screens.home import HomeScreen
 from forge.tui.screens.pipeline import PipelineScreen
@@ -8,6 +9,7 @@ from forge.tui.screens.review import ReviewScreen
 from forge.tui.screens.settings import SettingsScreen
 
 __all__ = [
+    "DryRunScreen",
     "HomeScreen",
     "PipelineScreen",
     "PlanApprovalScreen",

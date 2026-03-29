@@ -55,7 +55,8 @@ class WorktreeManager:
             existing = set()
 
         missing = [
-            e for e in self._GITIGNORE_REQUIRED_ENTRIES
+            e
+            for e in self._GITIGNORE_REQUIRED_ENTRIES
             if e not in existing and f"/{e}" not in existing and f"{e}/" not in existing
         ]
         if not missing:
@@ -183,7 +184,8 @@ class WorktreeManager:
             existing = set()
 
         missing = [
-            e for e in self._GITIGNORE_REQUIRED_ENTRIES
+            e
+            for e in self._GITIGNORE_REQUIRED_ENTRIES
             if e not in existing and f"/{e}" not in existing and f"{e}/" not in existing
         ]
         if not missing:

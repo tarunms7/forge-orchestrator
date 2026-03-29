@@ -790,7 +790,8 @@ class TestLintGateAutoFix:
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch(
-                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[self._ruff_strategy()]
+                "forge.core.daemon_review.detect_all_lint_strategies",
+                return_value=[self._ruff_strategy()],
             ),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -826,7 +827,8 @@ class TestLintGateAutoFix:
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch(
-                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[self._ruff_strategy()]
+                "forge.core.daemon_review.detect_all_lint_strategies",
+                return_value=[self._ruff_strategy()],
             ),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -892,7 +894,9 @@ class TestLintGateAutoFix:
                 return_value=["main.go"],
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
-            patch("forge.core.daemon_review.detect_all_lint_strategies", return_value=[gofmt_strategy]),
+            patch(
+                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[gofmt_strategy]
+            ),
             patch("forge.core.daemon_review.shutil.which", return_value="/usr/local/bin/gofmt"),
             patch(
                 "forge.core.daemon_review.async_subprocess",
@@ -937,7 +941,8 @@ class TestLintGateAutoFix:
             ),
             patch("forge.core.daemon_review.os.path.isfile", return_value=True),
             patch(
-                "forge.core.daemon_review.detect_all_lint_strategies", return_value=[self._ruff_strategy()]
+                "forge.core.daemon_review.detect_all_lint_strategies",
+                return_value=[self._ruff_strategy()],
             ),
             patch(
                 "forge.core.daemon_review.async_subprocess",

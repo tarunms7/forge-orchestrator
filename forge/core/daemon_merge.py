@@ -73,11 +73,11 @@ class MergeMixin:
             f"3. Do not discard either side unless the changes are truly redundant.\n"
             f"4. Ensure the resolved code is syntactically correct and logically coherent.\n"
             f"5. Stage the resolved files and continue the rebase:\n"
-            f"   git add -A -- ':!.venv' ':!venv' ':!node_modules' ':!__pycache__' && git rebase --continue\n"
+            f"   git add -A -- ':(exclude).venv' ':(exclude)venv' ':(exclude)node_modules' ':(exclude)__pycache__' && git rebase --continue\n"
             f"   IMPORTANT: Do NOT use `git commit`. The rebase is in progress — "
             f"use `git rebase --continue` to advance it.\n"
             f"6. If the rebase pauses again with more conflicts, resolve those too "
-            f"and run `git add -A -- ':!.venv' ':!venv' ':!node_modules' ':!__pycache__' && git rebase --continue` again.\n"
+            f"and run `git add -A -- ':(exclude).venv' ':(exclude)venv' ':(exclude)node_modules' ':(exclude)__pycache__' && git rebase --continue` again.\n"
             f"7. Repeat until the rebase completes successfully.\n"
         )
 
@@ -249,14 +249,14 @@ class MergeMixin:
                 await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": error_msg},
                     db=db,
                     pipeline_id=pipeline_id,
                 )
             else:
                 await self._events.emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": error_msg},
                 )
             # Only clean up worktree when we're done with the task entirely
             try:
@@ -321,18 +321,19 @@ class MergeMixin:
                 await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
             except Exception:
                 logger.debug("Failed to record error/timing for %s", task_id, exc_info=True)
+            merge_error_msg = "Max merge retries exceeded"
             if pipeline_id:
                 await self._cascade_blocked(db, task_id, pipeline_id)
                 await self._emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": merge_error_msg},
                     db=db,
                     pipeline_id=pipeline_id,
                 )
             else:
                 await self._events.emit(
                     "task:state_changed",
-                    {"task_id": task_id, "state": "error"},
+                    {"task_id": task_id, "state": "error", "error": merge_error_msg},
                 )
             try:
                 await worktree_mgr.async_remove(task_id)
