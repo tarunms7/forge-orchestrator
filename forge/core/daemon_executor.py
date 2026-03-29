@@ -9,6 +9,20 @@ import os
 import time
 from datetime import UTC, datetime
 
+# Pathspec exclusions appended to every ``git add -A`` so that virtual
+# environments, dependency caches, and build artifacts are never staged —
+# even when the repo has no .gitignore.
+_GIT_ADD_EXCLUDES: list[str] = [
+    ":!.venv",
+    ":!venv",
+    ":!.env",
+    ":!node_modules",
+    ":!__pycache__",
+    ":!.ruff_cache",
+    ":!.pytest_cache",
+    ":!.mypy_cache",
+]
+
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
@@ -351,13 +365,19 @@ class ExecutorMixin:
     async def _rebase_worktree(self, worktree_path: str, base_ref: str, task_id: str) -> None:
         """Rebase the worktree branch onto the latest pipeline branch.
 
-        Best-effort: if the rebase conflicts, abort and continue with
-        the un-rebased worktree.  The merge step will handle conflicts
-        later.  This is preferable to failing the retry entirely.
+        Strategy (most → least conservative):
+        1. Try a clean ``git rebase``.
+        2. On conflict, abort and retry with ``-X theirs`` to auto-resolve
+           in favour of the upstream branch.  Since the agent is about to
+           re-run, losing conflicting hunks from the *previous* attempt in
+           shared files (e.g. pyproject.toml) is acceptable.
+        3. If that also fails, abort and continue un-rebased — the merge
+           step has its own Tier 2 conflict resolution.
         """
         # Ensure worktree is clean — rebase refuses if index or working tree is dirty
         await self._ensure_clean_for_rebase(worktree_path, task_id)
 
+        # Attempt 1: clean rebase
         result = await _run_git(
             ["rebase", base_ref],
             cwd=worktree_path,
@@ -366,18 +386,45 @@ class ExecutorMixin:
         )
         if result.returncode == 0:
             console.print(f"[green]  {task_id}: worktree rebased onto {base_ref}[/green]")
-        else:
-            # Abort the failed rebase so the worktree is usable
-            await _run_git(
-                ["rebase", "--abort"],
-                cwd=worktree_path,
-                check=False,
-                description="abort rebase",
-            )
+            return
+
+        # Clean rebase failed — abort and try with -X theirs
+        await _run_git(
+            ["rebase", "--abort"],
+            cwd=worktree_path,
+            check=False,
+            description="abort rebase",
+        )
+        console.print(
+            f"[yellow]  {task_id}: clean rebase had conflicts — "
+            f"retrying with -X theirs[/yellow]"
+        )
+
+        # Attempt 2: auto-resolve conflicts in favour of upstream
+        result = await _run_git(
+            ["rebase", "-X", "theirs", base_ref],
+            cwd=worktree_path,
+            check=False,
+            description="rebase worktree -X theirs",
+        )
+        if result.returncode == 0:
             console.print(
-                f"[yellow]  {task_id}: rebase onto {base_ref} had conflicts — "
-                f"continuing with un-rebased worktree[/yellow]"
+                f"[green]  {task_id}: worktree rebased onto {base_ref} "
+                f"(auto-resolved with -X theirs)[/green]"
             )
+            return
+
+        # Even -X theirs failed (e.g. add/add conflict on binary files)
+        await _run_git(
+            ["rebase", "--abort"],
+            cwd=worktree_path,
+            check=False,
+            description="abort rebase",
+        )
+        console.print(
+            f"[yellow]  {task_id}: rebase onto {base_ref} failed even with "
+            f"-X theirs — continuing with un-rebased worktree[/yellow]"
+        )
 
     # -- agent execution + streaming + cost -----------------------------
 
@@ -573,7 +620,7 @@ class ExecutorMixin:
         )
         if status.stdout.strip():
             await _run_git(
-                ["add", "-A"],
+                ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
                 cwd=worktree_path,
                 check=False,
                 description="stage remaining changes before rebase",
@@ -628,9 +675,10 @@ class ExecutorMixin:
             f"[yellow]{task_id}: auto-committing uncommitted agent changes[/yellow]",
         )
 
-        # Stage everything (including new files the agent created)
+        # Stage everything (including new files the agent created), but
+        # exclude virtual environments and caches that agents may create.
         add_result = await _run_git(
-            ["add", "-A"],
+            ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
             cwd=worktree_path,
             check=False,
             description="auto-stage agent changes",
@@ -1180,7 +1228,10 @@ class ExecutorMixin:
 
         # Stage and commit the reverts
         await _run_git(
-            ["add", "-A"], cwd=worktree_path, check=False, description="stage scope reverts"
+            ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
+            cwd=worktree_path,
+            check=False,
+            description="stage scope reverts",
         )
         staged = await _run_git(
             ["diff", "--cached", "--name-only"],

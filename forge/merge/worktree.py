@@ -24,23 +24,44 @@ class WorktreeManager:
     def _branch_name(self, task_id: str) -> str:
         return f"forge/{task_id}"
 
+    # Directories that must never be committed — virtual environments,
+    # dependency caches, and build artifacts that agents may create.
+    _GITIGNORE_REQUIRED_ENTRIES = (
+        ".forge",
+        ".venv",
+        "venv",
+        ".env",
+        "node_modules",
+        "__pycache__",
+        "*.pyc",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".mypy_cache",
+    )
+
     def _ensure_forge_gitignored(self) -> None:
-        """Add .forge to the repo's .gitignore if not already present.
+        """Ensure the repo .gitignore contains entries for .forge, .venv, etc.
 
         Uses an atomic write-to-temp-then-rename pattern so concurrent
         worktree creations don't corrupt the file.
         """
         gitignore = os.path.join(self._repo, ".gitignore")
-        entry = ".forge"
         if os.path.isfile(gitignore):
             with open(gitignore, encoding="utf-8") as f:
                 content = f.read()
-            lines = {line.strip() for line in content.splitlines()}
-            if entry in lines or f"/{entry}" in lines or f"{entry}/" in lines:
-                return
-            new_content = content + f"\n{entry}\n"
+            existing = {line.strip().rstrip("/") for line in content.splitlines()}
         else:
-            new_content = f"{entry}\n"
+            content = ""
+            existing = set()
+
+        missing = [
+            e for e in self._GITIGNORE_REQUIRED_ENTRIES
+            if e not in existing and f"/{e}" not in existing and f"{e}/" not in existing
+        ]
+        if not missing:
+            return
+
+        new_content = content.rstrip("\n") + "\n" + "\n".join(missing) + "\n"
 
         # Atomic write: write to a temp file in the same directory, then
         # rename (rename is atomic on POSIX when src and dst are on the
@@ -139,7 +160,38 @@ class WorktreeManager:
             if os.path.isdir(src) and not os.path.exists(dst):
                 os.symlink(src, dst)
 
+        # Ensure the worktree's .gitignore has the required exclusions.
+        # The base ref may predate the repo-root .gitignore update above,
+        # so we must also patch the worktree copy directly.
+        self._ensure_worktree_gitignore(path)
+
         return path
+
+    def _ensure_worktree_gitignore(self, worktree_path: str) -> None:
+        """Ensure the worktree has a .gitignore with env/cache exclusions.
+
+        This prevents agents from committing .venv, node_modules, etc.
+        even if the base ref has no .gitignore.
+        """
+        gitignore = os.path.join(worktree_path, ".gitignore")
+        if os.path.isfile(gitignore):
+            with open(gitignore, encoding="utf-8") as f:
+                content = f.read()
+            existing = {line.strip().rstrip("/") for line in content.splitlines()}
+        else:
+            content = ""
+            existing = set()
+
+        missing = [
+            e for e in self._GITIGNORE_REQUIRED_ENTRIES
+            if e not in existing and f"/{e}" not in existing and f"{e}/" not in existing
+        ]
+        if not missing:
+            return
+
+        new_content = content.rstrip("\n") + "\n" + "\n".join(missing) + "\n"
+        with open(gitignore, "w", encoding="utf-8") as f:
+            f.write(new_content)
 
     def remove(self, task_id: str) -> None:
         """Remove a task's worktree and its branch.

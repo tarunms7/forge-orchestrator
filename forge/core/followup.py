@@ -581,8 +581,11 @@ async def _commit_and_push(
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         return proc.returncode or 0, stdout.decode(), stderr.decode()
 
-    # Stage all changes
-    await _run_git(["git", "add", "-A"], cwd=worktree_dir)
+    # Stage all changes, excluding virtual environments and caches
+    await _run_git(
+        ["git", "add", "-A", "--", ":!.venv", ":!venv", ":!node_modules", ":!__pycache__"],
+        cwd=worktree_dir,
+    )
 
     # Check if there are staged changes
     rc, _, _ = await _run_git(["git", "diff", "--cached", "--quiet"], cwd=worktree_dir)
