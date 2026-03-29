@@ -1742,6 +1742,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 task_timeout,
             )
             try:
+                await db.set_task_error(task_id, f"Task timed out after {task_timeout}s")
                 await db.update_task_state(task_id, TaskState.ERROR.value)
                 await self._emit(
                     "task:state_changed",
@@ -1841,6 +1842,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         # Retry not possible (max retries exceeded or retry itself failed) — permanent ERROR.
         try:
+            await db.set_task_error(task_id, str(exc))
             await db.update_task_state(task_id, TaskState.ERROR.value)
             await self._emit(
                 "task:state_changed",

@@ -274,7 +274,7 @@ async def test_attempt_merge_records_duration():
     merge_worker._main = "forge/pipeline-abc"
     merge_worker.merge = AsyncMock(return_value=MergeResult(success=True, error=None))
 
-    mixin._run_review = AsyncMock(return_value=(True, None))
+    mixin._run_review = AsyncMock(return_value=(True, None, False))
     mixin._emit_merge_success = AsyncMock()
     mixin._get_review_config = MagicMock(
         return_value={"skip_l2": True, "extra_review_pass": False, "custom_review_focus": ""}
@@ -393,7 +393,7 @@ async def test_run_review_records_review_duration():
             return_value=[],
         ),
     ):
-        passed, feedback = await mixin._run_review(
+        passed, feedback, needs_human = await mixin._run_review(
             task,
             "/wt/task-1",
             "+ diff",
@@ -484,7 +484,7 @@ async def test_run_review_records_duration_on_lint_failure():
             return_value=[],
         ),
     ):
-        passed, feedback = await mixin._run_review(
+        passed, feedback, needs_human = await mixin._run_review(
             task,
             "/wt/task-1",
             "+ diff",

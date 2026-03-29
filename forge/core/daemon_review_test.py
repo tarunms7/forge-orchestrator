@@ -296,7 +296,7 @@ class TestReviewGateEvents:
             ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
-            passed, feedback = await mixin._run_review(
+            passed, feedback, needs_human = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",
@@ -346,7 +346,7 @@ class TestReviewGateEvents:
             ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
-            passed, feedback = await mixin._run_review(
+            passed, feedback, needs_human = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",
@@ -397,7 +397,7 @@ class TestReviewGateEvents:
                 ),
             ),
         ):
-            passed, feedback = await mixin._run_review(
+            passed, feedback, needs_human = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",
@@ -448,7 +448,7 @@ class TestReviewGateEvents:
             ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
-            passed, feedback = await mixin._run_review(
+            passed, feedback, needs_human = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",

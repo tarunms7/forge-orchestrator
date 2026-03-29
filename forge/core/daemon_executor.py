@@ -354,8 +354,11 @@ class ExecutorMixin:
                     await self._rebase_worktree(wt, base_ref, task_id)
                 return wt
             console.print(f"[red]Worktree path doesn't exist for {task_id}[/red]")
+            error_reason = f"Worktree path doesn't exist for {task_id}"
         except Exception as exc:
             console.print(f"[red]Worktree creation failed for {task_id}: {exc}[/red]")
+            error_reason = f"Worktree creation failed: {exc}"
+        await db.set_task_error(task_id, error_reason)
         await db.update_task_state(task_id, TaskState.ERROR.value)
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "error"}, db=db, pipeline_id=pid
@@ -1209,6 +1212,7 @@ class ExecutorMixin:
             try:
                 # Mark as ERROR (not AWAITING_INPUT) so the pipeline can terminate.
                 # AWAITING_INPUT with no pending question creates a zombie task.
+                await db.set_task_error(task_id, str(e))
                 await db.update_task_state(task_id, TaskState.ERROR.value)
                 await db.release_agent(agent_id)
             except Exception:
