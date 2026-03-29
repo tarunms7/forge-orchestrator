@@ -125,6 +125,55 @@ class ReviewChunk:
     metadata: dict = field(default_factory=dict)
 
 
+@dataclass
+class FileRiskScore:
+    """A file path with an associated risk score (0–100) for Tier 3 chunking."""
+
+    path: str
+    score: float = 0.0
+    line_count: int = 0
+
+
+@dataclass
+class DiffChunk:
+    """A risk-annotated chunk of files for Tier 3 per-chunk review."""
+
+    index: int                          # 1-based chunk index
+    total: int                          # total number of chunks
+    files: list[str]                    # file paths in this chunk
+    diff_text: str                      # combined diff for this chunk
+    line_count: int                     # changed-line count
+    risk_label: str                     # "HIGH", "MEDIUM", "LOW"
+    risk_scores: dict[str, float] = field(default_factory=dict)  # file → score
+
+
+def extract_interface_context(
+    chunk: DiffChunk,
+    all_file_scores: list[FileRiskScore],
+    full_diff: str,
+) -> str:
+    """Return a brief interface context string for a chunk.
+
+    Lists sibling chunks' files so the reviewer knows what exists outside
+    their chunk.  Keeps the output short (names only, no diff text) to
+    avoid bloating the prompt.
+    """
+    sibling_files = [
+        fs.path for fs in all_file_scores if fs.path not in chunk.files
+    ]
+    if not sibling_files:
+        return ""
+    # Cap at 30 sibling paths to avoid prompt bloat
+    shown = sibling_files[:30]
+    extra = len(sibling_files) - len(shown)
+    lines = ["## Sibling Files (reviewed in other chunks — do not flag missing integration here)"]
+    for path in shown:
+        lines.append(f"  - {path}")
+    if extra > 0:
+        lines.append(f"  … and {extra} more")
+    return "\n".join(lines)
+
+
 def _is_test_file(path: str) -> bool:
     """Return True if the path looks like a test file."""
     p = path.lower()
