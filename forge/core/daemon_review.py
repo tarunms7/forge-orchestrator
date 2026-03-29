@@ -7,6 +7,7 @@ import logging
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -30,6 +31,48 @@ console = make_console()
 
 
 # ---------------------------------------------------------------------------
+# Shell command helpers
+# ---------------------------------------------------------------------------
+
+
+async def _async_shell(
+    cmd: str,
+    cwd: str,
+    *,
+    timeout: float = 30,
+) -> subprocess.CompletedProcess[str]:
+    """Run a shell command string (supports &&, ||, pipes, redirects).
+
+    Unlike async_subprocess which uses create_subprocess_exec (no shell),
+    this uses create_subprocess_shell for commands with shell operators.
+    """
+    import asyncio
+
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        cwd=cwd,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise TimeoutError(f"Command timed out after {timeout}s: {cmd}")
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=proc.returncode or 0,
+        stdout=stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else "",
+        stderr=stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else "",
+    )
+
+
+# ---------------------------------------------------------------------------
 # LintStrategy — language-agnostic lint gate
 # ---------------------------------------------------------------------------
 
@@ -45,6 +88,7 @@ class LintStrategy:
     commit_msg: str = "fix: auto-fix lint issues"
     tool_check: str | None = None  # Binary to verify exists via shutil.which()
     check_via_output: bool = False  # True = non-empty stdout means failure
+    extensions: set[str] | None = None  # File extensions this linter handles (e.g. {".py"})
 
 
 # Language fallbacks — ordered by priority for tiebreaking
@@ -57,6 +101,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             fix_cmd=[sys.executable, "-m", "ruff", "check", "--fix"],
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (ruff)",
+            extensions={".py", ".pyi"},
             # ruff is a core dependency — no tool_check needed
         ),
     ),
@@ -69,6 +114,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (eslint)",
             tool_check="npx",
+            extensions={".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"},
         ),
     ),
     (
@@ -81,6 +127,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             commit_msg="fix: auto-fix lint issues (gofmt)",
             tool_check="gofmt",
             check_via_output=True,
+            extensions={".go"},
         ),
     ),
     (
@@ -92,6 +139,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=False,
             commit_msg="fix: auto-fix lint issues (clippy)",
             tool_check="cargo",
+            extensions={".rs"},
         ),
     ),
     (
@@ -103,6 +151,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (rubocop)",
             tool_check="rubocop",
+            extensions={".rb"},
         ),
     ),
     (
@@ -114,6 +163,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (ktlint)",
             tool_check="ktlint",
+            extensions={".kt", ".kts"},
         ),
     ),
     (
@@ -125,6 +175,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (swiftlint)",
             tool_check="swiftlint",
+            extensions={".swift"},
         ),
     ),
     (
@@ -136,6 +187,7 @@ _LANGUAGE_FALLBACKS: list[tuple[set[str], LintStrategy]] = [
             supports_file_args=True,
             commit_msg="fix: auto-fix lint issues (shellcheck)",
             tool_check="shellcheck",
+            extensions={".sh", ".bash"},
         ),
     ),
 ]
@@ -514,8 +566,14 @@ class ReviewMixin:
             await gate_sem.acquire()
         try:
             try:
-                parts = shlex.split(cmd)
-                proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
+                # Use shell=True for commands with shell operators (&&, ||, ;, |)
+                # so they execute correctly. Plain commands use exec for safety.
+                _shell_operators = ("&&", "||", ";", "|", ">", ">>", "<")
+                if any(op in cmd for op in _shell_operators):
+                    proc = await _async_shell(cmd, cwd=worktree_path, timeout=timeout)
+                else:
+                    parts = shlex.split(cmd)
+                    proc = await async_subprocess(parts, cwd=worktree_path, timeout=timeout)
             except TimeoutError:
                 return GateResult(
                     passed=False,
@@ -1228,8 +1286,23 @@ class ReviewMixin:
         # tools like ESLint must run from that subdirectory so they find
         # their config and node_modules.
         lint_cwd = worktree_path
-        lint_files = list(changed_files)
-        if strategy.supports_file_args and changed_files:
+        # Filter files to only those matching the linter's supported extensions.
+        # Without this, non-code files (.bin, .txt, .scm, .md) get passed to the
+        # linter and cause spurious failures (e.g., ruff chokes on binary files).
+        if strategy.extensions and strategy.supports_file_args:
+            lint_files = [
+                f for f in changed_files
+                if os.path.splitext(f)[1].lower() in strategy.extensions
+            ]
+            if not lint_files:
+                return GateResult(
+                    passed=True,
+                    gate="gate1_auto_check",
+                    details=f"No {strategy.name}-eligible files changed",
+                )
+        else:
+            lint_files = list(changed_files)
+        if strategy.supports_file_args and lint_files:
             common_prefix = (
                 os.path.commonpath(changed_files)
                 if len(changed_files) > 1
