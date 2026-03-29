@@ -7,24 +7,20 @@ import logging
 import random
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.sdk_helpers import sdk_query
-from forge.review.pipeline import GateResult
+
+# ReviewCostInfo lives in pipeline.py to avoid circular imports.
+# Re-exported here for backward compatibility with existing callers.
+from forge.review.pipeline import (
+    GateResult,
+    ReviewCostInfo,  # noqa: F401
+)
 
 logger = logging.getLogger("forge.review")
-
-
-@dataclass
-class ReviewCostInfo:
-    """Cost information from an LLM review call."""
-
-    cost_usd: float = 0.0
-    input_tokens: int = 0
-    output_tokens: int = 0
 
 
 REVIEW_SYSTEM_PROMPT = """You are a senior code reviewer. Your job is to catch bugs, security issues,

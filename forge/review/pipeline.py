@@ -1,6 +1,23 @@
 """Review gate data classes."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+
+
+@dataclass
+class ReviewCostInfo:
+    """Accumulated cost from one or more LLM review calls."""
+
+    cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, other: ReviewCostInfo) -> None:
+        """Accumulate cost from another ReviewCostInfo in-place."""
+        self.cost_usd += other.cost_usd
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
 
 
 @dataclass
@@ -18,6 +35,10 @@ class GateResult:
     )
     # — skip this gate instead of consuming a retry
     needs_human: bool = False  # True = escalate to awaiting_input for human decision
+    # Adaptive review metadata (all optional, backward-compatible)
+    review_strategy: str | None = None  # "tier1", "tier2", "tier3"
+    chunk_count: int | None = None  # Tier 3 only: total number of chunks
+    chunk_verdicts: list[str] | None = None  # Tier 3 only: e.g. ["PASS","FAIL","PASS"]
 
 
 @dataclass
