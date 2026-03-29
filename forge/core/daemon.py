@@ -647,9 +647,42 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         )
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
+        _planner_token_count = [0]
+        _last_token_update = [0.0]
+
         async def _on_planner_msg(msg):
             text = _extract_activity(msg)
+
+            # Count tokens from ALL messages (including filtered JSON output)
+            # so we can show generation progress even when text is hidden.
+            _msg_tokens = 0
+            try:
+                from claude_code_sdk import AssistantMessage
+
+                if isinstance(msg, AssistantMessage):
+                    for block in msg.content or []:
+                        if hasattr(block, "text") and block.text:
+                            # Rough token estimate: chars / 4
+                            _msg_tokens += max(1, len(block.text) // 4)
+            except ImportError:
+                pass
+            if _msg_tokens > 0:
+                _planner_token_count[0] += _msg_tokens
+                now = time.monotonic()
+                # Emit token count update every 2 seconds (not every message)
+                if now - _last_token_update[0] >= 2.0:
+                    _last_token_update[0] = now
+                    token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                    if pipeline_id:
+                        await self._emit(
+                            "planner:output", {"line": token_line}, db=db, pipeline_id=pipeline_id
+                        )
+                    else:
+                        await self._events.emit("planner:output", {"line": token_line})
+
             if text:
+                # Reset token update timer so activity lines don't get buried
+                _last_token_update[0] = time.monotonic()
                 if pipeline_id:
                     await self._emit(
                         "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
@@ -737,9 +770,40 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             async def _on_unified_msg(msg):
                 """Forward SDK streaming messages as planner:output events."""
+                # Count tokens for progress display (reuses outer counters)
+                _msg_tokens = 0
+                if not isinstance(msg, str):
+                    try:
+                        from claude_code_sdk import AssistantMessage
+
+                        if isinstance(msg, AssistantMessage):
+                            for block in msg.content or []:
+                                if hasattr(block, "text") and block.text:
+                                    _msg_tokens += max(1, len(block.text) // 4)
+                    except ImportError:
+                        pass
+                if _msg_tokens > 0:
+                    _planner_token_count[0] += _msg_tokens
+                    now = time.monotonic()
+                    if now - _last_token_update[0] >= 2.0:
+                        _last_token_update[0] = now
+                        token_line = (
+                            f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                        )
+                        if pipeline_id:
+                            await self._emit(
+                                "planner:output",
+                                {"line": token_line},
+                                db=db,
+                                pipeline_id=pipeline_id,
+                            )
+                        else:
+                            await self._events.emit("planner:output", {"line": token_line})
+
                 text = _extract_activity(msg) if not isinstance(msg, str) else msg
                 if not text:
                     return
+                _last_token_update[0] = time.monotonic()
                 if pipeline_id:
                     await self._emit(
                         "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
