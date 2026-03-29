@@ -235,7 +235,7 @@ class ExecutorMixin:
             )
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         await self._attempt_merge(
             db,
             merge_worker,
@@ -278,7 +278,7 @@ class ExecutorMixin:
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit(
             "task:state_changed", {"task_id": task_id, "state": "merging"}, db=db, pipeline_id=pid
@@ -455,7 +455,7 @@ class ExecutorMixin:
                 user message when resuming a paused conversation.
             resume: SDK session ID for conversation continuation (``ClaudeCodeOptions.resume``).
         """
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
         await check_budget(db, pid, self._settings)
@@ -1020,7 +1020,7 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
 
-        agent_model = select_model(self._strategy, "agent", task.complexity or "medium")
+        agent_model = select_model(self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count)
         await self._attempt_merge(
             db,
             merge_worker,
