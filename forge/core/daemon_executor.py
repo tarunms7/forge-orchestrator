@@ -12,15 +12,18 @@ from datetime import UTC, datetime
 # Pathspec exclusions appended to every ``git add -A`` so that virtual
 # environments, dependency caches, and build artifacts are never staged —
 # even when the repo has no .gitignore.
+# NOTE: Use long-form :(exclude) instead of :! because the short form
+# breaks on some git versions when the path contains underscores
+# (e.g., :!__pycache__ triggers "Unimplemented pathspec magic '_'").
 _GIT_ADD_EXCLUDES: list[str] = [
-    ":!.venv",
-    ":!venv",
-    ":!.env",
-    ":!node_modules",
-    ":!__pycache__",
-    ":!.ruff_cache",
-    ":!.pytest_cache",
-    ":!.mypy_cache",
+    ":(exclude).venv",
+    ":(exclude)venv",
+    ":(exclude).env",
+    ":(exclude)node_modules",
+    ":(exclude)__pycache__",
+    ":(exclude).ruff_cache",
+    ":(exclude).pytest_cache",
+    ":(exclude).mypy_cache",
 ]
 
 from forge.core.budget import BudgetExceededError, check_budget
