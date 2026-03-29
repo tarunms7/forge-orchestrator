@@ -313,9 +313,11 @@ class TestWorktreePathThreading:
         mixin._settings = MagicMock(allowed_dirs=[], require_approval=False, budget_limit_usd=0.0)
         mixin._template_config = None
         mixin._contracts = None
-        mixin._merge_lock = MagicMock()
-        mixin._merge_lock.__aenter__ = AsyncMock(return_value=None)
-        mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
+        mock_lock = MagicMock()
+        mock_lock.__aenter__ = AsyncMock(return_value=None)
+        mock_lock.__aexit__ = AsyncMock(return_value=False)
+        mixin._merge_lock = mock_lock
+        mixin._get_merge_lock = MagicMock(return_value=mock_lock)
         # _worktree_path is provided by ForgeDaemon at runtime; mock it here
         mixin._worktree_path = MagicMock(
             side_effect=lambda repo_id, task_id: (
@@ -490,9 +492,11 @@ class TestAttemptMergeLockBehavior:
         mixin._settings = MagicMock(allowed_dirs=[], require_approval=False, budget_limit_usd=0.0)
         mixin._template_config = None
         mixin._contracts = None
-        mixin._merge_lock = MagicMock()
-        mixin._merge_lock.__aenter__ = AsyncMock(return_value=None)
-        mixin._merge_lock.__aexit__ = AsyncMock(return_value=False)
+        mock_lock = MagicMock()
+        mock_lock.__aenter__ = AsyncMock(return_value=None)
+        mock_lock.__aexit__ = AsyncMock(return_value=False)
+        mixin._merge_lock = mock_lock  # backward compat
+        mixin._get_merge_lock = MagicMock(return_value=mock_lock)
         mixin._worktree_path = MagicMock(
             side_effect=lambda repo_id, task_id: (
                 f"/fake/project/.forge/worktrees/{repo_id}/{task_id}"
@@ -501,7 +505,7 @@ class TestAttemptMergeLockBehavior:
         return mixin
 
     async def test_lock_acquired_once_on_first_merge_success(self):
-        """When the first merge attempt succeeds, _merge_lock is entered exactly once."""
+        """When the first merge attempt succeeds, _get_merge_lock is entered exactly once."""
         mixin = self._make_mixin()
         mixin._emit = AsyncMock()
         mixin._run_review = AsyncMock(return_value=(True, None))
@@ -549,7 +553,7 @@ class TestAttemptMergeLockBehavior:
                 )
 
         # Lock entered exactly once
-        assert mixin._merge_lock.__aenter__.call_count == 1
+        assert mixin._get_merge_lock.return_value.__aenter__.call_count == 1
         # retry_merge never called because first attempt succeeded
         merge_worker.retry_merge.assert_not_called()
         mixin._emit_merge_success.assert_called_once()
@@ -610,7 +614,7 @@ class TestAttemptMergeLockBehavior:
                 )
 
         # Lock entered exactly ONCE even though merge failed and retry was needed
-        assert mixin._merge_lock.__aenter__.call_count == 1
+        assert mixin._get_merge_lock.return_value.__aenter__.call_count == 1
         # Both merge and retry_merge were called
         merge_worker.merge.assert_called_once()
         merge_worker.retry_merge.assert_called_once()
@@ -679,7 +683,7 @@ class TestAttemptMergeLockBehavior:
                 )
 
         # Lock still entered exactly once
-        assert mixin._merge_lock.__aenter__.call_count == 1
+        assert mixin._get_merge_lock.return_value.__aenter__.call_count == 1
         # Tier 2 resolution was triggered
         mixin._attempt_tier2_resolution.assert_called_once()
         mixin._emit_merge_success.assert_not_called()

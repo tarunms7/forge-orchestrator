@@ -604,8 +604,10 @@ class ReviewMixin:
             try:
                 # Use shell=True for commands with shell operators (&&, ||, ;, |)
                 # so they execute correctly. Plain commands use exec for safety.
-                _shell_operators = ("&&", "||", ";", "|", ">", ">>", "<")
-                if any(op in cmd for op in _shell_operators):
+                # Use space-padded operators to avoid false matches in file paths
+                # or arguments (e.g., "echo hello|world" shouldn't trigger shell).
+                _shell_operators = (" && ", " || ", " ; ", " | ", " > ", " >> ", " < ")
+                if any(op in f" {cmd} " for op in _shell_operators):
                     proc = await _async_shell(cmd, cwd=worktree_path, timeout=timeout)
                 else:
                     parts = shlex.split(cmd)

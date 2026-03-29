@@ -281,7 +281,7 @@ class ExecutorMixin:
         await self._ensure_clean_for_rebase(worktree_path, task_id)
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
-        async with self._merge_lock:
+        async with self._get_merge_lock(repo_id):
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
             await self._emit_merge_success(
@@ -1453,7 +1453,7 @@ class ExecutorMixin:
         # Hold the lock for the entire first-attempt + retry sequence so no
         # other task's merge can interleave between the two attempts.
         merge_t0 = time.monotonic()
-        async with self._merge_lock:
+        async with self._get_merge_lock():
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
             if not merge_result.success:
                 console.print(
@@ -1512,7 +1512,7 @@ class ExecutorMixin:
         if not retry_result.conflicting_files:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
-        async with self._merge_lock:
+        async with self._get_merge_lock():
             prep = await merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
             await self._try_race_resolved_merge(
@@ -1530,7 +1530,7 @@ class ExecutorMixin:
             task_id, worktree_path, prep.conflicting_files, agent_model, db=db
         )
         if resolved:
-            async with self._merge_lock:
+            async with self._get_merge_lock():
                 final = await merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
                 await self._emit_merge_success(
@@ -1855,7 +1855,7 @@ class ExecutorMixin:
         pre_merge_ref: str | None = None,
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
-        async with self._merge_lock:
+        async with self._get_merge_lock():
             ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
             await self._emit_merge_success(

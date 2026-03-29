@@ -260,7 +260,7 @@ class MergeMixin:
                 )
             # Only clean up worktree when we're done with the task entirely
             try:
-                worktree_mgr.remove(task_id)
+                await worktree_mgr.async_remove(task_id)
             except Exception as e:
                 logger.warning(
                     "Worktree cleanup failed for %s (_handle_retry): %s",
@@ -335,7 +335,7 @@ class MergeMixin:
                     {"task_id": task_id, "state": "error"},
                 )
             try:
-                worktree_mgr.remove(task_id)
+                await worktree_mgr.async_remove(task_id)
             except Exception as e:
                 logger.warning(
                     "Worktree cleanup failed for %s (_handle_merge_retry): %s",
