@@ -47,40 +47,45 @@ class TestRebaseWorktree:
         assert args[0] == ["rebase", "forge/pipeline-abc"]
         assert kwargs["cwd"] == "/wt/task-1"
 
-    async def test_rebase_conflict_aborts(self):
-        """Failed rebase triggers git rebase --abort."""
+    async def test_rebase_conflict_retries_with_theirs(self):
+        """Failed clean rebase aborts and retries with -X theirs."""
         mixin = self._make_mixin()
         rebase_fail = _make_proc(returncode=1, stdout="CONFLICT")
         abort_ok = _make_proc(returncode=0)
+        rebase_theirs_ok = _make_proc(returncode=0)
 
         with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
             with patch(
                 "forge.core.daemon_executor._run_git",
                 new_callable=AsyncMock,
-                side_effect=[rebase_fail, abort_ok],
+                side_effect=[rebase_fail, abort_ok, rebase_theirs_ok],
             ) as mock_git:
                 await mixin._rebase_worktree("/wt/task-1", "forge/pipeline-abc", "task-1")
 
-        assert mock_git.call_count == 2
-        # Second call should be abort
-        args, kwargs = mock_git.call_args_list[1]
-        assert args[0] == ["rebase", "--abort"]
-        assert kwargs["cwd"] == "/wt/task-1"
+        assert mock_git.call_count == 3
+        # 1st: clean rebase, 2nd: abort, 3rd: rebase -X theirs
+        assert mock_git.call_args_list[0].args[0] == ["rebase", "forge/pipeline-abc"]
+        assert mock_git.call_args_list[1].args[0] == ["rebase", "--abort"]
+        assert mock_git.call_args_list[2].args[0] == ["rebase", "-X", "theirs", "forge/pipeline-abc"]
 
-    async def test_rebase_does_not_raise(self):
-        """Even if abort also fails, no exception propagates."""
+    async def test_rebase_all_attempts_fail_does_not_raise(self):
+        """If both clean and -X theirs rebase fail, no exception propagates."""
         mixin = self._make_mixin()
         rebase_fail = _make_proc(returncode=1)
-        abort_fail = _make_proc(returncode=1)
+        abort_ok = _make_proc(returncode=0)
+        rebase_theirs_fail = _make_proc(returncode=1)
+        abort_ok2 = _make_proc(returncode=0)
 
         with patch.object(ExecutorMixin, "_ensure_clean_for_rebase", new_callable=AsyncMock):
             with patch(
                 "forge.core.daemon_executor._run_git",
                 new_callable=AsyncMock,
-                side_effect=[rebase_fail, abort_fail],
-            ):
+                side_effect=[rebase_fail, abort_ok, rebase_theirs_fail, abort_ok2],
+            ) as mock_git:
                 # Should not raise
                 await mixin._rebase_worktree("/wt/task-1", "main", "task-1")
+
+        assert mock_git.call_count == 4
 
 
 class TestBuildPrompt:
@@ -189,7 +194,7 @@ class TestAutoCommitIfNeeded:
         # Verify: status, add -A, commit
         calls = mock_git.call_args_list
         assert calls[0].args[0] == ["status", "--porcelain"]
-        assert calls[1].args[0] == ["add", "-A"]
+        assert calls[1].args[0][:2] == ["add", "-A"]
         assert calls[2].args[0][0] == "commit"
 
     async def test_git_add_failure_returns_false(self):

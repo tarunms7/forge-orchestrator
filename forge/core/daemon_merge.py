@@ -73,11 +73,11 @@ class MergeMixin:
             f"3. Do not discard either side unless the changes are truly redundant.\n"
             f"4. Ensure the resolved code is syntactically correct and logically coherent.\n"
             f"5. Stage the resolved files and continue the rebase:\n"
-            f"   git add -A && git rebase --continue\n"
+            f"   git add -A -- ':!.venv' ':!venv' ':!node_modules' ':!__pycache__' && git rebase --continue\n"
             f"   IMPORTANT: Do NOT use `git commit`. The rebase is in progress — "
             f"use `git rebase --continue` to advance it.\n"
             f"6. If the rebase pauses again with more conflicts, resolve those too "
-            f"and run `git add -A && git rebase --continue` again.\n"
+            f"and run `git add -A -- ':!.venv' ':!venv' ':!node_modules' ':!__pycache__' && git rebase --continue` again.\n"
             f"7. Repeat until the rebase completes successfully.\n"
         )
 
