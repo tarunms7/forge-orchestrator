@@ -1432,19 +1432,33 @@ class ExecutorMixin:
                     continue
                 break
             if needs_human:
-                question_data = {
-                    "question": (
-                        "Automated review could not complete (SDK returned empty after retries). "
-                        "The agent's diff is preserved. What should I do?"
-                    ),
-                    "context": f"Task: {task.title}. The code changes are ready but could not be reviewed automatically.",
-                    "suggestions": [
-                        "Retry the review now",
-                        "I'll review the diff manually — approve",
-                        "I'll review the diff manually — reject and retry the task",
-                    ],
-                    "source": "review_escalation",
-                }
+                # Determine if this is empty-response or reviewer-uncertainty
+                is_uncertain = feedback and not feedback.startswith("Review could not complete")
+                if is_uncertain:
+                    question_data = {
+                        "question": "The reviewer is uncertain about this code and needs your input.",
+                        "context": feedback,
+                        "suggestions": [
+                            "Approve — the code is correct, reviewer's concern is not applicable",
+                            "Reject — the reviewer's concern is valid, retry the task",
+                            "Provide guidance for the reviewer to re-review with more context",
+                        ],
+                        "source": "review_uncertain",
+                    }
+                else:
+                    question_data = {
+                        "question": (
+                            "Automated review could not complete (SDK returned empty after retries). "
+                            "The agent's diff is preserved. What should I do?"
+                        ),
+                        "context": f"Task: {task.title}. The code changes are ready but could not be reviewed automatically.",
+                        "suggestions": [
+                            "Retry the review now",
+                            "I'll review the diff manually — approve",
+                            "I'll review the diff manually — reject and retry the task",
+                        ],
+                        "source": "review_escalation",
+                    }
                 await self._handle_agent_question(
                     db, task_id, agent_id, question_data,
                     session_id=None,
