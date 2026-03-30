@@ -542,11 +542,10 @@ async def test_countdown_banner_renders_number():
 @pytest.mark.asyncio
 async def test_countdown_ticks_and_fires_complete():
     """Countdown ticks down and posts CountdownComplete when reaching zero."""
-    from forge.tui.screens.pipeline import PhaseBanner
 
     state = TuiState()
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         banner = app.screen.query_one("PhaseBanner")
         banner.start_countdown(2)
         # Tick twice (interval is 1s, but we can trigger manually)
@@ -564,7 +563,7 @@ async def test_stop_countdown_prevents_complete():
     """stop_countdown cancels the timer without firing CountdownComplete."""
     state = TuiState()
     app = PipelineTestApp(state=state)
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         banner = app.screen.query_one("PhaseBanner")
         banner.start_countdown(5)
         assert banner._countdown_value == 5

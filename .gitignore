@@ -17,3 +17,9 @@ web/.next/
 .env.production
 .DS_Store
 .superpowers/
+.forge
+venv
+node_modules
+.ruff_cache
+.pytest_cache
+.mypy_cache

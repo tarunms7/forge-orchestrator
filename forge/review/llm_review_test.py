@@ -485,6 +485,6 @@ class TestAdaptiveReviewDispatch:
 
     def test_strategy_selection_tier1_for_small_diff(self):
         """For small diff, strategy is TIER1."""
-        from forge.review.strategy import select_strategy, ReviewStrategy
+        from forge.review.strategy import ReviewStrategy, select_strategy
         diff = "diff --git a/x b/x\n+line\n"
         assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER1
