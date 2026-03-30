@@ -350,6 +350,43 @@ class TuiState:
             gates["gate2_llm_review"] = {"status": "passed", "details": data.get("feedback")}
             self._notify("tasks")
 
+    def _on_review_strategy_selected(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            self.tasks[task_id]["review_strategy"] = data.get("strategy")
+            self.tasks[task_id]["review_chunk_count"] = data.get("chunk_count")
+            self.tasks[task_id]["review_diff_lines"] = data.get("diff_lines")
+            self._notify("tasks")
+
+    def _on_review_chunk_started(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            idx = data.get("chunk_index")
+            self.tasks[task_id]["review_current_chunk"] = idx
+            chunks = self.tasks[task_id].setdefault("review_chunks", {})
+            chunks[idx] = {
+                "files": data.get("files", []),
+                "verdict": None,
+                "risk_label": data.get("risk_label", "?"),
+            }
+            self._notify("tasks")
+
+    def _on_review_chunk_complete(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            idx = data.get("chunk_index")
+            chunks = self.tasks[task_id].get("review_chunks", {})
+            if idx in chunks:
+                chunks[idx]["verdict"] = data.get("verdict")
+            self.tasks[task_id]["review_current_chunk"] = None
+            self._notify("tasks")
+
+    def _on_review_synthesis_started(self, data: dict) -> None:
+        task_id = data.get("task_id")
+        if task_id and task_id in self.tasks:
+            self.tasks[task_id]["review_current_chunk"] = "synthesis"
+            self._notify("tasks")
+
     def _on_cost_estimate(self, data: dict) -> None:
         self.cost_estimate = data
         self._notify("cost_estimate")
@@ -671,6 +708,10 @@ class TuiState:
         "review:gate_failed": _on_review_gate_failed,
         "review:llm_feedback": _on_review_llm_feedback,
         "review:llm_output": _on_review_llm_output,
+        "review:strategy_selected": _on_review_strategy_selected,
+        "review:chunk_started": _on_review_chunk_started,
+        "review:chunk_complete": _on_review_chunk_complete,
+        "review:synthesis_started": _on_review_synthesis_started,
         "pipeline:all_tasks_done": _on_all_tasks_done,
         "pipeline:interrupted": _on_interrupted,
         "pipeline:pr_creating": _on_pr_creating,
