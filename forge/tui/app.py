@@ -1404,7 +1404,34 @@ class ForgeApp(App):
         return True
 
     async def on_pipeline_list_selected(self, event: PipelineList.Selected) -> None:
-        """User selected a pipeline from the history list — resume or replay it."""
+        """User pressed Enter on a pipeline — always opens read-only view."""
+        pipeline_id = event.pipeline_id
+        if not self._db:
+            self.notify("Database not available", severity="error")
+            return
+
+        try:
+            pipeline = await self._db.get_pipeline(pipeline_id)
+            if not pipeline:
+                self.notify("Pipeline not found", severity="error")
+                return
+
+            events = await self._db.list_events(pipeline_id)
+            replay_state = TuiState()
+            replay_state.base_branch = getattr(pipeline, "base_branch", None) or "main"
+            replay_state._replay_date = pipeline.created_at or ""
+            for evt in events:
+                replay_state.apply_event(evt.event_type, evt.payload or {})
+            self.push_screen(PipelineScreen(replay_state, read_only=True))
+
+        except Exception as e:
+            logger.error("Failed to load pipeline history: %s", e, exc_info=True)
+            self.notify(f"Failed to load pipeline: {_escape_markup(e)}", severity="error")
+
+    async def on_pipeline_list_resume_requested(
+        self, event: PipelineList.ResumeRequested
+    ) -> None:
+        """User pressed Shift+R on a resumable pipeline — resume/retry it."""
         pipeline_id = event.pipeline_id
         if not self._db:
             self.notify("Database not available", severity="error")
@@ -1450,7 +1477,7 @@ class ForgeApp(App):
                 )
                 return
 
-            # ── planned: show plan approval (BUG FIX: now creates daemon) ──
+            # ── planned: show plan approval ──
             if status == "planned":
                 if not ctx["task_graph_json"]:
                     self.notify("No plan found for this pipeline", severity="error")
@@ -1491,15 +1518,13 @@ class ForgeApp(App):
                 self.push_screen(PipelineScreen(self._state))
 
                 if ctx["contracts_json"]:
-                    # Contracts already generated — skip to execution with resume=True
-                    self._daemon._contracts = None  # Will be loaded from DB by execute()
+                    self._daemon._contracts = None
                     self._daemon_task = safe_create_task(
                         self._resume_execution(),
                         logger=logger,
                         name="resume-execute-after-contracts",
                     )
                 else:
-                    # Re-run contracts and execution
                     self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
                 self._daemon_task.add_done_callback(self._on_daemon_done)
                 self.notify(
@@ -1517,10 +1542,9 @@ class ForgeApp(App):
                         severity="warning",
                     )
                     return
-                # Fall through to interrupted handler logic
                 status = "interrupted"
 
-            # ── interrupted: smart-reset already applied at quit, resume execution ──
+            # ── interrupted: resume execution ──
             if status == "interrupted":
                 await self._replay_state_for_pipeline(pipeline)
                 await self._setup_daemon_for_resume(pipeline)
@@ -1539,22 +1563,21 @@ class ForgeApp(App):
                 )
                 return
 
-            # ── complete: interactive if no PR, read-only otherwise ──
+            # ── complete without PR: let user create one ──
             if status == "complete":
                 await self._replay_state_for_pipeline(pipeline)
                 if not ctx["pr_url"]:
-                    # No PR created yet — let user create one
                     await self._setup_daemon_for_resume(pipeline)
                     self._load_task_graph(pipeline)
                     self.push_screen(PipelineScreen(self._state))
                     self._final_approval_pushed = True
                     self._push_final_approval(partial=False)
                     return
-                # PR exists — read-only replay
-                # (fall through to bottom)
+                self.notify("Pipeline already complete with PR", severity="information")
+                return
 
-            # ── error: show final approval with partial=True for retry ──
-            if status == "error":
+            # ── error / partial_success: show final approval for retry ──
+            if status in ("error", "partial_success"):
                 await self._replay_state_for_pipeline(pipeline)
                 await self._setup_daemon_for_resume(pipeline)
                 self._load_task_graph(pipeline)
@@ -1563,25 +1586,8 @@ class ForgeApp(App):
                 self._push_final_approval(partial=True)
                 return
 
-            # ── partial_success: show final approval ──
-            if status == "partial_success":
-                await self._replay_state_for_pipeline(pipeline)
-                await self._setup_daemon_for_resume(pipeline)
-                self._load_task_graph(pipeline)
-                self.push_screen(PipelineScreen(self._state))
-                self._final_approval_pushed = True
-                self._push_final_approval(partial=True)
-                return
-
-            # ── cancelled / complete with PR / unknown: read-only replay ──
-            events = await self._db.list_events(pipeline_id)
-            replay_state = TuiState()
-            replay_state.base_branch = getattr(pipeline, "base_branch", None) or "main"
-            replay_state._replay_date = pipeline.created_at or ""
-            for evt in events:
-                replay_state.apply_event(evt.event_type, evt.payload or {})
-            self.push_screen(PipelineScreen(replay_state, read_only=True))
+            self.notify(f"Cannot resume pipeline with status: {status}", severity="warning")
 
         except Exception as e:
-            logger.error("Failed to load pipeline history: %s", e, exc_info=True)
-            self.notify(f"Failed to load pipeline: {_escape_markup(e)}", severity="error")
+            logger.error("Failed to resume pipeline: %s", e, exc_info=True)
+            self.notify(f"Failed to resume pipeline: {_escape_markup(e)}", severity="error")

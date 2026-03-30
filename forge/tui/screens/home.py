@@ -89,11 +89,11 @@ class HomeScreen(Screen):
     }
     #input-row {
         width: 100%;
-        height: auto;
+        height: 9;
         margin: 1 0;
     }
     #prompt-input {
-        height: 5;
+        height: 7;
         border: tall #30363d;
         background: #161b22;
         width: 1fr;
@@ -103,7 +103,7 @@ class HomeScreen(Screen):
     }
     #shortcuts-panel {
         width: 32;
-        height: 5;
+        height: 9;
         border: tall #30363d;
         background: #161b22;
         margin-left: 1;
@@ -117,7 +117,7 @@ class HomeScreen(Screen):
     .branch-field {
         width: 1fr;
         height: auto;
-        max-height: 10;
+        max-height: 6;
     }
     .workspace-repo-row {
         width: 100%;
@@ -143,7 +143,7 @@ class HomeScreen(Screen):
     #recent-label {
         width: 100%;
         margin: 1 0 0 0;
-        color: #484f58;
+        color: #6e7681;
     }
     PipelineList {
         width: 100%;
@@ -154,6 +154,7 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         ("escape", "app.quit", "Quit"),
+        Binding("q", "app.quit_app", "Quit", show=False),
         Binding("tab", "cycle_focus", "Switch focus", show=False),
     ]
 
@@ -228,27 +229,32 @@ class HomeScreen(Screen):
             yield PipelineList()
         yield ShortcutBar(
             [
-                ("Ctrl+S", "Submit Task"),
+                ("Ctrl+S", "Submit"),
+                ("Ctrl+U", "Clear"),
+                ("Tab", "Focus"),
                 ("j/k", "History"),
-                ("Enter", "Resume Selected"),
+                ("Enter", "View"),
+                ("Shift+R", "Resume"),
                 ("q", "Quit"),
             ]
         )
 
     def _update_shortcut_label(self, pipeline: dict | None) -> None:
-        """Update the ShortcutBar Enter label based on selected pipeline."""
-        if pipeline and is_pipeline_resumable(pipeline):
-            enter_label = "Resume Selected"
-        else:
-            enter_label = "View Selected"
+        """Update the ShortcutBar based on selected pipeline."""
+        resumable = pipeline and is_pipeline_resumable(pipeline)
         try:
             bar = self.query_one(ShortcutBar)
-            bar.shortcuts = [
-                ("Ctrl+S", "Submit Task"),
+            shortcuts = [
+                ("Ctrl+S", "Submit"),
+                ("Ctrl+U", "Clear"),
+                ("Tab", "Focus"),
                 ("j/k", "History"),
-                ("Enter", enter_label),
-                ("q", "Quit"),
+                ("Enter", "View"),
             ]
+            if resumable:
+                shortcuts.append(("Shift+R", "Resume"))
+            shortcuts.append(("q", "Quit"))
+            bar.shortcuts = shortcuts
         except Exception:
             pass
 
