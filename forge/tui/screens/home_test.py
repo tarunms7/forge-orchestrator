@@ -176,15 +176,15 @@ async def test_shortcuts_panel_contains_all_shortcuts():
         panel = app.screen.query_one("#shortcuts-panel", Static)
         rendered = str(panel.content)
         assert "Ctrl+S" in rendered
-        assert "Submit pipeline" in rendered
+        assert "submit" in rendered
         assert "Ctrl+U" in rendered
-        assert "Clear input" in rendered
+        assert "clear" in rendered
         assert "Tab" in rendered
-        assert "Switch focus" in rendered
+        assert "focus" in rendered
         assert "Ctrl+P" in rendered
-        assert "Command palette" in rendered
+        assert "palette" in rendered
         assert "?" in rendered
-        assert "Help" in rendered
+        assert "help" in rendered
 
 
 @pytest.mark.asyncio

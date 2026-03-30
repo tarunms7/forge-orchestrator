@@ -89,11 +89,11 @@ class HomeScreen(Screen):
     }
     #input-row {
         width: 100%;
-        height: 9;
+        height: 10;
         margin: 1 0;
     }
     #prompt-input {
-        height: 9;
+        height: 10;
         border: tall #30363d;
         background: #161b22;
         width: 1fr;
@@ -102,18 +102,20 @@ class HomeScreen(Screen):
         border: tall #58a6ff;
     }
     #shortcuts-panel {
-        width: 32;
-        height: 9;
+        width: 34;
+        height: 10;
         border: tall #30363d;
         background: #161b22;
         margin-left: 1;
         padding: 0 1;
+        content-align: left top;
     }
+    /* Do not cap height: Select + label needs ~4 lines; max-height caused clipping
+       ("eaten" bottom) and invisible text when the row was squeezed. */
     #branch-row {
         width: 100%;
         height: auto;
-        max-height: 5;
-        margin: 0 0 2 0;
+        margin: 0 0 1 0;
     }
     .branch-field {
         width: 1fr;
@@ -131,10 +133,26 @@ class HomeScreen(Screen):
     .workspace-repo-row {
         width: 100%;
         height: auto;
+        align: center middle;
+    }
+    .workspace-repo-row BranchSelector Select {
+        border: tall #30363d;
+        background: #161b22;
+        color: #e6edf3;
+    }
+    .workspace-repo-row BranchSelector Select:focus {
+        border: tall #58a6ff;
+    }
+    /* compact Select zeros left padding; restore inset so branch text clears the border */
+    #home-container Select.-textual-compact > SelectCurrent {
+        padding: 0 2 0 1;
+    }
+    #workspace-optional-branch {
+        margin-top: 1;
     }
     .repo-id-label {
         width: 15;
-        height: 3;
+        height: 1;
         content-align: left middle;
         color: #58a6ff;
     }
@@ -198,12 +216,8 @@ class HomeScreen(Screen):
     def compose(self) -> ComposeResult:
         shortcuts_text = (
             "[#e6edf3 bold]Shortcuts[/]\n"
-            "\n"
-            "[#58a6ff]Ctrl+S[/]  Submit pipeline\n"
-            "[#58a6ff]Ctrl+U[/]  Clear input\n"
-            "[#58a6ff]Tab[/]     Switch focus\n"
-            "[#58a6ff]Ctrl+P[/]  Command palette\n"
-            "[#58a6ff]?[/]       Help"
+            "[#58a6ff]Ctrl+S[/] submit  [#58a6ff]Ctrl+U[/] clear  [#58a6ff]Tab[/] focus\n"
+            "[#58a6ff]Ctrl+P[/] palette  [#58a6ff]?[/] help"
         )
         with Vertical(id="home-container"):
             yield ForgeLogo()
@@ -211,7 +225,6 @@ class HomeScreen(Screen):
                 yield PromptTextArea(id="prompt-input")
                 yield Static(shortcuts_text, id="shortcuts-panel")
             if self._is_workspace:
-                yield Static("[#8b949e]Workspace repos[/]", id="workspace-label")
                 for repo in self._repos:
                     with Horizontal(classes="workspace-repo-row"):
                         yield Static(f"[#58a6ff]{repo.id}[/]", classes="repo-id-label")
@@ -219,7 +232,7 @@ class HomeScreen(Screen):
                             default=repo.base_branch,
                             id=f"base-branch-{repo.id}",
                         )
-                with Vertical(classes="branch-field"):
+                with Vertical(classes="branch-field", id="workspace-optional-branch"):
                     yield Static("[#8b949e]Branch name (optional)[/]", classes="branch-label")
                     yield BranchInput(id="branch-name-input")
             else:
@@ -345,7 +358,6 @@ class HomeScreen(Screen):
 
     def action_cycle_focus(self) -> None:
         """Tab: cycle focus through prompt → base branch → branch name → history."""
-        from textual.widgets import Input as TextualInput
         from textual.widgets import Select
 
         focusable: list = [self.query_one(PromptTextArea)]
