@@ -700,3 +700,220 @@ class TestAttemptMergeLockBehavior:
         # Tier 2 resolution was triggered
         mixin._attempt_tier2_resolution.assert_called_once()
         mixin._emit_merge_success.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for resume-aware execution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestExecuteTaskReviewOnly:
+    """ExecutorMixin._execute_task_review_only() for resumed in_review tasks."""
+
+    def _make_executor(self):
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._emit = AsyncMock()
+        executor._strategy = "balanced"
+        executor._review_phase_emitted = False
+        executor._merging_phase_emitted = False
+        executor._repos = {"default": MagicMock(path="/project")}
+        return executor
+
+    def _make_task(self, state="in_review", task_id="task-1"):
+        task = MagicMock()
+        task.id = task_id
+        task.state = state
+        task.title = "Test task"
+        task.complexity = "medium"
+        task.retry_count = 0
+        task.repo_id = "default"
+        task.files = ["main.py"]
+        task.review_feedback = None
+        return task
+
+    async def test_missing_worktree_resets_to_todo(self):
+        """When worktree doesn't exist, task is reset to TODO."""
+        executor = self._make_executor()
+        db = AsyncMock()
+        task = self._make_task()
+        db.get_task = AsyncMock(return_value=task)
+        db.update_task_state = AsyncMock()
+        db.release_agent = AsyncMock()
+        db.log_event = AsyncMock()
+
+        merge_worker = MagicMock()
+        merge_worker._main = "forge/pipeline-abc"
+        worktree_mgr = MagicMock()
+
+        executor._worktree_path = MagicMock(return_value="/nonexistent/worktree")
+
+        with patch("os.path.isdir", return_value=False):
+            await executor._execute_task_review_only(
+                db, merge_worker, worktree_mgr,
+                "task-1", "agent-1",
+                pipeline_id="pipe-1", repo_id="default",
+            )
+
+        db.update_task_state.assert_called_with("task-1", "todo")
+        db.release_agent.assert_called_once_with("agent-1")
+
+    async def test_review_only_dispatches_to_attempt_merge(self):
+        """With valid worktree, dispatches to _attempt_merge (review→merge)."""
+        executor = self._make_executor()
+        db = AsyncMock()
+        task = self._make_task()
+        db.get_task = AsyncMock(return_value=task)
+        db.log_event = AsyncMock()
+        db.set_task_timing = AsyncMock()
+
+        merge_worker = MagicMock()
+        merge_worker._main = "forge/pipeline-abc"
+        worktree_mgr = MagicMock()
+
+        executor._worktree_path = MagicMock(return_value="/wt/task-1")
+        executor._attempt_merge = AsyncMock()
+        executor._cleanup_and_release = AsyncMock()
+
+        with patch("os.path.isdir", return_value=True):
+            await executor._execute_task_review_only(
+                db, merge_worker, worktree_mgr,
+                "task-1", "agent-1",
+                pipeline_id="pipe-1", repo_id="default",
+            )
+
+        executor._attempt_merge.assert_called_once()
+        executor._cleanup_and_release.assert_called_once()
+
+    async def test_rebase_abort_on_review_only(self):
+        """Interrupted rebase is cleaned up before review."""
+        executor = self._make_executor()
+        db = AsyncMock()
+        task = self._make_task()
+        db.get_task = AsyncMock(return_value=task)
+        db.log_event = AsyncMock()
+        db.set_task_timing = AsyncMock()
+
+        merge_worker = MagicMock()
+        merge_worker._main = "forge/pipeline-abc"
+        worktree_mgr = MagicMock()
+
+        executor._worktree_path = MagicMock(return_value="/wt/task-1")
+        executor._attempt_merge = AsyncMock()
+        executor._cleanup_and_release = AsyncMock()
+
+        def isdir_side_effect(path):
+            if path == "/wt/task-1":
+                return True
+            if path.endswith("rebase-merge"):
+                return True
+            return False
+
+        with patch("os.path.isdir", side_effect=isdir_side_effect):
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+                return_value=_make_proc(returncode=0),
+            ) as mock_git:
+                await executor._execute_task_review_only(
+                    db, merge_worker, worktree_mgr,
+                    "task-1", "agent-1",
+                    pipeline_id="pipe-1", repo_id="default",
+                )
+
+        # Verify rebase --abort was called
+        abort_calls = [
+            c for c in mock_git.call_args_list
+            if c.args[0] == ["rebase", "--abort"]
+        ]
+        assert len(abort_calls) == 1
+
+    async def test_missing_task_releases_agent(self):
+        """When task doesn't exist in DB, agent is released immediately."""
+        executor = self._make_executor()
+        db = AsyncMock()
+        db.get_task = AsyncMock(return_value=None)
+        db.release_agent = AsyncMock()
+
+        await executor._execute_task_review_only(
+            db, MagicMock(), MagicMock(),
+            "task-1", "agent-1",
+            pipeline_id="pipe-1",
+        )
+
+        db.release_agent.assert_called_once_with("agent-1")
+
+
+@pytest.mark.asyncio
+class TestPrepareWorktreeRebaseAbort:
+    """_prepare_worktree() cleans up interrupted rebase."""
+
+    async def test_rebase_abort_when_rebase_merge_exists(self):
+        """Interrupted rebase-merge is aborted before reusing worktree."""
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._repos = {"default": MagicMock(path="/project")}
+        executor._emit = AsyncMock()
+
+        def isdir_side_effect(path):
+            if path == "/project/.forge/worktrees/task-1":
+                return True
+            if path.endswith("rebase-merge"):
+                return True
+            return False
+
+        worktree_mgr = MagicMock()
+        worktree_mgr.async_create = AsyncMock(side_effect=ValueError("exists"))
+
+        executor._worktree_path = MagicMock(return_value="/project/.forge/worktrees/task-1")
+        executor._rebase_worktree = AsyncMock()
+
+        with patch("os.path.isdir", side_effect=isdir_side_effect):
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+                return_value=_make_proc(returncode=0),
+            ) as mock_git:
+                result = await executor._prepare_worktree(
+                    worktree_mgr, "task-1", "pipe-1", AsyncMock(),
+                    base_ref="main", repo_id="default",
+                )
+
+        assert result == "/project/.forge/worktrees/task-1"
+        # Verify rebase --abort was called
+        abort_calls = [
+            c for c in mock_git.call_args_list
+            if c.args[0] == ["rebase", "--abort"]
+        ]
+        assert len(abort_calls) == 1
+
+    async def test_no_rebase_abort_when_clean(self):
+        """No rebase abort when worktree is clean (no rebase-merge dir)."""
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._repos = {"default": MagicMock(path="/project")}
+        executor._emit = AsyncMock()
+
+        def isdir_side_effect(path):
+            if path == "/project/.forge/worktrees/task-1":
+                return True
+            return False
+
+        worktree_mgr = MagicMock()
+        worktree_mgr.async_create = AsyncMock(side_effect=ValueError("exists"))
+
+        executor._worktree_path = MagicMock(return_value="/project/.forge/worktrees/task-1")
+        executor._rebase_worktree = AsyncMock()
+
+        with patch("os.path.isdir", side_effect=isdir_side_effect):
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+            ) as mock_git:
+                result = await executor._prepare_worktree(
+                    worktree_mgr, "task-1", "pipe-1", AsyncMock(),
+                    base_ref="main", repo_id="default",
+                )
+
+        assert result == "/project/.forge/worktrees/task-1"
+        # _run_git should NOT have been called for rebase abort
+        for call in mock_git.call_args_list:
+            assert call.args[0] != ["rebase", "--abort"]

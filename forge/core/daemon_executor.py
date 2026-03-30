@@ -328,6 +328,92 @@ class ExecutorMixin:
         except Exception:
             logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
 
+    # -- review-only path for resume -------------------------------------
+
+    async def _execute_task_review_only(
+        self,
+        db,
+        merge_worker,
+        worktree_mgr,
+        task_id: str,
+        agent_id: str,
+        pipeline_id: str | None = None,
+        repo_id: str = "default",
+    ) -> None:
+        """Review-only path for tasks that were in_review when pipeline was interrupted.
+
+        Skips agent execution, goes straight to review + merge via
+        ``_attempt_merge`` (which handles the full review→merge pipeline).
+        If the worktree is missing, resets the task to TODO for full
+        re-execution on the next loop iteration.
+        """
+        pid = pipeline_id or ""
+        task = await db.get_task(task_id)
+        if not task:
+            await db.release_agent(agent_id)
+            return
+
+        console.print(f"[cyan]{task_id}: resume review-only path[/cyan]")
+        await self._emit(
+            "task:state_changed",
+            {"task_id": task_id, "state": "in_progress"},
+            db=db,
+            pipeline_id=pid,
+        )
+        repo_id = getattr(task, "repo_id", repo_id) or repo_id
+        worktree_path = self._worktree_path(repo_id, task_id)
+
+        # Verify worktree exists — fall back to full execution if missing
+        if not os.path.isdir(worktree_path):
+            console.print(
+                f"[yellow]{task_id}: worktree missing — resetting to todo[/yellow]"
+            )
+            await db.update_task_state(task_id, TaskState.TODO.value)
+            await self._emit(
+                "task:state_changed",
+                {"task_id": task_id, "state": "todo"},
+                db=db,
+                pipeline_id=pid,
+            )
+            await db.release_agent(agent_id)
+            return
+
+        # Clean up interrupted rebase if any
+        rebase_merge = os.path.join(worktree_path, ".git", "rebase-merge")
+        rebase_apply = os.path.join(worktree_path, ".git", "rebase-apply")
+        if os.path.isdir(rebase_merge) or os.path.isdir(rebase_apply):
+            logger.info("%s: aborting interrupted rebase before review", task_id)
+            await _run_git(
+                ["rebase", "--abort"],
+                cwd=worktree_path,
+                check=False,
+                description="abort interrupted rebase",
+            )
+
+        pipeline_branch = merge_worker._main
+        agent_model = select_model(
+            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        )
+
+        # _attempt_merge handles: compute diff → review → merge
+        await self._attempt_merge(
+            db,
+            merge_worker,
+            worktree_mgr,
+            task,
+            task_id,
+            agent_id,
+            worktree_path,
+            agent_model,
+            pid,
+            pipeline_branch=pipeline_branch,
+        )
+        await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+        try:
+            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+
     # -- worktree creation ----------------------------------------------
 
     async def _prepare_worktree(
@@ -345,6 +431,17 @@ class ExecutorMixin:
         except ValueError:
             wt = self._worktree_path(repo_id, task_id)
             if os.path.isdir(wt):
+                # Clean up interrupted rebase before reusing worktree
+                rebase_merge = os.path.join(wt, ".git", "rebase-merge")
+                rebase_apply = os.path.join(wt, ".git", "rebase-apply")
+                if os.path.isdir(rebase_merge) or os.path.isdir(rebase_apply):
+                    logger.info("%s: aborting interrupted rebase in worktree", task_id)
+                    await _run_git(
+                        ["rebase", "--abort"],
+                        cwd=wt,
+                        check=False,
+                        description="abort interrupted rebase",
+                    )
                 # Reuse the worktree as-is.  The scope gate already stripped
                 # out-of-scope changes on the previous run, so only the
                 # agent's in-scope work remains.  The retry agent can patch

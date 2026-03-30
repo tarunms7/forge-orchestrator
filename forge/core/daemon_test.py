@@ -1645,3 +1645,186 @@ async def test_preflight_checks_multi_repo(tmp_path):
 
     result = await daemon._preflight_checks(str(tmp_path), db, "test-pipeline")
     assert result is True, "Preflight should pass for multi-repo workspace"
+
+
+# ---------------------------------------------------------------------------
+# Tests for resume-aware execution: status persistence and contract restoration
+# ---------------------------------------------------------------------------
+
+
+def _make_task_def(task_id="task-1"):
+    """Create a minimal valid TaskDefinition dict for TaskGraph construction."""
+    return {
+        "id": task_id,
+        "title": f"Task {task_id}",
+        "description": "test",
+        "files": ["main.py"],
+    }
+
+
+@pytest.mark.asyncio
+class TestGenerateContractsPersistsStatus:
+    """generate_contracts() persists 'contracts' status to DB."""
+
+    async def test_no_hints_skips_status(self, tmp_path):
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._snapshot = MagicMock()
+        daemon._snapshot.format_for_planner.return_value = ""
+        daemon._strategy = "balanced"
+        daemon._settings = ForgeSettings()
+
+        from forge.core.models import TaskGraph
+
+        graph = TaskGraph(tasks=[_make_task_def()], integration_hints=[])
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+
+        # No hints → early return, no status change
+        result = await daemon.generate_contracts(graph, db, "pipe-1")
+        db.update_pipeline_status.assert_not_called()
+
+    async def test_contracts_status_persisted_with_hints(self, tmp_path):
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._snapshot = MagicMock()
+        daemon._snapshot.format_for_planner.return_value = ""
+        daemon._strategy = "balanced"
+        daemon._settings = ForgeSettings(contracts_required=False)
+
+        from forge.core.models import TaskGraph
+
+        hint = {"type": "api", "producer": "task-1", "consumer": "task-2", "description": "test"}
+        graph = TaskGraph(tasks=[_make_task_def()], integration_hints=[hint])
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.add_pipeline_cost = AsyncMock()
+        db.set_pipeline_contracts = AsyncMock()
+
+        with patch("forge.core.daemon.ContractBuilder") as MockBuilder, \
+             patch("forge.core.daemon.ContractBuilderLLM"):
+            from forge.core.contracts import ContractSet
+            mock_builder = MockBuilder.return_value
+            mock_builder.build = AsyncMock(return_value=ContractSet())
+            result = await daemon.generate_contracts(graph, db, "pipe-1")
+
+        db.update_pipeline_status.assert_called_once_with("pipe-1", "contracts")
+
+
+@pytest.mark.asyncio
+class TestExecutePersistsStatus:
+    """execute() persists 'executing' status to DB."""
+
+    async def test_executing_status_persisted(self, tmp_path):
+        daemon = _make_daemon(tmp_path)
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+
+        # We only need to verify the status is set early.
+        # Raise after that to short-circuit the rest of execute().
+        daemon._emit = AsyncMock()
+        daemon._init_repos = AsyncMock()
+        daemon._preflight_checks = AsyncMock(return_value=False)
+
+        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+            from forge.core.models import TaskGraph
+
+            graph = TaskGraph(tasks=[_make_task_def()])
+            await daemon.execute(graph, db, "pipe-1")
+
+        db.update_pipeline_status.assert_called_with("pipe-1", "executing")
+
+
+@pytest.mark.asyncio
+class TestResumeContractRestoration:
+    """On resume, execute() restores contracts from DB and recalculates agents."""
+
+    async def test_contract_restoration_from_db(self, tmp_path):
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._init_repos = AsyncMock()
+        daemon._preflight_checks = AsyncMock(return_value=False)
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+
+        # Simulate stored contracts JSON
+        from forge.core.contracts import ContractSet
+        contracts = ContractSet()
+        db.get_pipeline_contracts = AsyncMock(return_value=contracts.model_dump_json())
+
+        # Simulate tasks for agent re-scaling
+        t1 = _make_task("todo", "task-1")
+        t2 = _make_task("in_review", "task-2")
+        t3 = _make_task("done", "task-3")
+        db.list_tasks_by_pipeline = AsyncMock(return_value=[t1, t2, t3])
+
+        from forge.core.models import TaskGraph
+
+        graph = TaskGraph(tasks=[_make_task_def()])
+
+        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+            await daemon.execute(graph, db, "pipe-1", resume=True)
+
+        # Contracts were restored
+        assert isinstance(daemon._contracts, ContractSet)
+        # Agent scaling: 2 remaining (todo + in_review), capped by max_agents
+        assert daemon._effective_max_agents == min(2, daemon._settings.max_agents)
+
+    async def test_contract_restoration_with_malformed_json(self, tmp_path):
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._init_repos = AsyncMock()
+        daemon._preflight_checks = AsyncMock(return_value=False)
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+        db.get_pipeline_contracts = AsyncMock(return_value="{bad json")
+        db.list_tasks_by_pipeline = AsyncMock(return_value=[])
+
+        from forge.core.contracts import ContractSet
+        from forge.core.models import TaskGraph
+
+        graph = TaskGraph(tasks=[_make_task_def()])
+
+        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+            await daemon.execute(graph, db, "pipe-1", resume=True)
+
+        # Should fall back to empty ContractSet
+        assert isinstance(daemon._contracts, ContractSet)
+
+    async def test_agent_rescaling_counts_remaining(self, tmp_path):
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._init_repos = AsyncMock()
+        daemon._preflight_checks = AsyncMock(return_value=False)
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+        db.get_pipeline_contracts = AsyncMock(return_value=None)
+
+        # 3 remaining: 1 todo + 1 in_review + 1 blocked
+        tasks = [
+            _make_task("todo", "t1"),
+            _make_task("in_review", "t2"),
+            _make_task("blocked", "t3"),
+            _make_task("done", "t4"),
+            _make_task("error", "t5"),
+        ]
+        db.list_tasks_by_pipeline = AsyncMock(return_value=tasks)
+
+        from forge.core.models import TaskGraph
+
+        graph = TaskGraph(tasks=[_make_task_def()])
+
+        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+            await daemon.execute(graph, db, "pipe-1", resume=True)
+
+        assert daemon._effective_max_agents == min(3, daemon._settings.max_agents)
