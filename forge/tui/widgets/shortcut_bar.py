@@ -39,6 +39,10 @@ class ShortcutBar(Widget):
         """Trigger re-render when shortcuts change."""
         self.refresh()
 
+    def update_shortcuts(self, shortcuts: list[tuple[str, str]]) -> None:
+        """Replace internal shortcut list and re-render."""
+        self.shortcuts = shortcuts
+
     def render(self) -> Text:
         if not self.shortcuts:
             return Text("")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from textual.binding import Binding
 from textual.message import Message
@@ -24,6 +25,55 @@ _STATUS_MAP: dict[str, tuple[str, str]] = {
     "cancelled": (STATE_ICONS.get("cancelled", "✘"), STATE_COLORS.get("cancelled", "#8b949e")),
     **{k: v for k, v in PIPELINE_STATUS_ICONS.items() if k not in ("complete", "error")},
 }
+
+# Statuses that are resumable (user can press Enter to continue the pipeline)
+RESUMABLE_STATUSES: set[str] = {
+    "planning",
+    "planned",
+    "contracts",
+    "countdown",
+    "interrupted",
+    "executing",
+    "partial_success",
+    "error",
+    "retrying",
+}
+
+
+def is_pipeline_resumable(pipeline: dict) -> bool:
+    """Return True if the pipeline can be resumed, False if read-only."""
+    status = pipeline.get("status", "unknown")
+    if status in RESUMABLE_STATUSES:
+        return True
+    # complete without PR is resumable (needs PR creation)
+    if status == "complete" and not pipeline.get("pr_url"):
+        return True
+    return False
+
+
+def _progress_text(pipeline: dict) -> str:
+    """Return a short progress string for a pipeline based on its status."""
+    status = pipeline.get("status", "unknown")
+    total = pipeline.get("total_tasks", 0)
+    done = pipeline.get("tasks_done", 0)
+
+    if status in ("executing", "interrupted", "partial_success", "retrying"):
+        return f"{done}/{total} tasks done"
+    if status == "complete":
+        if pipeline.get("pr_url"):
+            return "✓ PR created"
+        return "✓ Done — no PR yet"
+    if status == "planning":
+        return "Planning…"
+    if status == "planned":
+        return "Plan ready"
+    if status in ("contracts", "countdown"):
+        return "Preparing…"
+    if status == "error":
+        return "✗ Failed"
+    if status == "cancelled":
+        return "Cancelled"
+    return ""
 
 
 class PipelineList(Widget, can_focus=True):
@@ -51,6 +101,13 @@ class PipelineList(Widget, can_focus=True):
             self.pipeline_id = pipeline_id
             super().__init__()
 
+    class CursorMoved(Message):
+        """Posted when the cursor moves to a different pipeline."""
+
+        def __init__(self, pipeline: dict | None) -> None:
+            self.pipeline = pipeline
+            super().__init__()
+
     def __init__(self) -> None:
         super().__init__()
         self._pipelines: list[dict] = []
@@ -60,7 +117,7 @@ class PipelineList(Widget, can_focus=True):
         """Update the pipeline list.
 
         Each dict should have keys: 'id', 'description', 'status',
-        'created_at', 'task_count', 'total_cost_usd'.
+        'created_at', 'task_count'/'total_tasks', 'total_cost_usd'.
         """
         self._pipelines = list(pipelines)
         self._selected_index = min(self._selected_index, max(0, len(pipelines) - 1))
@@ -84,24 +141,48 @@ class PipelineList(Widget, can_focus=True):
             cost = p.get("total_cost_usd", 0.0) or p.get("cost", 0.0)
             date = str(p.get("created_at", ""))[:10]
             is_selected = i == self._selected_index
+            resumable = is_pipeline_resumable(p)
+
+            # Resume indicator: ▶ green for resumable, ● dim for read-only
+            if resumable:
+                resume_indicator = "[#3fb950]▶[/]"
+            else:
+                resume_indicator = "[#484f58]●[/]"
+
+            # Progress text
+            progress = _progress_text(p)
+            if progress:
+                if status == "error":
+                    progress_tag = f"  [#f85149]{progress}[/]"
+                elif status == "cancelled":
+                    progress_tag = f"  [#484f58]{progress}[/]"
+                else:
+                    progress_tag = f"  [#8b949e]{progress}[/]"
+            else:
+                progress_tag = ""
 
             project_dir = p.get("project_dir", "") or ""
             project_tag = ""
             if project_dir:
-                import os
-
                 folder = os.path.basename(project_dir.rstrip("/"))[:20]
                 if folder:
                     project_tag = f"[#8b949e]{folder}[/]  "
 
+            # Dim read-only rows slightly
+            dim_open = "[#6e7681]" if not resumable and not is_selected else ""
+            dim_close = "[/]" if not resumable and not is_selected else ""
+
             if is_selected:
                 lines.append(
-                    f"[bold on #1f2937] [{color}]{icon}[/] {desc}  "
+                    f"[bold on #1f2937] {resume_indicator} [{color}]{icon}[/] {desc}"
+                    f"{progress_tag}  "
                     f"{project_tag}[#8b949e]{date} · ${cost:.2f}[/] [/]"
                 )
             else:
                 lines.append(
-                    f"  [{color}]{icon}[/] {desc}  {project_tag}[#8b949e]{date} · ${cost:.2f}[/]"
+                    f"  {dim_open}{resume_indicator} [{color}]{icon}[/] {desc}"
+                    f"{progress_tag}  "
+                    f"{project_tag}[#8b949e]{date} · ${cost:.2f}[/]{dim_close}"
                 )
 
         return "\n".join(lines)
@@ -110,11 +191,13 @@ class PipelineList(Widget, can_focus=True):
         if self._selected_index < len(self._pipelines) - 1:
             self._selected_index += 1
             self.refresh()
+            self.post_message(self.CursorMoved(self.selected_pipeline))
 
     def action_cursor_up(self) -> None:
         if self._selected_index > 0:
             self._selected_index -= 1
             self.refresh()
+            self.post_message(self.CursorMoved(self.selected_pipeline))
 
     def action_select_pipeline(self) -> None:
         p = self.selected_pipeline

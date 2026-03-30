@@ -12,7 +12,7 @@ from textual.widgets import Static, TextArea
 from forge.tui.theme import PIPELINE_STATUS_ICONS as _PIPELINE_STATUS_ICONS
 from forge.tui.widgets.branch_selector import BranchInput, BranchSelector
 from forge.tui.widgets.logo import ForgeLogo
-from forge.tui.widgets.pipeline_list import PipelineList
+from forge.tui.widgets.pipeline_list import PipelineList, is_pipeline_resumable
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 
@@ -235,11 +235,35 @@ class HomeScreen(Screen):
             ]
         )
 
+    def _update_shortcut_label(self, pipeline: dict | None) -> None:
+        """Update the ShortcutBar Enter label based on selected pipeline."""
+        if pipeline and is_pipeline_resumable(pipeline):
+            enter_label = "Resume Selected"
+        else:
+            enter_label = "View Selected"
+        try:
+            bar = self.query_one(ShortcutBar)
+            bar.shortcuts = [
+                ("Ctrl+S", "Submit Task"),
+                ("j/k", "History"),
+                ("Enter", enter_label),
+                ("q", "Quit"),
+            ]
+        except Exception:
+            pass
+
+    def on_pipeline_list_cursor_moved(self, event: PipelineList.CursorMoved) -> None:
+        """Update shortcut bar when pipeline selection changes."""
+        self._update_shortcut_label(event.pipeline)
+
     async def on_mount(self) -> None:
         import asyncio
 
         pipeline_list = self.query_one(PipelineList)
         pipeline_list.update_pipelines(self._recent_pipelines)
+
+        # Set initial shortcut label based on first pipeline
+        self._update_shortcut_label(pipeline_list.selected_pipeline)
 
         # Load branches into ALL selectors concurrently (not sequentially)
         tasks: list = []

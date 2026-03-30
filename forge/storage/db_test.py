@@ -1384,3 +1384,181 @@ async def test_get_tasks_by_ids_dedup(db: Database):
     )
     results = await db.get_tasks_by_ids(["t-1", "t-1", "t-1"])
     assert len(results) == 1
+
+
+# ── Resume pipeline persistence tests ─────────────────────────────
+
+
+async def _create_pipeline_with_tasks(db: Database, pipeline_id: str = "pipe-resume") -> None:
+    """Helper: create a pipeline with tasks in various states."""
+    await db.create_pipeline(
+        id=pipeline_id,
+        description="Resume test pipeline",
+        project_dir="/tmp/project",
+        base_branch="main",
+        branch_name="forge/test-123",
+    )
+    for task_id, state in [
+        ("t1", "done"),
+        ("t2", "done"),
+        ("t3", "in_review"),
+        ("t4", "error"),
+        ("t5", "blocked"),
+    ]:
+        await db.create_task(
+            id=task_id,
+            title=f"Task {task_id}",
+            description="d",
+            files=[],
+            depends_on=[],
+            complexity="low",
+            pipeline_id=pipeline_id,
+        )
+        if state != "todo":
+            await db.update_task_state(task_id, state)
+
+
+async def test_set_pipeline_quit_phase(db: Database):
+    """set_pipeline_quit_phase stores and retrieves correctly."""
+    await db.create_pipeline(
+        id="pipe-qp",
+        description="Quit phase test",
+        project_dir="/tmp",
+    )
+    await db.set_pipeline_quit_phase("pipe-qp", "executing")
+    pipeline = await db.get_pipeline("pipe-qp")
+    assert pipeline.quit_phase == "executing"
+
+
+async def test_quit_phase_defaults_to_none(db: Database):
+    """quit_phase defaults to None for new pipelines."""
+    await db.create_pipeline(
+        id="pipe-qp-none",
+        description="Default quit phase",
+        project_dir="/tmp",
+    )
+    pipeline = await db.get_pipeline("pipe-qp-none")
+    assert pipeline.quit_phase is None
+
+
+async def test_set_pipeline_quit_phase_overwrite(db: Database):
+    """set_pipeline_quit_phase can overwrite a previous value."""
+    await db.create_pipeline(
+        id="pipe-qp-ow",
+        description="Overwrite test",
+        project_dir="/tmp",
+    )
+    await db.set_pipeline_quit_phase("pipe-qp-ow", "planning")
+    await db.set_pipeline_quit_phase("pipe-qp-ow", "final_approval")
+    pipeline = await db.get_pipeline("pipe-qp-ow")
+    assert pipeline.quit_phase == "final_approval"
+
+
+async def test_set_pipeline_quit_phase_nonexistent(db: Database):
+    """set_pipeline_quit_phase on nonexistent pipeline is a no-op."""
+    await db.set_pipeline_quit_phase("nonexistent", "executing")
+    # Should not raise
+
+
+async def test_get_pipeline_resume_context(db: Database):
+    """get_pipeline_resume_context returns correct task counts."""
+    await _create_pipeline_with_tasks(db)
+    await db.set_pipeline_quit_phase("pipe-resume", "executing")
+    await db.update_pipeline_status("pipe-resume", "interrupted")
+
+    ctx = await db.get_pipeline_resume_context("pipe-resume")
+    assert ctx is not None
+    assert ctx["status"] == "interrupted"
+    assert ctx["quit_phase"] == "executing"
+    assert ctx["project_dir"] == "/tmp/project"
+    assert ctx["base_branch"] == "main"
+    assert ctx["branch_name"] == "forge/test-123"
+    assert ctx["description"] == "Resume test pipeline"
+    assert ctx["total_tasks"] == 5
+    assert ctx["tasks_done"] == 2
+    assert ctx["tasks_error"] == 1
+    assert ctx["tasks_in_review"] == 1
+    assert ctx["tasks_blocked"] == 1
+    assert ctx["pr_url"] is None
+    assert ctx["executor_pid"] is None
+    assert ctx["task_graph_json"] is None
+    assert ctx["contracts_json"] is None
+
+
+async def test_get_pipeline_resume_context_zero_tasks(db: Database):
+    """get_pipeline_resume_context with no tasks returns zero counts."""
+    await db.create_pipeline(
+        id="pipe-empty",
+        description="No tasks",
+        project_dir="/tmp",
+    )
+    ctx = await db.get_pipeline_resume_context("pipe-empty")
+    assert ctx is not None
+    assert ctx["total_tasks"] == 0
+    assert ctx["tasks_done"] == 0
+    assert ctx["tasks_error"] == 0
+    assert ctx["tasks_in_review"] == 0
+    assert ctx["tasks_blocked"] == 0
+
+
+async def test_get_pipeline_resume_context_nonexistent(db: Database):
+    """get_pipeline_resume_context returns None for nonexistent pipeline."""
+    ctx = await db.get_pipeline_resume_context("nonexistent")
+    assert ctx is None
+
+
+async def test_get_pipeline_list_with_counts(db: Database):
+    """get_pipeline_list_with_counts returns enriched data."""
+    await _create_pipeline_with_tasks(db, "pipe-list-1")
+    await db.create_pipeline(
+        id="pipe-list-2",
+        description="Second pipeline",
+        project_dir="/tmp/other",
+    )
+    await db.create_task(
+        id="t-list-1",
+        title="Solo task",
+        description="d",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-list-2",
+    )
+    await db.update_task_state("t-list-1", "done")
+
+    results = await db.get_pipeline_list_with_counts(limit=10)
+    assert len(results) == 2
+
+    by_id = {r["id"]: r for r in results}
+
+    p1 = by_id["pipe-list-1"]
+    assert isinstance(p1["created_at"], str)
+    assert p1["description"] == "Resume test pipeline"
+    assert p1["total_tasks"] == 5
+    assert p1["tasks_done"] == 2
+    assert p1["tasks_error"] == 1
+    assert p1["project_dir"] == "/tmp/project"
+
+    p2 = by_id["pipe-list-2"]
+    assert p2["description"] == "Second pipeline"
+    assert p2["total_tasks"] == 1
+    assert p2["tasks_done"] == 1
+    assert p2["tasks_error"] == 0
+
+
+async def test_get_pipeline_list_with_counts_respects_limit(db: Database):
+    """get_pipeline_list_with_counts respects the limit parameter."""
+    for i in range(5):
+        await db.create_pipeline(
+            id=f"pipe-lim-{i}",
+            description=f"Pipeline {i}",
+            project_dir="/tmp",
+        )
+    results = await db.get_pipeline_list_with_counts(limit=3)
+    assert len(results) == 3
+
+
+async def test_get_pipeline_list_with_counts_empty(db: Database):
+    """get_pipeline_list_with_counts returns empty list when no pipelines."""
+    results = await db.get_pipeline_list_with_counts()
+    assert results == []

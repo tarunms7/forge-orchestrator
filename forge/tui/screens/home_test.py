@@ -6,6 +6,7 @@ from textual.widgets import Static
 
 from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 SAMPLE_PIPELINES = [
     {
@@ -16,6 +17,10 @@ SAMPLE_PIPELINES = [
         "cost": 2.50,
         "total_cost_usd": 2.50,
         "task_count": 3,
+        "total_tasks": 3,
+        "tasks_done": 3,
+        "tasks_error": 0,
+        "pr_url": "https://github.com/org/repo/pull/1",
     },
     {
         "id": "def",
@@ -25,6 +30,10 @@ SAMPLE_PIPELINES = [
         "cost": 0.80,
         "total_cost_usd": 0.80,
         "task_count": 2,
+        "total_tasks": 2,
+        "tasks_done": 0,
+        "tasks_error": 1,
+        "pr_url": None,
     },
 ]
 
@@ -206,3 +215,30 @@ async def test_home_screen_has_input_row():
     async with app.run_test():
         row = app.screen.query_one("#input-row")
         assert row is not None
+
+
+@pytest.mark.asyncio
+async def test_shortcut_label_view_for_read_only_pipeline():
+    """First pipeline is complete+PR (read-only), shortcut should say View Selected."""
+    app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        bar = app.screen.query_one(ShortcutBar)
+        enter_labels = [label for key, label in bar.shortcuts if key == "Enter"]
+        assert enter_labels == ["View Selected"]
+
+
+@pytest.mark.asyncio
+async def test_shortcut_label_resume_for_resumable_pipeline():
+    """After navigating to error pipeline, shortcut should say Resume Selected."""
+    app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
+    async with app.run_test() as pilot:
+        pl = app.screen.query_one(PipelineList)
+        pl.focus()
+        await pilot.pause()
+        # Navigate to second pipeline (error status = resumable)
+        pl.action_cursor_down()
+        await pilot.pause()
+        bar = app.screen.query_one(ShortcutBar)
+        enter_labels = [label for key, label in bar.shortcuts if key == "Enter"]
+        assert enter_labels == ["Resume Selected"]

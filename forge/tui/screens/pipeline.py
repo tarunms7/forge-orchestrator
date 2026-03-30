@@ -494,9 +494,8 @@ class PipelineScreen(Screen):
             # On task state changes, also update streaming lifecycle
             self._update_streaming_lifecycle()
             self._refresh_all()
-            # Update shortcut bar hints based on pipeline phase
-            if field == "phase":
-                self._update_shortcut_bar(self._state.phase)
+            # Update shortcut bar hints based on pipeline phase or task state
+            self._update_shortcut_bar()
 
             # Notify user when task enters review (press 'r' to open)
             if field == "tasks" and not self._read_only:
@@ -522,30 +521,46 @@ class PipelineScreen(Screen):
                     timeout=15,
                 )
 
-    def _update_shortcut_bar(self, phase: str) -> None:
-        """Update shortcut bar based on current pipeline phase."""
+    def _update_shortcut_bar(self, phase: str | None = None) -> None:
+        """Update shortcut bar based on current pipeline phase and selected task state."""
+        if phase is None:
+            phase = self._state.phase
+        shortcuts: list[tuple[str, str]] = [("j/k", "Tasks"), ("q", "Quit")]
+
+        if phase in ("planning", "contracts", "countdown"):
+            # Minimal shortcuts during non-interactive phases
+            pass
+        elif phase in ("executing", "retrying"):
+            shortcuts.insert(0, ("Tab", "Next Active"))
+            task = self._get_selected_task()
+            if task:
+                state = task.get("state", "")
+                if state == "in_progress":
+                    shortcuts.extend(
+                        [("o", "Output"), ("t", "Chat"), ("i", "Interject"), ("d", "Diff")]
+                    )
+                elif state == "in_review":
+                    shortcuts.extend([("r", "Review"), ("d", "Diff"), ("o", "Output")])
+                elif state == "awaiting_input":
+                    shortcuts.extend([("t", "Answer"), ("o", "Output")])
+                elif state == "done":
+                    shortcuts.extend([("d", "Diff"), ("o", "Output")])
+                elif state == "error":
+                    shortcuts.extend([("R", "Retry"), ("s", "Skip"), ("o", "Output")])
+                else:  # todo, blocked
+                    shortcuts.append(("o", "Output"))
+        elif phase == "awaiting_input":
+            shortcuts.insert(0, ("Enter", "Answer Question"))
+            shortcuts.append(("d", "View Diff"))
+        elif phase in ("partial_success",):
+            shortcuts.insert(0, ("Enter", "View Results"))
+
+        shortcuts.append(("g", "DAG"))
         try:
             bar = self.query_one(ShortcutBar)
+            bar.update_shortcuts(shortcuts)
         except Exception:
-            return
-        if phase == "awaiting_input":
-            bar.shortcuts = [
-                ("Enter", "Answer Question"),
-                ("d", "View Diff"),
-                ("↑↓", "Select Task"),
-                ("q", "Quit (tasks saved)"),
-            ]
-        elif phase in ("partial_success", "retrying"):
-            bar.shortcuts = [
-                ("Enter", "View Results"),
-                ("q", "Quit (tasks saved)"),
-            ]
-        else:
-            bar.shortcuts = [
-                ("d", "View Diff"),
-                ("↑↓", "Select Task"),
-                ("q", "Quit (tasks saved)"),
-            ]
+            pass
 
     def _check_review_notification(self) -> None:
         """Notify user when a task enters review — they can press 'r' to open ReviewScreen."""
@@ -946,6 +961,7 @@ class PipelineScreen(Screen):
     def on_task_list_selected(self, event: TaskList.Selected) -> None:
         self._state.selected_task_id = event.task_id
         self._refresh_all()
+        self._update_shortcut_bar()
 
     def on_chat_thread_answer_submitted(self, event: ChatThread.AnswerSubmitted) -> None:
         """Forward answer to the TUI app for dispatch to the daemon."""
@@ -1020,6 +1036,14 @@ class PipelineScreen(Screen):
             pass
 
     def action_view_diff(self) -> None:
+        task = self._get_selected_task()
+        if not task:
+            self.app.notify("No task selected", severity="warning")
+            return
+        state = task.get("state", "")
+        if state not in ("in_review", "done", "merging", "in_progress", "awaiting_approval"):
+            self.app.notify(f"Diff not available — task is {state}", severity="warning")
+            return
         self._set_view("diff")
 
     def action_copy_mode(self) -> None:
@@ -1091,6 +1115,11 @@ class PipelineScreen(Screen):
         if not tid or tid not in self._state.tasks:
             self.app.notify("No task selected", timeout=3)
             return
+        task = self._state.tasks[tid]
+        state = task.get("state", "")
+        if state not in ("in_review", "awaiting_approval"):
+            self.app.notify(f"Review not available — task is {state}", severity="warning")
+            return
         try:
             from forge.tui.screens.review import ReviewScreen
 
@@ -1104,12 +1133,12 @@ class PipelineScreen(Screen):
             return
         tid = self._state.selected_task_id
         if not tid or tid not in self._state.tasks:
-            self.notify("No task selected", severity="warning")
+            self.app.notify("No task selected", severity="warning")
             return
         task = self._state.tasks[tid]
         state = task.get("state", "")
         if state not in ("in_progress", "awaiting_input"):
-            self.notify(f"Cannot interject — task is {state}", severity="warning")
+            self.app.notify(f"Interject not available — task is {state}", severity="warning")
             return
         # Replace the existing ChatThread with one in interjection mode
         chat = self.query_one(ChatThread)
@@ -1138,7 +1167,12 @@ class PipelineScreen(Screen):
         if self._read_only:
             return
         task = self._get_selected_task()
-        if not task or task.get("state") != "error":
+        if not task:
+            return
+        if task.get("state") != "error":
+            self.app.notify(
+                f"Retry not available — task is {task.get('state', 'unknown')}", severity="warning"
+            )
             return
         tid = task["id"]
         safe_create_task(self._retry_task(tid), name=f"retry-{tid}")
@@ -1164,7 +1198,12 @@ class PipelineScreen(Screen):
         if self._read_only:
             return
         task = self._get_selected_task()
-        if not task or task.get("state") != "error":
+        if not task:
+            return
+        if task.get("state") != "error":
+            self.app.notify(
+                f"Skip not available — task is {task.get('state', 'unknown')}", severity="warning"
+            )
             return
         tid = task["id"]
         safe_create_task(self._skip_task(tid), name=f"skip-{tid}")

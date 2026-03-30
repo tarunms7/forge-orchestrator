@@ -305,6 +305,24 @@ async def test_d_key_opens_diff_view():
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Set up a task in a diff-eligible state so action_view_diff doesn't guard
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+        await pilot.pause()
         await pilot.press("d")
         assert app.screen._active_view == "diff"
 
@@ -805,3 +823,265 @@ def test_phase_banner_render_static():
     banner._phase = "executing"
     result = banner.render()
     assert "E  X  E  C  U  T  I  O  N" in result
+
+
+# ── Shortcut bar dynamic update tests ─────────────────────────────
+
+
+def _make_state_with_task(task_id: str, task_state: str, phase: str = "executing") -> TuiState:
+    """Create a TuiState with one task in the given state."""
+    state = TuiState()
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": task_id,
+                    "title": "Test Task",
+                    "description": "",
+                    "files": ["f.py"],
+                    "depends_on": [],
+                    "complexity": "low",
+                }
+            ]
+        },
+    )
+    state.apply_event("task:state_changed", {"task_id": task_id, "state": task_state})
+    state.apply_event("pipeline:phase_changed", {"phase": phase})
+    return state
+
+
+@pytest.mark.asyncio
+async def test_shortcut_bar_changes_by_task_state_in_progress():
+    """Shortcut bar should include interject/chat/diff for in_progress tasks."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+        await pilot.pause()
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        bar = app.screen.query_one(ShortcutBar)
+        keys = [k for k, _ in bar.shortcuts]
+        assert "i" in keys  # Interject
+        assert "t" in keys  # Chat
+        assert "d" in keys  # Diff
+
+
+@pytest.mark.asyncio
+async def test_shortcut_bar_changes_by_task_state_error():
+    """Shortcut bar should include Retry/Skip for error tasks."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "error"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+        await pilot.pause()
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        bar = app.screen.query_one(ShortcutBar)
+        keys = [k for k, _ in bar.shortcuts]
+        assert "R" in keys  # Retry
+        assert "s" in keys  # Skip
+
+
+@pytest.mark.asyncio
+async def test_shortcut_bar_changes_by_task_state_done():
+    """Shortcut bar should include Diff/Output for done tasks."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+        await pilot.pause()
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        bar = app.screen.query_one(ShortcutBar)
+        keys = [k for k, _ in bar.shortcuts]
+        assert "d" in keys  # Diff
+        assert "o" in keys  # Output
+        # Should NOT have interject or retry
+        assert "i" not in keys
+        assert "R" not in keys
+
+
+@pytest.mark.asyncio
+async def test_shortcut_bar_changes_by_phase_planning():
+    """Planning phase should show minimal shortcuts (no task-specific actions)."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "todo"})
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        await pilot.pause()
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        bar = app.screen.query_one(ShortcutBar)
+        keys = [k for k, _ in bar.shortcuts]
+        # Should not have task-specific shortcuts
+        assert "Tab" not in keys
+        assert "i" not in keys
+        assert "R" not in keys
+        # Should have base shortcuts
+        assert "q" in keys
+        assert "g" in keys
+
+
+@pytest.mark.asyncio
+async def test_shortcut_bar_changes_by_phase_executing():
+    """Executing phase should include Tab for next active."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+        await pilot.pause()
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        bar = app.screen.query_one(ShortcutBar)
+        keys = [k for k, _ in bar.shortcuts]
+        assert "Tab" in keys
+
+
+@pytest.mark.asyncio
+async def test_guard_diff_shows_notification_for_todo_task():
+    """Pressing 'd' on a todo task should show warning notification."""
+    state = _make_state_with_task("t1", "todo", phase="executing")
+    app = PipelineTestApp(state=state)
+    async with app.run_test():
+        with patch.object(app, "notify") as mock_notify:
+            app.screen.action_view_diff()
+            mock_notify.assert_called_once()
+            assert "Diff not available" in mock_notify.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_guard_diff_no_task_selected():
+    """Pressing 'd' with no task selected should show warning."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test():
+        with patch.object(app, "notify") as mock_notify:
+            app.screen.action_view_diff()
+            mock_notify.assert_called_once()
+            assert "No task selected" in mock_notify.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_guard_interject_shows_notification_for_done_task():
+    """Pressing 'i' on a done task should show warning notification."""
+    state = _make_state_with_task("t1", "done", phase="executing")
+    app = PipelineTestApp(state=state)
+    async with app.run_test():
+        with patch.object(app, "notify") as mock_notify:
+            app.screen.action_interject()
+            mock_notify.assert_called_once()
+            assert (
+                "not available" in mock_notify.call_args[0][0].lower()
+                or "interject" in mock_notify.call_args[0][0].lower()
+            )
+
+
+@pytest.mark.asyncio
+async def test_guard_retry_shows_notification_for_done_task():
+    """Pressing 'R' on a done task should show warning notification."""
+    state = _make_state_with_task("t1", "done", phase="executing")
+    app = PipelineTestApp(state=state)
+    async with app.run_test():
+        with patch.object(app, "notify") as mock_notify:
+            app.screen.action_retry_task()
+            mock_notify.assert_called_once()
+            assert "Retry not available" in mock_notify.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_guard_skip_shows_notification_for_done_task():
+    """Pressing 's' on a done task should show warning notification."""
+    state = _make_state_with_task("t1", "done", phase="executing")
+    app = PipelineTestApp(state=state)
+    async with app.run_test():
+        with patch.object(app, "notify") as mock_notify:
+            app.screen.action_skip_task()
+            mock_notify.assert_called_once()
+            assert "Skip not available" in mock_notify.call_args[0][0]

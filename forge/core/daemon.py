@@ -44,7 +44,7 @@ from forge.core.errors import ForgeError
 from forge.core.events import EventEmitter
 from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
-from forge.core.models import RepoConfig, TaskGraph, TaskState, row_to_record
+from forge.core.models import AgentState, RepoConfig, TaskGraph, TaskState, row_to_record
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
 from forge.core.sanitize import validate_task_id
@@ -1040,6 +1040,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             db=db,
             pipeline_id=pipeline_id,
         )
+        await db.update_pipeline_status(pipeline_id, "contracts")
 
         contract_model = select_model(self._strategy, "contract_builder", "high")
         builder_llm = ContractBuilderLLM(model=contract_model, cwd=self._project_dir)
@@ -1124,6 +1125,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """
         pid = pipeline_id or getattr(self, "_pipeline_id", None) or str(uuid.uuid4())
         await self._emit("pipeline:phase_changed", {"phase": "executing"}, db=db, pipeline_id=pid)
+        await db.update_pipeline_status(pid, "executing")
         # Reset phase-emission guards so review/merging phases emit correctly
         self._review_phase_emitted = False
         self._merging_phase_emitted = False
@@ -1204,6 +1206,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             for i in range(self._effective_max_agents):
                 await db.create_agent(f"{prefix}-agent-{i}")
+        else:
+            # Resume path: restore contracts and recalculate agent scaling
+            contracts_json = await db.get_pipeline_contracts(pid)
+            if contracts_json:
+                try:
+                    self._contracts = ContractSet.model_validate_json(contracts_json)
+                except Exception:
+                    logger.warning("Failed to restore contracts from DB — using empty set")
+                    self._contracts = ContractSet()
+            else:
+                self._contracts = ContractSet()
+
+            # Recalculate effective max agents based on remaining work
+            tasks = await db.list_tasks_by_pipeline(pid)
+            remaining = sum(1 for t in tasks if t.state in ("todo", "in_review", "blocked"))
+            self._effective_max_agents = min(max(remaining, 1), self._settings.max_agents)
 
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,
@@ -2309,7 +2327,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 task_records, agent_records, self._effective_max_agents
             )
 
-            if not dispatch_plan:
+            # Check for in_review tasks that need resume dispatch
+            has_in_review = any(
+                t.state == TaskState.IN_REVIEW.value
+                for t in tasks
+                if t.id not in self._active_tasks
+            )
+
+            if not dispatch_plan and not has_in_review:
                 if not self._active_tasks:
                     if any(
                         t.state
@@ -2352,11 +2377,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 (tid, aid) for tid, aid in dispatch_plan if tid not in self._active_tasks
             ]
 
+            # Also find in_review tasks eligible for resume dispatch.
+            # These have code in worktrees but need re-review + merge.
+            in_review_tasks = [
+                t
+                for t in task_records
+                if t.state == TaskState.IN_REVIEW.value and t.id not in self._active_tasks
+            ]
+
             # Cap to actual free slots (pool is authoritative)
             available_slots = max(0, self._effective_max_agents - len(self._active_tasks))
             dispatch_plan = dispatch_plan[:available_slots]
 
-            # Launch into pool
+            # Launch into pool — normal TODO tasks
             for task_id, agent_id in dispatch_plan:
                 await db.assign_task(task_id, agent_id)
                 await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
@@ -2396,6 +2429,43 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 async with self._active_tasks_lock:
                     self._active_tasks[task_id] = atask
                 # Invalidate task cache — new task dispatched
+                self._cached_tasks = None
+
+            # Dispatch in_review tasks to review-only path (resume scenario).
+            # These tasks already have code in worktrees — skip agent, re-review + merge.
+            remaining_slots = max(0, self._effective_max_agents - len(self._active_tasks))
+            idle_agents_for_review = [a for a in agent_records if a.state == AgentState.IDLE.value]
+            # Only dispatch up to remaining slots worth of in_review tasks
+            for ir_task in in_review_tasks[:remaining_slots]:
+                if not idle_agents_for_review:
+                    break
+                ir_agent = idle_agents_for_review.pop(0)
+                await db.assign_task(ir_task.id, ir_agent.id)
+
+                task_row = await db.get_task(ir_task.id)
+                repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
+                if repo_id == "default" and len(self._repos) > 1 and "default" not in self._repos:
+                    repo_id = next(iter(self._repos.keys()))
+
+                try:
+                    wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
+                except ForgeError:
+                    wt_mgr, mw = worktree_mgr, merge_worker
+
+                atask = asyncio.create_task(
+                    self._execute_task_review_only(
+                        db,
+                        mw,
+                        wt_mgr,
+                        ir_task.id,
+                        ir_agent.id,
+                        pipeline_id=pipeline_id,
+                        repo_id=repo_id,
+                    ),
+                    name=f"forge-task-review-{ir_task.id}",
+                )
+                async with self._active_tasks_lock:
+                    self._active_tasks[ir_task.id] = atask
                 self._cached_tasks = None
 
             # Wait efficiently

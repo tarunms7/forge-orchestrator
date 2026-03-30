@@ -322,6 +322,7 @@ class FinalApprovalScreen(Screen):
         self._multi_repo = multi_repo
         self._per_repo_pr_urls = per_repo_pr_urls or {}
         self._repos = repos or []
+        self._pr_created = False
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Dynamically enable/disable actions based on partial mode."""
@@ -426,8 +427,41 @@ class FinalApprovalScreen(Screen):
                 ]
             )
 
+    def _update_shortcut_bar(self) -> None:
+        """Update shortcut bar based on current mode and PR state."""
+        if self._pr_created:
+            shortcuts: list[tuple[str, str]] = [
+                ("d", "Diff"),
+                ("f", "Follow-up"),
+                ("n", "New Task"),
+                ("Esc", "Done"),
+            ]
+        elif self._partial:
+            shortcuts = [
+                ("Enter", "Create PR"),
+                ("d", "Diff"),
+                ("r", "Retry Failed"),
+                ("s", "Skip & Finish"),
+                ("f", "Follow-up"),
+                ("Esc", "Back"),
+            ]
+        else:
+            shortcuts = [
+                ("Enter", "Create PR"),
+                ("d", "Diff"),
+                ("f", "Follow-up"),
+                ("n", "New Task"),
+                ("Esc", "Back"),
+            ]
+        try:
+            bar = self.query_one(ShortcutBar)
+            bar.update_shortcuts(shortcuts)
+        except Exception:
+            pass
+
     def show_pr_url(self, url: str, repo_id: str | None = None) -> None:
         """Display PR URL(s) inline, with optional per-repo labeling."""
+        self._pr_created = True
         try:
             pr_widget = self.query_one("#pr-url", Static)
             if repo_id is not None:
@@ -445,6 +479,7 @@ class FinalApprovalScreen(Screen):
                 )
         except Exception:
             pass
+        self._update_shortcut_bar()
 
     def action_new_task(self) -> None:
         """Return to HomeScreen for a new task, cleaning up pipeline state."""

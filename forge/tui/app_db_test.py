@@ -94,6 +94,8 @@ async def test_pipeline_replay_loading(tmp_project, central_db_dir):
             project_dir="/tmp",
             model_strategy="auto",
         )
+        # Set status to "cancelled" so on_pipeline_list_selected routes to read-only replay
+        await app._db.update_pipeline_status("replay-pipe", "cancelled")
         await app._db.log_event(
             pipeline_id="replay-pipe",
             task_id=None,

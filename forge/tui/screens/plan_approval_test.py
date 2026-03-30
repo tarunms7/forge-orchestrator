@@ -504,3 +504,57 @@ class TestMoveOperations:
         screen._cursor = 1
         assert screen._tasks[1]["id"] == id_2
         assert screen._tasks[2]["id"] == id_1
+
+
+# ---------------------------------------------------------------------------
+# Shortcut bar update tests
+# ---------------------------------------------------------------------------
+
+
+class TestPlanApprovalShortcutBar:
+    """Test that shortcut bar updates based on edit mode."""
+
+    def test_normal_mode_shortcuts(self):
+        """Normal mode should show Approve, Edit, Files, Remove, Add, Reorder, Cancel."""
+        screen = PlanApprovalScreen(_sample_tasks())
+        assert not screen._is_editing()
+        # _update_shortcut_bar should not raise when not mounted
+        screen._update_shortcut_bar()
+
+    def test_edit_mode_shortcuts(self):
+        """Edit mode should show Save and Cancel Edit only."""
+        screen = PlanApprovalScreen(_sample_tasks())
+        screen._editing = "description"
+        assert screen._is_editing()
+        screen._update_shortcut_bar()
+
+    def test_edit_mode_changes_shortcut_set(self):
+        """Normal vs edit mode should produce different shortcut sets."""
+        from unittest.mock import MagicMock
+
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        screen = PlanApprovalScreen(_sample_tasks())
+
+        captured_shortcuts: list[list[tuple[str, str]]] = []
+        mock_bar = MagicMock(spec=ShortcutBar)
+        mock_bar.update_shortcuts = lambda s: captured_shortcuts.append(list(s))
+        screen.query_one = MagicMock(return_value=mock_bar)
+
+        # Normal mode
+        screen._editing = None
+        screen._adding = False
+        screen._update_shortcut_bar()
+        normal_shortcuts = captured_shortcuts[-1]
+
+        # Edit mode
+        screen._editing = "description"
+        screen._update_shortcut_bar()
+        edit_shortcuts = captured_shortcuts[-1]
+
+        assert normal_shortcuts != edit_shortcuts
+        assert len(normal_shortcuts) > len(edit_shortcuts)
+        edit_keys = [k for k, _ in edit_shortcuts]
+        assert "Ctrl+S" in edit_keys
+        normal_keys = [k for k, _ in normal_shortcuts]
+        assert "Enter" in normal_keys
