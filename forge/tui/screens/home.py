@@ -112,12 +112,12 @@ class HomeScreen(Screen):
     #branch-row {
         width: 100%;
         height: auto;
+        max-height: 5;
         margin: 0 0 0 0;
     }
     .branch-field {
         width: 1fr;
         height: auto;
-        max-height: 7;
     }
     .workspace-repo-row {
         width: 100%;
@@ -335,11 +335,7 @@ class HomeScreen(Screen):
             )
 
     def action_cycle_focus(self) -> None:
-        """Tab: cycle focus through prompt → base branch(es) → branch input → history.
-
-        For BranchInput, the text Input comes before the Select dropdown
-        to match the visual top-to-bottom order.
-        """
+        """Tab: cycle focus through prompt → base branch → branch name → history."""
         from textual.widgets import Input as TextualInput
         from textual.widgets import Select
 
@@ -352,12 +348,8 @@ class HomeScreen(Screen):
             except Exception:
                 pass
 
-        # Pipeline branch: text input first, then the dropdown
+        # Pipeline branch: just the Select dropdown
         for container in self.query(BranchInput):
-            try:
-                focusable.append(container.query_one(TextualInput))
-            except Exception:
-                pass
             try:
                 focusable.append(container.query_one(Select))
             except Exception:
