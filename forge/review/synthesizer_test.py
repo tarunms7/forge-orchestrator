@@ -16,14 +16,17 @@ from forge.review.synthesizer import (
 
 # ── _parse_chunk_json ─────────────────────────────────────────────────────
 
+
 def test_parse_chunk_json_pass():
-    raw = json.dumps({
-        "verdict": "PASS",
-        "confidence": 5,
-        "issues": [],
-        "cross_chunk_concerns": [],
-        "summary": "All good.",
-    })
+    raw = json.dumps(
+        {
+            "verdict": "PASS",
+            "confidence": 5,
+            "issues": [],
+            "cross_chunk_concerns": [],
+            "summary": "All good.",
+        }
+    )
     result = _parse_chunk_json(raw, chunk_index=1)
     assert result.verdict == "PASS"
     assert result.confidence == 5
@@ -31,15 +34,22 @@ def test_parse_chunk_json_pass():
 
 
 def test_parse_chunk_json_fail_with_issues():
-    raw = json.dumps({
-        "verdict": "FAIL",
-        "confidence": 4,
-        "issues": [
-            {"severity": "HIGH", "file": "foo.py", "line_hint": "~42", "description": "Bad thing"}
-        ],
-        "cross_chunk_concerns": [],
-        "summary": "Found a bug.",
-    })
+    raw = json.dumps(
+        {
+            "verdict": "FAIL",
+            "confidence": 4,
+            "issues": [
+                {
+                    "severity": "HIGH",
+                    "file": "foo.py",
+                    "line_hint": "~42",
+                    "description": "Bad thing",
+                }
+            ],
+            "cross_chunk_concerns": [],
+            "summary": "Found a bug.",
+        }
+    )
     result = _parse_chunk_json(raw, chunk_index=1)
     assert result.verdict == "FAIL"
     assert len(result.issues) == 1
@@ -60,18 +70,21 @@ def test_parse_chunk_json_fallback_pass():
 
 
 def test_parse_chunk_json_uncertain():
-    raw = json.dumps({
-        "verdict": "UNCERTAIN",
-        "confidence": 2,
-        "issues": [],
-        "cross_chunk_concerns": ["Possible issue in sibling file"],
-        "summary": "Not sure.",
-    })
+    raw = json.dumps(
+        {
+            "verdict": "UNCERTAIN",
+            "confidence": 2,
+            "issues": [],
+            "cross_chunk_concerns": ["Possible issue in sibling file"],
+            "summary": "Not sure.",
+        }
+    )
     result = _parse_chunk_json(raw, chunk_index=1)
     assert result.verdict == "UNCERTAIN"
 
 
 # ── _apply_synthesis_rules ────────────────────────────────────────────────
+
 
 def _make_result(verdict: str, confidence: int, issues: list | None = None) -> ChunkReviewResult:
     return ChunkReviewResult(
@@ -133,18 +146,22 @@ def test_synthesis_empty_results():
 def test_parse_chunk_json_null_verdict_becomes_uncertain():
     """JSON with null verdict falls through to UNCERTAIN."""
     import json as _json
-    raw = _json.dumps({
-        "verdict": None,
-        "confidence": 3,
-        "issues": [],
-        "cross_chunk_concerns": [],
-        "summary": "Unclear.",
-    })
+
+    raw = _json.dumps(
+        {
+            "verdict": None,
+            "confidence": 3,
+            "issues": [],
+            "cross_chunk_concerns": [],
+            "summary": "Unclear.",
+        }
+    )
     result = _parse_chunk_json(raw, chunk_index=1)
     assert result.verdict == "UNCERTAIN"
 
 
 # ── _deduplicate_issues ───────────────────────────────────────────────────
+
 
 def test_deduplicate_removes_exact_duplicates():
     issue = {"severity": "HIGH", "file": "foo.py", "line_hint": "~42", "description": "Bad"}
@@ -161,13 +178,23 @@ def test_deduplicate_keeps_different_files():
 
 # ── _format_chunks_for_synthesis ──────────────────────────────────────────
 
+
 def test_format_chunks_for_synthesis_includes_verdict():
-    result = _make_result("FAIL", 4, issues=[
-        {"severity": "HIGH", "file": "foo.py", "line_hint": "~10", "description": "Bug"}
-    ])
+    result = _make_result(
+        "FAIL",
+        4,
+        issues=[{"severity": "HIGH", "file": "foo.py", "line_hint": "~10", "description": "Bug"}],
+    )
     result.summary = "Found a bug."
-    chunk = DiffChunk(index=1, total=2, files=["foo.py"], diff_text="", line_count=10,
-                      risk_label="HIGH", risk_scores={"foo.py": 55.0})
+    chunk = DiffChunk(
+        index=1,
+        total=2,
+        files=["foo.py"],
+        diff_text="",
+        line_count=10,
+        risk_label="HIGH",
+        risk_scores={"foo.py": 55.0},
+    )
     text = _format_chunks_for_synthesis([chunk], [result])
     assert "FAIL" in text
     assert "foo.py" in text

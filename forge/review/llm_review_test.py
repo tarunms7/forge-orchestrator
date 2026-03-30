@@ -467,8 +467,7 @@ class TestAdaptiveReviewDispatch:
                 f"new file mode 100644\n"
                 f"--- /dev/null\n"
                 f"+++ b/module{i}.py\n"
-                f"@@ -0,0 +1,30 @@\n"
-                + "\n".join(f"+line{j}" for j in range(30))
+                f"@@ -0,0 +1,30 @@\n" + "\n".join(f"+line{j}" for j in range(30))
             )
         diff = "\n".join(diff_parts)
         file_scores = score_files(diff)
@@ -480,11 +479,13 @@ class TestAdaptiveReviewDispatch:
     def test_tier2_prompt_without_risk_map(self):
         """Without risk_map_header, prompt behaves exactly as before."""
         from forge.review.llm_review import _build_review_prompt
+
         prompt = _build_review_prompt("title", "desc", "diff --git a/x b/x\n+line\n")
         assert "Review Priority Map" not in prompt
 
     def test_strategy_selection_tier1_for_small_diff(self):
         """For small diff, strategy is TIER1."""
         from forge.review.strategy import ReviewStrategy, select_strategy
+
         diff = "diff --git a/x b/x\n+line\n"
         assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER1

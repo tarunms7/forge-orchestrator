@@ -1867,9 +1867,7 @@ async def retry_task(
             blocking_deps = [d for d in deps if d in non_done_ids or d == task_id]
             if blocking_deps == [task_id]:
                 await forge_db.update_task_state(t.id, "todo")
-                logger.info(
-                    "Unblocked task %s (was waiting on retried task %s)", t.id, task_id
-                )
+                logger.info("Unblocked task %s (was waiting on retried task %s)", t.id, task_id)
     except Exception:
         logger.warning(
             "Failed to cascade-unblock dependents of %s (non-fatal)", task_id, exc_info=True

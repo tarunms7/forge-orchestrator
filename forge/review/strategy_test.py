@@ -248,7 +248,10 @@ def test_select_strategy_large_is_tier3():
 def test_select_strategy_adaptive_false_always_tier1():
     """Custom thresholds: setting medium_threshold very high forces TIER1."""
     lines = "".join(f"+line{i}\n" for i in range(300))
-    assert select_strategy(lines, medium_threshold=99999, large_threshold=999999) == ReviewStrategy.TIER1
+    assert (
+        select_strategy(lines, medium_threshold=99999, large_threshold=999999)
+        == ReviewStrategy.TIER1
+    )
 
 
 def test_select_strategy_boundary_large():
@@ -310,13 +313,11 @@ def test_build_chunks_keeps_test_with_source():
 def test_build_chunks_splits_unrelated_files():
     """Unrelated files that overflow max_chunk_lines go into separate chunks."""
     # Create a diff with two completely unrelated large files
-    file_a_diff = (
-        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,60 @@\n"
-        + "".join(f"+lineA{i}\n" for i in range(60))
+    file_a_diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,60 @@\n" + "".join(
+        f"+lineA{i}\n" for i in range(60)
     )
-    file_b_diff = (
-        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1,60 @@\n"
-        + "".join(f"+lineB{i}\n" for i in range(60))
+    file_b_diff = "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1,60 @@\n" + "".join(
+        f"+lineB{i}\n" for i in range(60)
     )
     combined = file_a_diff + file_b_diff
     scores = [
@@ -331,13 +332,11 @@ def test_build_chunks_splits_unrelated_files():
 
 def test_build_chunks_total_chunks_backfill():
     """total_chunks is set correctly on every chunk."""
-    file_a_diff = (
-        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,60 @@\n"
-        + "".join(f"+lineA{i}\n" for i in range(60))
+    file_a_diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1,60 @@\n" + "".join(
+        f"+lineA{i}\n" for i in range(60)
     )
-    file_b_diff = (
-        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1,60 @@\n"
-        + "".join(f"+lineB{i}\n" for i in range(60))
+    file_b_diff = "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1,60 @@\n" + "".join(
+        f"+lineB{i}\n" for i in range(60)
     )
     combined = file_a_diff + file_b_diff
     scores = [

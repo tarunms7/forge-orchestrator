@@ -63,7 +63,7 @@ def format_question_card(question: dict) -> str:
 def format_review_progress(
     strategy: str | None,
     diff_lines: int | None,
-    chunks: dict,          # {chunk_index: {"files": [...], "verdict": str|None, "risk_label": str}}
+    chunks: dict,  # {chunk_index: {"files": [...], "verdict": str|None, "risk_label": str}}
     current_chunk: int | str | None,
     chunk_count: int | None,
 ) -> str:
@@ -89,7 +89,11 @@ def format_review_progress(
 
     # Normalize current_chunk to int for comparison (JSON may deserialize as str)
     try:
-        _current = int(current_chunk) if current_chunk is not None and current_chunk != "synthesis" else current_chunk
+        _current = (
+            int(current_chunk)
+            if current_chunk is not None and current_chunk != "synthesis"
+            else current_chunk
+        )
     except (ValueError, TypeError):
         _current = current_chunk
 

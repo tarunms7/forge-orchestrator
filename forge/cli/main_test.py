@@ -298,9 +298,7 @@ def test_run_dry_run_calls_daemon_dry_run(tmp_path):
                 str(tmp_path),
             ],
         )
-        mock_daemon.dry_run.assert_called_once_with(
-            "Build it", spec_path=None, deep_plan=False
-        )
+        mock_daemon.dry_run.assert_called_once_with("Build it", spec_path=None, deep_plan=False)
         mock_daemon.run.assert_not_called()
     assert result.exit_code == 0
     assert "DRY RUN" in result.output
