@@ -50,6 +50,5 @@ jobs:
 
             Be surgical. Only fix what's needed. Do NOT refactor or add features.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: sonnet
-          max_turns: 30
+          claude_args: "--model claude-sonnet-4-6 --max-turns 30"
           timeout_minutes: 15
