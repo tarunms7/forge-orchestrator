@@ -13,7 +13,7 @@ import logging
 from rich.text import Text
 from textual.containers import Vertical
 from textual.message import Message
-from textual.widgets import Input, Select
+from textual.widgets import Select
 
 logger = logging.getLogger("forge.tui.widgets.branch_selector")
 
@@ -192,20 +192,8 @@ class BranchInput(Vertical):
         width: 1fr;
         height: auto;
     }
-    BranchInput Input {
-        width: 100%;
-        height: 3;
-        border: tall #30363d;
-        background: #161b22;
-        color: #e6edf3;
-        padding: 0 1;
-    }
-    BranchInput Input:focus {
-        border: tall #58a6ff;
-    }
     BranchInput Select {
         width: 100%;
-        margin-top: 0;
     }
     """
 
@@ -227,17 +215,7 @@ class BranchInput(Vertical):
 
     @property
     def value(self) -> str:
-        """Current value: typed text, selected branch, or empty for auto."""
-        try:
-            inp = self.query_one(Input)
-            text = inp.value.strip()
-            if text:
-                # Strip origin/ prefix for consistency
-                if text.startswith("origin/"):
-                    text = text[len("origin/") :]
-                return text
-        except Exception:
-            pass
+        """Current value: selected branch name, or empty for auto-generate."""
         try:
             sel = self.query_one(Select)
             val = sel.value
@@ -251,10 +229,6 @@ class BranchInput(Vertical):
             return ""
 
     def compose(self):
-        yield Input(
-            placeholder="Type branch name or pick below",
-            id="branch-text-input",
-        )
         options: list[tuple[str | Text, str]] = [
             (Text(_AUTO_GENERATE_LABEL, style="#a371f7"), ""),
         ]
@@ -262,7 +236,7 @@ class BranchInput(Vertical):
             options,
             value="",
             allow_blank=False,
-            prompt="Or select existing",
+            prompt="Branch name",
             id="branch-pick-select",
         )
 
@@ -290,14 +264,9 @@ class BranchInput(Vertical):
             logger.debug("Failed to update branch input", exc_info=True)
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """When user picks from dropdown, populate or clear the text input."""
+        """Forward selection as BranchChosen."""
         if event.value is not Select.BLANK and event.value is not None:
             val = str(event.value)
-            # Strip origin/ prefix
             if val.startswith("origin/"):
                 val = val[len("origin/") :]
-            try:
-                inp = self.query_one(Input)
-                inp.value = val  # Empty string for auto-generate clears the input
-            except Exception:
-                pass
+            self.post_message(self.BranchChosen(val))
