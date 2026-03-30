@@ -374,9 +374,14 @@ def _build_review_prompt(
         delta_snippet = delta_diff[:6000]
         parts.append(
             "=== CHANGES SINCE LAST REVIEW (DELTA) ===\n"
-            "These are the changes the developer made in this retry attempt, shown for context.\n"
+            "These are the NEW changes the developer added in this retry attempt.\n"
+            "IMPORTANT: A delta of zero lines for a file does NOT mean that file is unchanged "
+            "from the base — it means the file was already fixed in an earlier commit during "
+            "this task's lifetime and was not re-edited in this retry. "
+            "The FULL DIFF above is the authoritative source of truth for what the current "
+            "code actually contains. If a file appears correct in the full diff, do NOT "
+            "complain that it is missing or unchanged.\n"
             f"```diff\n{delta_snippet}\n```\n\n"
-            "The full diff above shows the complete current state.\n\n"
         )
     parts.append("Review this code. Respond with PASS, FAIL, or UNCERTAIN.")
     return "".join(parts)
