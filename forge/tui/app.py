@@ -1014,6 +1014,7 @@ class ForgeApp(App):
         # Persist 'planned' status and task graph so resume can skip planning
         if self._db and self._pipeline_id and self._graph:
             try:
+                await self._db.update_pipeline_status(self._pipeline_id, "planned")
                 await self._db.set_pipeline_plan(
                     self._pipeline_id, self._graph.model_dump_json()
                 )
