@@ -193,6 +193,8 @@ class PipelineRow(Base):
     ci_fix_max_retries: Mapped[int] = mapped_column(default=3)
     ci_fix_cost_usd: Mapped[float] = mapped_column(default=0.0)
     ci_fix_log: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Resume pipeline support
+    quit_phase: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     def get_repos(self) -> list[dict]:
         """Return repo configurations. Single-repo returns synthetic default entry."""
@@ -897,6 +899,72 @@ class Database:
         """Get the ContractSet JSON for a pipeline."""
         pipeline = await self.get_pipeline(pipeline_id)
         return getattr(pipeline, "contracts_json", None) if pipeline else None
+
+    async def set_pipeline_quit_phase(self, pipeline_id: str, phase: str) -> None:
+        """Store the TUI phase when user quit, enabling resume to restore the correct screen."""
+        async with self._session_factory() as session:
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
+            row = result.scalar_one_or_none()
+            if row:
+                row.quit_phase = phase
+                await session.commit()
+
+    async def get_pipeline_resume_context(self, pipeline_id: str) -> dict | None:
+        """Return all data needed for resume routing in a single DB round-trip."""
+        async with self._session_factory() as session:
+            pipeline = (await session.execute(
+                select(PipelineRow).where(PipelineRow.id == pipeline_id)
+            )).scalar_one_or_none()
+            if not pipeline:
+                return None
+            tasks = (await session.execute(
+                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
+            )).scalars().all()
+            return {
+                "status": pipeline.status,
+                "quit_phase": pipeline.quit_phase,
+                "task_graph_json": pipeline.task_graph_json,
+                "contracts_json": pipeline.contracts_json,
+                "pr_url": pipeline.pr_url,
+                "project_dir": pipeline.project_dir,
+                "base_branch": pipeline.base_branch,
+                "branch_name": pipeline.branch_name,
+                "description": pipeline.description,
+                "executor_pid": pipeline.executor_pid,
+                "total_tasks": len(tasks),
+                "tasks_done": sum(1 for t in tasks if t.state == "done"),
+                "tasks_error": sum(1 for t in tasks if t.state == "error"),
+                "tasks_in_review": sum(1 for t in tasks if t.state == "in_review"),
+                "tasks_blocked": sum(1 for t in tasks if t.state == "blocked"),
+            }
+
+    async def get_pipeline_list_with_counts(self, limit: int = 10) -> list[dict]:
+        """Return recent pipelines with task counts for the HomeScreen list."""
+        async with self._session_factory() as session:
+            pipelines = (await session.execute(
+                select(PipelineRow)
+                .order_by(PipelineRow.created_at.desc())
+                .limit(limit)
+            )).scalars().all()
+
+            result = []
+            for p in pipelines:
+                tasks = (await session.execute(
+                    select(TaskRow).where(TaskRow.pipeline_id == p.id)
+                )).scalars().all()
+                result.append({
+                    "id": p.id,
+                    "description": p.description,
+                    "status": p.status,
+                    "created_at": p.created_at,
+                    "cost": p.total_cost_usd,
+                    "total_tasks": len(tasks),
+                    "tasks_done": sum(1 for t in tasks if t.state == "done"),
+                    "tasks_error": sum(1 for t in tasks if t.state == "error"),
+                    "pr_url": p.pr_url,
+                    "project_dir": p.project_dir,
+                })
+            return result
 
     async def list_pipelines(
         self,
