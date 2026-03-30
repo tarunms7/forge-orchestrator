@@ -7,24 +7,20 @@ import logging
 import random
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core.sdk_helpers import sdk_query
-from forge.review.pipeline import GateResult
+
+# ReviewCostInfo lives in pipeline.py to avoid circular imports.
+# Re-exported here for backward compatibility with existing callers.
+from forge.review.pipeline import (
+    GateResult,
+    ReviewCostInfo,  # noqa: F401
+)
 
 logger = logging.getLogger("forge.review")
-
-
-@dataclass
-class ReviewCostInfo:
-    """Cost information from an LLM review call."""
-
-    cost_usd: float = 0.0
-    input_tokens: int = 0
-    output_tokens: int = 0
 
 
 REVIEW_SYSTEM_PROMPT = """You are a senior code reviewer. Your job is to catch bugs, security issues,
@@ -102,6 +98,13 @@ async def gate2_llm_review(
     sibling_context: str | None = None,
     custom_review_focus: str = "",
     on_message: Callable[[Any], Awaitable[None]] | None = None,
+    # NEW: callback for review progress events (strategy_selected, chunk_started, etc.)
+    on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
+    # NEW: adaptive review config (from ReviewConfig)
+    adaptive_review: bool = True,
+    medium_diff_threshold: int = 400,
+    large_diff_threshold: int = 2000,
+    max_chunk_lines: int = 600,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -129,6 +132,65 @@ async def gate2_llm_review(
             cost_info,
         )
 
+    # ── Strategy selection ────────────────────────────────────────────────
+    from forge.review.strategy import (
+        ReviewStrategy,
+        build_risk_map_header,
+        count_diff_lines,
+        score_files,
+        select_strategy,
+    )
+    from forge.review.strategy import (
+        build_diff_chunks as build_chunks,
+    )
+    from forge.review.synthesizer import run_chunked_review
+
+    strategy = select_strategy(
+        diff,
+        medium_diff_threshold,
+        large_diff_threshold,
+        adaptive=adaptive_review,
+    )
+
+    # Pre-compute file scores and chunks for Tier 3 (reused for both event payload and review)
+    _t3_file_scores = None
+    _t3_chunks = None
+    if strategy == ReviewStrategy.TIER3:
+        _t3_file_scores = score_files(diff)
+        _t3_chunks = build_chunks(_t3_file_scores, diff, max_chunk_lines)
+
+    if on_review_event:
+        payload: dict = {
+            "strategy": strategy.value,
+            "diff_lines": count_diff_lines(diff),
+        }
+        if strategy == ReviewStrategy.TIER3:
+            payload["chunk_count"] = len(_t3_chunks)
+        await on_review_event("review:strategy_selected", payload)
+
+    # ── Tier 3: multi-chunk map-reduce ────────────────────────────────────
+    if strategy == ReviewStrategy.TIER3:
+        return await run_chunked_review(
+            _t3_chunks,
+            _t3_file_scores,
+            diff,
+            task_title,
+            task_description,
+            model=model,
+            worktree_path=worktree_path,
+            sibling_context=sibling_context,
+            prior_feedback=prior_feedback,
+            delta_diff=delta_diff,
+            on_message=on_message,
+            on_review_event=on_review_event,
+        )
+
+    # Tier 2: build risk map header (pure Python, no LLM cost)
+    risk_map = ""
+    if strategy == ReviewStrategy.TIER2:
+        file_scores_t2 = score_files(diff)
+        risk_map = build_risk_map_header(file_scores_t2)
+
     prompt = _build_review_prompt(
         task_title,
         task_description,
@@ -139,6 +201,7 @@ async def gate2_llm_review(
         allowed_files=allowed_files,
         delta_diff=delta_diff,
         sibling_context=sibling_context,
+        risk_map_header=risk_map,
     )
 
     system_prompt = REVIEW_SYSTEM_PROMPT
@@ -185,6 +248,7 @@ async def gate2_llm_review(
                         gate="gate2_llm_review",
                         details=f"Review timed out after {max_review_attempts} attempts",
                         retriable=True,
+                        review_strategy=strategy.value,
                     ),
                     cost_info,
                 )
@@ -200,6 +264,7 @@ async def gate2_llm_review(
                         gate="gate2_llm_review",
                         details=f"SDK error during review after {max_review_attempts} attempts: {e}",
                         retriable=True,
+                        review_strategy=strategy.value,
                     ),
                     cost_info,
                 )
@@ -213,7 +278,9 @@ async def gate2_llm_review(
 
         result_text = result.result if result and result.result else ""
         if result_text:
-            return (_parse_review_result(result_text), cost_info)
+            result_gate = _parse_review_result(result_text)
+            result_gate.review_strategy = strategy.value
+            return result_gate, cost_info
 
         # Log diagnostic details to help debug empty responses
         _diag_parts = [f"attempt {attempt}/{max_review_attempts}"]
@@ -244,6 +311,7 @@ async def gate2_llm_review(
             gate="gate2_llm_review",
             details=f"Review could not complete after {max_review_attempts} attempts (likely transient SDK issue). Human review needed.",
             needs_human=True,
+            review_strategy=strategy.value,
         ),
         cost_info,
     )
@@ -260,6 +328,7 @@ def _build_review_prompt(
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
+    risk_map_header: str = "",  # NEW: Tier 2 risk prioritisation header
 ) -> str:
     parts = []
     if project_context:
@@ -278,6 +347,8 @@ def _build_review_prompt(
             "If the diff contains changes to files outside this list (excluding related test files), "
             "FAIL immediately with 'OUT OF SCOPE' and list the violating files.\n\n"
         )
+    if risk_map_header:
+        parts.append(f"{risk_map_header}\n\n")
     parts.append(
         f"Git diff of changes:\n```diff\n{diff}\n```\n\n",
     )

@@ -60,6 +60,81 @@ def format_question_card(question: dict) -> str:
     return "\n".join(parts)
 
 
+def format_review_progress(
+    strategy: str | None,
+    diff_lines: int | None,
+    chunks: dict,          # {chunk_index: {"files": [...], "verdict": str|None, "risk_label": str}}
+    current_chunk: int | str | None,
+    chunk_count: int | None,
+) -> str:
+    """Format review progress header for Tier 2/3 reviews.
+
+    Returns empty string for Tier 1 (no special display needed).
+    """
+    if not strategy or strategy == "tier1":
+        return ""
+
+    lines_str = f"{diff_lines} lines · " if diff_lines else ""
+
+    if strategy == "tier2":
+        # Just show the tier label — the risk map is already in the review text
+        return f"[{TEXT_SECONDARY}]  ({lines_str}Risk-Enhanced)[/]"
+
+    if strategy != "tier3":
+        return ""
+
+    # Tier 3: show chunk grid
+    header = f"[{TEXT_SECONDARY}]  ({lines_str}Chunked · {chunk_count or len(chunks)} chunks)[/]"
+    parts = [header]
+
+    # Normalize current_chunk to int for comparison (JSON may deserialize as str)
+    try:
+        _current = int(current_chunk) if current_chunk is not None and current_chunk != "synthesis" else current_chunk
+    except (ValueError, TypeError):
+        _current = current_chunk
+
+    for idx in sorted(chunks.keys()):
+        chunk = chunks[idx]
+        files = chunk.get("files", [])
+        file_preview = ", ".join(str(f).split("/")[-1] for f in files[:3])
+        if len(files) > 3:
+            file_preview += f" +{len(files) - 3}"
+
+        verdict = chunk.get("verdict")
+        risk = chunk.get("risk_label", "?")
+        total = chunk_count or len(chunks)
+
+        if verdict == "PASS":
+            icon = "[green]✓[/]"
+            verdict_str = f"[green]{verdict}[/]"
+        elif verdict == "FAIL":
+            icon = "[red]✗[/]"
+            verdict_str = f"[red]{verdict}[/]"
+        elif verdict in ("UNCERTAIN", "TIMEOUT"):
+            icon = "[yellow]?[/]"
+            verdict_str = f"[yellow]{verdict}[/]"
+        elif _current == idx:
+            icon = f"[{ACCENT_BLUE}]⟳[/]"
+            verdict_str = f"[{ACCENT_BLUE}]reviewing...[/]"
+        else:
+            icon = f"[{TEXT_MUTED}]○[/]"
+            verdict_str = ""
+
+        risk_badge = f"[{TEXT_MUTED}][{risk}][/]" if risk else ""
+        chunk_line = (
+            f"  {icon} Chunk {idx}/{total} {risk_badge} · "
+            f"[{TEXT_SECONDARY}]{_escape(file_preview)}[/]"
+        )
+        if verdict_str:
+            chunk_line += f"  {verdict_str}"
+        parts.append(chunk_line)
+
+    if current_chunk == "synthesis":
+        parts.append(f"  [{ACCENT_BLUE}]⟳ Synthesizing results...[/]")
+
+    return "\n".join(parts)
+
+
 class ChatThread(Widget):
     class AnswerSubmitted(Message):
         def __init__(self, task_id: str, answer: str) -> None:

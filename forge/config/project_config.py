@@ -175,10 +175,21 @@ class ReviewConfig:
 
     enabled: bool = True
     max_retries: int = 3
+    # Adaptive review scaling
+    adaptive_review: bool = True  # False = always use single-pass (Tier 1)
+    medium_diff_threshold: int = 400  # Lines; >= this → Tier 2 (risk-enhanced single pass)
+    large_diff_threshold: int = 2000  # Lines; >= this → Tier 3 (multi-chunk map-reduce)
+    max_chunk_lines: int = 600  # Max lines per chunk in Tier 3
 
     def __post_init__(self):
         if self.max_retries < 0:
             self.max_retries = 0
+        if self.medium_diff_threshold < 1:
+            self.medium_diff_threshold = 1
+        if self.large_diff_threshold <= self.medium_diff_threshold:
+            self.large_diff_threshold = self.medium_diff_threshold + 1
+        if self.max_chunk_lines < 50:
+            self.max_chunk_lines = 50
 
 
 @dataclass
@@ -310,6 +321,10 @@ class ProjectConfig:
             review=ReviewConfig(
                 enabled=review_raw.get("enabled", True),
                 max_retries=review_raw.get("max_retries", 3),
+                adaptive_review=review_raw.get("adaptive_review", True),
+                medium_diff_threshold=review_raw.get("medium_diff_threshold", 400),
+                large_diff_threshold=review_raw.get("large_diff_threshold", 2000),
+                max_chunk_lines=review_raw.get("max_chunk_lines", 600),
             ),
             agents=AgentConfig(
                 max_parallel=agents_raw.get("max_parallel", 5),

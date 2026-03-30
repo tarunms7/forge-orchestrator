@@ -449,3 +449,42 @@ class TestEmptyReviewEscalation:
 
         assert gate_result.passed is True
         assert gate_result.needs_human is False
+
+
+class TestAdaptiveReviewDispatch:
+    """Tests for Tier 2 risk-map injection and strategy selection."""
+
+    def test_tier2_prompt_contains_risk_map(self):
+        """When risk_map_header is provided, _build_review_prompt includes it."""
+        from forge.review.llm_review import _build_review_prompt
+        from forge.review.strategy import build_risk_map_header, score_files
+
+        # Build a ~600-line diff (Tier 2 range)
+        diff_parts = []
+        for i in range(20):
+            diff_parts.append(
+                f"diff --git a/module{i}.py b/module{i}.py\n"
+                f"new file mode 100644\n"
+                f"--- /dev/null\n"
+                f"+++ b/module{i}.py\n"
+                f"@@ -0,0 +1,30 @@\n"
+                + "\n".join(f"+line{j}" for j in range(30))
+            )
+        diff = "\n".join(diff_parts)
+        file_scores = score_files(diff)
+        risk_map = build_risk_map_header(file_scores)
+        prompt = _build_review_prompt("title", "desc", diff, risk_map_header=risk_map)
+        assert "Review Priority Map" in prompt
+        assert "HIGH" in prompt or "MEDIUM" in prompt
+
+    def test_tier2_prompt_without_risk_map(self):
+        """Without risk_map_header, prompt behaves exactly as before."""
+        from forge.review.llm_review import _build_review_prompt
+        prompt = _build_review_prompt("title", "desc", "diff --git a/x b/x\n+line\n")
+        assert "Review Priority Map" not in prompt
+
+    def test_strategy_selection_tier1_for_small_diff(self):
+        """For small diff, strategy is TIER1."""
+        from forge.review.strategy import ReviewStrategy, select_strategy
+        diff = "diff --git a/x b/x\n+line\n"
+        assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER1

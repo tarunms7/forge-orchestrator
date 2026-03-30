@@ -347,6 +347,40 @@ class TestReviewConfigValidation:
         assert ReviewConfig(max_retries=-1).max_retries == 0
         assert ReviewConfig(max_retries=-99).max_retries == 0
 
+    def test_review_config_new_defaults(self):
+        """New adaptive review fields have correct defaults."""
+        cfg = ReviewConfig()
+        assert cfg.adaptive_review is True
+        assert cfg.medium_diff_threshold == 400
+        assert cfg.large_diff_threshold == 2000
+        assert cfg.max_chunk_lines == 600
+
+    def test_review_config_clamps_large_threshold(self):
+        """large_diff_threshold is always > medium_diff_threshold after __post_init__."""
+        cfg = ReviewConfig(medium_diff_threshold=1000, large_diff_threshold=500)
+        assert cfg.large_diff_threshold > cfg.medium_diff_threshold
+
+    def test_review_config_clamps_chunk_lines(self):
+        """max_chunk_lines is at least 50."""
+        cfg = ReviewConfig(max_chunk_lines=5)
+        assert cfg.max_chunk_lines == 50
+
+    def test_review_config_parses_new_fields_from_toml(self, tmp_path):
+        """New adaptive fields are parsed from forge.toml."""
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            "[review]\n"
+            "adaptive_review = false\n"
+            "medium_diff_threshold = 300\n"
+            "large_diff_threshold = 1500\n"
+            "max_chunk_lines = 800\n"
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.review.adaptive_review is False
+        assert config.review.medium_diff_threshold == 300
+        assert config.review.large_diff_threshold == 1500
+        assert config.review.max_chunk_lines == 800
+
 
 class TestIntegrationCheckConfigValidation:
     def test_valid_on_failure_values(self):

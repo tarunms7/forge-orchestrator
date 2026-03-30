@@ -663,8 +663,10 @@ def test_fade_reset_on_update_unified():
 
 def test_fade_color_wrapping_produces_valid_rich_markup():
     """Wrapping a rendered part in fade color should produce valid Rich markup."""
-    from rich.console import Console
     from io import StringIO
+
+    from rich.console import Console
+
     from forge.tui.widgets.agent_output import _FADE_STEPS, format_unified_incremental
 
     # Generate a typical rendered part (agent line with markdown)

@@ -1,0 +1,8 @@
+[project]
+name = "forge-smoke-test"
+version = "0.1.0"
+description = "Smoke test fixture for the Forge pipeline — always has a known bug on main"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["."]

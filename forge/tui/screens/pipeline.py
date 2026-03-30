@@ -18,7 +18,7 @@ from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
 from forge.tui.theme import PHASE_DISPLAY as _PHASE_BANNER
 from forge.tui.widgets.agent_output import AgentOutput
-from forge.tui.widgets.chat_thread import ChatThread
+from forge.tui.widgets.chat_thread import ChatThread, format_review_progress
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.diff_viewer import DiffViewer
@@ -604,6 +604,17 @@ class PipelineScreen(Screen):
         if tid not in self._review_streaming_tasks:
             self._review_streaming_tasks.add(tid)
             agent_output.set_streaming(True)
+            # Inject review strategy header before first streaming line
+            task = state.tasks.get(tid, {})
+            progress_header = format_review_progress(
+                strategy=task.get("review_strategy"),
+                diff_lines=task.get("review_diff_lines"),
+                chunks=task.get("review_chunks", {}),
+                current_chunk=task.get("review_current_chunk"),
+                chunk_count=task.get("review_chunk_count"),
+            )
+            if progress_header:
+                agent_output.append_unified("review", progress_header)
         for line in lines[prev_len:]:
             agent_output.append_unified("review", line)
 

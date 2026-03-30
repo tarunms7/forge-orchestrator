@@ -688,6 +688,20 @@ class ReviewMixin:
 
         return _on_msg, _flush
 
+    def _make_review_event_callback(self, task_id: str, db, pipeline_id: str):
+        """Build an on_review_event callback that translates review progress events
+        into WebSocket events for the TUI.
+
+        This decouples llm_review.py from the WebSocket/DB layer.
+        """
+
+        async def _on_review_event(event_name: str, payload: dict) -> None:
+            # Inject task_id into every event payload
+            full_payload = {"task_id": task_id, **payload}
+            await self._emit(event_name, full_payload, db=db, pipeline_id=pipeline_id)
+
+        return _on_review_event
+
     # -- main review pipeline ----------------------------------------------
 
     async def _build_sibling_context(self, task, db, pipeline_id: str) -> str | None:
@@ -1096,6 +1110,13 @@ class ReviewMixin:
                 db,
                 pipeline_id,
             )
+            # Build on_review_event callback for review progress events
+            on_review_event = self._make_review_event_callback(task.id, db, pipeline_id)
+
+            # Load adaptive review settings from project config
+            _review_cfg = getattr(
+                getattr(self, "_project_config", None), "review", None
+            )
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title,
                 task.description,
@@ -1110,6 +1131,11 @@ class ReviewMixin:
                 sibling_context=sibling_context,
                 custom_review_focus=custom_review_focus,
                 on_message=on_message,
+                on_review_event=on_review_event,
+                adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
+                medium_diff_threshold=_review_cfg.medium_diff_threshold if _review_cfg else 400,
+                large_diff_threshold=_review_cfg.large_diff_threshold if _review_cfg else 2000,
+                max_chunk_lines=_review_cfg.max_chunk_lines if _review_cfg else 600,
             )
             await flush_review()
             # Emit LLM feedback so the TUI can display reviewer comments
@@ -1209,6 +1235,11 @@ class ReviewMixin:
                     allowed_files=task.files,
                     sibling_context=sibling_context,
                     custom_review_focus=extra_focus,
+                    on_review_event=on_review_event,
+                    adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
+                    medium_diff_threshold=_review_cfg.medium_diff_threshold if _review_cfg else 400,
+                    large_diff_threshold=_review_cfg.large_diff_threshold if _review_cfg else 2000,
+                    max_chunk_lines=_review_cfg.max_chunk_lines if _review_cfg else 600,
                 )
                 # Track extra review cost
                 if extra_cost_info.cost_usd > 0:
