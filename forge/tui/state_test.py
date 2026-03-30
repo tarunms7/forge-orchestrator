@@ -1199,3 +1199,86 @@ def test_remove_change_callback_nonexistent():
     """Removing a callback that was never added is a no-op."""
     state = TuiState()
     state.remove_change_callback(lambda f: None)  # should not raise
+
+
+# ── Defensive validation / reset gap tests ─────────────────────────────
+
+
+def test_reset_clears_merge_substatus():
+    """reset() must clear merge_substatus so stale data doesn't bleed across pipelines."""
+    state = _make_state_with_task("t1")
+    state.merge_substatus["t1"] = "rebasing"
+    state.reset()
+    assert state.merge_substatus == {}
+
+
+def test_plan_ready_skips_task_without_id(caplog):
+    """Tasks missing 'id' in plan_ready data are skipped with a warning."""
+    import logging
+
+    state = TuiState()
+    with caplog.at_level(logging.WARNING, logger="forge.tui.state"):
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {"title": "no id task", "files": ["a.py"]},
+                    {
+                        "id": "t2",
+                        "title": "valid",
+                        "files": ["b.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    },
+                ]
+            },
+        )
+    assert "Skipping task without id" in caplog.text
+    assert len(state.tasks) == 1
+    assert "t2" in state.tasks
+    assert state.task_order == ["t2"]
+    assert state.selected_task_id == "t2"
+
+
+def test_plan_ready_empty_id_skipped(caplog):
+    """A task with an empty string id is also skipped."""
+    import logging
+
+    state = TuiState()
+    with caplog.at_level(logging.WARNING, logger="forge.tui.state"):
+        state.apply_event(
+            "pipeline:plan_ready",
+            {"tasks": [{"id": "", "title": "empty id", "files": []}]},
+        )
+    assert "Skipping task without id" in caplog.text
+    assert state.tasks == {}
+    assert state.task_order == []
+    assert state.selected_task_id is None
+
+
+def test_task_cost_update_missing_task_id():
+    """task:cost_update with no task_id is a no-op."""
+    state = _make_state_with_task("t1")
+    state.apply_event("task:cost_update", {"agent_cost": 1.0})
+    assert state.tasks["t1"]["agent_cost"] == 0.0  # unchanged
+
+
+def test_task_state_changed_missing_task_id():
+    """task:state_changed with no task_id is a no-op."""
+    state = _make_state_with_task("t1")
+    state.apply_event("task:state_changed", {"state": "done"})
+    assert state.tasks["t1"]["state"] == "todo"  # unchanged
+
+
+def test_review_gate_passed_missing_task_id():
+    """review:gate_passed with no task_id is a no-op."""
+    state = _make_state_with_task("t1")
+    state.apply_event("review:gate_passed", {"gate": "gate0_build", "details": "ok"})
+    assert state.review_gates == {}
+
+
+def test_review_gate_failed_missing_gate():
+    """review:gate_failed with no gate is a no-op."""
+    state = _make_state_with_task("t1")
+    state.apply_event("review:gate_failed", {"task_id": "t1", "details": "bad"})
+    assert state.review_gates == {}

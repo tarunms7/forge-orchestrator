@@ -119,7 +119,10 @@ class TuiState:
         self.tasks.clear()
         self.task_order.clear()
         for t in data.get("tasks", []):
-            tid = t["id"]
+            tid = t.get("id")
+            if not tid:
+                logger.warning("Skipping task without id in plan_ready: %s", t)
+                continue
             self.tasks[tid] = {
                 "id": tid,
                 "title": t.get("title", ""),
@@ -628,6 +631,7 @@ class TuiState:
         self.planner_output.clear()
         self.review_gates.clear()
         self.streaming_task_ids.clear()
+        self.merge_substatus.clear()
         self.error = None
         self.elapsed_seconds = 0.0
         self.total_cost_usd = 0.0
