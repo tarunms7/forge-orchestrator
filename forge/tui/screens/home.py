@@ -113,12 +113,20 @@ class HomeScreen(Screen):
         width: 100%;
         height: auto;
         max-height: 5;
-        margin: 0 0 1 0;
+        margin: 0 0 2 0;
     }
     .branch-field {
         width: 1fr;
         height: auto;
         margin-right: 1;
+    }
+    .branch-field Select {
+        border: tall #30363d;
+        background: #161b22;
+        color: #e6edf3;
+    }
+    .branch-field Select:focus {
+        border: tall #58a6ff;
     }
     .workspace-repo-row {
         width: 100%;
@@ -143,7 +151,7 @@ class HomeScreen(Screen):
     }
     #recent-label {
         width: 100%;
-        margin: 1 0 0 0;
+        margin: 1 0 1 0;
         color: #6e7681;
     }
     PipelineList {
