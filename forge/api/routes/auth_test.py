@@ -59,7 +59,7 @@ async def test_register_duplicate_email(client):
 
     resp2 = await client.post("/api/auth/register", json=payload)
     assert resp2.status_code == 409
-    assert "already registered" in resp2.json()["detail"].lower()
+    assert resp2.json()["detail"] == "Account registration failed"
 
 
 async def test_register_missing_fields(client):

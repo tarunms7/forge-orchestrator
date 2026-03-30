@@ -139,7 +139,8 @@ async def register(body: RegisterRequest, request: Request) -> JSONResponse:
             display_name=body.display_name,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        logger.warning("Registration failed: %s", exc)
+        raise HTTPException(status_code=409, detail="Account registration failed")
 
     return _build_auth_response(user, jwt_secret, status_code=201)
 
