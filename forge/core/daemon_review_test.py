@@ -504,7 +504,7 @@ class TestReviewGateEvents:
             ),
             patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
         ):
-            passed, _ = await mixin._run_review(
+            passed, _, _ = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",
@@ -717,7 +717,7 @@ class TestRunReviewPassesOnMessage:
                 GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
                 MagicMock(cost_usd=0),
             )
-            passed, _ = await mixin._run_review(
+            passed, _, _ = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",
@@ -1260,7 +1260,7 @@ class TestReviewUsesRepoConfig:
         # Track _run_lint_gate to verify repo_id is passed
         lint_gate_calls = {}
 
-        async def track_lint_gate(worktree_path, *, pipeline_branch=None, repo_id=None):
+        async def track_lint_gate(worktree_path, *, pipeline_branch=None, repo_id=None, **kwargs):
             lint_gate_calls["repo_id"] = repo_id
             return GateResult(passed=True, gate="gate1_auto_check", details="Lint clean")
 
@@ -1296,7 +1296,7 @@ class TestReviewUsesRepoConfig:
             patch.object(ReviewMixin, "_resolve_build_cmd", track_build),
             patch.object(ReviewMixin, "_resolve_test_cmd", track_test),
         ):
-            passed, _ = await mixin._run_review(
+            passed, _, _ = await mixin._run_review(
                 task,
                 "/repo",
                 "diff content",
