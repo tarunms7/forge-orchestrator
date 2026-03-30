@@ -10,7 +10,7 @@
 #
 # What it tests (full pipeline):
 #   clone repo → forge plans → agent implements fix → review gates →
-#   PR created → tests pass on the fixed branch
+#   tests pass on the pipeline branch → script pushes branch + opens PR
 #
 # Cost: ~$0.05–0.15 (haiku, one task)
 # Time: ~3–6 minutes
@@ -81,27 +81,49 @@ echo ""
     "Fix the divide-by-zero bug: calculator.divide() should return None when b is 0 instead of raising ZeroDivisionError. The test test_divide_by_zero in test_calculator.py shows the expected behaviour." \
     --project-dir "$WORK_DIR"
 
-# ── 5. Verify: find the forge branch and check tests pass ────────────────
+# ── 5. Verify: find the forge pipeline branch and check tests pass ────────
+#
+# forge run is headless — it merges tasks into a LOCAL pipeline branch
+# (forge/<pipeline-id>) but does not push to remote automatically.
+# We find the local branch, check tests pass, then push + open a PR so
+# the result is visible on GitHub.
 
 echo ""
 echo "Verifying fix..."
 
-# forge creates a branch named forge/<id>-task-N
-git fetch --quiet origin
-FORGE_BRANCH="$(git branch -r --sort=-committerdate | grep "origin/forge/" | head -1 | tr -d ' ')"
+# Find the forge pipeline branch (local) — most-recently-committed forge/* branch
+FORGE_BRANCH="$(git branch --sort=-committerdate | grep "forge/" | head -1 | tr -d ' *')"
 
 if [[ -z "$FORGE_BRANCH" ]]; then
-    echo "ERROR: No forge branch found on remote."
-    echo "Did forge complete and push successfully?"
+    echo "ERROR: No local forge branch found."
+    echo "Did forge complete successfully? Check the output above."
     exit 1
 fi
 
-echo "  Found forge branch: $FORGE_BRANCH"
-git checkout --quiet -b smoke-verify "$FORGE_BRANCH"
+echo "  Found pipeline branch: $FORGE_BRANCH"
+git checkout --quiet "$FORGE_BRANCH"
 
 echo ""
 echo "Running full test suite on fixed code..."
 python3 -m pytest test_calculator.py -v
+
+# ── 5b. Push the pipeline branch and open a PR ────────────────────────────
+
+echo ""
+echo "Pushing pipeline branch and opening PR..."
+git push --quiet origin "$FORGE_BRANCH"
+
+PR_URL="$(gh pr create \
+    --repo tarunms7/forge-smoke-test \
+    --head "$FORGE_BRANCH" \
+    --base main \
+    --title "fix: divide-by-zero bug (smoke test)" \
+    --body "Automated smoke test PR — created by \`scripts/smoke_test.sh\` running LOCAL forge.
+
+**Do not merge.** Leave open or close without merging so \`main\` always has the bug for the next smoke test run." \
+    2>&1)"
+
+echo "  PR: $PR_URL"
 
 echo ""
 echo "============================================"
@@ -112,7 +134,7 @@ echo "Forge (local build at $LOCAL_FORGE)"
 echo "successfully planned, implemented, and reviewed"
 echo "a fix for the known bug."
 echo ""
-echo "PR created at: $SMOKE_REPO_URL/pulls"
+echo "PR: $PR_URL"
 echo ""
 
 # ── 6. Cleanup ────────────────────────────────────────────────────────────
