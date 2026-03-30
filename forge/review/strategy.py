@@ -32,9 +32,8 @@ def count_diff_lines(diff: str) -> int:
         return 0
     count = 0
     for line in diff.splitlines():
-        if (
-            (line.startswith("+") and not line.startswith("+++"))
-            or (line.startswith("-") and not line.startswith("---"))
+        if (line.startswith("+") and not line.startswith("+++")) or (
+            line.startswith("-") and not line.startswith("---")
         ):
             count += 1
     return count
@@ -142,12 +141,12 @@ class FileRiskScore:
 class DiffChunk:
     """A risk-annotated chunk of files for Tier 3 per-chunk review."""
 
-    index: int                          # 1-based chunk index
-    total: int                          # total number of chunks
-    files: list[str]                    # file paths in this chunk
-    diff_text: str                      # combined diff for this chunk
-    line_count: int                     # changed-line count
-    risk_label: str                     # "HIGH", "MEDIUM", "LOW"
+    index: int  # 1-based chunk index
+    total: int  # total number of chunks
+    files: list[str]  # file paths in this chunk
+    diff_text: str  # combined diff for this chunk
+    line_count: int  # changed-line count
+    risk_label: str  # "HIGH", "MEDIUM", "LOW"
     risk_scores: dict[str, float] = field(default_factory=dict)  # file → score
 
 
@@ -162,9 +161,7 @@ def extract_interface_context(
     their chunk.  Keeps the output short (names only, no diff text) to
     avoid bloating the prompt.
     """
-    sibling_files = [
-        fs.path for fs in all_file_scores if fs.path not in chunk.files
-    ]
+    sibling_files = [fs.path for fs in all_file_scores if fs.path not in chunk.files]
     if not sibling_files:
         return ""
     # Cap at 30 sibling paths to avoid prompt bloat
@@ -216,7 +213,7 @@ def _stem(path: str) -> str:
         if name.endswith(suffix):
             name = name[: -len(suffix)]
         if name.startswith(suffix):
-            name = name[len(suffix):]
+            name = name[len(suffix) :]
     return name.lower()
 
 

@@ -11,7 +11,6 @@ import pytest
 from forge.core.ci_watcher import (
     CICheck,
     CIFixConfig,
-    CIFixResult,
     _fetch_checks,
     check_pr_open,
     fetch_failure_logs,
@@ -19,7 +18,6 @@ from forge.core.ci_watcher import (
     poll_ci_checks,
     run_ci_fix_loop,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────
 

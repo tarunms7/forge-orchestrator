@@ -92,6 +92,10 @@ def _make_executor():
     import asyncio as _asyncio
 
     mixin._merge_lock = _asyncio.Lock()
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=False)
+    mixin._get_merge_lock = MagicMock(return_value=mock_lock)
     return mixin
 
 
@@ -303,6 +307,7 @@ async def test_attempt_merge_records_duration():
             MagicMock(),
             task,
             "task-1",
+            "agent-1",
             "/wt/task-1",
             "sonnet",
             "pipe-1",

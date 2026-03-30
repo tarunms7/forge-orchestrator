@@ -1114,9 +1114,7 @@ class ReviewMixin:
             on_review_event = self._make_review_event_callback(task.id, db, pipeline_id)
 
             # Load adaptive review settings from project config
-            _review_cfg = getattr(
-                getattr(self, "_project_config", None), "review", None
-            )
+            _review_cfg = getattr(getattr(self, "_project_config", None), "review", None)
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title,
                 task.description,

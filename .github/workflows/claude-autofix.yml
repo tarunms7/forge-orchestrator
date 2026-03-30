@@ -1,0 +1,54 @@
+name: Claude Auto-Fix
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  autofix:
+    name: Auto-fix CI failures
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Get PR number
+        id: pr
+        run: |
+          PR_NUMBER=$(gh pr list --head "${{ github.event.workflow_run.head_branch }}" --json number --jq '.[0].number')
+          echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Claude Code Auto-Fix
+        if: steps.pr.outputs.number != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: |
+            CI has failed on this PR. Your job is to fix the failures so CI passes.
+
+            1. Run `gh run view ${{ github.event.workflow_run.id }} --log-failed` to get the failure logs
+            2. Diagnose the root cause from the logs
+            3. Fix the code — lint errors, test failures, build issues, whatever is broken
+            4. Run the failing checks locally to verify your fix works:
+               - `ruff check forge/` for lint
+               - `ruff format --check forge/` for format
+               - `python -m pytest forge/ -q --timeout=120` for tests (with the same deselects as CI)
+               - `cd web && npm ci && npm run build` for frontend
+            5. Commit and push the fix
+
+            Be surgical. Only fix what's needed. Do NOT refactor or add features.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--model claude-sonnet-4-6 --max-turns 30"
+          timeout_minutes: 15

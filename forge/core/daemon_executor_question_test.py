@@ -51,14 +51,19 @@ class TestQuestionDetection:
         q = _parse_forge_question(result_text)
         assert q is None
 
-    def test_agent_continued_after_marker_returns_none(self):
-        """If significant text follows the JSON block, the agent didn't stop."""
+    def test_agent_continued_after_marker_still_parses(self):
+        """Even if text follows the JSON block, the question is accepted.
+
+        The marker + valid JSON means the agent intended to ask — trailing
+        text doesn't invalidate it.
+        """
         result_text = (
             'FORGE_QUESTION:\n{"question": "Which?"}\n\n'
             "Actually I will just proceed and implement it."
         )
         q = _parse_forge_question(result_text)
-        assert q is None
+        assert q is not None
+        assert q["question"] == "Which?"
 
 
 class TestResumeTaskSdkOptions:
@@ -176,13 +181,16 @@ class TestExecuteTaskQuestionDetection:
         )
 
         worktree_mgr = MagicMock()
-        worktree_mgr.create = MagicMock(return_value="/fake/worktrees/task-1")
+        worktree_mgr.async_create = AsyncMock(return_value="/fake/worktrees/task-1")
 
         runtime = MagicMock()
         runtime.run_task = AsyncMock(return_value=agent_result)
 
         merge_worker = MagicMock()
         merge_worker._main = "main"
+
+        db.set_task_timing = AsyncMock()
+        db.set_task_error = AsyncMock()
 
         emitted_events: list[tuple] = []
 

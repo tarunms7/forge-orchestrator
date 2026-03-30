@@ -26,19 +26,20 @@ logger = logging.getLogger("forge.review")
 
 # ── Data structures ────────────────────────────────────────────────────────
 
+
 @dataclass
 class ChunkReviewResult:
     """Result of reviewing a single DiffChunk."""
 
     chunk_index: int
-    verdict: str                   # "PASS", "FAIL", "UNCERTAIN"
-    confidence: int                # 1–5
-    issues: list[dict]             # [{severity, file, line_hint, description}]
+    verdict: str  # "PASS", "FAIL", "UNCERTAIN"
+    confidence: int  # 1–5
+    issues: list[dict]  # [{severity, file, line_hint, description}]
     cross_chunk_concerns: list[str]
     summary: str
     cost_info: ReviewCostInfo = field(default_factory=ReviewCostInfo)
     raw_text: str = ""
-    timed_out: bool = False        # True if SDK/timeout failure (not a review verdict)
+    timed_out: bool = False  # True if SDK/timeout failure (not a review verdict)
 
 
 # ── System prompts ────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ Rules:
 
 # ── JSON parsing ──────────────────────────────────────────────────────────
 
+
 def _parse_chunk_json(raw_text: str, chunk_index: int) -> ChunkReviewResult:
     """Parse a chunk reviewer's JSON response.
 
@@ -166,6 +168,7 @@ def _parse_chunk_json(raw_text: str, chunk_index: int) -> ChunkReviewResult:
 
 
 # ── Synthesis helpers ─────────────────────────────────────────────────────
+
 
 def _apply_synthesis_rules(
     results: list[ChunkReviewResult],
@@ -246,10 +249,7 @@ def _format_chunks_for_synthesis(
         risk = f" [{chunk.risk_label}]" if chunk else ""
         total_chunks = chunks[-1].total if chunks else (results[-1].chunk_index if results else "?")
 
-        lines.append(
-            f"**Chunk {result.chunk_index}/{total_chunks}**"
-            f"{risk}: {file_list}"
-        )
+        lines.append(f"**Chunk {result.chunk_index}/{total_chunks}**{risk}: {file_list}")
         lines.append(f"  Verdict: {result.verdict} (confidence {result.confidence}/5)")
         lines.append(f"  Summary: {result.summary}")
 
@@ -272,6 +272,7 @@ def _format_chunks_for_synthesis(
 
 
 # ── Per-chunk review ──────────────────────────────────────────────────────
+
 
 async def review_chunk(
     chunk: DiffChunk,
@@ -456,6 +457,7 @@ async def review_chunk(
 
 # ── Synthesis ─────────────────────────────────────────────────────────────
 
+
 async def synthesize_results(
     chunks: list[DiffChunk],
     chunk_results: list[ChunkReviewResult],
@@ -523,15 +525,11 @@ async def synthesize_results(
         chunk_summary,
     ]
     if all_cross:
-        parts.append(
-            "## Cross-Chunk Concerns\n" + "\n".join(f"- {c}" for c in all_cross) + "\n\n"
-        )
+        parts.append("## Cross-Chunk Concerns\n" + "\n".join(f"- {c}" for c in all_cross) + "\n\n")
     if prior_feedback:
         parts.append(f"=== PRIOR REVIEW FEEDBACK ===\n{prior_feedback[:3000]}\n\n")
     if delta_diff:
-        parts.append(
-            f"=== CHANGES SINCE LAST REVIEW ===\n```diff\n{delta_diff[:6000]}\n```\n\n"
-        )
+        parts.append(f"=== CHANGES SINCE LAST REVIEW ===\n```diff\n{delta_diff[:6000]}\n```\n\n")
     parts.append(
         f"Pre-analysis: {pre_verdict} ({pre_reason})\n\n"
         "Produce the final PASS/FAIL/UNCERTAIN verdict with consolidated feedback."
@@ -560,9 +558,7 @@ async def synthesize_results(
                 timeout=120,
             )
         except (TimeoutError, Exception) as exc:
-            logger.warning(
-                "Synthesis attempt %d/%d failed: %s", attempt, max_attempts, exc
-            )
+            logger.warning("Synthesis attempt %d/%d failed: %s", attempt, max_attempts, exc)
             if attempt == max_attempts:
                 return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
             await asyncio.sleep(2**attempt)
@@ -629,6 +625,7 @@ def _synthesis_fallback(
 
 
 # ── Full Tier 3 orchestration ─────────────────────────────────────────────
+
 
 async def run_chunked_review(
     chunks: list[DiffChunk],

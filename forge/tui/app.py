@@ -985,7 +985,9 @@ class ForgeApp(App):
                     for t in self._graph.tasks
                 }
                 self.push_screen(
-                    DryRunScreen(plan_tasks, cost_estimate=cost_estimate, model_assignments=model_assignments)
+                    DryRunScreen(
+                        plan_tasks, cost_estimate=cost_estimate, model_assignments=model_assignments
+                    )
                 )
             else:
                 self.push_screen(PlanApprovalScreen(plan_tasks))

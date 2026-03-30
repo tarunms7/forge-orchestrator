@@ -9,23 +9,6 @@ import os
 import time
 from datetime import UTC, datetime
 
-# Pathspec exclusions appended to every ``git add -A`` so that virtual
-# environments, dependency caches, and build artifacts are never staged —
-# even when the repo has no .gitignore.
-# NOTE: Use long-form :(exclude) instead of :! because the short form
-# breaks on some git versions when the path contains underscores
-# (e.g., :!__pycache__ triggers "Unimplemented pathspec magic '_'").
-_GIT_ADD_EXCLUDES: list[str] = [
-    ":(exclude).venv",
-    ":(exclude)venv",
-    ":(exclude).env",
-    ":(exclude)node_modules",
-    ":(exclude)__pycache__",
-    ":(exclude).ruff_cache",
-    ":(exclude).pytest_cache",
-    ":(exclude).mypy_cache",
-]
-
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
@@ -47,6 +30,23 @@ from forge.core.models import TaskState
 from forge.core.sanitize import validate_task_id
 from forge.learning.guard import GuardTriggered, RuntimeGuard
 from forge.learning.store import format_lessons_block, row_to_lesson
+
+# Pathspec exclusions appended to every ``git add -A`` so that virtual
+# environments, dependency caches, and build artifacts are never staged —
+# even when the repo has no .gitignore.
+# NOTE: Use long-form :(exclude) instead of :! because the short form
+# breaks on some git versions when the path contains underscores
+# (e.g., :!__pycache__ triggers "Unimplemented pathspec magic '_'").
+_GIT_ADD_EXCLUDES: list[str] = [
+    ":(exclude).venv",
+    ":(exclude)venv",
+    ":(exclude).env",
+    ":(exclude)node_modules",
+    ":(exclude)__pycache__",
+    ":(exclude).ruff_cache",
+    ":(exclude).pytest_cache",
+    ":(exclude).mypy_cache",
+]
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -247,6 +247,7 @@ class ExecutorMixin:
             worktree_mgr,
             task,
             task_id,
+            agent_id,
             worktree_path,
             agent_model,
             pid,
@@ -1039,6 +1040,7 @@ class ExecutorMixin:
             worktree_mgr,
             task,
             task_id,
+            agent_id,
             worktree_path,
             agent_model,
             pid,
@@ -1110,8 +1112,9 @@ class ExecutorMixin:
         # Get the source of the question to determine routing
         source = None
         async with db._session_factory() as session:
-            from forge.storage.db import TaskQuestionRow
             from sqlalchemy import select as sa_select
+
+            from forge.storage.db import TaskQuestionRow
 
             stmt = (
                 sa_select(TaskQuestionRow)
@@ -1175,13 +1178,15 @@ class ExecutorMixin:
                 db=db,
                 pipeline_id=pid,
             )
+            worktree_path = getattr(task, "worktree_path", "") or ""
             await self._attempt_merge(
                 db,
                 self._merge_worker,
+                self._worktree_mgr,
                 task,
                 task_id,
                 agent_id,
-                self._worktree_mgr,
+                worktree_path,
                 agent_model,
                 pid,
             )
@@ -1361,6 +1366,7 @@ class ExecutorMixin:
         worktree_mgr,
         task,
         task_id: str,
+        agent_id: str,
         worktree_path: str,
         agent_model: str,
         pid: str,

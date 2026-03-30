@@ -1505,9 +1505,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         db=db,
                         pipeline_id=pipeline_id,
                     )
-                    logger.info(
-                        "Unblocked task %s (was waiting on retried task %s)", t.id, task_id
-                    )
+                    logger.info("Unblocked task %s (was waiting on retried task %s)", t.id, task_id)
         except Exception:
             logger.debug(
                 "Failed to cascade-unblock dependents of %s (non-fatal)", task_id, exc_info=True
@@ -1702,12 +1700,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 spec_path=spec_path,
                 deep_plan=deep_plan,
             )
-            cost = await estimate_pipeline_cost(
-                len(graph.tasks), self._settings, self._strategy
-            )
+            cost = await estimate_pipeline_cost(len(graph.tasks), self._settings, self._strategy)
             model_assignments = {
-                t.id: select_model(self._strategy, "agent", t.complexity.value)
-                for t in graph.tasks
+                t.id: select_model(self._strategy, "agent", t.complexity.value) for t in graph.tasks
             }
             await db.update_pipeline_status(self._pipeline_id, "dry_run")
             return {

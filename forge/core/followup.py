@@ -583,7 +583,16 @@ async def _commit_and_push(
 
     # Stage all changes, excluding virtual environments and caches
     await _run_git(
-        ["git", "add", "-A", "--", ":(exclude).venv", ":(exclude)venv", ":(exclude)node_modules", ":(exclude)__pycache__"],
+        [
+            "git",
+            "add",
+            "-A",
+            "--",
+            ":(exclude).venv",
+            ":(exclude)venv",
+            ":(exclude)node_modules",
+            ":(exclude)__pycache__",
+        ],
         cwd=worktree_dir,
     )
 
