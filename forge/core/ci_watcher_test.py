@@ -140,15 +140,15 @@ async def test_fetch_checks_parses_json(mock_sub):
         [
             {
                 "name": "build",
-                "state": "COMPLETED",
-                "conclusion": "SUCCESS",
-                "detailsUrl": "https://github.com/o/r/actions/runs/12345/job/1",
+                "state": "SUCCESS",
+                "bucket": "pass",
+                "link": "https://github.com/o/r/actions/runs/12345/job/1",
             },
             {
                 "name": "lint",
-                "state": "COMPLETED",
-                "conclusion": "FAILURE",
-                "detailsUrl": "https://github.com/o/r/actions/runs/67890/job/2",
+                "state": "FAILURE",
+                "bucket": "fail",
+                "link": "https://github.com/o/r/actions/runs/67890/job/2",
             },
         ]
     )
@@ -187,7 +187,7 @@ async def test_fetch_checks_invalid_json(mock_sub):
 async def test_fetch_checks_no_details_url(mock_sub):
     gh_output = json.dumps(
         [
-            {"name": "check", "state": "COMPLETED", "conclusion": "SUCCESS"},
+            {"name": "check", "state": "SUCCESS", "bucket": "pass"},
         ]
     )
     mock_sub.return_value = FakeResult(returncode=0, stdout=gh_output.encode())

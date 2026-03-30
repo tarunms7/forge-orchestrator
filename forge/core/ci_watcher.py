@@ -160,8 +160,37 @@ async def poll_ci_checks(
         current_interval = min(current_interval * 1.5, 90)
 
 
+# Maps gh `state` values to our (status, conclusion) tuple.
+# `gh pr checks --json` exposes `state` as the combined terminal result
+# (e.g. "SUCCESS", "FAILURE", "PENDING") — NOT separate status/conclusion.
+_GH_STATE_MAP: dict[str, tuple[str, str]] = {
+    "success": ("completed", "success"),
+    "failure": ("completed", "failure"),
+    "cancelled": ("completed", "cancelled"),
+    "timed_out": ("completed", "timed_out"),
+    "skipped": ("completed", "skipped"),
+    "neutral": ("completed", "neutral"),
+    "stale": ("completed", "stale"),
+    "startup_failure": ("completed", "failure"),
+    "error": ("completed", "failure"),
+    # Non-terminal states
+    "pending": ("in_progress", ""),
+    "queued": ("queued", ""),
+    "in_progress": ("in_progress", ""),
+    "waiting": ("waiting", ""),
+    "requested": ("queued", ""),
+    "action_required": ("in_progress", "action_required"),
+}
+
+
 async def _fetch_checks(owner_repo: str, pr_number: str, project_dir: str) -> list[CICheck]:
-    """Run `gh pr checks` and parse the JSON output."""
+    """Run `gh pr checks` and parse the JSON output.
+
+    Note: `gh pr checks --json` supports: name, state, bucket, link,
+    description, event, startedAt, completedAt, workflow.
+    It does NOT support `conclusion` or `detailsUrl` — those are only
+    available via the GitHub REST API, not the `gh pr checks` CLI.
+    """
     result = await async_subprocess(
         [
             "gh",
@@ -171,7 +200,7 @@ async def _fetch_checks(owner_repo: str, pr_number: str, project_dir: str) -> li
             "--repo",
             owner_repo,
             "--json",
-            "name,state,conclusion,detailsUrl",
+            "name,state,bucket,link",
         ],
         cwd=project_dir,
     )
@@ -189,18 +218,22 @@ async def _fetch_checks(owner_repo: str, pr_number: str, project_dir: str) -> li
 
     checks = []
     for item in data:
-        # Extract run ID from detailsUrl if available
+        # Extract run ID from link (the details URL) if available
         run_id = ""
-        details_url = item.get("detailsUrl", "")
-        run_match = re.search(r"/actions/runs/(\d+)", details_url)
+        link = item.get("link", "")
+        run_match = re.search(r"/actions/runs/(\d+)", link)
         if run_match:
             run_id = run_match.group(1)
+
+        # Map gh state to our (status, conclusion) model
+        raw_state = item.get("state", "").lower()
+        status, conclusion = _GH_STATE_MAP.get(raw_state, ("unknown", raw_state))
 
         checks.append(
             CICheck(
                 name=item.get("name", "unknown"),
-                status=item.get("state", "").lower(),
-                conclusion=item.get("conclusion", "").lower(),
+                status=status,
+                conclusion=conclusion,
                 run_id=run_id,
             )
         )
