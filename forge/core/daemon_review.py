@@ -1235,6 +1235,11 @@ class ReviewMixin:
                     allowed_files=task.files,
                     sibling_context=sibling_context,
                     custom_review_focus=extra_focus,
+                    on_review_event=on_review_event,
+                    adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
+                    medium_diff_threshold=_review_cfg.medium_diff_threshold if _review_cfg else 400,
+                    large_diff_threshold=_review_cfg.large_diff_threshold if _review_cfg else 2000,
+                    max_chunk_lines=_review_cfg.max_chunk_lines if _review_cfg else 600,
                 )
                 # Track extra review cost
                 if extra_cost_info.cost_usd > 0:

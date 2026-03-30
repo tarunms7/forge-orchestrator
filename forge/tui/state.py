@@ -361,7 +361,7 @@ class TuiState:
     def _on_review_chunk_started(self, data: dict) -> None:
         task_id = data.get("task_id")
         if task_id and task_id in self.tasks:
-            idx = data.get("chunk_index")
+            idx = int(data.get("chunk_index", 0))
             self.tasks[task_id]["review_current_chunk"] = idx
             chunks = self.tasks[task_id].setdefault("review_chunks", {})
             chunks[idx] = {
@@ -374,7 +374,7 @@ class TuiState:
     def _on_review_chunk_complete(self, data: dict) -> None:
         task_id = data.get("task_id")
         if task_id and task_id in self.tasks:
-            idx = data.get("chunk_index")
+            idx = int(data.get("chunk_index", 0))
             chunks = self.tasks[task_id].get("review_chunks", {})
             if idx in chunks:
                 chunks[idx]["verdict"] = data.get("verdict")

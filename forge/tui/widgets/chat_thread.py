@@ -87,6 +87,12 @@ def format_review_progress(
     header = f"[{TEXT_SECONDARY}]  ({lines_str}Chunked · {chunk_count or len(chunks)} chunks)[/]"
     parts = [header]
 
+    # Normalize current_chunk to int for comparison (JSON may deserialize as str)
+    try:
+        _current = int(current_chunk) if current_chunk is not None and current_chunk != "synthesis" else current_chunk
+    except (ValueError, TypeError):
+        _current = current_chunk
+
     for idx in sorted(chunks.keys()):
         chunk = chunks[idx]
         files = chunk.get("files", [])
@@ -107,7 +113,7 @@ def format_review_progress(
         elif verdict in ("UNCERTAIN", "TIMEOUT"):
             icon = "[yellow]?[/]"
             verdict_str = f"[yellow]{verdict}[/]"
-        elif current_chunk == idx:
+        elif _current == idx:
             icon = f"[{ACCENT_BLUE}]⟳[/]"
             verdict_str = f"[{ACCENT_BLUE}]reviewing...[/]"
         else:
