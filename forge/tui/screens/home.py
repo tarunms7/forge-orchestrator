@@ -117,7 +117,7 @@ class HomeScreen(Screen):
     .branch-field {
         width: 1fr;
         height: auto;
-        max-height: 5;
+        max-height: 4;
     }
     .workspace-repo-row {
         width: 100%;
