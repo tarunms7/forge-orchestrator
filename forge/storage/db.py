@@ -965,7 +965,7 @@ class Database:
                         "id": p.id,
                         "description": p.description,
                         "status": p.status,
-                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                        "created_at": p.created_at,
                         "cost": p.total_cost_usd,
                         "total_tasks": len(tasks),
                         "tasks_done": sum(1 for t in tasks if t.state == "done"),

@@ -350,14 +350,19 @@ class TestWorktreePathThreading:
         # Simulate the worktree directory existing on disk
         with patch("os.path.isdir", return_value=True):
             with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
-                result = await mixin._prepare_worktree(
-                    worktree_mgr,
-                    "task-1",
-                    "pipe-1",
-                    db,
-                    base_ref="main",
-                    repo_id="backend",
-                )
+                with patch(
+                    "forge.core.daemon_executor._run_git",
+                    new_callable=AsyncMock,
+                    return_value=_make_proc(returncode=0),
+                ):
+                    result = await mixin._prepare_worktree(
+                        worktree_mgr,
+                        "task-1",
+                        "pipe-1",
+                        db,
+                        base_ref="main",
+                        repo_id="backend",
+                    )
 
         assert result == "/fake/project/.forge/worktrees/backend/task-1"
         mixin._worktree_path.assert_called_once_with("backend", "task-1")
@@ -478,13 +483,18 @@ class TestWorktreePathThreading:
 
         with patch("os.path.isdir", return_value=True):
             with patch.object(mixin, "_rebase_worktree", new_callable=AsyncMock):
-                await mixin._prepare_worktree(
-                    worktree_mgr,
-                    "task-1",
-                    "pipe-1",
-                    db,
-                    base_ref="main",
-                )
+                with patch(
+                    "forge.core.daemon_executor._run_git",
+                    new_callable=AsyncMock,
+                    return_value=_make_proc(returncode=0),
+                ):
+                    await mixin._prepare_worktree(
+                        worktree_mgr,
+                        "task-1",
+                        "pipe-1",
+                        db,
+                        base_ref="main",
+                    )
 
         # Default repo_id is 'default'
         mixin._worktree_path.assert_called_once_with("default", "task-1")
@@ -780,15 +790,20 @@ class TestExecuteTaskReviewOnly:
         executor._cleanup_and_release = AsyncMock()
 
         with patch("os.path.isdir", return_value=True):
-            await executor._execute_task_review_only(
-                db,
-                merge_worker,
-                worktree_mgr,
-                "task-1",
-                "agent-1",
-                pipeline_id="pipe-1",
-                repo_id="default",
-            )
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                new_callable=AsyncMock,
+                return_value=_make_proc(returncode=0),
+            ):
+                await executor._execute_task_review_only(
+                    db,
+                    merge_worker,
+                    worktree_mgr,
+                    "task-1",
+                    "agent-1",
+                    pipeline_id="pipe-1",
+                    repo_id="default",
+                )
 
         executor._attempt_merge.assert_called_once()
         executor._cleanup_and_release.assert_called_once()

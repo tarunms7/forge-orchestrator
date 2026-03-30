@@ -1695,7 +1695,12 @@ class TestGenerateContractsPersistsStatus:
 
         from forge.core.models import TaskGraph
 
-        hint = {"type": "api", "producer": "task-1", "consumer": "task-2", "description": "test"}
+        hint = {
+            "producer_task_id": "task-1",
+            "consumer_task_ids": ["task-2"],
+            "interface_type": "api_endpoint",
+            "description": "test",
+        }
         graph = TaskGraph(tasks=[_make_task_def()], integration_hints=[hint])
 
         db = AsyncMock()
@@ -1705,10 +1710,12 @@ class TestGenerateContractsPersistsStatus:
 
         with (
             patch("forge.core.daemon.ContractBuilder") as MockBuilder,
-            patch("forge.core.daemon.ContractBuilderLLM"),
+            patch("forge.core.daemon.ContractBuilderLLM") as MockBuilderLLM,
         ):
             from forge.core.contracts import ContractSet
 
+            # Ensure _last_sdk_result is None so cost-tracking code is skipped
+            MockBuilderLLM.return_value._last_sdk_result = None
             mock_builder = MockBuilder.return_value
             mock_builder.build = AsyncMock(return_value=ContractSet())
             await daemon.generate_contracts(graph, db, "pipe-1")
@@ -1750,7 +1757,9 @@ class TestResumeContractRestoration:
         daemon = _make_daemon(tmp_path)
         daemon._emit = AsyncMock()
         daemon._init_repos = AsyncMock()
-        daemon._preflight_checks = AsyncMock(return_value=False)
+        # Pre-flight must PASS so the resume block (contract restoration + agent scaling)
+        # is reached before execution stops.
+        daemon._preflight_checks = AsyncMock(return_value=True)
 
         db = AsyncMock()
         db.log_event = AsyncMock()
@@ -1768,11 +1777,14 @@ class TestResumeContractRestoration:
         t3 = _make_task("done", "task-3")
         db.list_tasks_by_pipeline = AsyncMock(return_value=[t1, t2, t3])
 
+        # Fail after the resume block by raising on db.get_pipeline
+        db.get_pipeline = AsyncMock(side_effect=RuntimeError("stop after resume"))
+
         from forge.core.models import TaskGraph
 
         graph = TaskGraph(tasks=[_make_task_def()])
 
-        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+        with pytest.raises(RuntimeError, match="stop after resume"):
             await daemon.execute(graph, db, "pipe-1", resume=True)
 
         # Contracts were restored
@@ -1784,7 +1796,9 @@ class TestResumeContractRestoration:
         daemon = _make_daemon(tmp_path)
         daemon._emit = AsyncMock()
         daemon._init_repos = AsyncMock()
-        daemon._preflight_checks = AsyncMock(return_value=False)
+        # Pre-flight must PASS so the resume block (contract restoration + agent scaling)
+        # is reached before execution stops.
+        daemon._preflight_checks = AsyncMock(return_value=True)
 
         db = AsyncMock()
         db.log_event = AsyncMock()
@@ -1792,12 +1806,15 @@ class TestResumeContractRestoration:
         db.get_pipeline_contracts = AsyncMock(return_value="{bad json")
         db.list_tasks_by_pipeline = AsyncMock(return_value=[])
 
+        # Fail after the resume block by raising on db.get_pipeline
+        db.get_pipeline = AsyncMock(side_effect=RuntimeError("stop after resume"))
+
         from forge.core.contracts import ContractSet
         from forge.core.models import TaskGraph
 
         graph = TaskGraph(tasks=[_make_task_def()])
 
-        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+        with pytest.raises(RuntimeError, match="stop after resume"):
             await daemon.execute(graph, db, "pipe-1", resume=True)
 
         # Should fall back to empty ContractSet
@@ -1807,7 +1824,9 @@ class TestResumeContractRestoration:
         daemon = _make_daemon(tmp_path)
         daemon._emit = AsyncMock()
         daemon._init_repos = AsyncMock()
-        daemon._preflight_checks = AsyncMock(return_value=False)
+        # Pre-flight must PASS so the resume block (contract restoration + agent scaling)
+        # is reached before execution stops.
+        daemon._preflight_checks = AsyncMock(return_value=True)
 
         db = AsyncMock()
         db.log_event = AsyncMock()
@@ -1824,11 +1843,14 @@ class TestResumeContractRestoration:
         ]
         db.list_tasks_by_pipeline = AsyncMock(return_value=tasks)
 
+        # Fail after the resume block by raising on db.get_pipeline
+        db.get_pipeline = AsyncMock(side_effect=RuntimeError("stop after resume"))
+
         from forge.core.models import TaskGraph
 
         graph = TaskGraph(tasks=[_make_task_def()])
 
-        with pytest.raises(RuntimeError, match="Pre-flight checks failed"):
+        with pytest.raises(RuntimeError, match="stop after resume"):
             await daemon.execute(graph, db, "pipe-1", resume=True)
 
         assert daemon._effective_max_agents == min(3, daemon._settings.max_agents)

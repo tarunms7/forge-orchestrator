@@ -305,6 +305,24 @@ async def test_d_key_opens_diff_view():
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Set up a task in a diff-eligible state so action_view_diff doesn't guard
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+        await pilot.pause()
         await pilot.press("d")
         assert app.screen._active_view == "diff"
 
@@ -836,9 +854,27 @@ def _make_state_with_task(task_id: str, task_state: str, phase: str = "executing
 @pytest.mark.asyncio
 async def test_shortcut_bar_changes_by_task_state_in_progress():
     """Shortcut bar should include interject/chat/diff for in_progress tasks."""
-    state = _make_state_with_task("t1", "in_progress")
+    state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
         await pilot.pause()
         from forge.tui.widgets.shortcut_bar import ShortcutBar
 
@@ -852,9 +888,27 @@ async def test_shortcut_bar_changes_by_task_state_in_progress():
 @pytest.mark.asyncio
 async def test_shortcut_bar_changes_by_task_state_error():
     """Shortcut bar should include Retry/Skip for error tasks."""
-    state = _make_state_with_task("t1", "error")
+    state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "error"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
         await pilot.pause()
         from forge.tui.widgets.shortcut_bar import ShortcutBar
 
@@ -867,9 +921,27 @@ async def test_shortcut_bar_changes_by_task_state_error():
 @pytest.mark.asyncio
 async def test_shortcut_bar_changes_by_task_state_done():
     """Shortcut bar should include Diff/Output for done tasks."""
-    state = _make_state_with_task("t1", "done")
+    state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
         await pilot.pause()
         from forge.tui.widgets.shortcut_bar import ShortcutBar
 
@@ -885,9 +957,27 @@ async def test_shortcut_bar_changes_by_task_state_done():
 @pytest.mark.asyncio
 async def test_shortcut_bar_changes_by_phase_planning():
     """Planning phase should show minimal shortcuts (no task-specific actions)."""
-    state = _make_state_with_task("t1", "todo", phase="planning")
+    state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "todo"})
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
         await pilot.pause()
         from forge.tui.widgets.shortcut_bar import ShortcutBar
 
@@ -905,9 +995,27 @@ async def test_shortcut_bar_changes_by_phase_planning():
 @pytest.mark.asyncio
 async def test_shortcut_bar_changes_by_phase_executing():
     """Executing phase should include Tab for next active."""
-    state = _make_state_with_task("t1", "in_progress", phase="executing")
+    state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        # Apply state AFTER mount so _on_state_change callback fires and updates shortcut bar
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test Task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
         await pilot.pause()
         from forge.tui.widgets.shortcut_bar import ShortcutBar
 
