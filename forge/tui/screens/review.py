@@ -86,6 +86,7 @@ class ReviewScreen(Screen):
         self._state = state
         self._diff_cache: dict[str, str] = {}
         self._diff_loading: set[str] = set()
+        self._diff_loaded = False
 
     def compose(self) -> ComposeResult:
         yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
@@ -95,15 +96,25 @@ class ReviewScreen(Screen):
             "[a] approve  [x] reject  [e] editor  [j/k] scroll  [/] search  [1-9] jump task",
             id="review-status",
         )
-        yield ShortcutBar(
-            [
+        yield ShortcutBar([("Esc", "Back")])
+
+    def _update_shortcut_bar(self) -> None:
+        """Update shortcut bar based on diff load state."""
+        if self._diff_loaded:
+            shortcuts: list[tuple[str, str]] = [
                 ("a", "Approve"),
                 ("x", "Reject"),
-                ("e", "Open in Editor"),
-                ("↑↓", "Scroll"),
+                ("e", "Editor"),
+                ("/", "Search"),
                 ("Esc", "Back"),
             ]
-        )
+        else:
+            shortcuts = [("Esc", "Back")]
+        try:
+            bar = self.query_one(ShortcutBar)
+            bar.update_shortcuts(shortcuts)
+        except Exception:
+            pass
 
     def on_mount(self) -> None:
         self._state.on_change(self._on_state_change)
@@ -137,6 +148,10 @@ class ReviewScreen(Screen):
                 self._diff_loading.add(tid)
                 safe_create_task(self._load_diff(tid), logger=logger, name="load-diff")
                 diff = "\u23f3 Loading diff..."
+            was_loaded = self._diff_loaded
+            self._diff_loaded = bool(diff and not diff.startswith("\u23f3"))
+            if self._diff_loaded != was_loaded:
+                self._update_shortcut_bar()
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
     def action_cursor_down(self) -> None:
@@ -260,6 +275,8 @@ class ReviewScreen(Screen):
         # Guard: only update if user is still on this task
         if self._state.selected_task_id != tid:
             return
+        self._diff_loaded = True
+        self._update_shortcut_bar()
         try:
             self.query_one(DiffViewer).update_diff(
                 tid,

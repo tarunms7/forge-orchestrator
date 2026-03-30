@@ -68,7 +68,8 @@ def test_show_pr_url_updates_widget():
 
     screen.show_pr_url("https://github.com/org/repo/pull/42")
 
-    screen.query_one.assert_called_once()
+    # query_one is called for #pr-url and ShortcutBar (for _update_shortcut_bar)
+    assert screen.query_one.call_count >= 1
     mock_widget.update.assert_called_once()
     call_arg = mock_widget.update.call_args[0][0]
     assert "https://github.com/org/repo/pull/42" in call_arg

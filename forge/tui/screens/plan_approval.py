@@ -257,8 +257,12 @@ class PlanApprovalScreen(Screen):
         )
         yield ShortcutBar(
             [
-                ("Enter", "Approve Plan"),
-                ("↑↓", "Scroll"),
+                ("Enter", "Approve"),
+                ("e", "Edit"),
+                ("f", "Files"),
+                ("x", "Remove"),
+                ("a", "Add"),
+                ("J/K", "Reorder"),
                 ("Esc", "Cancel"),
             ]
         )
@@ -320,6 +324,7 @@ class PlanApprovalScreen(Screen):
         area.text = f"{task.get('title', '')}\n{task.get('description', '')}"
         area.add_class("visible")
         area.focus()
+        self._update_shortcut_bar()
 
     def action_edit_files(self) -> None:
         """Open inline editor for comma-separated file list."""
@@ -336,6 +341,7 @@ class PlanApprovalScreen(Screen):
         area.text = ", ".join(task.get("files", []))
         area.add_class("visible")
         area.focus()
+        self._update_shortcut_bar()
 
     def action_add_note(self) -> None:
         """Add a context note for the agent."""
@@ -352,6 +358,7 @@ class PlanApprovalScreen(Screen):
         area.text = task.get("agent_notes", "")
         area.add_class("visible")
         area.focus()
+        self._update_shortcut_bar()
 
     def _save_edit(self) -> None:
         """Save the current edit from the TextArea."""
@@ -373,6 +380,29 @@ class PlanApprovalScreen(Screen):
 
         self._close_editor()
 
+    def _update_shortcut_bar(self) -> None:
+        """Update shortcut bar based on whether we're in edit mode."""
+        if self._is_editing():
+            shortcuts: list[tuple[str, str]] = [
+                ("Ctrl+S", "Save"),
+                ("Esc", "Cancel Edit"),
+            ]
+        else:
+            shortcuts = [
+                ("Enter", "Approve"),
+                ("e", "Edit"),
+                ("f", "Files"),
+                ("x", "Remove"),
+                ("a", "Add"),
+                ("J/K", "Reorder"),
+                ("Esc", "Cancel"),
+            ]
+        try:
+            bar = self.query_one(ShortcutBar)
+            bar.update_shortcuts(shortcuts)
+        except Exception:
+            pass
+
     def _close_editor(self) -> None:
         """Close the edit area and return to task list navigation."""
         self._editing = None
@@ -381,6 +411,7 @@ class PlanApprovalScreen(Screen):
         area = self.query_one("#edit-area", TextArea)
         area.remove_class("visible")
         self._refresh_task_list()
+        self._update_shortcut_bar()
 
     def action_remove_task(self) -> None:
         """Mark the current task as removed."""
