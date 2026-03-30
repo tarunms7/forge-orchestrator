@@ -110,7 +110,7 @@ class TestBuildReviewPrompt:
         )
         assert "CHANGES SINCE LAST REVIEW (DELTA)" in prompt
         assert "delta changes only" in prompt
-        assert "shown for context" in prompt
+        assert "NEW changes" in prompt
 
     def test_no_delta_when_none(self):
         """No delta section when delta_diff is None."""
@@ -340,7 +340,7 @@ class TestRetryPromptNoSuppression:
 
     def test_delta_diff_neutral_framing(self):
         prompt = _build_review_prompt("T", "D", "full diff", delta_diff="delta changes")
-        assert "shown for context" in prompt
+        assert "NEW changes" in prompt
         assert "Focus your review on these delta changes" not in prompt
 
 

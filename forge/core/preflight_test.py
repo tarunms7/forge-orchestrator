@@ -160,6 +160,7 @@ async def test_preflight_bad_base_branch(tmp_path):
 async def test_run_preflight_super_repo(tmp_path):
     """Preflight passes when project_dir is a plain folder with git repos inside."""
     import subprocess
+    from unittest.mock import patch
 
     git_env = {
         **os.environ,
@@ -190,7 +191,14 @@ async def test_run_preflight_super_repo(tmp_path):
         "frontend": RepoConfig(id="frontend", path=str(tmp_path / "frontend"), base_branch="main"),
     }
 
-    report = await run_preflight(str(tmp_path), repos=repos)
+    # Mock Claude CLI checks — not available in CI
+    mock_claude_check = CheckResult(name="claude", passed=True, message="mocked")
+    mock_claude_auth = CheckResult(name="claude_auth", passed=True, message="mocked")
+    with (
+        patch("forge.core.preflight._check_claude_cli", return_value=mock_claude_check),
+        patch("forge.core.preflight._check_claude_auth", return_value=mock_claude_auth),
+    ):
+        report = await run_preflight(str(tmp_path), repos=repos)
 
     # Git repo check must pass (checking sub-repos, not the wrapper)
     git_check = next((c for c in report.checks if c.name == "git_repo"), None)
@@ -210,6 +218,7 @@ async def test_run_preflight_super_repo(tmp_path):
 async def test_run_preflight_super_repo_git_wrapper(tmp_path):
     """Preflight passes when project_dir is a git-init'd wrapper with repos inside."""
     import subprocess
+    from unittest.mock import patch
 
     git_env = {
         **os.environ,
@@ -242,7 +251,14 @@ async def test_run_preflight_super_repo_git_wrapper(tmp_path):
         "frontend": RepoConfig(id="frontend", path=str(tmp_path / "frontend"), base_branch="main"),
     }
 
-    report = await run_preflight(str(tmp_path), repos=repos)
+    # Mock Claude CLI checks — not available in CI
+    mock_claude_check = CheckResult(name="claude", passed=True, message="mocked")
+    mock_claude_auth = CheckResult(name="claude_auth", passed=True, message="mocked")
+    with (
+        patch("forge.core.preflight._check_claude_cli", return_value=mock_claude_check),
+        patch("forge.core.preflight._check_claude_auth", return_value=mock_claude_auth),
+    ):
+        report = await run_preflight(str(tmp_path), repos=repos)
     git_check = next((c for c in report.checks if c.name == "git_repo"), None)
     assert git_check is not None
     assert git_check.passed, f"git_repo check failed: {git_check.message}"
@@ -253,6 +269,7 @@ async def test_run_preflight_super_repo_git_wrapper(tmp_path):
 async def test_super_repo_single_repo_no_regression(tmp_path):
     """Single-repo mode still works exactly as before (no regression)."""
     import subprocess
+    from unittest.mock import patch
 
     git_env = {
         **os.environ,
@@ -271,13 +288,20 @@ async def test_super_repo_single_repo_no_regression(tmp_path):
         env=git_env,
     )
 
-    # No repos dict — single-repo mode
-    report = await run_preflight(str(tmp_path), base_branch="main")
-    assert report.passed, f"Single-repo preflight should pass: {report.summary()}"
+    # Mock Claude CLI checks — not available in CI
+    mock_claude_check = CheckResult(name="claude", passed=True, message="mocked")
+    mock_claude_auth = CheckResult(name="claude_auth", passed=True, message="mocked")
+    with (
+        patch("forge.core.preflight._check_claude_cli", return_value=mock_claude_check),
+        patch("forge.core.preflight._check_claude_auth", return_value=mock_claude_auth),
+    ):
+        # No repos dict — single-repo mode
+        report = await run_preflight(str(tmp_path), base_branch="main")
+        assert report.passed, f"Single-repo preflight should pass: {report.summary()}"
 
-    # With a single "default" repo dict — should also work
-    from forge.core.models import RepoConfig
+        # With a single "default" repo dict — should also work
+        from forge.core.models import RepoConfig
 
-    repos = {"default": RepoConfig(id="default", path=str(tmp_path), base_branch="main")}
-    report = await run_preflight(str(tmp_path), repos=repos)
-    assert report.passed, f"Single default repo preflight should pass: {report.summary()}"
+        repos = {"default": RepoConfig(id="default", path=str(tmp_path), base_branch="main")}
+        report = await run_preflight(str(tmp_path), repos=repos)
+        assert report.passed, f"Single default repo preflight should pass: {report.summary()}"

@@ -327,6 +327,7 @@ class TestGetPipelineTrends:
             "tasks_succeeded",
             "tasks_failed",
             "total_retries",
+            "total_tasks",
             "created_at",
         }
         assert set(t.keys()) == expected_keys

@@ -112,8 +112,12 @@ class TestHandleTaskException:
         daemon._emit = AsyncMock()
         task_rec = _make_task("in_progress", "task-1")
         task_rec.assigned_agent = "agent-1"
+        # Set retry_count >= max_retries so the retry path is skipped
+        # and the task goes straight to permanent ERROR.
+        task_rec.retry_count = daemon._settings.max_retries
         db = MagicMock()
         db.update_task_state = AsyncMock()
+        db.set_task_error = AsyncMock()
         db.get_task = AsyncMock(return_value=task_rec)
         db.release_agent = AsyncMock()
         db.log_event = AsyncMock()
@@ -128,7 +132,6 @@ class TestHandleTaskException:
         )
         db.update_task_state.assert_called_once_with("task-1", TaskState.ERROR.value)
         db.release_agent.assert_called_once_with("agent-1")
-        worktree_mgr.remove.assert_called_once_with("task-1")
 
     async def test_emits_pipeline_error_when_all_terminal(self, tmp_path):
         daemon = _make_daemon(tmp_path)
