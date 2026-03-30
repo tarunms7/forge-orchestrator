@@ -160,23 +160,26 @@ class ForgeApp(App):
             return []
 
     async def _load_recent_pipelines(self) -> list[dict]:
-        """Load recent pipelines from DB for HomeScreen."""
+        """Load recent pipelines from DB for HomeScreen, enriched with task counts."""
         if not self._db:
             return []
         try:
-            pipelines = await self._db.list_pipelines()
+            rows = await self._db.get_pipeline_list_with_counts(limit=10)
             return [
                 {
-                    "id": p.id,
-                    "description": p.description or "",
-                    "status": p.status or "unknown",
-                    "created_at": p.created_at or "",
-                    "cost": p.total_cost_usd or 0.0,
-                    "total_cost_usd": p.total_cost_usd or 0.0,
-                    "task_count": 0,
-                    "project_dir": p.project_dir or "",
+                    "id": r["id"],
+                    "description": r.get("description") or "",
+                    "status": r.get("status") or "unknown",
+                    "created_at": r.get("created_at") or "",
+                    "cost": r.get("cost") or 0.0,
+                    "total_cost_usd": r.get("cost") or 0.0,
+                    "project_dir": r.get("project_dir") or "",
+                    "total_tasks": r.get("total_tasks", 0),
+                    "tasks_done": r.get("tasks_done", 0),
+                    "tasks_error": r.get("tasks_error", 0),
+                    "pr_url": r.get("pr_url"),
                 }
-                for p in pipelines[:10]
+                for r in rows
             ]
         except Exception:
             logger.debug("Failed to load pipeline history", exc_info=True)
@@ -1006,8 +1009,16 @@ class ForgeApp(App):
             self._state.apply_event("pipeline:error", {"error": str(e)})
 
     async def on_plan_approval_screen_plan_approved(self, event) -> None:
-        """User approved the plan — start contract generation + execution."""
+        """User approved the plan — persist status + start contract generation + execution."""
         self.pop_screen()  # Remove PlanApprovalScreen, back to PipelineScreen
+        # Persist 'planned' status and task graph so resume can skip planning
+        if self._db and self._pipeline_id and self._graph:
+            try:
+                await self._db.set_pipeline_plan(
+                    self._pipeline_id, self._graph.model_dump_json()
+                )
+            except Exception:
+                logger.debug("Failed to persist plan approval", exc_info=True)
         # Launch contracts + execution as a single background task so the
         # TUI event loop stays responsive and can show progress.
         self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
@@ -1057,6 +1068,9 @@ class ForgeApp(App):
                 "pipeline:phase_changed",
                 {"phase": "contracts"},
             )
+            # Persist status so resume knows we're in contract generation
+            if self._db and self._pipeline_id:
+                await self._db.update_pipeline_status(self._pipeline_id, "contracts")
             self._daemon._contracts = await self._daemon.generate_contracts(
                 self._graph,
                 self._db,
@@ -1265,17 +1279,20 @@ class ForgeApp(App):
                 pass
 
         if self._db and self._pipeline_id:
+            # Smart reset: preserve task states where possible to minimize
+            # rework on resume. Only reset states where session context is lost.
+            _SMART_RESET = {
+                "in_progress": "todo",        # agent session lost
+                "awaiting_input": "todo",     # question context lost with agent
+                "in_review": "in_review",     # code in worktree, review can re-run
+                "awaiting_approval": "in_review",  # approval context lost, re-review
+                "merging": "in_review",       # merge interrupted, re-review + re-merge
+            }
             tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
-            non_terminal = (
-                "in_progress",
-                "in_review",
-                "merging",
-                "awaiting_input",
-                "awaiting_approval",
-            )
             for t in tasks:
-                if t.state in non_terminal:
-                    await self._db.update_task_state(t.id, "todo")
+                new_state = _SMART_RESET.get(t.state)
+                if new_state is not None and new_state != t.state:
+                    await self._db.update_task_state(t.id, new_state)
 
             prefix = self._pipeline_id[:8]
             agents = await self._db.list_agents(prefix=prefix)
@@ -1283,6 +1300,8 @@ class ForgeApp(App):
                 if a.state != "idle":
                     await self._db.release_agent(a.id)
 
+            # Store which TUI phase the user was in when they quit
+            await self._db.set_pipeline_quit_phase(self._pipeline_id, self._state.phase)
             await self._db.update_pipeline_status(self._pipeline_id, "interrupted")
             await self._db.clear_executor_info(self._pipeline_id)
 
@@ -1325,24 +1344,120 @@ class ForgeApp(App):
         self.save_screenshot(filename)
         self.notify(f"Screenshot saved: {filename}")
 
+    async def _setup_daemon_for_resume(self, pipeline) -> None:
+        """Set up daemon, event bus, and event subscriptions for pipeline resume."""
+        from forge.config.project_config import ProjectConfig, apply_project_config
+        from forge.config.settings import ForgeSettings
+        from forge.core.daemon import ForgeDaemon
+        from forge.core.events import EventEmitter
+
+        settings = self._settings or ForgeSettings()
+        project_config = ProjectConfig.load(pipeline.project_dir)
+        apply_project_config(settings, project_config)
+        emitter = EventEmitter()
+        self._bus = EventBus()
+        self._source = EmbeddedSource(emitter, self._bus)
+        self._source.connect()
+
+        for evt_type in TUI_EVENT_TYPES:
+            async def _handler(data, _type=evt_type):
+                self._state.apply_event(_type, data)
+            self._bus.subscribe(evt_type, _handler)
+
+        self._daemon = ForgeDaemon(
+            project_dir=pipeline.project_dir,
+            settings=settings,
+            event_emitter=emitter,
+        )
+
+    def _check_orphan_executor(self, executor_pid: int | None) -> bool:
+        """Check if an executor PID is still alive. Returns True if alive."""
+        if not executor_pid:
+            return False
+        try:
+            os.kill(executor_pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    async def _replay_state_for_pipeline(self, pipeline) -> None:
+        """Replay DB events into a fresh TuiState and set pipeline context."""
+        state = TuiState()
+        state.base_branch = getattr(pipeline, "base_branch", None) or "main"
+        events = await self._db.list_events(pipeline.id)
+        for evt in events:
+            state.apply_event(evt.event_type, evt.payload or {})
+        self._state = state
+        self._pipeline_id = pipeline.id
+        self._pipeline_start_time = time.time()
+        self._cached_base_branch = getattr(pipeline, "base_branch", None) or "main"
+        self._cached_pipeline_branch = getattr(pipeline, "branch_name", None) or ""
+
+    def _load_task_graph(self, pipeline) -> bool:
+        """Load TaskGraph from pipeline JSON. Returns True if successful."""
+        if not pipeline.task_graph_json:
+            return False
+        from forge.core.models import TaskGraph
+        self._graph = TaskGraph.model_validate_json(pipeline.task_graph_json)
+        return True
+
     async def on_pipeline_list_selected(self, event: PipelineList.Selected) -> None:
-        """User selected a pipeline from the history list — replay it."""
+        """User selected a pipeline from the history list — resume or replay it."""
         pipeline_id = event.pipeline_id
         if not self._db:
             self.notify("Database not available", severity="error")
             return
 
         try:
+            ctx = await self._db.get_pipeline_resume_context(pipeline_id)
+            if not ctx:
+                self.notify("Pipeline not found", severity="error")
+                return
+
             pipeline = await self._db.get_pipeline(pipeline_id)
             if not pipeline:
                 self.notify("Pipeline not found", severity="error")
                 return
 
-            # Resume a planned pipeline — show plan approval screen
-            if pipeline.status == "planned" and pipeline.task_graph_json:
-                import json
+            status = ctx["status"]
 
-                graph_data = json.loads(pipeline.task_graph_json)
+            # Validate project_dir exists for resumable statuses
+            if status not in ("complete", "cancelled") and ctx["project_dir"]:
+                if not os.path.isdir(ctx["project_dir"]):
+                    self.notify(
+                        f"Project directory no longer exists: {ctx['project_dir']}",
+                        severity="error",
+                    )
+                    return
+
+            # ── planning: re-run from scratch (LLM session lost) ──
+            if status == "planning":
+                await self._replay_state_for_pipeline(pipeline)
+                await self._setup_daemon_for_resume(pipeline)
+                self.push_screen(PipelineScreen(self._state))
+                self._daemon_task = asyncio.create_task(
+                    self._run_plan(
+                        ctx["description"],
+                        base_branch=ctx["base_branch"] or "main",
+                    )
+                )
+                self._daemon_task.add_done_callback(self._on_daemon_done)
+                self.notify(
+                    f"Restarting planning for: {ctx['description']}",
+                    severity="information",
+                )
+                return
+
+            # ── planned: show plan approval (BUG FIX: now creates daemon) ──
+            if status == "planned":
+                if not ctx["task_graph_json"]:
+                    self.notify("No plan found for this pipeline", severity="error")
+                    return
+                await self._replay_state_for_pipeline(pipeline)
+                await self._setup_daemon_for_resume(pipeline)
+                self._load_task_graph(pipeline)
+                import json as _json
+                graph_data = _json.loads(ctx["task_graph_json"])
                 tasks_dict = graph_data.get("tasks", {})
                 plan_tasks = [
                     {
@@ -1356,106 +1471,112 @@ class ForgeApp(App):
                     for tid, t in tasks_dict.items()
                 ]
                 if plan_tasks:
-                    # Set up state for this pipeline
-                    self._pipeline_id = pipeline_id
-                    self._state = TuiState()
-                    self._state.base_branch = getattr(pipeline, "base_branch", None) or "main"
-                    # Replay events to restore state
-                    events = await self._db.list_events(pipeline_id)
-                    for evt in events:
-                        self._state.apply_event(evt.event_type, evt.payload or {})
-                    # Push pipeline screen then plan approval
-                    pipeline_screen = PipelineScreen(self._state)
-                    self.push_screen(pipeline_screen)
-                    from forge.tui.screens.plan_approval import PlanApprovalScreen
-
+                    self.push_screen(PipelineScreen(self._state))
                     self.push_screen(PlanApprovalScreen(plan_tasks))
-                    return
-
-            if pipeline.status in ("interrupted", "partial_success"):
-                events = await self._db.list_events(pipeline_id)
-                state = TuiState()
-                state.base_branch = getattr(pipeline, "base_branch", None) or "main"
-                for evt in events:
-                    state.apply_event(evt.event_type, evt.payload or {})
-
-                self._state = state
-                self._pipeline_id = pipeline_id
-                self._pipeline_start_time = time.time()
-
-                graph_json = pipeline.task_graph_json
-                if graph_json:
-                    import json
-
-                    from forge.core.models import TaskGraph
-
-                    self._graph = TaskGraph.model_validate_json(graph_json)
-
-                from forge.config.project_config import ProjectConfig, apply_project_config
-                from forge.config.settings import ForgeSettings
-                from forge.core.daemon import ForgeDaemon
-                from forge.core.events import EventEmitter
-                from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
-
-                settings = self._settings or ForgeSettings()
-                project_config = ProjectConfig.load(pipeline.project_dir)
-                apply_project_config(settings, project_config)
-                emitter = EventEmitter()
-                self._bus = EventBus()
-                self._source = EmbeddedSource(emitter, self._bus)
-                self._source.connect()
-
-                for evt_type in TUI_EVENT_TYPES:
-
-                    async def _handler(data, _type=evt_type):
-                        self._state.apply_event(_type, data)
-
-                    self._bus.subscribe(evt_type, _handler)
-
-                self._daemon = ForgeDaemon(
-                    project_dir=pipeline.project_dir,
-                    settings=settings,
-                    event_emitter=emitter,
-                )
-
-                self.push_screen(PipelineScreen(state))
-
-                if pipeline.status == "interrupted":
-                    tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
-                    non_terminal = (
-                        "in_progress",
-                        "in_review",
-                        "merging",
-                        "awaiting_input",
-                        "awaiting_approval",
-                    )
-                    for t in tasks:
-                        if t.state in non_terminal:
-                            await self._db.update_task_state(t.id, "todo")
-                    tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
-
-                    await self._db.update_pipeline_status(pipeline_id, "executing")
-                    await self._resume_execution()
-                    self.notify(
-                        f"Resumed pipeline — {sum(1 for t in tasks if t.state == 'done')}/{len(tasks)} tasks done",
-                        severity="information",
-                    )
-
-                elif pipeline.status == "partial_success":
-                    self._final_approval_pushed = True
-                    self._push_final_approval(partial=True)
-
                 return
 
-            # Load events and replay into a fresh TuiState (read-only history)
+            # ── contracts / countdown: resume contract gen or skip to execute ──
+            if status in ("contracts", "countdown"):
+                if not ctx["task_graph_json"]:
+                    self.notify("No plan found — cannot resume", severity="error")
+                    return
+                await self._replay_state_for_pipeline(pipeline)
+                await self._setup_daemon_for_resume(pipeline)
+                self._load_task_graph(pipeline)
+                self.push_screen(PipelineScreen(self._state))
+
+                if ctx["contracts_json"]:
+                    # Contracts already generated — skip to execution
+                    self._daemon._contracts = None  # Will be loaded from DB by execute()
+                    self._daemon_task = safe_create_task(
+                        self._run_execute(),
+                        logger=logger,
+                        name="resume-execute-after-contracts",
+                    )
+                else:
+                    # Re-run contracts and execution
+                    self._daemon_task = asyncio.create_task(
+                        self._run_contracts_and_execute()
+                    )
+                self._daemon_task.add_done_callback(self._on_daemon_done)
+                self.notify(
+                    f"Resuming pipeline: {ctx['description']}",
+                    severity="information",
+                )
+                return
+
+            # ── executing / retrying: check for orphan, then resume ──
+            if status in ("executing", "retrying"):
+                if self._check_orphan_executor(ctx["executor_pid"]):
+                    self.notify(
+                        "Pipeline may be running in another process "
+                        f"(PID {ctx['executor_pid']}). Close it first.",
+                        severity="warning",
+                    )
+                    return
+                # Fall through to interrupted handler logic
+                status = "interrupted"
+
+            # ── interrupted: smart-reset already applied at quit, resume execution ──
+            if status == "interrupted":
+                await self._replay_state_for_pipeline(pipeline)
+                await self._setup_daemon_for_resume(pipeline)
+                if not self._load_task_graph(pipeline):
+                    self.notify("No task graph — cannot resume", severity="error")
+                    return
+                self.push_screen(PipelineScreen(self._state))
+
+                tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+                await self._db.update_pipeline_status(pipeline_id, "executing")
+                await self._resume_execution()
+                done = sum(1 for t in tasks if t.state == "done")
+                self.notify(
+                    f"Resumed pipeline — {done}/{len(tasks)} tasks done",
+                    severity="information",
+                )
+                return
+
+            # ── complete: interactive if no PR, read-only otherwise ──
+            if status == "complete":
+                await self._replay_state_for_pipeline(pipeline)
+                if not ctx["pr_url"]:
+                    # No PR created yet — let user create one
+                    await self._setup_daemon_for_resume(pipeline)
+                    self._load_task_graph(pipeline)
+                    self.push_screen(PipelineScreen(self._state))
+                    self._final_approval_pushed = True
+                    self._push_final_approval(partial=False)
+                    return
+                # PR exists — read-only replay
+                # (fall through to bottom)
+
+            # ── error: show final approval with partial=True for retry ──
+            if status == "error":
+                await self._replay_state_for_pipeline(pipeline)
+                await self._setup_daemon_for_resume(pipeline)
+                self._load_task_graph(pipeline)
+                self.push_screen(PipelineScreen(self._state))
+                self._final_approval_pushed = True
+                self._push_final_approval(partial=True)
+                return
+
+            # ── partial_success: show final approval ──
+            if status == "partial_success":
+                await self._replay_state_for_pipeline(pipeline)
+                await self._setup_daemon_for_resume(pipeline)
+                self._load_task_graph(pipeline)
+                self.push_screen(PipelineScreen(self._state))
+                self._final_approval_pushed = True
+                self._push_final_approval(partial=True)
+                return
+
+            # ── cancelled / complete with PR / unknown: read-only replay ──
             events = await self._db.list_events(pipeline_id)
             replay_state = TuiState()
             replay_state.base_branch = getattr(pipeline, "base_branch", None) or "main"
             replay_state._replay_date = pipeline.created_at or ""
-
             for evt in events:
                 replay_state.apply_event(evt.event_type, evt.payload or {})
-
             self.push_screen(PipelineScreen(replay_state, read_only=True))
 
         except Exception as e:
