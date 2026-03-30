@@ -92,10 +92,18 @@ class PipelineList(Widget, can_focus=True):
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("enter", "select_pipeline", "Select", show=False),
+        Binding("R", "request_resume", "Resume", show=False),
     ]
 
     class Selected(Message):
-        """Posted when user presses Enter on a pipeline."""
+        """Posted when user presses Enter on a pipeline (always read-only view)."""
+
+        def __init__(self, pipeline_id: str) -> None:
+            self.pipeline_id = pipeline_id
+            super().__init__()
+
+    class ResumeRequested(Message):
+        """Posted when user presses Shift+R to resume a resumable pipeline."""
 
         def __init__(self, pipeline_id: str) -> None:
             self.pipeline_id = pipeline_id
@@ -203,3 +211,9 @@ class PipelineList(Widget, can_focus=True):
         p = self.selected_pipeline
         if p and "id" in p:
             self.post_message(self.Selected(p["id"]))
+
+    def action_request_resume(self) -> None:
+        """Shift+R: request resume only for resumable pipelines."""
+        p = self.selected_pipeline
+        if p and "id" in p and is_pipeline_resumable(p):
+            self.post_message(self.ResumeRequested(p["id"]))

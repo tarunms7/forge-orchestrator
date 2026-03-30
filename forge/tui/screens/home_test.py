@@ -219,18 +219,21 @@ async def test_home_screen_has_input_row():
 
 @pytest.mark.asyncio
 async def test_shortcut_label_view_for_read_only_pipeline():
-    """First pipeline is complete+PR (read-only), shortcut should say View Selected."""
+    """First pipeline is complete+PR (read-only), Enter always says View."""
     app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
     async with app.run_test() as pilot:
         await pilot.pause()
         bar = app.screen.query_one(ShortcutBar)
         enter_labels = [label for key, label in bar.shortcuts if key == "Enter"]
-        assert enter_labels == ["View Selected"]
+        assert enter_labels == ["View"]
+        # Non-resumable: no Shift+R shown
+        resume_labels = [label for key, label in bar.shortcuts if key == "Shift+R"]
+        assert resume_labels == []
 
 
 @pytest.mark.asyncio
 async def test_shortcut_label_resume_for_resumable_pipeline():
-    """After navigating to error pipeline, shortcut should say Resume Selected."""
+    """After navigating to error pipeline, Shift+R Resume should appear."""
     app = HomeTestApp(pipelines=SAMPLE_PIPELINES)
     async with app.run_test() as pilot:
         pl = app.screen.query_one(PipelineList)
@@ -240,5 +243,9 @@ async def test_shortcut_label_resume_for_resumable_pipeline():
         pl.action_cursor_down()
         await pilot.pause()
         bar = app.screen.query_one(ShortcutBar)
+        # Enter always says View now
         enter_labels = [label for key, label in bar.shortcuts if key == "Enter"]
-        assert enter_labels == ["Resume Selected"]
+        assert enter_labels == ["View"]
+        # Shift+R should appear for resumable pipelines
+        resume_labels = [label for key, label in bar.shortcuts if key == "Shift+R"]
+        assert resume_labels == ["Resume"]
