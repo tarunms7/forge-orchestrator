@@ -222,7 +222,12 @@ def tui(project_dir: str, strategy: str | None, dry_run: bool, repo: tuple[str, 
     if not os.path.isdir(forge_dir):
         os.makedirs(forge_dir, exist_ok=True)
 
-    from forge.config.project_config import ProjectConfig, apply_project_config, resolve_repos, validate_repos_startup
+    from forge.config.project_config import (
+        ProjectConfig,
+        apply_project_config,
+        resolve_repos,
+        validate_repos_startup,
+    )
 
     # Resolve repos: CLI flags → workspace.toml → single-repo default
     repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
