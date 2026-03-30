@@ -247,6 +247,30 @@ def test_tui_help_shows_dry_run_option():
     assert "--dry-run" in result.output
 
 
+def test_tui_loads_project_config(tmp_path):
+    """tui command must apply ProjectConfig to settings before launching ForgeApp."""
+    from unittest.mock import MagicMock, patch
+
+    mock_project_config = MagicMock()
+    mock_app = MagicMock()
+
+    with (
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+        patch("forge.core.logging_config.configure_tui_logging"),
+        patch("forge.config.project_config.ProjectConfig") as mock_pc_class,
+        patch("forge.config.project_config.apply_project_config") as mock_apply,
+        patch("forge.tui.app.ForgeApp", return_value=mock_app),
+    ):
+        mock_pc_class.load.return_value = mock_project_config
+        result = CliRunner().invoke(cli, ["tui", "--project-dir", str(tmp_path)])
+
+    mock_pc_class.load.assert_called_once_with(str(tmp_path))
+    mock_apply.assert_called_once()
+    # First arg to apply_project_config is settings, second is the loaded config
+    assert mock_apply.call_args[0][1] is mock_project_config
+
+
 def test_run_dry_run_calls_daemon_dry_run(tmp_path):
     """run --dry-run should call daemon.dry_run() instead of daemon.run()."""
     from unittest.mock import AsyncMock, MagicMock
