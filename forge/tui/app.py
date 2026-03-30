@@ -1473,6 +1473,8 @@ class ForgeApp(App):
                 if plan_tasks:
                     self.push_screen(PipelineScreen(self._state))
                     self.push_screen(PlanApprovalScreen(plan_tasks))
+                else:
+                    self.notify("No tasks found in plan", severity="error")
                 return
 
             # ── contracts / countdown: resume contract gen or skip to execute ──
@@ -1486,10 +1488,10 @@ class ForgeApp(App):
                 self.push_screen(PipelineScreen(self._state))
 
                 if ctx["contracts_json"]:
-                    # Contracts already generated — skip to execution
+                    # Contracts already generated — skip to execution with resume=True
                     self._daemon._contracts = None  # Will be loaded from DB by execute()
                     self._daemon_task = safe_create_task(
-                        self._run_execute(),
+                        self._resume_execution(),
                         logger=logger,
                         name="resume-execute-after-contracts",
                     )
