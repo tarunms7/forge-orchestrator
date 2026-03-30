@@ -2384,7 +2384,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # These have code in worktrees but need re-review + merge.
             in_review_tasks = [
                 t for t in task_records
-                if t.state == TaskState.IN_REVIEW and t.id not in self._active_tasks
+                if t.state == TaskState.IN_REVIEW.value and t.id not in self._active_tasks
             ]
 
             # Cap to actual free slots (pool is authoritative)
@@ -2438,7 +2438,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             remaining_slots = max(
                 0, self._effective_max_agents - len(self._active_tasks)
             )
-            idle_agents_for_review = [a for a in agent_records if a.state == AgentState.IDLE]
+            idle_agents_for_review = [a for a in agent_records if a.state == AgentState.IDLE.value]
             # Only dispatch up to remaining slots worth of in_review tasks
             for ir_task in in_review_tasks[:remaining_slots]:
                 if not idle_agents_for_review:
