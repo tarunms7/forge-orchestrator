@@ -1850,6 +1850,31 @@ async def retry_task(
 
     await forge_db.retry_task(task_id)  # Resets to todo, increments retry_count
 
+    # Cascade-reset downstream BLOCKED tasks whose only blocking dependency
+    # is this task.  They couldn't run because the parent failed; now that
+    # we're retrying the parent they should become eligible again.
+    try:
+        all_tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
+        non_done_ids = frozenset(
+            t.id
+            for t in all_tasks
+            if t.id != task_id and t.state not in ("done", "todo", "in_progress")
+        )
+        for t in all_tasks:
+            if t.state != "blocked":
+                continue
+            deps = t.depends_on or []
+            blocking_deps = [d for d in deps if d in non_done_ids or d == task_id]
+            if blocking_deps == [task_id]:
+                await forge_db.update_task_state(t.id, "todo")
+                logger.info(
+                    "Unblocked task %s (was waiting on retried task %s)", t.id, task_id
+                )
+    except Exception:
+        logger.warning(
+            "Failed to cascade-unblock dependents of %s (non-fatal)", task_id, exc_info=True
+        )
+
     # If pipeline was complete/cancelled/error, we need to reactivate it
     # AND re-launch the execution loop (otherwise the task stays in 'todo'
     # with nothing to pick it up).

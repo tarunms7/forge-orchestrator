@@ -1474,6 +1474,45 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         except Exception:
             logger.debug("No worktree to clean for task %s (or already removed)", task_id)
 
+        # Cascade-reset downstream BLOCKED tasks so they can run once this
+        # task succeeds.  Only unblock tasks whose ONLY failed/retried
+        # dependency is this task — leave tasks that depend on OTHER errored
+        # tasks alone (they'll remain blocked by those).
+        try:
+            all_tasks = await (
+                db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
+            )
+            # Build a set of currently non-done, non-todo task IDs (error/blocked/etc.)
+            # excluding the task we just reset (which is now todo).
+            non_done_ids = frozenset(
+                t.id
+                for t in all_tasks
+                if t.id != task_id and t.state not in ("done", "todo", "in_progress")
+            )
+            for t in all_tasks:
+                if t.state != "blocked":
+                    continue
+                deps = t.depends_on or []
+                if not deps:
+                    continue
+                # Only unblock if task_id is the sole non-done dependency
+                blocking_deps = [d for d in deps if d in non_done_ids or d == task_id]
+                if blocking_deps == [task_id]:
+                    await db.update_task_state(t.id, "todo")
+                    await self._emit(
+                        "task:state_changed",
+                        {"task_id": t.id, "state": "todo"},
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
+                    logger.info(
+                        "Unblocked task %s (was waiting on retried task %s)", t.id, task_id
+                    )
+        except Exception:
+            logger.debug(
+                "Failed to cascade-unblock dependents of %s (non-fatal)", task_id, exc_info=True
+            )
+
         # Re-add to scheduler by emitting state change
         await self._emit(
             "task:state_changed",
