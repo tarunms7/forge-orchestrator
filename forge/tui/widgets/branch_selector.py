@@ -112,6 +112,7 @@ class BranchSelector(Vertical):
             allow_blank=False,
             prompt="Select branch",
             id="branch-select",
+            compact=True,
         )
 
     async def load_branches(self, repo_path: str) -> None:
@@ -238,6 +239,7 @@ class BranchInput(Vertical):
             allow_blank=False,
             prompt="Branch name",
             id="branch-pick-select",
+            compact=True,
         )
 
     async def load_branches(self, repo_path: str) -> None:
