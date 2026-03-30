@@ -93,7 +93,7 @@ class HomeScreen(Screen):
         margin: 1 0;
     }
     #prompt-input {
-        height: 7;
+        height: 9;
         border: tall #30363d;
         background: #161b22;
         width: 1fr;
@@ -113,11 +113,12 @@ class HomeScreen(Screen):
         width: 100%;
         height: auto;
         max-height: 5;
-        margin: 0 0 0 0;
+        margin: 0 0 1 0;
     }
     .branch-field {
         width: 1fr;
         height: auto;
+        margin-right: 1;
     }
     .workspace-repo-row {
         width: 100%;
@@ -142,7 +143,7 @@ class HomeScreen(Screen):
     }
     #recent-label {
         width: 100%;
-        margin: 0 0 0 0;
+        margin: 1 0 0 0;
         color: #6e7681;
     }
     PipelineList {
