@@ -66,7 +66,10 @@ class BranchSelector(Vertical):
     BranchSelector Select {
         width: 100%;
         height: 3;
-        max-height: 3;
+    }
+    BranchSelector SelectCurrent {
+        color: #e6edf3;
+        background: #161b22;
     }
     """
 
@@ -208,8 +211,11 @@ class BranchInput(Vertical):
     BranchInput Select {
         width: 100%;
         height: 3;
-        max-height: 3;
         margin-top: 0;
+    }
+    BranchInput SelectCurrent {
+        color: #e6edf3;
+        background: #161b22;
     }
     """
 
