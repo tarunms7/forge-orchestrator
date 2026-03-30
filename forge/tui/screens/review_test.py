@@ -112,3 +112,65 @@ def test_stale_error_cache_is_not_used():
     ]
     for msg in stale_messages:
         assert msg.startswith(("No pipeline", "git diff failed", "Error"))
+
+
+# ---------------------------------------------------------------------------
+# Shortcut bar dynamic update tests
+# ---------------------------------------------------------------------------
+
+
+def test_review_screen_initial_shortcuts_loading():
+    """ReviewScreen should start with only Esc/Back shortcut before diff loads."""
+    state = TuiState()
+    screen = ReviewScreen(state)
+    assert screen._diff_loaded is False
+
+
+@pytest.mark.asyncio
+async def test_review_screen_shortcuts_after_diff_loads():
+    """After diff loads, shortcuts should include approve/reject/editor/search."""
+    state = TuiState()
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Test",
+                    "description": "",
+                    "files": ["f"],
+                    "depends_on": [],
+                    "complexity": "low",
+                }
+            ]
+        },
+    )
+    state.selected_task_id = "t1"
+    state.tasks["t1"]["state"] = "in_review"
+
+    class ReviewTestAppWithState(App):
+        def compose(self) -> ComposeResult:
+            yield ReviewScreen(state)
+
+    app = ReviewTestAppWithState()
+    async with app.run_test() as pilot:
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        bar = app.query_one(ShortcutBar)
+        # Before diff loads, should only have Esc
+        keys_before = [k for k, _ in bar.shortcuts]
+        assert "Esc" in keys_before
+        assert "a" not in keys_before  # approve not yet available
+
+        # Simulate diff loading
+        screen = app.query_one(ReviewScreen)
+        screen._diff_loaded = True
+        screen._update_shortcut_bar()
+        await pilot.pause()
+
+        keys_after = [k for k, _ in bar.shortcuts]
+        assert "a" in keys_after  # Approve
+        assert "x" in keys_after  # Reject
+        assert "e" in keys_after  # Editor
+        assert "/" in keys_after  # Search
+        assert "Esc" in keys_after  # Back

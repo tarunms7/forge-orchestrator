@@ -504,3 +504,91 @@ def test_format_task_list_in_progress_shows_running():
     result = format_task_table(tasks)
     assert "✗" not in result
     assert "⚙" in result
+
+
+# ---------------------------------------------------------------------------
+# Shortcut bar dynamic update tests
+# ---------------------------------------------------------------------------
+
+
+class TestFinalApprovalShortcutBar:
+    """Test that shortcut bar updates based on mode and PR state."""
+
+    def test_full_mode_shortcuts(self):
+        """Full mode (not partial) should include Create PR, Diff, Follow-up, New Task."""
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+
+        captured: list[list[tuple[str, str]]] = []
+        mock_bar = MagicMock(spec=ShortcutBar)
+        mock_bar.update_shortcuts = lambda s: captured.append(list(s))
+        screen.query_one = MagicMock(return_value=mock_bar)
+
+        screen._update_shortcut_bar()
+        shortcuts = captured[-1]
+        keys = [k for k, _ in shortcuts]
+        labels = [label for _, label in shortcuts]
+        assert "Enter" in keys
+        assert "Create PR" in labels
+        assert "d" in keys
+        assert "n" in keys  # New Task
+        assert "Esc" in keys
+
+    def test_partial_mode_shortcuts(self):
+        """Partial mode should include Retry Failed and Skip & Finish."""
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        screen = FinalApprovalScreen(
+            stats={}, tasks=[], pipeline_branch="feat/x", partial=True
+        )
+
+        captured: list[list[tuple[str, str]]] = []
+        mock_bar = MagicMock(spec=ShortcutBar)
+        mock_bar.update_shortcuts = lambda s: captured.append(list(s))
+        screen.query_one = MagicMock(return_value=mock_bar)
+
+        screen._update_shortcut_bar()
+        shortcuts = captured[-1]
+        keys = [k for k, _ in shortcuts]
+        labels = [label for _, label in shortcuts]
+        assert "r" in keys  # Retry Failed
+        assert "s" in keys  # Skip & Finish
+        assert "Retry Failed" in labels
+        assert "Skip & Finish" in labels
+
+    def test_shortcuts_after_pr_created(self):
+        """After PR is created, shortcuts should remove Create PR and add Done."""
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+
+        captured: list[list[tuple[str, str]]] = []
+        mock_bar = MagicMock(spec=ShortcutBar)
+        mock_bar.update_shortcuts = lambda s: captured.append(list(s))
+        screen.query_one = MagicMock(return_value=mock_bar)
+
+        # Before PR creation
+        screen._update_shortcut_bar()
+        before = captured[-1]
+        before_keys = [k for k, _ in before]
+        assert "Enter" in before_keys  # Create PR available
+
+        # After PR creation
+        screen._pr_created = True
+        screen._update_shortcut_bar()
+        after = captured[-1]
+        after_keys = [k for k, _ in after]
+        after_labels = [label for _, label in after]
+        assert "Enter" not in after_keys  # Create PR removed
+        assert "Done" in after_labels  # Done added
+
+    def test_show_pr_url_updates_shortcuts(self):
+        """show_pr_url should set _pr_created and update shortcut bar."""
+        screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+        mock_widget = MagicMock()
+        screen.query_one = MagicMock(return_value=mock_widget)
+
+        assert screen._pr_created is False
+        screen.show_pr_url("https://github.com/org/repo/pull/42")
+        assert screen._pr_created is True

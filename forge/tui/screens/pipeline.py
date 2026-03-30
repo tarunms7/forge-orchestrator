@@ -1035,11 +1035,13 @@ class PipelineScreen(Screen):
 
     def action_view_diff(self) -> None:
         task = self._get_selected_task()
-        if task:
-            state = task.get("state", "")
-            if state not in ("in_review", "done", "merging", "in_progress", "awaiting_approval"):
-                self.app.notify(f"Diff not available — task is {state}", severity="warning")
-                return
+        if not task:
+            self.app.notify("No task selected", severity="warning")
+            return
+        state = task.get("state", "")
+        if state not in ("in_review", "done", "merging", "in_progress", "awaiting_approval"):
+            self.app.notify(f"Diff not available — task is {state}", severity="warning")
+            return
         self._set_view("diff")
 
     def action_copy_mode(self) -> None:
@@ -1129,12 +1131,12 @@ class PipelineScreen(Screen):
             return
         tid = self._state.selected_task_id
         if not tid or tid not in self._state.tasks:
-            self.notify("No task selected", severity="warning")
+            self.app.notify("No task selected", severity="warning")
             return
         task = self._state.tasks[tid]
         state = task.get("state", "")
         if state not in ("in_progress", "awaiting_input"):
-            self.notify(f"Cannot interject — task is {state}", severity="warning")
+            self.app.notify(f"Interject not available — task is {state}", severity="warning")
             return
         # Replace the existing ChatThread with one in interjection mode
         chat = self.query_one(ChatThread)
