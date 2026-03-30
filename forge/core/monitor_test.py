@@ -63,24 +63,26 @@ def test_healthy_snapshot_no_blocked_reasons():
 
 
 @pytest.mark.asyncio
-async def test_take_snapshot_returns_safe_defaults_on_oserror():
-    """When psutil raises OSError, take_snapshot returns safe defaults."""
+async def test_take_snapshot_returns_conservative_defaults_on_oserror():
+    """When psutil raises OSError, take_snapshot returns conservative (blocking) defaults."""
     monitor = ResourceMonitor(cpu_threshold=80.0, memory_threshold_pct=20.0, disk_threshold_gb=5.0)
     with patch("forge.core.monitor.psutil.virtual_memory", side_effect=OSError("device not ready")):
         snap = await monitor.take_snapshot()
 
-    assert snap.cpu_percent == 0.0
-    assert snap.memory_available_pct == 100.0
-    assert snap.disk_free_gb == 100.0
+    assert snap.cpu_percent == 100.0
+    assert snap.memory_available_pct == 0.0
+    assert snap.disk_free_gb == 0.0
+    assert monitor.can_dispatch(snap) is False
 
 
 @pytest.mark.asyncio
-async def test_take_snapshot_returns_safe_defaults_on_runtime_error():
-    """When psutil raises RuntimeError, take_snapshot returns safe defaults."""
+async def test_take_snapshot_returns_conservative_defaults_on_runtime_error():
+    """When psutil raises RuntimeError, take_snapshot returns conservative (blocking) defaults."""
     monitor = ResourceMonitor(cpu_threshold=80.0, memory_threshold_pct=20.0, disk_threshold_gb=5.0)
     with patch("forge.core.monitor.psutil.virtual_memory", side_effect=RuntimeError("unexpected")):
         snap = await monitor.take_snapshot()
 
-    assert snap.cpu_percent == 0.0
-    assert snap.memory_available_pct == 100.0
-    assert snap.disk_free_gb == 100.0
+    assert snap.cpu_percent == 100.0
+    assert snap.memory_available_pct == 0.0
+    assert snap.disk_free_gb == 0.0
+    assert monitor.can_dispatch(snap) is False
