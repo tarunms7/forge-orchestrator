@@ -112,14 +112,12 @@ class HomeScreen(Screen):
     #branch-row {
         width: 100%;
         height: auto;
-        max-height: 4;
         margin: 0 0 0 0;
     }
     .branch-field {
         width: 1fr;
         height: auto;
-        max-height: 4;
-        overflow: hidden;
+        max-height: 7;
     }
     .workspace-repo-row {
         width: 100%;
@@ -150,7 +148,7 @@ class HomeScreen(Screen):
     PipelineList {
         width: 100%;
         height: 1fr;
-        max-height: 14;
+        max-height: 12;
     }
     """
 
