@@ -66,10 +66,6 @@ class BranchSelector(Vertical):
     BranchSelector Select {
         width: 100%;
     }
-    BranchSelector SelectCurrent {
-        color: #e6edf3;
-        background: #161b22;
-    }
     """
 
     class BranchSelected(Message):
@@ -210,10 +206,6 @@ class BranchInput(Vertical):
     BranchInput Select {
         width: 100%;
         margin-top: 0;
-    }
-    BranchInput SelectCurrent {
-        color: #e6edf3;
-        background: #161b22;
     }
     """
 
