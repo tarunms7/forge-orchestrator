@@ -1682,7 +1682,7 @@ class TestGenerateContractsPersistsStatus:
         db.log_event = AsyncMock()
 
         # No hints → early return, no status change
-        result = await daemon.generate_contracts(graph, db, "pipe-1")
+        await daemon.generate_contracts(graph, db, "pipe-1")
         db.update_pipeline_status.assert_not_called()
 
     async def test_contracts_status_persisted_with_hints(self, tmp_path):
@@ -1708,7 +1708,7 @@ class TestGenerateContractsPersistsStatus:
             from forge.core.contracts import ContractSet
             mock_builder = MockBuilder.return_value
             mock_builder.build = AsyncMock(return_value=ContractSet())
-            result = await daemon.generate_contracts(graph, db, "pipe-1")
+            await daemon.generate_contracts(graph, db, "pipe-1")
 
         db.update_pipeline_status.assert_called_once_with("pipe-1", "contracts")
 
