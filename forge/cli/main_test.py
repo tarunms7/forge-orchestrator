@@ -263,7 +263,7 @@ def test_tui_loads_project_config(tmp_path):
         patch("forge.tui.app.ForgeApp", return_value=mock_app),
     ):
         mock_pc_class.load.return_value = mock_project_config
-        result = CliRunner().invoke(cli, ["tui", "--project-dir", str(tmp_path)])
+        CliRunner().invoke(cli, ["tui", "--project-dir", str(tmp_path)])
 
     mock_pc_class.load.assert_called_once_with(str(tmp_path))
     mock_apply.assert_called_once()
