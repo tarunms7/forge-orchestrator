@@ -10,10 +10,24 @@ class Scheduler:
     def ready_tasks(tasks: list[TaskRecord]) -> list[TaskRecord]:
         """Return tasks that are TODO and have all dependencies DONE."""
         done_ids = frozenset(t.id for t in tasks if t.state == TaskState.DONE)
+        error_ids = frozenset(t.id for t in tasks if t.state == TaskState.ERROR)
         return [
             t
             for t in tasks
-            if t.state == TaskState.TODO and all(dep in done_ids for dep in (t.depends_on or []))
+            if t.state == TaskState.TODO
+            and all(dep in done_ids for dep in (t.depends_on or []))
+            and not any(dep in error_ids for dep in (t.depends_on or []))
+        ]
+
+    @staticmethod
+    def blocked_by_error(tasks: list[TaskRecord]) -> list[TaskRecord]:
+        """Return TODO tasks whose dependencies include at least one ERROR task."""
+        error_ids = frozenset(t.id for t in tasks if t.state == TaskState.ERROR)
+        return [
+            t
+            for t in tasks
+            if t.state == TaskState.TODO
+            and any(dep in error_ids for dep in (t.depends_on or []))
         ]
 
     @staticmethod

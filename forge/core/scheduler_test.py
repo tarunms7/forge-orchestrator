@@ -104,6 +104,54 @@ class TestDispatchPlan:
         assert plan == []
 
 
+class TestErrorDependencies:
+    def test_task_depending_on_error_not_ready(self):
+        tasks = [
+            _record("a", state=TaskState.ERROR),
+            _record("b", depends_on=["a"]),
+        ]
+        ready = Scheduler.ready_tasks(tasks)
+        assert ready == []
+
+    def test_blocked_by_error_returns_affected_tasks(self):
+        tasks = [
+            _record("a", state=TaskState.ERROR),
+            _record("b", depends_on=["a"]),
+            _record("c"),
+        ]
+        blocked = Scheduler.blocked_by_error(tasks)
+        assert [t.id for t in blocked] == ["b"]
+
+    def test_mixed_deps_some_error_excluded_from_ready(self):
+        tasks = [
+            _record("a", state=TaskState.DONE),
+            _record("b", state=TaskState.ERROR),
+            _record("c", depends_on=["a", "b"]),
+        ]
+        ready = Scheduler.ready_tasks(tasks)
+        assert "c" not in [t.id for t in ready]
+
+    def test_blocked_by_error_mixed_deps(self):
+        tasks = [
+            _record("a", state=TaskState.DONE),
+            _record("b", state=TaskState.ERROR),
+            _record("c", depends_on=["a", "b"]),
+        ]
+        blocked = Scheduler.blocked_by_error(tasks)
+        assert [t.id for t in blocked] == ["c"]
+
+    def test_done_dep_not_blocked_by_error(self):
+        tasks = [
+            _record("a", state=TaskState.ERROR),
+            _record("b", state=TaskState.DONE),
+            _record("c", depends_on=["b"]),
+        ]
+        ready = Scheduler.ready_tasks(tasks)
+        assert [t.id for t in ready] == ["c"]
+        blocked = Scheduler.blocked_by_error(tasks)
+        assert blocked == []
+
+
 class TestDependsOnNoneSafety:
     def test_none_depends_on_is_ready(self):
         """A task with depends_on=None should be treated as having no dependencies."""
