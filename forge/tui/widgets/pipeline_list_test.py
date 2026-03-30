@@ -250,7 +250,12 @@ class TestResumeEligibility:
         assert is_pipeline_resumable({"status": "retrying"}) is True
 
     def test_complete_with_pr_is_read_only(self):
-        assert is_pipeline_resumable({"status": "complete", "pr_url": "https://github.com/org/repo/pull/1"}) is False
+        assert (
+            is_pipeline_resumable(
+                {"status": "complete", "pr_url": "https://github.com/org/repo/pull/1"}
+            )
+            is False
+        )
 
     def test_complete_without_pr_is_resumable(self):
         assert is_pipeline_resumable({"status": "complete", "pr_url": None}) is True
@@ -319,32 +324,84 @@ class TestProgressRendering:
 
     def test_resume_indicator_resumable(self):
         pl = PipelineList()
-        pl.update_pipelines([{"id": "x", "description": "t", "status": "interrupted", "created_at": "", "total_cost_usd": 0}])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "t",
+                    "status": "interrupted",
+                    "created_at": "",
+                    "total_cost_usd": 0,
+                }
+            ]
+        )
         rendered = pl.render()
         assert "▶" in rendered
 
     def test_resume_indicator_read_only(self):
         pl = PipelineList()
-        pl.update_pipelines([{"id": "x", "description": "t", "status": "cancelled", "created_at": "", "total_cost_usd": 0}])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "t",
+                    "status": "cancelled",
+                    "created_at": "",
+                    "total_cost_usd": 0,
+                }
+            ]
+        )
         rendered = pl.render()
         assert "●" in rendered
 
     def test_progress_text_in_render(self):
         pl = PipelineList()
-        pl.update_pipelines([{"id": "x", "description": "t", "status": "executing", "created_at": "", "total_cost_usd": 0, "total_tasks": 5, "tasks_done": 3}])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "t",
+                    "status": "executing",
+                    "created_at": "",
+                    "total_cost_usd": 0,
+                    "total_tasks": 5,
+                    "tasks_done": 3,
+                }
+            ]
+        )
         rendered = pl.render()
         assert "3/5 tasks done" in rendered
 
     def test_error_progress_in_render(self):
         pl = PipelineList()
-        pl.update_pipelines([{"id": "x", "description": "t", "status": "error", "created_at": "", "total_cost_usd": 0}])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "t",
+                    "status": "error",
+                    "created_at": "",
+                    "total_cost_usd": 0,
+                }
+            ]
+        )
         rendered = pl.render()
         assert "✗ Failed" in rendered
 
     def test_graceful_fallback_missing_fields(self):
         """Should not crash when enriched fields are missing."""
         pl = PipelineList()
-        pl.update_pipelines([{"id": "x", "description": "t", "status": "executing", "created_at": "", "total_cost_usd": 0}])
+        pl.update_pipelines(
+            [
+                {
+                    "id": "x",
+                    "description": "t",
+                    "status": "executing",
+                    "created_at": "",
+                    "total_cost_usd": 0,
+                }
+            ]
+        )
         rendered = pl.render()
         assert "0/0 tasks done" in rendered
 

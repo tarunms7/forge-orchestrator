@@ -1220,12 +1220,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Recalculate effective max agents based on remaining work
             tasks = await db.list_tasks_by_pipeline(pid)
-            remaining = sum(
-                1 for t in tasks if t.state in ("todo", "in_review", "blocked")
-            )
-            self._effective_max_agents = min(
-                max(remaining, 1), self._settings.max_agents
-            )
+            remaining = sum(1 for t in tasks if t.state in ("todo", "in_review", "blocked"))
+            self._effective_max_agents = min(max(remaining, 1), self._settings.max_agents)
 
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,
@@ -2333,7 +2329,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Check for in_review tasks that need resume dispatch
             has_in_review = any(
-                t.state == TaskState.IN_REVIEW.value for t in tasks
+                t.state == TaskState.IN_REVIEW.value
+                for t in tasks
                 if t.id not in self._active_tasks
             )
 
@@ -2383,7 +2380,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Also find in_review tasks eligible for resume dispatch.
             # These have code in worktrees but need re-review + merge.
             in_review_tasks = [
-                t for t in task_records
+                t
+                for t in task_records
                 if t.state == TaskState.IN_REVIEW.value and t.id not in self._active_tasks
             ]
 
@@ -2435,9 +2433,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             # Dispatch in_review tasks to review-only path (resume scenario).
             # These tasks already have code in worktrees — skip agent, re-review + merge.
-            remaining_slots = max(
-                0, self._effective_max_agents - len(self._active_tasks)
-            )
+            remaining_slots = max(0, self._effective_max_agents - len(self._active_tasks))
             idle_agents_for_review = [a for a in agent_records if a.state == AgentState.IDLE.value]
             # Only dispatch up to remaining slots worth of in_review tasks
             for ir_task in in_review_tasks[:remaining_slots]:

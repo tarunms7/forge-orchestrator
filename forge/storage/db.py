@@ -912,14 +912,16 @@ class Database:
     async def get_pipeline_resume_context(self, pipeline_id: str) -> dict | None:
         """Return all data needed for resume routing in a single DB round-trip."""
         async with self._session_factory() as session:
-            pipeline = (await session.execute(
-                select(PipelineRow).where(PipelineRow.id == pipeline_id)
-            )).scalar_one_or_none()
+            pipeline = (
+                await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
+            ).scalar_one_or_none()
             if not pipeline:
                 return None
-            tasks = (await session.execute(
-                select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)
-            )).scalars().all()
+            tasks = (
+                (await session.execute(select(TaskRow).where(TaskRow.pipeline_id == pipeline_id)))
+                .scalars()
+                .all()
+            )
             return {
                 "status": pipeline.status,
                 "quit_phase": pipeline.quit_phase,
@@ -941,29 +943,37 @@ class Database:
     async def get_pipeline_list_with_counts(self, limit: int = 10) -> list[dict]:
         """Return recent pipelines with task counts for the HomeScreen list."""
         async with self._session_factory() as session:
-            pipelines = (await session.execute(
-                select(PipelineRow)
-                .order_by(PipelineRow.created_at.desc())
-                .limit(limit)
-            )).scalars().all()
+            pipelines = (
+                (
+                    await session.execute(
+                        select(PipelineRow).order_by(PipelineRow.created_at.desc()).limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
             result = []
             for p in pipelines:
-                tasks = (await session.execute(
-                    select(TaskRow).where(TaskRow.pipeline_id == p.id)
-                )).scalars().all()
-                result.append({
-                    "id": p.id,
-                    "description": p.description,
-                    "status": p.status,
-                    "created_at": p.created_at.isoformat() if p.created_at else None,
-                    "cost": p.total_cost_usd,
-                    "total_tasks": len(tasks),
-                    "tasks_done": sum(1 for t in tasks if t.state == "done"),
-                    "tasks_error": sum(1 for t in tasks if t.state == "error"),
-                    "pr_url": p.pr_url,
-                    "project_dir": p.project_dir,
-                })
+                tasks = (
+                    (await session.execute(select(TaskRow).where(TaskRow.pipeline_id == p.id)))
+                    .scalars()
+                    .all()
+                )
+                result.append(
+                    {
+                        "id": p.id,
+                        "description": p.description,
+                        "status": p.status,
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                        "cost": p.total_cost_usd,
+                        "total_tasks": len(tasks),
+                        "tasks_done": sum(1 for t in tasks if t.state == "done"),
+                        "tasks_error": sum(1 for t in tasks if t.state == "error"),
+                        "pr_url": p.pr_url,
+                        "project_dir": p.project_dir,
+                    }
+                )
             return result
 
     async def list_pipelines(

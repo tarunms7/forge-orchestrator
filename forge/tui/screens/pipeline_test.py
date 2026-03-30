@@ -949,7 +949,10 @@ async def test_guard_interject_shows_notification_for_done_task():
         with patch.object(app, "notify") as mock_notify:
             app.screen.action_interject()
             mock_notify.assert_called_once()
-            assert "not available" in mock_notify.call_args[0][0].lower() or "interject" in mock_notify.call_args[0][0].lower()
+            assert (
+                "not available" in mock_notify.call_args[0][0].lower()
+                or "interject" in mock_notify.call_args[0][0].lower()
+            )
 
 
 @pytest.mark.asyncio

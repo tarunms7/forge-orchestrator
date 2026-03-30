@@ -1015,9 +1015,7 @@ class ForgeApp(App):
         if self._db and self._pipeline_id and self._graph:
             try:
                 await self._db.update_pipeline_status(self._pipeline_id, "planned")
-                await self._db.set_pipeline_plan(
-                    self._pipeline_id, self._graph.model_dump_json()
-                )
+                await self._db.set_pipeline_plan(self._pipeline_id, self._graph.model_dump_json())
             except Exception:
                 logger.debug("Failed to persist plan approval", exc_info=True)
         # Launch contracts + execution as a single background task so the
@@ -1283,11 +1281,11 @@ class ForgeApp(App):
             # Smart reset: preserve task states where possible to minimize
             # rework on resume. Only reset states where session context is lost.
             _SMART_RESET = {
-                "in_progress": "todo",        # agent session lost
-                "awaiting_input": "todo",     # question context lost with agent
-                "in_review": "in_review",     # code in worktree, review can re-run
+                "in_progress": "todo",  # agent session lost
+                "awaiting_input": "todo",  # question context lost with agent
+                "in_review": "in_review",  # code in worktree, review can re-run
                 "awaiting_approval": "in_review",  # approval context lost, re-review
-                "merging": "in_review",       # merge interrupted, re-review + re-merge
+                "merging": "in_review",  # merge interrupted, re-review + re-merge
             }
             tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
             for t in tasks:
@@ -1361,8 +1359,10 @@ class ForgeApp(App):
         self._source.connect()
 
         for evt_type in TUI_EVENT_TYPES:
+
             async def _handler(data, _type=evt_type):
                 self._state.apply_event(_type, data)
+
             self._bus.subscribe(evt_type, _handler)
 
         self._daemon = ForgeDaemon(
@@ -1399,6 +1399,7 @@ class ForgeApp(App):
         if not pipeline.task_graph_json:
             return False
         from forge.core.models import TaskGraph
+
         self._graph = TaskGraph.model_validate_json(pipeline.task_graph_json)
         return True
 
@@ -1458,6 +1459,7 @@ class ForgeApp(App):
                 await self._setup_daemon_for_resume(pipeline)
                 self._load_task_graph(pipeline)
                 import json as _json
+
                 graph_data = _json.loads(ctx["task_graph_json"])
                 tasks_dict = graph_data.get("tasks", {})
                 plan_tasks = [
@@ -1498,9 +1500,7 @@ class ForgeApp(App):
                     )
                 else:
                     # Re-run contracts and execution
-                    self._daemon_task = asyncio.create_task(
-                        self._run_contracts_and_execute()
-                    )
+                    self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
                 self._daemon_task.add_done_callback(self._on_daemon_done)
                 self.notify(
                     f"Resuming pipeline: {ctx['description']}",

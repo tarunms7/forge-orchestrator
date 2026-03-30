@@ -539,9 +539,7 @@ class TestFinalApprovalShortcutBar:
         """Partial mode should include Retry Failed and Skip & Finish."""
         from forge.tui.widgets.shortcut_bar import ShortcutBar
 
-        screen = FinalApprovalScreen(
-            stats={}, tasks=[], pipeline_branch="feat/x", partial=True
-        )
+        screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x", partial=True)
 
         captured: list[list[tuple[str, str]]] = []
         mock_bar = MagicMock(spec=ShortcutBar)

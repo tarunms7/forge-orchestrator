@@ -536,7 +536,9 @@ class PipelineScreen(Screen):
             if task:
                 state = task.get("state", "")
                 if state == "in_progress":
-                    shortcuts.extend([("o", "Output"), ("t", "Chat"), ("i", "Interject"), ("d", "Diff")])
+                    shortcuts.extend(
+                        [("o", "Output"), ("t", "Chat"), ("i", "Interject"), ("d", "Diff")]
+                    )
                 elif state == "in_review":
                     shortcuts.extend([("r", "Review"), ("d", "Diff"), ("o", "Output")])
                 elif state == "awaiting_input":
@@ -1168,7 +1170,9 @@ class PipelineScreen(Screen):
         if not task:
             return
         if task.get("state") != "error":
-            self.app.notify(f"Retry not available — task is {task.get('state', 'unknown')}", severity="warning")
+            self.app.notify(
+                f"Retry not available — task is {task.get('state', 'unknown')}", severity="warning"
+            )
             return
         tid = task["id"]
         safe_create_task(self._retry_task(tid), name=f"retry-{tid}")
@@ -1197,7 +1201,9 @@ class PipelineScreen(Screen):
         if not task:
             return
         if task.get("state") != "error":
-            self.app.notify(f"Skip not available — task is {task.get('state', 'unknown')}", severity="warning")
+            self.app.notify(
+                f"Skip not available — task is {task.get('state', 'unknown')}", severity="warning"
+            )
             return
         tid = task["id"]
         safe_create_task(self._skip_task(tid), name=f"skip-{tid}")

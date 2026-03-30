@@ -365,9 +365,7 @@ class ExecutorMixin:
 
         # Verify worktree exists — fall back to full execution if missing
         if not os.path.isdir(worktree_path):
-            console.print(
-                f"[yellow]{task_id}: worktree missing — resetting to todo[/yellow]"
-            )
+            console.print(f"[yellow]{task_id}: worktree missing — resetting to todo[/yellow]")
             await db.update_task_state(task_id, TaskState.TODO.value)
             await self._emit(
                 "task:state_changed",

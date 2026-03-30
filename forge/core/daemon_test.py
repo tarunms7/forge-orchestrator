@@ -1703,9 +1703,12 @@ class TestGenerateContractsPersistsStatus:
         db.add_pipeline_cost = AsyncMock()
         db.set_pipeline_contracts = AsyncMock()
 
-        with patch("forge.core.daemon.ContractBuilder") as MockBuilder, \
-             patch("forge.core.daemon.ContractBuilderLLM"):
+        with (
+            patch("forge.core.daemon.ContractBuilder") as MockBuilder,
+            patch("forge.core.daemon.ContractBuilderLLM"),
+        ):
             from forge.core.contracts import ContractSet
+
             mock_builder = MockBuilder.return_value
             mock_builder.build = AsyncMock(return_value=ContractSet())
             await daemon.generate_contracts(graph, db, "pipe-1")
@@ -1755,6 +1758,7 @@ class TestResumeContractRestoration:
 
         # Simulate stored contracts JSON
         from forge.core.contracts import ContractSet
+
         contracts = ContractSet()
         db.get_pipeline_contracts = AsyncMock(return_value=contracts.model_dump_json())
 

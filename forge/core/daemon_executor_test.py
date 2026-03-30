@@ -750,9 +750,13 @@ class TestExecuteTaskReviewOnly:
 
         with patch("os.path.isdir", return_value=False):
             await executor._execute_task_review_only(
-                db, merge_worker, worktree_mgr,
-                "task-1", "agent-1",
-                pipeline_id="pipe-1", repo_id="default",
+                db,
+                merge_worker,
+                worktree_mgr,
+                "task-1",
+                "agent-1",
+                pipeline_id="pipe-1",
+                repo_id="default",
             )
 
         db.update_task_state.assert_called_with("task-1", "todo")
@@ -777,9 +781,13 @@ class TestExecuteTaskReviewOnly:
 
         with patch("os.path.isdir", return_value=True):
             await executor._execute_task_review_only(
-                db, merge_worker, worktree_mgr,
-                "task-1", "agent-1",
-                pipeline_id="pipe-1", repo_id="default",
+                db,
+                merge_worker,
+                worktree_mgr,
+                "task-1",
+                "agent-1",
+                pipeline_id="pipe-1",
+                repo_id="default",
             )
 
         executor._attempt_merge.assert_called_once()
@@ -816,16 +824,17 @@ class TestExecuteTaskReviewOnly:
                 return_value=_make_proc(returncode=0),
             ) as mock_git:
                 await executor._execute_task_review_only(
-                    db, merge_worker, worktree_mgr,
-                    "task-1", "agent-1",
-                    pipeline_id="pipe-1", repo_id="default",
+                    db,
+                    merge_worker,
+                    worktree_mgr,
+                    "task-1",
+                    "agent-1",
+                    pipeline_id="pipe-1",
+                    repo_id="default",
                 )
 
         # Verify rebase --abort was called
-        abort_calls = [
-            c for c in mock_git.call_args_list
-            if c.args[0] == ["rebase", "--abort"]
-        ]
+        abort_calls = [c for c in mock_git.call_args_list if c.args[0] == ["rebase", "--abort"]]
         assert len(abort_calls) == 1
 
     async def test_missing_task_releases_agent(self):
@@ -836,8 +845,11 @@ class TestExecuteTaskReviewOnly:
         db.release_agent = AsyncMock()
 
         await executor._execute_task_review_only(
-            db, MagicMock(), MagicMock(),
-            "task-1", "agent-1",
+            db,
+            MagicMock(),
+            MagicMock(),
+            "task-1",
+            "agent-1",
             pipeline_id="pipe-1",
         )
 
@@ -874,16 +886,17 @@ class TestPrepareWorktreeRebaseAbort:
                 return_value=_make_proc(returncode=0),
             ) as mock_git:
                 result = await executor._prepare_worktree(
-                    worktree_mgr, "task-1", "pipe-1", AsyncMock(),
-                    base_ref="main", repo_id="default",
+                    worktree_mgr,
+                    "task-1",
+                    "pipe-1",
+                    AsyncMock(),
+                    base_ref="main",
+                    repo_id="default",
                 )
 
         assert result == "/project/.forge/worktrees/task-1"
         # Verify rebase --abort was called
-        abort_calls = [
-            c for c in mock_git.call_args_list
-            if c.args[0] == ["rebase", "--abort"]
-        ]
+        abort_calls = [c for c in mock_git.call_args_list if c.args[0] == ["rebase", "--abort"]]
         assert len(abort_calls) == 1
 
     async def test_no_rebase_abort_when_clean(self):
@@ -909,8 +922,12 @@ class TestPrepareWorktreeRebaseAbort:
                 new_callable=AsyncMock,
             ) as mock_git:
                 result = await executor._prepare_worktree(
-                    worktree_mgr, "task-1", "pipe-1", AsyncMock(),
-                    base_ref="main", repo_id="default",
+                    worktree_mgr,
+                    "task-1",
+                    "pipe-1",
+                    AsyncMock(),
+                    base_ref="main",
+                    repo_id="default",
                 )
 
         assert result == "/project/.forge/worktrees/task-1"
