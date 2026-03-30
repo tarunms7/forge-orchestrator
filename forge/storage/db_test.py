@@ -1532,6 +1532,7 @@ async def test_get_pipeline_list_with_counts(db: Database):
     by_id = {r["id"]: r for r in results}
 
     p1 = by_id["pipe-list-1"]
+    assert isinstance(p1["created_at"], str)
     assert p1["description"] == "Resume test pipeline"
     assert p1["total_tasks"] == 5
     assert p1["tasks_done"] == 2
