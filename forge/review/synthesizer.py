@@ -387,7 +387,8 @@ async def review_chunk(
             await asyncio.sleep(2**attempt + random.uniform(0, 1))
             continue
 
-        if result:
+        # Always accumulate cost, even if result text is empty
+        if result is not None:
             cost_info.add(
                 ReviewCostInfo(
                     cost_usd=result.cost_usd,
@@ -550,6 +551,9 @@ async def synthesize_results(
     for r in chunk_results:
         total_cost.add(r.cost_info)
 
+    # Import here (not at module level) to avoid circular imports
+    from forge.review.llm_review import _parse_review_result
+
     max_attempts = 2
     for attempt in range(1, max_attempts + 1):
         try:
@@ -564,7 +568,8 @@ async def synthesize_results(
             await asyncio.sleep(2**attempt)
             continue
 
-        if result:
+        # Always accumulate cost, even if result text is empty
+        if result is not None:
             total_cost.add(
                 ReviewCostInfo(
                     cost_usd=result.cost_usd,
@@ -578,8 +583,6 @@ async def synthesize_results(
                 return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
             await asyncio.sleep(2**attempt)
             continue
-
-        from forge.review.llm_review import _parse_review_result  # avoid circular at module level
 
         gate_result = _parse_review_result(raw)
         # Override needs_human: UNCERTAIN from synthesis always goes to human
@@ -648,7 +651,7 @@ async def run_chunked_review(
     """
     chunk_results: list[ChunkReviewResult] = []
 
-    for chunk in chunks:
+    for chunk_pos, chunk in enumerate(chunks):
         result = await review_chunk(
             chunk,
             task_title,
@@ -667,7 +670,7 @@ async def run_chunked_review(
         # Abort early if a chunk timed out — no point reviewing more chunks
         if result.timed_out:
             # Fill remaining chunks with placeholder results
-            for remaining_chunk in chunks[chunk.index :]:  # chunk.index is 1-based
+            for remaining_chunk in chunks[chunk_pos + 1 :]:
                 chunk_results.append(
                     ChunkReviewResult(
                         chunk_index=remaining_chunk.index,

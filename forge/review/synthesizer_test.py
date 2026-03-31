@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from forge.review.pipeline import ReviewCostInfo
+from forge.review.pipeline import GateResult, ReviewCostInfo
 from forge.review.strategy import DiffChunk
 from forge.review.synthesizer import (
     ChunkReviewResult,
@@ -177,6 +177,76 @@ def test_deduplicate_keeps_different_files():
 
 
 # ── _format_chunks_for_synthesis ──────────────────────────────────────────
+
+
+def test_chunk_escalation_uses_correct_indices():
+    """Timeout escalation should use loop position, not chunk.index (1-based)."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    chunks = [
+        DiffChunk(
+            index=1, total=3, files=["a.py"], diff_text="diff a",
+            line_count=10, risk_label="LOW", risk_scores={"a.py": 10.0},
+        ),
+        DiffChunk(
+            index=2, total=3, files=["b.py"], diff_text="diff b",
+            line_count=10, risk_label="MEDIUM", risk_scores={"b.py": 30.0},
+        ),
+        DiffChunk(
+            index=3, total=3, files=["c.py"], diff_text="diff c",
+            line_count=10, risk_label="HIGH", risk_scores={"c.py": 50.0},
+        ),
+    ]
+
+    # First chunk succeeds, second times out
+    ok_result = ChunkReviewResult(
+        chunk_index=1, verdict="PASS", confidence=5, issues=[],
+        cross_chunk_concerns=[], summary="ok", cost_info=ReviewCostInfo(),
+        raw_text="", timed_out=False,
+    )
+    timeout_result = ChunkReviewResult(
+        chunk_index=2, verdict="UNCERTAIN", confidence=1, issues=[],
+        cross_chunk_concerns=[], summary="timed out", cost_info=ReviewCostInfo(),
+        raw_text="", timed_out=True,
+    )
+
+    call_count = 0
+
+    async def mock_review_chunk(chunk, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ok_result
+        return timeout_result
+
+    with patch("forge.review.synthesizer.review_chunk", side_effect=mock_review_chunk):
+        with patch("forge.review.synthesizer.synthesize_results", new_callable=AsyncMock) as mock_synth:
+            mock_synth.return_value = (
+                GateResult(passed=False, gate="gate2_llm_review", details="timeout"),
+                ReviewCostInfo(),
+            )
+            from forge.review.synthesizer import run_chunked_review
+
+            loop = asyncio.new_event_loop()
+            try:
+                _, _ = loop.run_until_complete(
+                    run_chunked_review(
+                        chunks, [], "diff", "title", "desc",
+                    )
+                )
+            finally:
+                loop.close()
+
+            # synthesize_results should receive 3 results:
+            # chunk 1 (ok), chunk 2 (timeout), chunk 3 (placeholder)
+            synth_call_args = mock_synth.call_args
+            chunk_results = synth_call_args[0][1]  # second positional arg
+            assert len(chunk_results) == 3
+            # Chunk 3 should be a placeholder (skipped due to timeout)
+            assert chunk_results[2].timed_out is True
+            assert chunk_results[2].chunk_index == 3
+            assert "Skipped" in chunk_results[2].summary
 
 
 def test_format_chunks_for_synthesis_includes_verdict():
