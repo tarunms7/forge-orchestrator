@@ -1,10 +1,7 @@
 """Forge gauntlet — end-to-end test harness for pipeline validation."""
 
 from forge.gauntlet.models import GauntletResult, ScenarioResult
-
-# These are defined by sibling tasks; use lazy imports to avoid circular errors
-# at import time while still exposing them in the public API.
-SCENARIO_REGISTRY: dict[str, object] = {}
+from forge.gauntlet.scenarios import SCENARIO_REGISTRY
 
 
 def __getattr__(name: str):  # noqa: N807
