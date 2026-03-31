@@ -222,7 +222,12 @@ def tui(project_dir: str, strategy: str | None, dry_run: bool, repo: tuple[str, 
     if not os.path.isdir(forge_dir):
         os.makedirs(forge_dir, exist_ok=True)
 
-    from forge.config.project_config import resolve_repos, validate_repos_startup
+    from forge.config.project_config import (
+        ProjectConfig,
+        apply_project_config,
+        resolve_repos,
+        validate_repos_startup,
+    )
 
     # Resolve repos: CLI flags → workspace.toml → single-repo default
     repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
@@ -238,7 +243,10 @@ def tui(project_dir: str, strategy: str | None, dry_run: bool, repo: tuple[str, 
     from forge.config.settings import ForgeSettings
     from forge.tui.app import ForgeApp
 
+    # Load project config and apply to settings (env vars still win)
+    project_config = ProjectConfig.load(project_dir)
     settings = ForgeSettings()
+    apply_project_config(settings, project_config)
     if strategy:
         settings.model_strategy = strategy
 

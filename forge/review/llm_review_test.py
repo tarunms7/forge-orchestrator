@@ -489,3 +489,44 @@ class TestAdaptiveReviewDispatch:
 
         diff = "diff --git a/x b/x\n+line\n"
         assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER1
+
+
+class TestCostTrackingOnEmptyResult:
+    """Cost is tracked even when LLM returns empty response."""
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_on_none_result(self):
+        """When sdk_query returns None, cost accumulates safely (as zero)."""
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = None
+            _, cost_info = await gate2_llm_review(
+                "Test task", "Test desc", "diff --git a/test.py", model="sonnet"
+            )
+        # Should not raise — cost should be zero but tracked
+        assert cost_info.cost_usd == 0
+        assert cost_info.input_tokens == 0
+        assert cost_info.output_tokens == 0
+
+    @pytest.mark.asyncio
+    async def test_cost_tracked_on_empty_result_text(self):
+        """When result exists but result.result is empty, cost is still accumulated."""
+        mock_result = MagicMock()
+        mock_result.result = ""
+        mock_result.cost_usd = 0.005
+        mock_result.input_tokens = 200
+        mock_result.output_tokens = 10
+        mock_result.num_turns = 1
+        mock_result.duration_ms = 500
+        mock_result.duration_api_ms = 400
+
+        with patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk:
+            mock_sdk.return_value = mock_result
+            _, cost_info = await gate2_llm_review(
+                "Test task", "Test desc", "diff --git a/test.py", model="sonnet"
+            )
+
+        # Cost should be accumulated even though result text was empty
+        # (called twice due to max_review_attempts=2)
+        assert cost_info.cost_usd == 0.005 * 2
+        assert cost_info.input_tokens == 200 * 2
+        assert cost_info.output_tokens == 10 * 2

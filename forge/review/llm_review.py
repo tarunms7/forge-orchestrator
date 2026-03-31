@@ -270,11 +270,10 @@ async def gate2_llm_review(
                 )
             continue
 
-        # Accumulate cost info from each attempt
-        if result is not None:
-            cost_info.cost_usd += result.cost_usd
-            cost_info.input_tokens += result.input_tokens
-            cost_info.output_tokens += result.output_tokens
+        # Always accumulate cost from SDK call, even if result is None/empty
+        cost_info.cost_usd += getattr(result, "cost_usd", 0)
+        cost_info.input_tokens += getattr(result, "input_tokens", 0)
+        cost_info.output_tokens += getattr(result, "output_tokens", 0)
 
         result_text = result.result if result and result.result else ""
         if result_text:

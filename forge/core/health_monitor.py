@@ -130,21 +130,46 @@ class PipelineHealthMonitor:
             if task.state in terminal_states:
                 self._task_last_output.pop(task.id, None)
 
-        # Check for deadlock: all remaining tasks are blocked
+        # Check for deadlock: all remaining tasks are blocked with no path forward
         if self._config.deadlock_check_enabled:
-            active_states = [
-                t.state for t in tasks if t.state not in ("done", "error", "cancelled")
-            ]
-            if active_states and all(s == "blocked" for s in active_states):
-                logger.error(
-                    "DEADLOCK: All %d remaining tasks are blocked. "
-                    "This usually means a dependency failed and cascaded.",
-                    len(active_states),
-                )
-                if self._on_stuck_task:
-                    for task in tasks:
-                        if task.state == "blocked":
-                            await self._on_stuck_task(task.id, "deadlock — all tasks blocked")
+            remaining = [t for t in tasks if t.state not in ("done", "error", "cancelled")]
+            if remaining:
+                states = {t.id: t.state for t in remaining}
+                # Human-resolvable states are not deadlocks
+                human_resolvable = {"awaiting_input", "awaiting_approval"}
+                if any(s in human_resolvable for s in states.values()):
+                    pass  # Not a deadlock — humans can unblock
+                elif all(s == "blocked" for s in states.values()):
+                    # All remaining are blocked. Prefer reporting a concrete cycle when
+                    # one exists, but keep the broader blocked-pipeline diagnostic for
+                    # dependency-failure cascades and other non-cyclic stalls.
+                    cycle = self._find_blocked_cycle(remaining)
+                    if cycle:
+                        cycle_str = " → ".join(cycle + [cycle[0]])
+                        logger.error(
+                            "Deadlock detected: %d tasks blocked in cycle: [%s]",
+                            len(cycle),
+                            cycle_str,
+                        )
+                        if self._on_stuck_task:
+                            for task_id in cycle:
+                                await self._on_stuck_task(
+                                    task_id,
+                                    f"deadlock — blocked in cycle: [{cycle_str}]",
+                                )
+                    else:
+                        logger.error(
+                            "All %d remaining tasks are blocked. "
+                            "This usually means an upstream dependency failed "
+                            "and the block cascaded.",
+                            len(remaining),
+                        )
+                        if self._on_stuck_task:
+                            for task in remaining:
+                                await self._on_stuck_task(
+                                    task.id,
+                                    "deadlock — all remaining tasks blocked",
+                                )
 
         for task_id, state, idle_time, reason in stuck_tasks:
             logger.warning(
@@ -156,3 +181,49 @@ class PipelineHealthMonitor:
             )
             if self._on_stuck_task:
                 await self._on_stuck_task(task_id, reason)
+
+    @staticmethod
+    def _find_blocked_cycle(remaining: list) -> list[str] | None:
+        """Return task IDs forming a dependency cycle, or None if no cycle exists.
+
+        Only blocked→blocked edges participate in cycle detection. This lets us
+        detect a real cycle subset without losing the broader "all remaining
+        tasks are blocked" diagnostic when other blocked tasks are simply waiting
+        on failed or terminal dependencies.
+        """
+        blocked_ids = {t.id for t in remaining if t.state == "blocked"}
+        # Build adjacency: blocked task → its blocked dependencies
+        deps: dict[str, list[str]] = {}
+        for t in remaining:
+            if t.state != "blocked":
+                continue
+            task_deps = getattr(t, "depends_on", []) or []
+            deps[t.id] = [d for d in task_deps if d in blocked_ids]
+
+        # DFS cycle detection
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color: dict[str, int] = {tid: WHITE for tid in blocked_ids}
+        path: list[str] = []
+
+        def dfs(node: str) -> list[str] | None:
+            color[node] = GRAY
+            path.append(node)
+            for dep in deps.get(node, []):
+                if color[dep] == GRAY:
+                    # Found a cycle — extract it
+                    idx = path.index(dep)
+                    return path[idx:]
+                if color[dep] == WHITE:
+                    result = dfs(dep)
+                    if result is not None:
+                        return result
+            path.pop()
+            color[node] = BLACK
+            return None
+
+        for tid in blocked_ids:
+            if color[tid] == WHITE:
+                cycle = dfs(tid)
+                if cycle is not None:
+                    return cycle
+        return None

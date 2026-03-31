@@ -140,6 +140,14 @@ class TestFetchIssue:
         assert "--repo" in cmd
         assert "org/repo" in cmd
 
+    def test_invalid_repo_format(self):
+        with pytest.raises(ValueError, match="Invalid repo format"):
+            fetch_issue(10, repo="not-a-valid-repo")
+
+    def test_invalid_repo_format_with_slashes(self):
+        with pytest.raises(ValueError, match="Invalid repo format"):
+            fetch_issue(10, repo="org/repo/extra")
+
     @patch("forge.issue.github.subprocess.run", return_value=_err_result("issue 999 not found"))
     def test_not_found(self, mock_run):
         with pytest.raises(RuntimeError, match="not found"):

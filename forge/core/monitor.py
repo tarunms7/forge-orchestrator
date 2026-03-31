@@ -41,11 +41,14 @@ class ResourceMonitor:
                 disk_free_gb=disk.free / (1024**3),
             )
         except (OSError, RuntimeError) as exc:
-            logger.warning("Resource snapshot failed: %s — returning safe defaults", exc)
+            logger.warning(
+                "Resource snapshot failed: %s — returning conservative defaults (blocking dispatch)",
+                exc,
+            )
             return ResourceSnapshot(
-                cpu_percent=0.0,
-                memory_available_pct=100.0,
-                disk_free_gb=100.0,
+                cpu_percent=100.0,
+                memory_available_pct=0.0,
+                disk_free_gb=0.0,
             )
 
     async def take_snapshot(self) -> ResourceSnapshot:
@@ -53,8 +56,11 @@ class ResourceMonitor:
             snapshot = await asyncio.to_thread(self._take_snapshot_sync)
             return snapshot
         except (OSError, RuntimeError) as exc:
-            logger.warning("Resource snapshot failed: %s -- returning safe defaults", exc)
-            return ResourceSnapshot(cpu_percent=0.0, memory_available_pct=100.0, disk_free_gb=100.0)
+            logger.warning(
+                "Resource snapshot failed: %s -- returning conservative defaults (blocking dispatch)",
+                exc,
+            )
+            return ResourceSnapshot(cpu_percent=100.0, memory_available_pct=0.0, disk_free_gb=0.0)
 
     def can_dispatch(self, snapshot: ResourceSnapshot) -> bool:
         return len(self.blocked_reasons(snapshot)) == 0

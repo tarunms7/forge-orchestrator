@@ -1473,9 +1473,7 @@ class ForgeApp(App):
             logger.error("Failed to load pipeline history: %s", e, exc_info=True)
             self.notify(f"Failed to load pipeline: {_escape_markup(e)}", severity="error")
 
-    async def on_pipeline_list_resume_requested(
-        self, event: PipelineList.ResumeRequested
-    ) -> None:
+    async def on_pipeline_list_resume_requested(self, event: PipelineList.ResumeRequested) -> None:
         """User pressed Shift+R on a resumable pipeline — resume/retry it."""
         pipeline_id = event.pipeline_id
         if not self._db:
