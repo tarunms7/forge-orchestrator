@@ -973,18 +973,6 @@ class PipelineScreen(Screen):
         self._refresh_all()
         self._update_shortcut_bar()
 
-    def on_chat_thread_answer_submitted(self, event: ChatThread.AnswerSubmitted) -> None:
-        """Forward answer to the TUI app for dispatch to the daemon."""
-        # Bubble up — the main App should handle sending the answer back.
-        # We post as a regular message so the App can catch it.
-        self.post_message(event)
-
-    def on_chat_thread_interjection_submitted(
-        self, event: ChatThread.InterjectionSubmitted
-    ) -> None:
-        """Forward interjection to the TUI app for DB persistence."""
-        self.post_message(event)
-
     def on_copy_overlay_copy_complete(self, event: CopyOverlay.CopyComplete) -> None:
         """Remove overlay after copy."""
         self._dismiss_copy_overlay()
