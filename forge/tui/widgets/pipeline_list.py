@@ -13,6 +13,9 @@ from forge.tui.theme import PIPELINE_STATUS_ICONS, STATE_COLORS, STATE_ICONS
 
 logger = logging.getLogger("forge.tui.widgets.pipeline_list")
 
+_LINES_PER_PIPELINE = 2
+_DEFAULT_VISIBLE_PIPELINES = 6
+
 # Map pipeline status → icon/color
 _STATUS_MAP: dict[str, tuple[str, str]] = {
     "complete": (STATE_ICONS.get("done", "✔"), STATE_COLORS.get("done", "#3fb950")),
@@ -120,6 +123,35 @@ class PipelineList(Widget, can_focus=True):
         super().__init__()
         self._pipelines: list[dict] = []
         self._selected_index: int = 0
+        self._scroll_offset: int = 0
+
+    def _visible_pipeline_count(self) -> int:
+        """Return how many pipeline rows fit in the current widget height."""
+        height = self.size.height
+        if height <= 0:
+            return _DEFAULT_VISIBLE_PIPELINES
+        return max(1, height // _LINES_PER_PIPELINE)
+
+    def _clamp_scroll_offset(self, visible_count: int | None = None) -> None:
+        """Keep the scroll offset within the current list bounds."""
+        if visible_count is None:
+            visible_count = self._visible_pipeline_count()
+        max_offset = max(0, len(self._pipelines) - visible_count)
+        self._scroll_offset = min(max(self._scroll_offset, 0), max_offset)
+
+    def _ensure_selection_visible(self, visible_count: int | None = None) -> None:
+        """Adjust the viewport so the selected pipeline stays on screen."""
+        if visible_count is None:
+            visible_count = self._visible_pipeline_count()
+        if not self._pipelines:
+            self._scroll_offset = 0
+            return
+        self._clamp_scroll_offset(visible_count)
+        if self._selected_index < self._scroll_offset:
+            self._scroll_offset = self._selected_index
+        elif self._selected_index >= self._scroll_offset + visible_count:
+            self._scroll_offset = self._selected_index - visible_count + 1
+        self._clamp_scroll_offset(visible_count)
 
     def update_pipelines(self, pipelines: list[dict]) -> None:
         """Update the pipeline list.
@@ -129,6 +161,7 @@ class PipelineList(Widget, can_focus=True):
         """
         self._pipelines = list(pipelines)
         self._selected_index = min(self._selected_index, max(0, len(pipelines) - 1))
+        self._ensure_selection_visible()
         self.refresh()
 
     @property
@@ -141,8 +174,13 @@ class PipelineList(Widget, can_focus=True):
         if not self._pipelines:
             return "[#8b949e]No recent pipelines[/]"
 
+        visible_count = self._visible_pipeline_count()
+        self._ensure_selection_visible(visible_count)
+        start = self._scroll_offset
+        end = start + visible_count
+
         lines: list[str] = []
-        for i, p in enumerate(self._pipelines):
+        for i, p in enumerate(self._pipelines[start:end], start=start):
             status = p.get("status", "unknown")
             icon, color = _STATUS_MAP.get(status, ("?", "#8b949e"))
             desc = p.get("description", "Untitled")[:48]
@@ -196,12 +234,14 @@ class PipelineList(Widget, can_focus=True):
     def action_cursor_down(self) -> None:
         if self._selected_index < len(self._pipelines) - 1:
             self._selected_index += 1
+            self._ensure_selection_visible()
             self.refresh()
             self.post_message(self.CursorMoved(self.selected_pipeline))
 
     def action_cursor_up(self) -> None:
         if self._selected_index > 0:
             self._selected_index -= 1
+            self._ensure_selection_visible()
             self.refresh()
             self.post_message(self.CursorMoved(self.selected_pipeline))
 

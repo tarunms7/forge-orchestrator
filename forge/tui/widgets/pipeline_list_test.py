@@ -414,3 +414,64 @@ class TestProgressRendering:
         cursor_msgs = [m for m in messages if isinstance(m, PipelineList.CursorMoved)]
         assert len(cursor_msgs) == 1
         assert cursor_msgs[0].pipeline["id"] == "p2"
+
+
+class TestViewportScrolling:
+    """Tests that the selected pipeline remains visible in constrained layouts."""
+
+    def _make_pipelines(self, count: int) -> list[dict]:
+        return [
+            {
+                "id": f"p{i}",
+                "description": f"Pipeline {i}",
+                "status": "complete",
+                "created_at": "2026-03-10T12:00:00",
+                "total_cost_usd": float(i),
+            }
+            for i in range(1, count + 1)
+        ]
+
+    def test_render_limits_to_visible_window(self):
+        pl = PipelineList()
+        pl._visible_pipeline_count = lambda: 2
+        pl.update_pipelines(self._make_pipelines(5))
+
+        rendered = pl.render()
+
+        assert "Pipeline 1" in rendered
+        assert "Pipeline 2" in rendered
+        assert "Pipeline 3" not in rendered
+
+    def test_cursor_down_scrolls_window_to_keep_selection_visible(self):
+        pl = PipelineList()
+        pl._visible_pipeline_count = lambda: 2
+        pl.update_pipelines(self._make_pipelines(5))
+
+        for _ in range(3):
+            pl.action_cursor_down()
+
+        rendered = pl.render()
+
+        assert pl._selected_index == 3
+        assert pl._scroll_offset == 2
+        assert "Pipeline 3" in rendered
+        assert "Pipeline 4" in rendered
+        assert "Pipeline 2" not in rendered
+
+    def test_cursor_up_scrolls_window_back_when_selection_moves_above_view(self):
+        pl = PipelineList()
+        pl._visible_pipeline_count = lambda: 2
+        pl.update_pipelines(self._make_pipelines(5))
+        pl._selected_index = 4
+        pl._scroll_offset = 3
+
+        pl.action_cursor_up()
+        pl.action_cursor_up()
+
+        rendered = pl.render()
+
+        assert pl._selected_index == 2
+        assert pl._scroll_offset == 2
+        assert "Pipeline 3" in rendered
+        assert "Pipeline 4" in rendered
+        assert "Pipeline 5" not in rendered
