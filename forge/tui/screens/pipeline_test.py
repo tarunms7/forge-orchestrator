@@ -248,6 +248,142 @@ async def test_task_answer_clears_chat_and_returns_to_output():
 
 
 @pytest.mark.asyncio
+async def test_action_view_chat_does_not_resurrect_answered_planning_question():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Checking the architecture..."})
+        state.apply_event(
+            "planning:question",
+            {
+                "question_id": "q1",
+                "question": {
+                    "question": "Which approach should we use?",
+                    "suggestions": ["A", "B", "C"],
+                },
+            },
+        )
+        await pilot.pause()
+        state.apply_event("planning:answer", {"answer": "C"})
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Build feature",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        await pilot.pause()
+
+        with patch.object(app, "notify") as mock_notify:
+            await pilot.press("t")
+            await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        chat_input = chat.query_one("#chat-input")
+        assert app.screen._active_view == "output"
+        assert chat.has_question is False
+        assert chat_input.display is False
+        mock_notify.assert_called_once()
+        assert "No question pending" in mock_notify.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_answered_question_blurs_hidden_chat_input():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Architect is planning..."})
+        state.apply_event(
+            "planning:question",
+            {
+                "question_id": "q1",
+                "question": {
+                    "question": "Choose a mode",
+                    "suggestions": ["A", "B", "C"],
+                },
+            },
+        )
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        chat_input = chat.query_one("#chat-input")
+        chat_input.focus()
+        await pilot.pause()
+        assert chat_input.has_focus is True
+
+        state.apply_event("planning:answer", {"answer": "C"})
+        await pilot.pause()
+
+        assert chat_input.display is False
+        assert app.focused is not chat_input
+
+
+@pytest.mark.asyncio
+async def test_view_diff_then_output_uses_selected_task_not_stale_planner_content():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Architect is planning..."})
+        state.apply_event(
+            "planning:question",
+            {
+                "question_id": "q1",
+                "question": {
+                    "question": "Choose a mode",
+                    "suggestions": ["A", "B", "C"],
+                },
+            },
+        )
+        await pilot.pause()
+        state.apply_event("planning:answer", {"answer": "C"})
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Review task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_review"})
+        state.apply_event("task:agent_output", {"task_id": "t1", "line": "Working on files..."})
+        state.apply_event("task:review_diff", {"task_id": "t1", "diff": "diff --git a/f.py b/f.py"})
+        await pilot.pause()
+
+        app.screen.action_view_diff()
+        await pilot.pause()
+        app.screen.action_view_output()
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        chat_input = chat.query_one("#chat-input")
+        agent_output = app.screen.query_one("AgentOutput")
+        assert app.screen._active_view == "output"
+        assert chat.has_question is False
+        assert chat_input.display is False
+        assert agent_output._task_id == "t1"
+        assert agent_output._title == "Review task"
+
+
+@pytest.mark.asyncio
 async def test_chat_answer_submission_bubbles_to_app_once():
     """Answer submission should bubble to the App without freezing the screen."""
     state = TuiState()
@@ -487,13 +623,31 @@ async def test_streaming_stops_on_task_done():
 
 
 @pytest.mark.asyncio
-async def test_t_key_opens_chat_view():
-    """Pressing 't' should switch to chat view (relocated from 'c')."""
+async def test_t_key_opens_chat_view_when_question_is_pending():
+    """Pressing 't' should switch to chat only for a live pending question."""
     state = TuiState()
     app = PipelineTestApp(state=state)
     async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event(
+            "planning:question",
+            {
+                "question_id": "q1",
+                "question": {
+                    "question": "Which approach should we use?",
+                    "suggestions": ["A", "B", "C"],
+                },
+            },
+        )
+        await pilot.pause()
+
         screen = app.screen
+        screen.action_view_output()
+        await pilot.pause()
+        assert screen._active_view == "output"
+
         await pilot.press("t")
+        await pilot.pause()
         assert screen._active_view == "chat"
 
 

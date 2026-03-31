@@ -922,6 +922,23 @@ class PipelineScreen(Screen):
             w = self.query_one(cls)
             w.display = name == view
 
+        if view != "chat":
+            try:
+                chat_input = self.query_one("#chat-input", Input)
+                if chat_input.has_focus:
+                    chat_input.blur()
+            except Exception:
+                pass
+            focus_target = AgentOutput if view == "output" else DiffViewer
+            self.call_after_refresh(lambda: self._focus_panel_widget(focus_target))
+
+    def _focus_panel_widget(self, widget_cls: type[Widget]) -> None:
+        """Move focus onto the visible right-panel widget after layout refresh."""
+        try:
+            self.app.set_focus(self.query_one(widget_cls))
+        except Exception:
+            pass
+
     def _auto_switch_planning_chat(self, question: dict) -> None:
         """Switch to chat view for a planning question from the Architect."""
         state = self._state
@@ -983,6 +1000,19 @@ class PipelineScreen(Screen):
         chat.clear_question()
         if self._active_view == "chat" and not self._read_only:
             self._set_view("output")
+
+    def _selected_pending_question(self) -> tuple[str, dict] | None:
+        """Return the live question that should drive the chat panel, if any."""
+        planning_q = self._state.pending_questions.get("__planning__")
+        if planning_q:
+            return "__planning__", planning_q
+
+        tid = self._state.selected_task_id
+        if tid and tid in self._state.tasks:
+            question = self._state.pending_questions.get(tid)
+            if question:
+                return tid, question
+        return None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1056,14 +1086,26 @@ class PipelineScreen(Screen):
 
     def action_view_output(self) -> None:
         self._set_view("output")
+        self._refresh_all()
 
     def action_view_chat(self) -> None:
-        self._set_view("chat")
-        if not self._read_only:
-            try:
-                self.query_one("#chat-input").focus()
-            except Exception:
-                pass
+        question_target = self._selected_pending_question()
+        if question_target:
+            task_id, question = question_target
+            if task_id == "__planning__":
+                self._auto_switch_planning_chat(question)
+            else:
+                task = self._state.tasks.get(task_id, {})
+                self._auto_switch_chat(task_id, task)
+            self._refresh_all()
+            return
+
+        selected = self._get_selected_task()
+        if selected and selected.get("state") in ("in_progress", "awaiting_input"):
+            self.app.notify("No question pending — press i to interject", timeout=4)
+        else:
+            self.app.notify("No question pending", severity="warning", timeout=4)
+        self._refresh_all()
 
     def action_view_diff(self) -> None:
         task = self._get_selected_task()
@@ -1075,6 +1117,7 @@ class PipelineScreen(Screen):
             self.app.notify(f"Diff not available — task is {state}", severity="warning")
             return
         self._set_view("diff")
+        self._refresh_all()
 
     def action_copy_mode(self) -> None:
         """Enter copy mode — mount CopyOverlay on AgentOutput."""
