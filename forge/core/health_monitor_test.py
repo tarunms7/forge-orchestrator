@@ -263,13 +263,13 @@ class TestHealthMonitor:
         assert len(stuck_tasks) == 0
 
     @pytest.mark.asyncio
-    async def test_all_blocked_no_cycle_no_deadlock(self):
-        """All blocked but depending on done tasks (deps resolved) — no cycle, no deadlock."""
+    async def test_all_blocked_no_cycle_reports_blocked_pipeline(self):
+        """All remaining blocked without a cycle should still be surfaced."""
         db = AsyncMock()
         db.list_tasks_by_pipeline.return_value = [
             _make_task("t1", "blocked", depends_on=["t3"]),
             _make_task("t2", "blocked", depends_on=["t3"]),
-            _make_task("t3", "done"),
+            _make_task("t3", "error"),
         ]
 
         stuck_tasks = []
@@ -286,10 +286,9 @@ class TestHealthMonitor:
         )
 
         await monitor._check_health()
-        # t1 and t2 depend on t3 (done), so they're not in a cycle
-        # But all *remaining* (non-terminal) tasks are blocked — cycle check runs
-        # t1 depends on t3 which is not in blocked_ids → not a deadlock
-        assert len(stuck_tasks) == 0
+        assert len(stuck_tasks) == 2
+        assert {task_id for task_id, _ in stuck_tasks} == {"t1", "t2"}
+        assert all("all remaining tasks blocked" in reason for _, reason in stuck_tasks)
 
     @pytest.mark.asyncio
     async def test_three_task_cycle_detected(self):
@@ -316,6 +315,35 @@ class TestHealthMonitor:
 
         await monitor._check_health()
         assert len(stuck_tasks) == 3
+        assert all("cycle" in reason for _, reason in stuck_tasks)
+
+    @pytest.mark.asyncio
+    async def test_cycle_subset_detected_even_with_other_blocked_tasks(self):
+        """A real cycle should still be reported when other blocked tasks are present."""
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [
+            _make_task("t1", "blocked", depends_on=["t2"]),
+            _make_task("t2", "blocked", depends_on=["t1"]),
+            _make_task("t3", "blocked", depends_on=["t4"]),
+            _make_task("t4", "error"),
+        ]
+
+        stuck_tasks = []
+
+        async def on_stuck(task_id, reason):
+            stuck_tasks.append((task_id, reason))
+
+        config = HealthConfig(deadlock_check_enabled=True)
+        monitor = PipelineHealthMonitor(
+            db=db,
+            pipeline_id="p1",
+            config=config,
+            on_stuck_task=on_stuck,
+        )
+
+        await monitor._check_health()
+        assert len(stuck_tasks) == 2
+        assert {task_id for task_id, _ in stuck_tasks} == {"t1", "t2"}
         assert all("cycle" in reason for _, reason in stuck_tasks)
 
     @pytest.mark.asyncio
