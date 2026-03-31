@@ -200,6 +200,19 @@ class ChatThread(Widget):
         )
         yield Input(placeholder=placeholder, id="chat-input")
 
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    @property
+    def has_question(self) -> bool:
+        return self._question is not None
+
+    def set_mode(self, mode: str) -> None:
+        """Switch between answer and interjection chrome."""
+        self._mode = mode
+        self._update_controls()
+
     def _update_controls(self) -> None:
         """Sync input/chip visibility with the current mode and read-only state."""
         try:
@@ -260,6 +273,7 @@ class ChatThread(Widget):
     def update_question(
         self, question: dict, work_lines: list[str], history: list[dict] | None = None
     ) -> None:
+        self._mode = "answer"
         self._question = question
         self._work_lines = work_lines
         self._history = history or []
@@ -285,6 +299,7 @@ class ChatThread(Widget):
 
     def clear_question(self) -> None:
         self._question = None
+        self._mode = "answer"
         self.query_one(SuggestionChips).update_suggestions([])
         self.query_one("#chat-input", Input).value = ""
         self.query_one("#chat-scroll", VerticalScroll).remove_children()

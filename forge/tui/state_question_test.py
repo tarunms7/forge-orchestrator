@@ -21,12 +21,22 @@ def test_task_answer_clears_pending():
     state.pending_questions = {"t1": {"id": "q1", "question": "Which?"}}
     state.apply_event("task:answer", {"task_id": "t1", "answer": "A"})
     assert "t1" not in state.pending_questions
+    assert state.tasks["t1"]["state"] == "in_progress"
 
 
 def test_task_resumed_sets_running():
     state = TuiState()
     state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Test"}}
     state.apply_event("task:resumed", {"task_id": "t1"})
+    assert state.tasks["t1"]["state"] == "in_progress"
+
+
+def test_task_auto_decided_resumes_locally():
+    state = TuiState()
+    state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Test"}}
+    state.pending_questions = {"t1": {"id": "q1", "question": "Which?"}}
+    state.apply_event("task:auto_decided", {"task_id": "t1", "reason": "timeout"})
+    assert "t1" not in state.pending_questions
     assert state.tasks["t1"]["state"] == "in_progress"
 
 

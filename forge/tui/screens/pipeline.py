@@ -809,6 +809,7 @@ class PipelineScreen(Screen):
         progress.update_tasks(ordered_tasks)
         dag.update_tasks(ordered_tasks)
         phase_banner.update_phase(state.phase)
+        self._clear_stale_chat_question()
 
         split_pane = self.query_one("#split-pane")
         if state.phase in _SIDEBAR_HIDDEN_PHASES:
@@ -925,6 +926,7 @@ class PipelineScreen(Screen):
         """Switch to chat view for a planning question from the Architect."""
         state = self._state
         chat = self.query_one(ChatThread)
+        chat.set_mode("answer")
         chat.task_id = "__planning__"
         work_lines = state.planner_output
         history = state.question_history.get("__planning__", [])
@@ -947,12 +949,14 @@ class PipelineScreen(Screen):
         """Switch to chat view and populate question when task needs input."""
         state = self._state
         question = state.pending_questions.get(task_id)
-        if question:
-            chat = self.query_one(ChatThread)
-            chat.task_id = task_id
-            work_lines = state.agent_output.get(task_id, [])
-            history = state.question_history.get(task_id, [])
-            chat.update_question(question, work_lines, history)
+        if not question:
+            return
+        chat = self.query_one(ChatThread)
+        chat.set_mode("answer")
+        chat.task_id = task_id
+        work_lines = state.agent_output.get(task_id, [])
+        history = state.question_history.get(task_id, [])
+        chat.update_question(question, work_lines, history)
 
         # Only auto-switch if we're not already in chat view
         if self._active_view != "chat":
@@ -960,6 +964,25 @@ class PipelineScreen(Screen):
         # Always focus input — delay to let layout settle
         if not self._read_only:
             self.set_timer(0.15, self._focus_chat_input)
+
+    def _clear_stale_chat_question(self) -> None:
+        """Drop answer UI once there is no longer a pending question."""
+        chat = self.query_one(ChatThread)
+        if chat.mode != "answer" or not chat.has_question:
+            return
+
+        state = self._state
+        planning_pending = state.pending_questions.get("__planning__") is not None
+        selected_pending = (
+            state.selected_task_id is not None
+            and state.pending_questions.get(state.selected_task_id) is not None
+        )
+        if planning_pending or selected_pending:
+            return
+
+        chat.clear_question()
+        if self._active_view == "chat" and not self._read_only:
+            self._set_view("output")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1150,7 +1173,7 @@ class PipelineScreen(Screen):
         # Replace the existing ChatThread with one in interjection mode
         chat = self.query_one(ChatThread)
         chat.task_id = tid
-        chat._mode = "interjection"
+        chat.set_mode("interjection")
         # Update the input placeholder and hide suggestion chips
         try:
             inp = chat.query_one("#chat-input", Input)

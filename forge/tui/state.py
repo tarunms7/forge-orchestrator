@@ -260,6 +260,8 @@ class TuiState:
             if q:
                 history = self.question_history.setdefault(task_id, [])
                 history.append({"question": q, "answer": data.get("answer")})
+            if task_id in self.tasks and self.tasks[task_id].get("state") == "awaiting_input":
+                self.tasks[task_id]["state"] = "in_progress"
             self._notify("tasks")
 
     def _on_task_resumed(self, data: dict) -> None:
@@ -285,6 +287,8 @@ class TuiState:
                 history.append(
                     {"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"}
                 )
+            if task_id in self.tasks and self.tasks[task_id].get("state") == "awaiting_input":
+                self.tasks[task_id]["state"] = "in_progress"
             self._notify("tasks")
             self.last_auto_decided = {"task_id": task_id, "reason": data.get("reason", "timeout")}
             self._notify("auto_decided")

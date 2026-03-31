@@ -172,6 +172,82 @@ async def test_read_only_replay_hides_question_answer_controls():
 
 
 @pytest.mark.asyncio
+async def test_planning_answer_clears_chat_and_returns_to_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Checking the architecture..."})
+        state.apply_event(
+            "planning:question",
+            {
+                "question_id": "q1",
+                "question": {
+                    "question": "Which approach should we use?",
+                    "suggestions": ["A", "B", "C"],
+                },
+            },
+        )
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        assert app.screen._active_view == "chat"
+        assert chat.has_question is True
+
+        state.apply_event("planning:answer", {"answer": "C"})
+        await pilot.pause()
+
+        assert app.screen._active_view == "output"
+        assert chat.has_question is False
+        assert chat.mode == "answer"
+
+
+@pytest.mark.asyncio
+async def test_task_answer_clears_chat_and_returns_to_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event(
+            "task:question",
+            {
+                "task_id": "t1",
+                "question": {
+                    "question": "Choose an option",
+                    "suggestions": ["Option A", "Option B", "Option C"],
+                },
+            },
+        )
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        assert app.screen._active_view == "chat"
+        assert chat.has_question is True
+
+        state.apply_event("task:answer", {"task_id": "t1", "answer": "Option C"})
+        await pilot.pause()
+
+        assert state.tasks["t1"]["state"] == "in_progress"
+        assert app.screen._active_view == "output"
+        assert chat.has_question is False
+        assert chat.mode == "answer"
+
+
+@pytest.mark.asyncio
 async def test_chat_answer_submission_bubbles_to_app_once():
     """Answer submission should bubble to the App without freezing the screen."""
     state = TuiState()
