@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 import time
 import traceback
@@ -61,16 +62,25 @@ class GauntletRunner:
                 error=f"Unknown scenario: {name}",
             )
 
+        if self.live:
+            return ScenarioResult(
+                name=name,
+                passed=False,
+                duration_s=round(time.monotonic() - start, 4),
+                error="Live mode (ForgeDaemon + Claude SDK) is not yet implemented. "
+                "Use live=False to run with MockPipeline.",
+            )
+
+        tmp_dir: str | None = None
         try:
             # Each scenario gets a fresh fixture workspace for isolation
             if self.workspace_dir:
                 workspace_base = self.workspace_dir
-                repos = create_fixture_workspace(workspace_base)
             else:
-                tmp = tempfile.mkdtemp(prefix=f"gauntlet-{name}-")
-                repos = create_fixture_workspace(tmp)
-                workspace_base = tmp
+                tmp_dir = tempfile.mkdtemp(prefix=f"gauntlet-{name}-")
+                workspace_base = tmp_dir
 
+            repos = create_fixture_workspace(workspace_base)
             chaos_for_scenario = self.chaos and config.chaos_compatible
 
             pipeline = MockPipeline(
@@ -91,3 +101,6 @@ class GauntletRunner:
                 duration_s=round(time.monotonic() - start, 4),
                 error=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
             )
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
