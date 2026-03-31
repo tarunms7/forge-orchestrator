@@ -74,6 +74,7 @@ def test_planning_question_added_to_pending():
     )
     assert "__planning__" in state.pending_questions
     assert state.pending_questions["__planning__"]["question"] == "JWT or session?"
+    assert state.pending_questions["__planning__"]["question_id"] == "q1"
 
 
 def test_planning_answer_removes_from_pending():

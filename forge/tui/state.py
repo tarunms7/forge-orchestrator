@@ -497,7 +497,11 @@ class TuiState:
 
     def _on_planning_question(self, data: dict) -> None:
         """Architect has a question during planning."""
-        self.pending_questions["__planning__"] = data.get("question", {})
+        question = dict(data.get("question", {}) or {})
+        question_id = data.get("question_id")
+        if question_id:
+            question["question_id"] = question_id
+        self.pending_questions["__planning__"] = question
         self._notify("planning")
 
     def _on_planning_answer(self, data: dict) -> None:

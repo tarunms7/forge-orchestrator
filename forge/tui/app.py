@@ -347,20 +347,39 @@ class ForgeApp(App):
         is_planning = task_id == "__planning__"
 
         try:
-            pending = await self._db.get_pending_questions(self._pipeline_id)
-            for q in pending:
-                if q.task_id == task_id and q.answer is None:
-                    await self._db.answer_question(q.id, answer, "human")
-                    # Emit the right event type for planning questions
-                    if is_planning and self._daemon and hasattr(self._daemon, "_events"):
+            if is_planning:
+                current = self._state.pending_questions.get("__planning__", {})
+                question_id = current.get("question_id")
+                if question_id:
+                    await self._db.answer_question(question_id, answer, "human")
+                    if self._daemon and hasattr(self._daemon, "_events"):
                         await self._daemon._events.emit(
                             "planning:answer",
                             {
-                                "question_id": q.id,
+                                "question_id": question_id,
                                 "answer": answer,
                             },
                         )
-                    break
+                else:
+                    pending = await self._db.get_pending_questions(self._pipeline_id)
+                    for q in pending:
+                        if q.task_id == task_id and q.answer is None:
+                            await self._db.answer_question(q.id, answer, "human")
+                            if self._daemon and hasattr(self._daemon, "_events"):
+                                await self._daemon._events.emit(
+                                    "planning:answer",
+                                    {
+                                        "question_id": q.id,
+                                        "answer": answer,
+                                    },
+                                )
+                            break
+            else:
+                pending = await self._db.get_pending_questions(self._pipeline_id)
+                for q in pending:
+                    if q.task_id == task_id and q.answer is None:
+                        await self._db.answer_question(q.id, answer, "human")
+                        break
         except Exception:
             logger.error("Failed to record answer to DB", exc_info=True)
 
@@ -381,6 +400,50 @@ class ForgeApp(App):
                     )
                 except Exception:
                     logger.error("Failed to emit task:answer to daemon", exc_info=True)
+
+    async def _restart_planning_from_scratch(
+        self,
+        *,
+        description: str,
+        base_branch: str,
+        branch_name: str = "",
+        project_dir: str | None = None,
+        notify_message: str,
+    ) -> None:
+        """Start a fresh planning run when the previous planner session is unrecoverable."""
+        if self._source:
+            try:
+                self._source.disconnect()
+            except Exception:
+                logger.debug("Failed to disconnect old event source", exc_info=True)
+        self._source = None
+        self._bus = EventBus()
+        self._daemon = None
+        self._daemon_task = None
+        self._graph = None
+        self._pipeline_id = None
+        self._final_approval_pushed = False
+        self._cached_pipeline_branch = ""
+        self._cached_base_branch = base_branch or "main"
+
+        if project_dir:
+            self._project_dir = project_dir
+            self._repos = self._resolve_repos()
+
+        fresh_state = TuiState()
+        fresh_state.base_branch = base_branch or "main"
+        fresh_state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        self._replace_state(fresh_state)
+        self.push_screen(PipelineScreen(self._state))
+        self._daemon_task = asyncio.create_task(
+            self._run_plan(
+                description,
+                base_branch=base_branch or "main",
+                branch_name=branch_name or "",
+            )
+        )
+        self._daemon_task.add_done_callback(self._on_daemon_done)
+        self.notify(notify_message, severity="information")
 
     async def respond_to_integration_prompt(self, action: str) -> None:
         """Handle user response to an integration health check prompt.
@@ -1502,21 +1565,14 @@ class ForgeApp(App):
                     )
                     return
 
-            # ── planning: re-run from scratch (LLM session lost) ──
+            # ── planning: restart from scratch (planner session is unrecoverable) ──
             if status == "planning":
-                await self._replay_state_for_pipeline(pipeline)
-                await self._setup_daemon_for_resume(pipeline)
-                self.push_screen(PipelineScreen(self._state))
-                self._daemon_task = asyncio.create_task(
-                    self._run_plan(
-                        ctx["description"],
-                        base_branch=ctx["base_branch"] or "main",
-                    )
-                )
-                self._daemon_task.add_done_callback(self._on_daemon_done)
-                self.notify(
-                    f"Restarting planning for: {ctx['description']}",
-                    severity="information",
+                await self._restart_planning_from_scratch(
+                    description=ctx["description"],
+                    base_branch=ctx["base_branch"] or "main",
+                    branch_name=ctx["branch_name"] or "",
+                    project_dir=ctx["project_dir"],
+                    notify_message=f"Restarting planning for: {ctx['description']}",
                 )
                 return
 
@@ -1586,6 +1642,18 @@ class ForgeApp(App):
                     )
                     return
                 status = "interrupted"
+
+            if status == "interrupted" and ctx.get("quit_phase") == "planning":
+                await self._restart_planning_from_scratch(
+                    description=ctx["description"],
+                    base_branch=ctx["base_branch"] or "main",
+                    branch_name=ctx["branch_name"] or "",
+                    project_dir=ctx["project_dir"],
+                    notify_message=(
+                        "Planning was interrupted earlier — restarting it from scratch."
+                    ),
+                )
+                return
 
             # ── interrupted: resume execution ──
             if status == "interrupted":

@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -313,6 +313,80 @@ async def test_history_resume_partial_pipeline_retries_failed_tasks():
 
 
 @pytest.mark.asyncio
+async def test_history_resume_interrupted_planning_restarts_from_scratch():
+    """Shift+R should restart planning from scratch after an interrupted planning session."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.pipeline import PipelineScreen
+    from forge.tui.state import TuiState
+
+    pipeline = MagicMock(id="pipe-plan", project_dir="/tmp/project")
+    ctx = {
+        "status": "interrupted",
+        "quit_phase": "planning",
+        "task_graph_json": None,
+        "contracts_json": None,
+        "pr_url": None,
+        "project_dir": "/tmp/project",
+        "base_branch": "main",
+        "branch_name": "forge/plan-branch",
+        "description": "Build gauntlet",
+        "executor_pid": None,
+        "total_tasks": 0,
+        "tasks_done": 0,
+        "tasks_error": 0,
+        "tasks_in_review": 0,
+        "tasks_blocked": 0,
+    }
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pipeline_resume_context = AsyncMock(return_value=ctx)
+    app._db.get_pipeline = AsyncMock(return_value=pipeline)
+    app._project_dir = "/tmp/original"
+    app._repos = []
+    app._source = None
+    app._bus = MagicMock()
+    app._daemon = None
+    app._daemon_task = None
+    app._graph = None
+    app._pipeline_id = "old-pipeline"
+    app._final_approval_pushed = False
+    app._cached_pipeline_branch = ""
+    app._cached_base_branch = "main"
+    app._state = TuiState()
+    app._resolve_repos = MagicMock(return_value=[])
+    app.push_screen = MagicMock()
+    app.notify = MagicMock()
+    app._on_daemon_done = MagicMock()
+    app._run_plan = AsyncMock()
+
+    with (
+        patch("forge.tui.app.asyncio.create_task") as mock_create_task,
+        patch("forge.tui.app.os.path.isdir", return_value=True),
+    ):
+        fake_task = MagicMock()
+        mock_create_task.return_value = fake_task
+        event = MagicMock()
+        event.pipeline_id = "pipe-plan"
+        await app.on_pipeline_list_resume_requested(event)
+        planning_coro = mock_create_task.call_args[0][0]
+        planning_coro.close()
+
+    app._run_plan.assert_called_once_with(
+        "Build gauntlet",
+        base_branch="main",
+        branch_name="forge/plan-branch",
+    )
+    app.push_screen.assert_called_once()
+    pushed_screen = app.push_screen.call_args[0][0]
+    assert isinstance(pushed_screen, PipelineScreen)
+    assert app._state.phase == "planning"
+    assert app._project_dir == "/tmp/project"
+    app.notify.assert_called_once()
+    assert "restarting" in app.notify.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
 async def test_answer_submission_emits_to_daemon_events():
     """Answering a question should emit task:answer on the daemon's EventEmitter."""
     from forge.tui.app import ForgeApp
@@ -353,6 +427,7 @@ async def test_answer_submission_emits_to_daemon_events():
 async def test_planning_answer_emits_planning_answer_event():
     """Answering a planning question should emit planning:answer to daemon."""
     from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
 
     emitted = []
 
@@ -369,13 +444,15 @@ async def test_planning_answer_emits_planning_answer_event():
 
     app = ForgeApp.__new__(ForgeApp)
     app._db = AsyncMock()
-    app._db.get_pending_questions = AsyncMock(
-        return_value=[MagicMock(task_id="__planning__", answer=None, id="q1")]
-    )
+    app._db.get_pending_questions = AsyncMock(return_value=[])
     app._db.answer_question = AsyncMock()
     app._pipeline_id = "pipe1"
     app._daemon = FakeDaemon()
-    app._state = MagicMock()
+    app._state = TuiState()
+    app._state.pending_questions["__planning__"] = {
+        "question": "Which DB?",
+        "question_id": "q1",
+    }
 
     await app.on_chat_thread_answer_submitted(event)
 
@@ -383,6 +460,49 @@ async def test_planning_answer_emits_planning_answer_event():
     assert emitted[0][0] == "planning:answer"
     assert emitted[0][1]["question_id"] == "q1"
     assert emitted[0][1]["answer"] == "Use JWT"
+    app._db.answer_question.assert_awaited_once_with("q1", "Use JWT", "human")
+
+
+@pytest.mark.asyncio
+async def test_planning_answer_uses_current_pending_question_id_over_stale_db_rows():
+    """Current pending planning question should win over older unanswered DB rows."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    emitted = []
+
+    class FakeEmitter:
+        async def emit(self, event_type, data):
+            emitted.append((event_type, data))
+
+    class FakeDaemon:
+        _events = FakeEmitter()
+
+    event = MagicMock()
+    event.task_id = "__planning__"
+    event.answer = "Option C"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(
+        return_value=[
+            MagicMock(task_id="__planning__", answer=None, id="old-q"),
+            MagicMock(task_id="__planning__", answer=None, id="new-q"),
+        ]
+    )
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = FakeDaemon()
+    app._state = TuiState()
+    app._state.pending_questions["__planning__"] = {
+        "question": "Pick one",
+        "question_id": "new-q",
+    }
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    app._db.answer_question.assert_awaited_once_with("new-q", "Option C", "human")
+    assert emitted == [("planning:answer", {"question_id": "new-q", "answer": "Option C"})]
 
 
 @pytest.mark.asyncio
