@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from textual.app import App, ComposeResult
 
 from forge.tui.screens.final_approval import (
     DiffScreen,
@@ -91,6 +92,32 @@ def test_action_view_diff_no_branch_notifies():
     screen.action_view_diff()
     screen.notify.assert_called_once()
     assert "No pipeline branch" in screen.notify.call_args[0][0]
+
+
+class FinalApprovalRerunApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rerun_count = 0
+
+    def compose(self) -> ComposeResult:
+        yield FinalApprovalScreen(
+            stats={},
+            tasks=[{"title": "Fix auth", "state": "error", "error": "limit reached"}],
+            pipeline_branch="",
+            partial=True,
+        )
+
+    def on_final_approval_screen_rerun(self, event) -> None:
+        self.rerun_count += 1
+
+
+@pytest.mark.asyncio
+async def test_r_binding_emits_rerun_message_in_partial_mode():
+    app = FinalApprovalRerunApp()
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        assert app.rerun_count == 1
 
 
 @pytest.mark.asyncio

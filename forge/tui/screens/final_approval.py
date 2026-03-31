@@ -269,7 +269,7 @@ class FinalApprovalScreen(Screen):
     class CreatePR(Message):
         pass
 
-    class ReRun(Message):
+    class Rerun(Message):
         pass
 
     class SkipFailed(Message):
@@ -334,6 +334,8 @@ class FinalApprovalScreen(Screen):
 
     def on_mount(self) -> None:
         safe_create_task(self._check_behind_main(), logger=logger, name="check-behind-main")
+        # Keep screen-level shortcuts active by default; follow-up input is opt-in via "f".
+        self.focus()
 
     async def _check_behind_main(self) -> None:
         """Check if pipeline branch is behind the base branch and show warning."""
@@ -382,8 +384,16 @@ class FinalApprovalScreen(Screen):
             done = sum(1 for t in self._tasks if t.get("state") == "done")
             total = len(self._tasks)
             header = f"Pipeline Partial — {done}/{total} Tasks Completed"
+            help_text = (
+                f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  r: re-run  "
+                f"s: skip failed  f: follow up  Esc: cancel[/]"
+            )
         else:
             header = "Pipeline Complete — Final Approval"
+            help_text = (
+                f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  f: follow up  "
+                f"n: new task  Esc: cancel[/]"
+            )
         with VerticalScroll():
             with Center():
                 with Vertical(id="approval-container"):
@@ -397,10 +407,7 @@ class FinalApprovalScreen(Screen):
                     yield Static(
                         format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table"
                     )
-                    yield Static(
-                        f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  r: re-run  "
-                        f"f: follow up  n: new task  Esc: cancel[/]"
-                    )
+                    yield Static(help_text)
                     yield FollowUpInput(
                         branch=self._pipeline_branch,
                         files_changed=files_count,
@@ -489,7 +496,7 @@ class FinalApprovalScreen(Screen):
         self.post_message(self.CreatePR())
 
     def action_rerun(self) -> None:
-        self.post_message(self.ReRun())
+        self.post_message(self.Rerun())
 
     def action_skip_failed(self) -> None:
         """Skip all failed tasks and finish the pipeline."""
