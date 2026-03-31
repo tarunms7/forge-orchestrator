@@ -384,6 +384,67 @@ async def test_view_diff_then_output_uses_selected_task_not_stale_planner_conten
 
 
 @pytest.mark.asyncio
+async def test_task_question_takes_priority_over_stale_planning_prompt():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Task 1",
+                        "description": "",
+                        "files": ["a.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    },
+                    {
+                        "id": "t2",
+                        "title": "Task 2",
+                        "description": "",
+                        "files": ["b.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    },
+                    {
+                        "id": "t3",
+                        "title": "Task 3",
+                        "description": "",
+                        "files": ["c.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    },
+                ]
+            },
+        )
+        state.pending_questions["__planning__"] = {
+            "question": "Old planning prompt",
+            "question_id": "stale-planning-q",
+        }
+        state.apply_event("pipeline:phase_changed", {"phase": "executing"})
+        state.apply_event(
+            "task:question",
+            {
+                "task_id": "t3",
+                "question": {
+                    "question": "Reviewer needs your input",
+                    "suggestions": ["Approve", "Reject"],
+                },
+            },
+        )
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        assert "__planning__" not in state.pending_questions
+        assert state.selected_task_id == "t3"
+        assert app.screen._active_view == "chat"
+        assert chat.task_id == "t3"
+        assert chat.has_question is True
+
+
+@pytest.mark.asyncio
 async def test_chat_answer_submission_bubbles_to_app_once():
     """Answer submission should bubble to the App without freezing the screen."""
     state = TuiState()

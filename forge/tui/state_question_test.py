@@ -13,6 +13,7 @@ def test_task_question_updates_state():
     )
     assert state.tasks["t1"]["state"] == "awaiting_input"
     assert state.pending_questions["t1"] is not None
+    assert state.selected_task_id == "t1"
 
 
 def test_task_answer_clears_pending():
@@ -123,6 +124,13 @@ def test_planning_answer_noop_when_no_pending():
     """planning:answer should not crash when no pending planning question."""
     state = TuiState()
     state.apply_event("planning:answer", {"answer": "JWT"})
+    assert "__planning__" not in state.pending_questions
+
+
+def test_phase_change_clears_stale_planning_question():
+    state = TuiState()
+    state.pending_questions["__planning__"] = {"question": "Which DB?"}
+    state.apply_event("pipeline:phase_changed", {"phase": "executing"})
     assert "__planning__" not in state.pending_questions
 
 

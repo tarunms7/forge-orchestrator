@@ -112,6 +112,8 @@ class TuiState:
 
     def _on_phase_changed(self, data: dict) -> None:
         self.phase = data.get("phase", self.phase)
+        if self.phase not in ("planning", "planned") and "__planning__" in self.pending_questions:
+            self.pending_questions.pop("__planning__", None)
         self._notify("phase")
 
     def _on_plan_ready(self, data: dict) -> None:
@@ -251,6 +253,7 @@ class TuiState:
         if task_id and task_id in self.tasks:
             self.tasks[task_id]["state"] = "awaiting_input"
             self.pending_questions[task_id] = data.get("question", {})
+            self.selected_task_id = task_id
             self._notify("tasks")
 
     def _on_task_answer(self, data: dict) -> None:

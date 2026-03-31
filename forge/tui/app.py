@@ -883,7 +883,11 @@ class ForgeApp(App):
     def action_cycle_questions(self) -> None:
         """Tab: cycle through tasks with pending questions."""
         state = self._state
-        pending_task_ids = list(state.pending_questions.keys())
+        pending_task_ids = [
+            task_id
+            for task_id in state.pending_questions
+            if task_id != "__planning__" or state.phase in ("planning", "planned")
+        ]
         if not pending_task_ids:
             return
         current = state.selected_task_id
