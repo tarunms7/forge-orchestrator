@@ -126,8 +126,14 @@ class PipelineList(Widget, can_focus=True):
         self._scroll_offset: int = 0
 
     def _viewport_height(self) -> int:
-        """Return the smallest positive height reported for this widget viewport."""
+        """Return the smallest positive height that is actually visible on screen."""
         heights = [self.size.height, self.content_region.height, self.window_region.height]
+        try:
+            visible_screen_height = self.screen.size.height - self.region.y
+        except Exception:
+            visible_screen_height = 0
+        if visible_screen_height > 0:
+            heights.append(visible_screen_height)
         positive_heights = [height for height in heights if height > 0]
         if not positive_heights:
             return 0
@@ -140,16 +146,6 @@ class PipelineList(Widget, can_focus=True):
             return _DEFAULT_VISIBLE_PIPELINES
         return max(1, height // _LINES_PER_PIPELINE)
 
-    def _fully_visible_pipeline_count(self, visible_count: int | None = None) -> int:
-        """Return how many pipeline rows can fit without clipping the last line."""
-        if visible_count is None:
-            visible_count = self._visible_pipeline_count()
-        height = self._viewport_height()
-        if height <= 0:
-            return visible_count
-        fully_visible = max(1, (height - 1) // _LINES_PER_PIPELINE)
-        return min(visible_count, fully_visible)
-
     def _clamp_scroll_offset(self, visible_count: int | None = None) -> None:
         """Keep the scroll offset within the current list bounds."""
         if visible_count is None:
@@ -161,15 +157,14 @@ class PipelineList(Widget, can_focus=True):
         """Adjust the viewport so the selected pipeline stays on screen."""
         if visible_count is None:
             visible_count = self._visible_pipeline_count()
-        fully_visible_count = self._fully_visible_pipeline_count(visible_count)
         if not self._pipelines:
             self._scroll_offset = 0
             return
         self._clamp_scroll_offset(visible_count)
         if self._selected_index < self._scroll_offset:
             self._scroll_offset = self._selected_index
-        elif self._selected_index >= self._scroll_offset + fully_visible_count:
-            self._scroll_offset = self._selected_index - fully_visible_count + 1
+        elif self._selected_index >= self._scroll_offset + visible_count:
+            self._scroll_offset = self._selected_index - visible_count + 1
         self._clamp_scroll_offset(visible_count)
 
     def update_pipelines(self, pipelines: list[dict]) -> None:

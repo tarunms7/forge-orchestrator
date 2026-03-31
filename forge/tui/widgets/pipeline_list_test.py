@@ -511,13 +511,19 @@ class PipelineListViewportApp(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_cursor_down_scrolls_when_the_last_row_would_clip():
-    app = PipelineListViewportApp(host_height=8)
+async def test_cursor_down_respects_visible_screen_slice():
+    app = PipelineListViewportApp(host_height=12)
 
-    async with app.run_test(size=(120, 20)) as pilot:
+    async with app.run_test(size=(120, 9)) as pilot:
         pl = app.query_one(PipelineList)
+        pl.styles.margin = (3, 0, 0, 0)
         pl.update_pipelines(TestViewportScrolling()._make_pipelines(6))
         await pilot.pause()
+
+        rendered = pl.render()
+        assert "Pipeline 1" in rendered
+        assert "Pipeline 3" in rendered
+        assert "Pipeline 4" not in rendered
 
         for _ in range(3):
             pl.action_cursor_down()
@@ -529,24 +535,3 @@ async def test_cursor_down_scrolls_when_the_last_row_would_clip():
         assert pl._scroll_offset == 1
         assert "Pipeline 4" in rendered
         assert "Pipeline 1" not in rendered
-
-
-@pytest.mark.asyncio
-async def test_cursor_down_keeps_full_odd_height_viewports_stable():
-    app = PipelineListViewportApp(host_height=7)
-
-    async with app.run_test(size=(120, 20)) as pilot:
-        pl = app.query_one(PipelineList)
-        pl.update_pipelines(TestViewportScrolling()._make_pipelines(6))
-        await pilot.pause()
-
-        for _ in range(2):
-            pl.action_cursor_down()
-        await pilot.pause()
-
-        rendered = pl.render()
-
-        assert pl._selected_index == 2
-        assert pl._scroll_offset == 0
-        assert "Pipeline 1" in rendered
-        assert "Pipeline 3" in rendered

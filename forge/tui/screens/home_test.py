@@ -2,7 +2,6 @@
 
 import pytest
 from textual.app import App
-from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
@@ -277,7 +276,7 @@ async def test_shortcut_label_resume_for_resumable_pipeline():
 
 
 @pytest.mark.asyncio
-async def test_workspace_history_navigation_keeps_selected_pipeline_in_view():
+async def test_workspace_history_scrolls_as_soon_as_fourth_pipeline_is_selected():
     pipelines = [
         {
             "id": f"p{i}",
@@ -291,22 +290,22 @@ async def test_workspace_history_navigation_keeps_selected_pipeline_in_view():
     repos = [FakeRepo("wizbridge"), FakeRepo("temp"), FakeRepo("ultron")]
     app = WorkspaceHomeTestApp(pipelines=pipelines, repos=repos)
 
-    async with app.run_test(size=(140, 24)) as pilot:
-        container = app.screen.query_one("#home-container", VerticalScroll)
+    async with app.run_test(size=(140, 55)) as pilot:
         pl = app.screen.query_one(PipelineList)
-        pl.focus()
         await pilot.pause()
 
-        for _ in range(4):
+        initial = pl.render()
+        assert "Pipeline 1" in initial
+        assert "Pipeline 3" in initial
+        assert "Pipeline 4" not in initial
+
+        for _ in range(3):
             pl.action_cursor_down()
-            await pilot.pause()
+        await pilot.pause()
 
-        relative_index = pl._selected_index - pl._scroll_offset
-        selected_top = pl.region.y + (relative_index * 2)
-        selected_bottom = selected_top + 2
-        viewport_top = container.scroll_y
-        viewport_bottom = viewport_top + container.scrollable_content_region.height
+        rendered = pl.render()
 
-        assert container.scroll_y > 0
-        assert viewport_top <= selected_top
-        assert selected_bottom <= viewport_bottom
+        assert pl._selected_index == 3
+        assert pl._scroll_offset == 1
+        assert "Pipeline 4" in rendered
+        assert "Pipeline 1" not in rendered

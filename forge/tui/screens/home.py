@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
@@ -245,7 +245,7 @@ class HomeScreen(Screen):
             "[#58a6ff]Ctrl+P[/] command palette\n"
             "[#58a6ff]?[/] help overlay"
         )
-        with VerticalScroll(id="home-container"):
+        with Vertical(id="home-container"):
             yield ForgeLogo()
             yield Static(
                 "[bold #e6edf3]Mission control for parallel shipping.[/]\n"
@@ -322,36 +322,6 @@ class HomeScreen(Screen):
     def on_pipeline_list_cursor_moved(self, event: PipelineList.CursorMoved) -> None:
         """Update shortcut bar when pipeline selection changes."""
         self._update_shortcut_label(event.pipeline)
-        self._scroll_selected_pipeline_into_view()
-
-    def _scroll_selected_pipeline_into_view(self) -> None:
-        """Keep the selected pipeline row visible within the scrollable home layout."""
-        try:
-            container = self.query_one("#home-container", VerticalScroll)
-            pipeline_list = self.query_one(PipelineList)
-        except Exception:
-            return
-
-        if not pipeline_list.selected_pipeline:
-            return
-
-        relative_index = pipeline_list._selected_index - pipeline_list._scroll_offset
-        if relative_index < 0:
-            return
-
-        selected_top = pipeline_list.region.y + (relative_index * 2)
-        selected_bottom = selected_top + 2
-        viewport_top = container.scroll_y
-        viewport_bottom = viewport_top + container.scrollable_content_region.height
-
-        if selected_top < viewport_top:
-            target_y = selected_top
-        elif selected_bottom > viewport_bottom:
-            target_y = selected_bottom - container.scrollable_content_region.height
-        else:
-            return
-
-        container.scroll_to(y=target_y, animate=False, immediate=True)
 
     async def on_mount(self) -> None:
         import asyncio
@@ -452,7 +422,4 @@ class HomeScreen(Screen):
             idx = (focusable.index(current) + 1) % len(focusable)
         else:
             idx = 0
-        next_widget = focusable[idx]
-        next_widget.focus()
-        if isinstance(next_widget, PipelineList):
-            self._scroll_selected_pipeline_into_view()
+        focusable[idx].focus()
