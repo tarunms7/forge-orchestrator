@@ -380,6 +380,10 @@ from forge.cli.export import export  # noqa: E402
 
 cli.add_command(export)
 
+from forge.cli.gauntlet import gauntlet  # noqa: E402
+
+cli.add_command(gauntlet)
+
 
 @cli.command()
 def upgrade() -> None:
