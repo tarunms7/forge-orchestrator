@@ -1,6 +1,5 @@
 """Tests for forge.gauntlet.runner — GauntletRunner orchestration."""
 
-import pytest
 
 from forge.gauntlet.runner import GauntletRunner
 
