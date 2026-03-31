@@ -203,6 +203,115 @@ async def test_resume_refetches_tasks_after_reset():
     assert todo_count == 1
 
 
+def test_replace_state_rewires_app_callback():
+    """Replacing app state should detach from the old state and attach to the new one."""
+    from forge.tui.app import ForgeApp
+
+    app = ForgeApp.__new__(ForgeApp)
+    old_state = MagicMock()
+    new_state = MagicMock()
+    callback = MagicMock()
+    app._state = old_state
+    app._state_cb = callback
+
+    app._replace_state(new_state)
+
+    old_state.remove_change_callback.assert_called_once_with(callback)
+    new_state.on_change.assert_called_once_with(callback)
+    assert app._state is new_state
+
+
+@pytest.mark.asyncio
+async def test_history_resume_partial_pipeline_retries_failed_tasks():
+    """Shift+R from history should reset failed tasks and resume execution immediately."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.pipeline import PipelineScreen
+
+    pipeline = MagicMock(
+        id="pipe-1",
+        task_graph_json='{"tasks":[]}',
+        base_branch="main",
+        branch_name="forge/retry-branch",
+    )
+    ctx = {
+        "status": "partial_success",
+        "quit_phase": None,
+        "task_graph_json": pipeline.task_graph_json,
+        "contracts_json": None,
+        "pr_url": None,
+        "project_dir": "",
+        "base_branch": "main",
+        "branch_name": "forge/retry-branch",
+        "description": "Retry failed pipeline",
+        "executor_pid": None,
+        "total_tasks": 3,
+        "tasks_done": 1,
+        "tasks_error": 1,
+        "tasks_in_review": 0,
+        "tasks_blocked": 1,
+    }
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pipeline_resume_context = AsyncMock(return_value=ctx)
+    app._db.get_pipeline = AsyncMock(return_value=pipeline)
+    app._db.list_tasks_by_pipeline = AsyncMock(
+        return_value=[
+            MagicMock(id="t-done", state="done"),
+            MagicMock(id="t-error", state="error"),
+            MagicMock(id="t-blocked", state="blocked"),
+        ]
+    )
+    app._db.retry_task = AsyncMock()
+    app._db.update_task_state = AsyncMock()
+    app._db.update_pipeline_status = AsyncMock()
+
+    replay_state = MagicMock()
+    replay_state.tasks = {
+        "t-done": {"state": "done"},
+        "t-error": {"state": "error", "error": "usage limit reached"},
+        "t-blocked": {"state": "blocked", "error": "blocked by t-error"},
+    }
+    replay_state._notify = MagicMock()
+    replay_state.phase = "partial_success"
+
+    async def _replay(_pipeline):
+        app._state = replay_state
+        app._pipeline_id = _pipeline.id
+
+    app._replay_state_for_pipeline = AsyncMock(side_effect=_replay)
+    app._setup_daemon_for_resume = AsyncMock()
+    app._load_task_graph = MagicMock(
+        side_effect=lambda _pipeline: setattr(app, "_graph", object()) or True
+    )
+    app._resume_execution = AsyncMock()
+    app._push_final_approval = MagicMock()
+    app.push_screen = MagicMock()
+    app.notify = MagicMock()
+    app._daemon = object()
+    app._graph = object()
+    app._final_approval_pushed = True
+
+    event = MagicMock()
+    event.pipeline_id = "pipe-1"
+
+    await app.on_pipeline_list_resume_requested(event)
+
+    app._db.retry_task.assert_awaited_once_with("t-error")
+    app._db.update_task_state.assert_any_await("t-blocked", "todo")
+    app._db.update_pipeline_status.assert_awaited_once_with("pipe-1", "retrying")
+    app._resume_execution.assert_awaited_once()
+    app._push_final_approval.assert_not_called()
+    app.push_screen.assert_called_once()
+    pushed_screen = app.push_screen.call_args[0][0]
+    assert isinstance(pushed_screen, PipelineScreen)
+    assert replay_state.tasks["t-error"]["state"] == "todo"
+    assert replay_state.tasks["t-blocked"]["state"] == "todo"
+    assert "error" not in replay_state.tasks["t-error"]
+    assert "error" not in replay_state.tasks["t-blocked"]
+    assert replay_state.phase == "retrying"
+
+
 @pytest.mark.asyncio
 async def test_answer_submission_emits_to_daemon_events():
     """Answering a question should emit task:answer on the daemon's EventEmitter."""

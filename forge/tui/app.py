@@ -213,6 +213,18 @@ class ForgeApp(App):
         """Clean up state change callback to prevent leaks."""
         self._state.remove_change_callback(self._state_cb)
 
+    def _replace_state(self, state: TuiState) -> None:
+        """Swap in a new TUI state while preserving app-level change callbacks."""
+        callback = getattr(self, "_state_cb", None)
+        current = getattr(self, "_state", None)
+        if current is state:
+            return
+        if current is not None and callback is not None:
+            current.remove_change_callback(callback)
+        self._state = state
+        if callback is not None:
+            self._state.on_change(callback)
+
     # Fields that change frequently and don't need a full screen refresh
     _HIGH_FREQ_FIELDS = frozenset(
         {"agent_output", "review_output", "cost", "elapsed", "followup_output"}
@@ -675,31 +687,64 @@ class ForgeApp(App):
 
         await self._resume_execution()
 
-    async def on_final_approval_screen_rerun(self, event) -> None:
-        """User wants to retry failed tasks."""
+    async def _reset_failed_tasks_for_retry(self, pipeline_id: str) -> int:
+        """Reset failed tasks so the pipeline can resume on the same branch."""
+        if not self._db:
+            return 0
+
+        tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+        reset_ids: list[str] = []
+        for task in tasks:
+            if task.state == "error":
+                await self._db.retry_task(task.id)
+                reset_ids.append(task.id)
+            elif task.state == "blocked":
+                await self._db.update_task_state(task.id, "todo")
+                reset_ids.append(task.id)
+
+        if reset_ids:
+            for task_id in reset_ids:
+                if task_id in self._state.tasks:
+                    self._state.tasks[task_id]["state"] = "todo"
+                    self._state.tasks[task_id].pop("error", None)
+            self._state._notify("tasks")
+        return len(reset_ids)
+
+    async def _retry_failed_pipeline(self, *, push_pipeline_screen: bool = False) -> bool:
+        """Retry failed tasks and re-enter normal pipeline execution."""
         if not self._db or not self._pipeline_id:
-            return
+            self.notify("Cannot retry: missing pipeline context.", severity="error")
+            return False
+        if not self._daemon or not self._graph:
+            self.notify("Cannot retry: missing execution context.", severity="error")
+            return False
 
-        tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
-        reset_count = 0
-        for t in tasks:
-            if t.state in ("error", "blocked"):
-                await self._db.update_task_state(t.id, "todo")
-                reset_count += 1
-
+        reset_count = await self._reset_failed_tasks_for_retry(self._pipeline_id)
         if reset_count == 0:
             self.notify("No failed tasks to retry.", severity="warning")
-            return
+            return False
 
         await self._db.update_pipeline_status(self._pipeline_id, "retrying")
         self._state.phase = "retrying"
         self._state._notify("phase")
         self._final_approval_pushed = False
 
-        while len(self.screen_stack) > 2:
-            self.pop_screen()
+        if push_pipeline_screen:
+            self.push_screen(PipelineScreen(self._state))
+        else:
+            while len(self.screen_stack) > 2:
+                self.pop_screen()
 
         await self._resume_execution()
+        self.notify(
+            f"Retrying {reset_count} failed task{'s' if reset_count != 1 else ''}.",
+            severity="information",
+        )
+        return True
+
+    async def on_final_approval_screen_rerun(self, event) -> None:
+        """User wants to retry failed tasks."""
+        await self._retry_failed_pipeline(push_pipeline_screen=False)
 
     async def on_final_approval_screen_skip_failed(self, event) -> None:
         """User wants to skip failed tasks and finish."""
@@ -1054,7 +1099,7 @@ class ForgeApp(App):
                 await self._db.update_pipeline_status(self._pipeline_id, "cancelled")
             except Exception:
                 logger.debug("Failed to update cancelled status", exc_info=True)
-        self._state = TuiState()
+        self._replace_state(TuiState())
 
     async def _run_contracts_and_execute(self) -> None:
         """Generate contracts, run countdown, then execute.
@@ -1388,7 +1433,7 @@ class ForgeApp(App):
         events = await self._db.list_events(pipeline.id)
         for evt in events:
             state.apply_event(evt.event_type, evt.payload or {})
-        self._state = state
+        self._replace_state(state)
         self._pipeline_id = pipeline.id
         self._pipeline_start_time = time.time()
         self._cached_base_branch = getattr(pipeline, "base_branch", None) or "main"
@@ -1580,10 +1625,14 @@ class ForgeApp(App):
             if status in ("error", "partial_success"):
                 await self._replay_state_for_pipeline(pipeline)
                 await self._setup_daemon_for_resume(pipeline)
-                self._load_task_graph(pipeline)
-                self.push_screen(PipelineScreen(self._state))
-                self._final_approval_pushed = True
-                self._push_final_approval(partial=True)
+                if not self._load_task_graph(pipeline):
+                    self.notify("No task graph — cannot retry pipeline", severity="error")
+                    return
+                resumed = await self._retry_failed_pipeline(push_pipeline_screen=True)
+                if not resumed:
+                    self.push_screen(PipelineScreen(self._state))
+                    self._final_approval_pushed = True
+                    self._push_final_approval(partial=True)
                 return
 
             self.notify(f"Cannot resume pipeline with status: {status}", severity="warning")
