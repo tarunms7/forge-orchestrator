@@ -290,7 +290,7 @@ async def test_workspace_history_scrolls_as_soon_as_fourth_pipeline_is_selected(
     repos = [FakeRepo("wizbridge"), FakeRepo("temp"), FakeRepo("ultron")]
     app = WorkspaceHomeTestApp(pipelines=pipelines, repos=repos)
 
-    async with app.run_test(size=(140, 55)) as pilot:
+    async with app.run_test(size=(140, 57)) as pilot:
         pl = app.screen.query_one(PipelineList)
         await pilot.pause()
 
