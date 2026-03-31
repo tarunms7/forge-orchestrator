@@ -286,7 +286,10 @@ class HomeScreen(Screen):
                             classes="branch-label",
                         )
                         yield BranchInput(id="branch-name-input")
-            yield Static("[bold]Recent pipelines[/]  [#8b949e]resume, inspect, or relaunch[/]", id="recent-label")
+            yield Static(
+                "[bold]Recent pipelines[/]  [#8b949e]resume, inspect, or relaunch[/]",
+                id="recent-label",
+            )
             yield PipelineList()
         yield ShortcutBar(
             [

@@ -21,7 +21,9 @@ def _make_result(passed: bool = True) -> GauntletResult:
                     StageResult(name="planning", passed=True, duration_s=1.0, details=""),
                 ],
                 assertions=[
-                    AssertionResult(name="all_stages_pass", passed=True, message="All 6 stages passed"),
+                    AssertionResult(
+                        name="all_stages_pass", passed=True, message="All 6 stages passed"
+                    ),
                 ],
                 artifacts={"pipeline_id": "abc123"},
                 cost_usd=0.05,
@@ -31,10 +33,14 @@ def _make_result(passed: bool = True) -> GauntletResult:
                 passed=passed,
                 duration_s=1.2,
                 stages=[
-                    StageResult(name="review", passed=False, duration_s=0.5, details="quality too low"),
+                    StageResult(
+                        name="review", passed=False, duration_s=0.5, details="quality too low"
+                    ),
                 ],
                 assertions=[
-                    AssertionResult(name="review_fails", passed=passed, message="Review correctly failed"),
+                    AssertionResult(
+                        name="review_fails", passed=passed, message="Review correctly failed"
+                    ),
                 ],
                 cost_usd=0.01,
             ),

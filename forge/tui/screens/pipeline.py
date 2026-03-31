@@ -223,10 +223,7 @@ class DecisionBadge(Widget):
     def render(self) -> str:
         if self._count == 0:
             return f"[{TEXT_MUTED}]No decisions waiting on you[/]"
-        return (
-            f"[bold #d6a85f]◆ {self._count} decision"
-            f"{'s' if self._count != 1 else ''} pending[/]"
-        )
+        return f"[bold #d6a85f]◆ {self._count} decision{'s' if self._count != 1 else ''} pending[/]"
 
 
 class IntegrationBadge(Widget):

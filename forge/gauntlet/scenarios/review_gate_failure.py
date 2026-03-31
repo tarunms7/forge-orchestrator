@@ -25,7 +25,9 @@ async def run_review_gate_failure(
         AssertionResult(
             name="preflight_passes",
             passed=preflight is not None and preflight.passed,
-            message="Preflight passed" if preflight and preflight.passed else "Preflight did not pass",
+            message="Preflight passed"
+            if preflight and preflight.passed
+            else "Preflight did not pass",
         )
     )
 
@@ -45,7 +47,9 @@ async def run_review_gate_failure(
         AssertionResult(
             name="contracts_passes",
             passed=contracts is not None and contracts.passed,
-            message="Contracts passed" if contracts and contracts.passed else "Contracts did not pass",
+            message="Contracts passed"
+            if contracts and contracts.passed
+            else "Contracts did not pass",
         )
     )
 
@@ -55,7 +59,9 @@ async def run_review_gate_failure(
         AssertionResult(
             name="execution_passes",
             passed=execution is not None and execution.passed,
-            message="Execution passed" if execution and execution.passed else "Execution did not pass",
+            message="Execution passed"
+            if execution and execution.passed
+            else "Execution did not pass",
         )
     )
 

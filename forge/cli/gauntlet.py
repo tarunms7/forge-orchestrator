@@ -9,19 +9,33 @@ import click
 
 @click.command("gauntlet")
 @click.option("--scenario", "-s", multiple=True, help="Run specific scenario(s) by name")
-@click.option("--chaos", is_flag=True, default=False, help="Enable chaos mode for failure injection")
-@click.option("--live", is_flag=True, default=False, help="Run against real Claude SDK (expensive, slow)")
+@click.option(
+    "--chaos", is_flag=True, default=False, help="Enable chaos mode for failure injection"
+)
+@click.option(
+    "--live", is_flag=True, default=False, help="Run against real Claude SDK (expensive, slow)"
+)
 @click.option("--format", "fmt", type=click.Choice(["rich", "json"]), default="rich")
 @click.option("--output", "-o", type=click.Path(), default=None, help="Write JSON report to file")
 @click.option("--verbose", "-v", is_flag=True, default=False)
 @click.pass_context
-def gauntlet(ctx: click.Context, scenario: tuple[str, ...], chaos: bool, live: bool, fmt: str, output: str | None, verbose: bool) -> None:
+def gauntlet(
+    ctx: click.Context,
+    scenario: tuple[str, ...],
+    chaos: bool,
+    live: bool,
+    fmt: str,
+    output: str | None,
+    verbose: bool,
+) -> None:
     """Run the Forge gauntlet — end-to-end pipeline scenario tests."""
     from forge.gauntlet.report import format_report_json, format_report_rich, format_report_summary
     from forge.gauntlet.runner import GauntletRunner
 
     if live and not chaos:
-        click.echo("Warning: --live mode uses real Claude SDK calls and costs real money.", err=True)
+        click.echo(
+            "Warning: --live mode uses real Claude SDK calls and costs real money.", err=True
+        )
 
     runner = GauntletRunner(
         scenarios=list(scenario) if scenario else None,

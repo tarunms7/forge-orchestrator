@@ -8,9 +8,7 @@ from forge.gauntlet.models import AssertionResult, ScenarioResult
 TASK_DESCRIPTION = "Fix calculator bugs across backend, frontend, and shared-types repos"
 
 
-async def run_happy_path(
-    pipeline: MockPipeline, workspace: dict[str, str]
-) -> ScenarioResult:
+async def run_happy_path(pipeline: MockPipeline, workspace: dict[str, str]) -> ScenarioResult:
     """Run full pipeline with no injected failures and assert everything passes."""
     stages = await pipeline.run_full(TASK_DESCRIPTION)
     assertions: list[AssertionResult] = []
@@ -22,7 +20,9 @@ async def run_happy_path(
         AssertionResult(
             name="all_stages_pass",
             passed=all_passed,
-            message="All stages passed" if all_passed else f"Failed stages: {[s.name for s in stages if not s.passed]}",
+            message="All stages passed"
+            if all_passed
+            else f"Failed stages: {[s.name for s in stages if not s.passed]}",
         )
     )
 
@@ -45,7 +45,9 @@ async def run_happy_path(
         AssertionResult(
             name="task_graph_has_3_tasks",
             passed=has_3_tasks,
-            message="TaskGraph contains 3 tasks" if has_3_tasks else f"Planning details: {planning_result.details if planning_result else 'missing'}",
+            message="TaskGraph contains 3 tasks"
+            if has_3_tasks
+            else f"Planning details: {planning_result.details if planning_result else 'missing'}",
         )
     )
 
@@ -56,7 +58,9 @@ async def run_happy_path(
         AssertionResult(
             name="contracts_generated",
             passed=contracts_ok,
-            message="Contracts were generated successfully" if contracts_ok else "Contract generation failed",
+            message="Contracts were generated successfully"
+            if contracts_ok
+            else "Contract generation failed",
         )
     )
 
@@ -77,7 +81,9 @@ async def run_happy_path(
         AssertionResult(
             name="pipeline_status_complete",
             passed=pipeline_complete,
-            message="Pipeline completed successfully" if pipeline_complete else "Pipeline did not complete",
+            message="Pipeline completed successfully"
+            if pipeline_complete
+            else "Pipeline did not complete",
         )
     )
 

@@ -83,9 +83,7 @@ class MockPipeline:
             details=f"All {len(self.repos)} repos validated",
         )
 
-    async def run_planning(
-        self, task_description: str
-    ) -> tuple[StageResult, TaskGraph | None]:
+    async def run_planning(self, task_description: str) -> tuple[StageResult, TaskGraph | None]:
         """Create a deterministic TaskGraph from fixture structure."""
         start = time.monotonic()
         await self._chaos_delay()

@@ -34,7 +34,14 @@ class TestHappyPath:
         pipeline = MockPipeline(workspace_dir=base, repos=repos)
         result = await run_happy_path(pipeline, repos)
         stage_names = [s.name for s in result.stages]
-        assert stage_names == ["preflight", "planning", "contracts", "execution", "review", "integration"]
+        assert stage_names == [
+            "preflight",
+            "planning",
+            "contracts",
+            "execution",
+            "review",
+            "integration",
+        ]
 
     @pytest.mark.asyncio
     async def test_all_assertions_pass(self, workspace):
@@ -78,7 +85,9 @@ class TestMultiRepoContracts:
         base, repos = workspace
         pipeline = MockPipeline(workspace_dir=base, repos=repos)
         result = await run_multi_repo_contracts(pipeline, repos)
-        type_check = next(a for a in result.assertions if a.name == "type_contracts_reference_shared_types")
+        type_check = next(
+            a for a in result.assertions if a.name == "type_contracts_reference_shared_types"
+        )
         assert type_check.passed is True
 
     @pytest.mark.asyncio
@@ -86,7 +95,9 @@ class TestMultiRepoContracts:
         base, repos = workspace
         pipeline = MockPipeline(workspace_dir=base, repos=repos)
         result = await run_multi_repo_contracts(pipeline, repos)
-        repo_check = next(a for a in result.assertions if a.name == "tasks_have_correct_repo_assignments")
+        repo_check = next(
+            a for a in result.assertions if a.name == "tasks_have_correct_repo_assignments"
+        )
         assert repo_check.passed is True
 
 
@@ -186,7 +197,9 @@ class TestIntegrationFailure:
         base, repos = workspace
         pipeline = MockPipeline(workspace_dir=base, repos=repos)
         result = await run_integration_failure(pipeline, repos)
-        pre_check = next(a for a in result.assertions if a.name == "all_stages_before_integration_pass")
+        pre_check = next(
+            a for a in result.assertions if a.name == "all_stages_before_integration_pass"
+        )
         assert pre_check.passed is True
 
     @pytest.mark.asyncio

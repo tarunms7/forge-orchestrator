@@ -86,11 +86,7 @@ async def run_multi_repo_contracts(
         )
 
     # Assert TypeContract references CalculationRequest/CalculationResponse
-    type_names = (
-        [tc.name for tc in contract_set.type_contracts]
-        if contract_set
-        else []
-    )
+    type_names = [tc.name for tc in contract_set.type_contracts] if contract_set else []
     has_calc_request = "CalculationRequest" in type_names
     has_calc_response = "CalculationResponse" in type_names
     type_ok = has_calc_request and has_calc_response
@@ -106,10 +102,20 @@ async def run_multi_repo_contracts(
 
     # Assert type contracts are used by correct tasks
     if contract_set and type_ok:
-        req_contract = next(tc for tc in contract_set.type_contracts if tc.name == "CalculationRequest")
-        resp_contract = next(tc for tc in contract_set.type_contracts if tc.name == "CalculationResponse")
-        req_tasks_ok = "fix-backend-bug" in req_contract.used_by_tasks and "update-shared-types" in req_contract.used_by_tasks
-        resp_tasks_ok = "fix-backend-bug" in resp_contract.used_by_tasks and "update-shared-types" in resp_contract.used_by_tasks
+        req_contract = next(
+            tc for tc in contract_set.type_contracts if tc.name == "CalculationRequest"
+        )
+        resp_contract = next(
+            tc for tc in contract_set.type_contracts if tc.name == "CalculationResponse"
+        )
+        req_tasks_ok = (
+            "fix-backend-bug" in req_contract.used_by_tasks
+            and "update-shared-types" in req_contract.used_by_tasks
+        )
+        resp_tasks_ok = (
+            "fix-backend-bug" in resp_contract.used_by_tasks
+            and "update-shared-types" in resp_contract.used_by_tasks
+        )
         usage_ok = req_tasks_ok and resp_tasks_ok
         assertions.append(
             AssertionResult(

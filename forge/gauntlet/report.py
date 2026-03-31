@@ -23,13 +23,21 @@ def format_report_rich(result: GauntletResult, verbose: bool = False) -> None:
         status = "[green]PASS[/green]" if scenario.passed else "[red]FAIL[/red]"
         cost_str = f"${scenario.cost_usd:.4f}" if scenario.cost_usd else ""
 
-        console.print(f"  {icon} [bold]{scenario.name}[/]  {status}  [dim]{scenario.duration_s:.1f}s[/]  [dim]{cost_str}[/]")
+        console.print(
+            f"  {icon} [bold]{scenario.name}[/]  {status}  [dim]{scenario.duration_s:.1f}s[/]  [dim]{cost_str}[/]"
+        )
 
         if scenario.error:
             console.print(f"    [red]Error: {scenario.error.splitlines()[0]}[/]")
 
         if verbose and scenario.stages:
-            stage_table = Table(show_header=True, header_style="bold", box=None, pad_edge=False, padding=(0, 1, 0, 3))
+            stage_table = Table(
+                show_header=True,
+                header_style="bold",
+                box=None,
+                pad_edge=False,
+                padding=(0, 1, 0, 3),
+            )
             stage_table.add_column("Stage", min_width=12)
             stage_table.add_column("Status", width=6, justify="center")
             stage_table.add_column("Duration", width=8, justify="right")

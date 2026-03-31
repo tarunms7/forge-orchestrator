@@ -24,9 +24,7 @@ def failing_pipeline(tmp_path, workspace):
     """Factory for pipelines that fail at a specific stage."""
 
     def _make(fail_at: str) -> MockPipeline:
-        return MockPipeline(
-            workspace_dir=str(tmp_path), repos=workspace, fail_at=fail_at
-        )
+        return MockPipeline(workspace_dir=str(tmp_path), repos=workspace, fail_at=fail_at)
 
     return _make
 
