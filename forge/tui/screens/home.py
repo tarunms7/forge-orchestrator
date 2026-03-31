@@ -12,7 +12,11 @@ from textual.widgets import Static, TextArea
 from forge.tui.theme import PIPELINE_STATUS_ICONS as _PIPELINE_STATUS_ICONS
 from forge.tui.widgets.branch_selector import BranchInput, BranchSelector
 from forge.tui.widgets.logo import ForgeLogo
-from forge.tui.widgets.pipeline_list import PipelineList, is_pipeline_resumable
+from forge.tui.widgets.pipeline_list import (
+    PipelineList,
+    _single_line_summary,
+    is_pipeline_resumable,
+)
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 
@@ -55,7 +59,7 @@ def format_recent_pipelines(pipelines: list[dict]) -> str:
     for p in pipelines:
         status = p.get("status", "unknown")
         icon, color = _PIPELINE_STATUS_ICONS.get(status, ("?", "#8b949e"))
-        desc = p.get("description", "Untitled")[:50]
+        desc = _single_line_summary(p.get("description", "Untitled"))[:50]
         cost = p.get("cost", 0.0)
         date = p.get("created_at", "")[:10]
         project_dir = p.get("project_dir", "") or ""

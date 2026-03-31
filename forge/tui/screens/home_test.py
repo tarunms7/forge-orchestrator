@@ -107,6 +107,24 @@ def test_format_recent_pipelines_empty():
     assert "No recent pipelines" in result
 
 
+def test_format_recent_pipelines_flattens_multiline_description():
+    pipelines = [
+        {
+            "id": "abc",
+            "description": "Build gauntlet\n\nGoal:\nCreate a first-class self-test feature",
+            "status": "complete",
+            "created_at": "2026-03-10",
+            "cost": 2.50,
+        }
+    ]
+
+    result = format_recent_pipelines(pipelines)
+
+    assert "Build gauntlet Goal: Create a first-class" in result
+    assert "Goal:\n" not in result
+    assert result.count("\n") == 0
+
+
 @pytest.mark.asyncio
 async def test_home_screen_has_pipeline_list():
     """HomeScreen should contain a PipelineList widget."""

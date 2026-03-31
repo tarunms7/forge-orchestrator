@@ -559,3 +559,24 @@ async def test_render_uses_available_width_for_long_descriptions():
         rendered = pl.render()
 
         assert "issues everywhere" in rendered
+
+
+def test_render_flattens_multiline_descriptions():
+    pl = PipelineList()
+    pl.update_pipelines(
+        [
+            {
+                "id": "p1",
+                "description": 'Build a v1 of "Forge Gauntlet"\n\nGoal:\nCreate a first-class self-test feature',
+                "status": "complete",
+                "created_at": "2026-03-31T12:00:00",
+                "total_cost_usd": 8.80,
+            }
+        ]
+    )
+
+    rendered = pl.render()
+
+    assert len(rendered.splitlines()) == 2
+    assert 'Build a v1 of "Forge Gauntlet" Goal:' in rendered
+    assert "\nGoal:" not in rendered
