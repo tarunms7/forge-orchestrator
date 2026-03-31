@@ -300,6 +300,8 @@ def format_unified_incremental(
 class AgentOutput(Widget):
     """Scrollable agent output with fixed header and auto-scrolling body."""
 
+    can_focus = True
+
     DEFAULT_CSS = """
     AgentOutput {
         layout: vertical;

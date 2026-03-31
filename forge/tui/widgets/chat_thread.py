@@ -68,6 +68,14 @@ def format_read_only_notice(notice: str) -> str:
     )
 
 
+def format_chat_idle_notice() -> str:
+    """Render a neutral empty state when no live question is active."""
+    return (
+        f"[{TEXT_SECONDARY}]No question is waiting right now.[/]\n"
+        f"[{TEXT_MUTED}]When an agent needs your input, Forge will bring it here automatically.[/]"
+    )
+
+
 def format_review_progress(
     strategy: str | None,
     diff_lines: int | None,
@@ -200,20 +208,44 @@ class ChatThread(Widget):
         )
         yield Input(placeholder=placeholder, id="chat-input")
 
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    @property
+    def has_question(self) -> bool:
+        return self._question is not None
+
+    def set_mode(self, mode: str) -> None:
+        """Switch between answer and interjection chrome."""
+        self._mode = mode
+        self._update_controls()
+
     def _update_controls(self) -> None:
         """Sync input/chip visibility with the current mode and read-only state."""
+        show_answer_input = self._question is not None
+        show_input = not self._read_only and (self._mode == "interjection" or show_answer_input)
         try:
             chips = self.query_one(SuggestionChips)
             chips.display = (
-                not self._read_only and self._mode != "interjection" and bool(chips._suggestions)
+                not self._read_only
+                and self._mode != "interjection"
+                and show_answer_input
+                and bool(chips._suggestions)
             )
         except Exception:
             pass
         try:
             inp = self.query_one("#chat-input", Input)
-            inp.disabled = self._read_only
-            inp.display = not self._read_only
-            if not self._read_only:
+            inp.disabled = not show_input
+            inp.display = show_input
+            if not show_input and inp.has_focus:
+                inp.blur()
+                try:
+                    self.app.set_focus(None)
+                except Exception:
+                    pass
+            if show_input:
                 inp.placeholder = (
                     "Type a message to the agent..."
                     if self._mode == "interjection"
@@ -234,6 +266,11 @@ class ChatThread(Widget):
         """Populate the VerticalScroll with current question, work log, and history."""
         scroll = self.query_one("#chat-scroll", VerticalScroll)
         scroll.remove_children()
+
+        if self._mode == "answer" and not self._question:
+            scroll.mount(Static(format_chat_idle_notice()))
+            scroll.scroll_end(animate=False)
+            return
 
         # Show previous Q&A history
         for entry in self._history:
@@ -260,6 +297,7 @@ class ChatThread(Widget):
     def update_question(
         self, question: dict, work_lines: list[str], history: list[dict] | None = None
     ) -> None:
+        self._mode = "answer"
         self._question = question
         self._work_lines = work_lines
         self._history = history or []
@@ -285,16 +323,30 @@ class ChatThread(Widget):
 
     def clear_question(self) -> None:
         self._question = None
+        self._mode = "answer"
+        self._work_lines = []
+        self._history = []
+        self.task_id = ""
         self.query_one(SuggestionChips).update_suggestions([])
-        self.query_one("#chat-input", Input).value = ""
-        self.query_one("#chat-scroll", VerticalScroll).remove_children()
+        inp = self.query_one("#chat-input", Input)
+        inp.value = ""
+        if inp.has_focus:
+            inp.blur()
+            try:
+                self.app.set_focus(None)
+            except Exception:
+                pass
         self._update_controls()
+        self._render_scroll_content()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self._read_only:
             return
         text = event.value.strip()
         if not text:
+            return
+        if self._mode != "interjection" and not self._question:
+            event.input.value = ""
             return
         # Check if user typed just a number to select a suggestion
         if text.isdigit() and self._question:

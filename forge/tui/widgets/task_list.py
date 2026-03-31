@@ -97,6 +97,8 @@ def format_task_line(
 class TaskList(Widget):
     """Scrollable task list with keyboard navigation."""
 
+    can_focus = True
+
     DEFAULT_CSS = """
     TaskList {
         width: 1fr;

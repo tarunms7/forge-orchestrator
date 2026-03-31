@@ -13,6 +13,7 @@ def test_task_question_updates_state():
     )
     assert state.tasks["t1"]["state"] == "awaiting_input"
     assert state.pending_questions["t1"] is not None
+    assert state.selected_task_id == "t1"
 
 
 def test_task_answer_clears_pending():
@@ -21,12 +22,22 @@ def test_task_answer_clears_pending():
     state.pending_questions = {"t1": {"id": "q1", "question": "Which?"}}
     state.apply_event("task:answer", {"task_id": "t1", "answer": "A"})
     assert "t1" not in state.pending_questions
+    assert state.tasks["t1"]["state"] == "in_progress"
 
 
 def test_task_resumed_sets_running():
     state = TuiState()
     state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Test"}}
     state.apply_event("task:resumed", {"task_id": "t1"})
+    assert state.tasks["t1"]["state"] == "in_progress"
+
+
+def test_task_auto_decided_resumes_locally():
+    state = TuiState()
+    state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Test"}}
+    state.pending_questions = {"t1": {"id": "q1", "question": "Which?"}}
+    state.apply_event("task:auto_decided", {"task_id": "t1", "reason": "timeout"})
+    assert "t1" not in state.pending_questions
     assert state.tasks["t1"]["state"] == "in_progress"
 
 
@@ -74,6 +85,7 @@ def test_planning_question_added_to_pending():
     )
     assert "__planning__" in state.pending_questions
     assert state.pending_questions["__planning__"]["question"] == "JWT or session?"
+    assert state.pending_questions["__planning__"]["question_id"] == "q1"
 
 
 def test_planning_answer_removes_from_pending():
@@ -82,6 +94,21 @@ def test_planning_answer_removes_from_pending():
     state.pending_questions["__planning__"] = {"question": "JWT or session?"}
     state.apply_event("planning:answer", {"answer": "JWT"})
     assert "__planning__" not in state.pending_questions
+
+
+def test_planning_answer_is_added_to_history():
+    """Planning answers should be preserved for final reports and PR summaries."""
+    state = TuiState()
+    state.pending_questions["__planning__"] = {"question": "JWT or session?", "question_id": "q1"}
+
+    state.apply_event("planning:answer", {"answer": "JWT"})
+
+    assert state.question_history["__planning__"] == [
+        {
+            "question": {"question": "JWT or session?", "question_id": "q1"},
+            "answer": "JWT",
+        }
+    ]
 
 
 def test_planning_question_notifies():
@@ -112,6 +139,13 @@ def test_planning_answer_noop_when_no_pending():
     """planning:answer should not crash when no pending planning question."""
     state = TuiState()
     state.apply_event("planning:answer", {"answer": "JWT"})
+    assert "__planning__" not in state.pending_questions
+
+
+def test_phase_change_clears_stale_planning_question():
+    state = TuiState()
+    state.pending_questions["__planning__"] = {"question": "Which DB?"}
+    state.apply_event("pipeline:phase_changed", {"phase": "executing"})
     assert "__planning__" not in state.pending_questions
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -247,6 +248,7 @@ class TestOnTaskAnswered:
         executor = ExecutorMixin.__new__(ExecutorMixin)
         executor._project_dir = "/tmp/test"
         executor._active_tasks = {}
+        executor._active_tasks_lock = asyncio.Lock()
         executor._effective_max_agents = 4
         executor._runtime = MagicMock()
         executor._worktree_mgr = MagicMock()
@@ -260,13 +262,20 @@ class TestOnTaskAnswered:
         mock_db.assign_task = AsyncMock()
         mock_db.list_agents = AsyncMock(return_value=[MagicMock(id="agent-1")])
         mock_db.list_tasks_by_pipeline = AsyncMock(return_value=[mock_task])
+        mock_db._session_factory = MagicMock()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_db._session_factory.return_value = mock_session
 
         with patch("forge.core.scheduler.Scheduler") as MockSched:
             MockSched.dispatch_plan.return_value = [("t1", "agent-1")]
 
-            # Mock engine helpers
-            with patch("forge.core.engine._row_to_agent", side_effect=lambda a: a):
-                with patch("forge.core.engine._row_to_record", side_effect=lambda t: t):
+            with patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
+                with patch("forge.core.models.row_to_record", side_effect=lambda t: t):
                     # Mock _safe_execute_resume to avoid actual execution
                     executor._safe_execute_resume = AsyncMock()
 
@@ -276,6 +285,8 @@ class TestOnTaskAnswered:
                     )
 
         mock_db.assign_task.assert_called_once_with("t1", "agent-1")
+        assert "t1" in executor._active_tasks
+        await executor._active_tasks["t1"]
 
     @pytest.mark.asyncio
     async def test_skips_non_awaiting_task(self):
@@ -284,6 +295,7 @@ class TestOnTaskAnswered:
 
         executor = ExecutorMixin.__new__(ExecutorMixin)
         executor._active_tasks = {}
+        executor._active_tasks_lock = asyncio.Lock()
 
         mock_db = AsyncMock()
         mock_task = MagicMock()
@@ -306,6 +318,7 @@ class TestOnTaskAnswered:
 
         executor = ExecutorMixin.__new__(ExecutorMixin)
         executor._active_tasks = {"t1": MagicMock()}  # already active
+        executor._active_tasks_lock = asyncio.Lock()
 
         mock_db = AsyncMock()
         mock_task = MagicMock()
@@ -327,6 +340,7 @@ class TestOnTaskAnswered:
         from forge.core.daemon_executor import ExecutorMixin
 
         executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._active_tasks_lock = asyncio.Lock()
         mock_db = AsyncMock()
 
         await executor._on_task_answered(data={"answer": "x"}, db=mock_db)

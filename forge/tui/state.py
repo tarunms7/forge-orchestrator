@@ -112,6 +112,8 @@ class TuiState:
 
     def _on_phase_changed(self, data: dict) -> None:
         self.phase = data.get("phase", self.phase)
+        if self.phase not in ("planning", "planned") and "__planning__" in self.pending_questions:
+            self.pending_questions.pop("__planning__", None)
         self._notify("phase")
 
     def _on_plan_ready(self, data: dict) -> None:
@@ -251,6 +253,7 @@ class TuiState:
         if task_id and task_id in self.tasks:
             self.tasks[task_id]["state"] = "awaiting_input"
             self.pending_questions[task_id] = data.get("question", {})
+            self.selected_task_id = task_id
             self._notify("tasks")
 
     def _on_task_answer(self, data: dict) -> None:
@@ -260,6 +263,8 @@ class TuiState:
             if q:
                 history = self.question_history.setdefault(task_id, [])
                 history.append({"question": q, "answer": data.get("answer")})
+            if task_id in self.tasks and self.tasks[task_id].get("state") == "awaiting_input":
+                self.tasks[task_id]["state"] = "in_progress"
             self._notify("tasks")
 
     def _on_task_resumed(self, data: dict) -> None:
@@ -285,6 +290,8 @@ class TuiState:
                 history.append(
                     {"question": q, "answer": f"[auto: {data.get('reason', 'unknown')}]"}
                 )
+            if task_id in self.tasks and self.tasks[task_id].get("state") == "awaiting_input":
+                self.tasks[task_id]["state"] = "in_progress"
             self._notify("tasks")
             self.last_auto_decided = {"task_id": task_id, "reason": data.get("reason", "timeout")}
             self._notify("auto_decided")
@@ -497,12 +504,19 @@ class TuiState:
 
     def _on_planning_question(self, data: dict) -> None:
         """Architect has a question during planning."""
-        self.pending_questions["__planning__"] = data.get("question", {})
+        question = dict(data.get("question", {}) or {})
+        question_id = data.get("question_id")
+        if question_id:
+            question["question_id"] = question_id
+        self.pending_questions["__planning__"] = question
         self._notify("planning")
 
     def _on_planning_answer(self, data: dict) -> None:
         """Planning question was answered."""
-        self.pending_questions.pop("__planning__", None)
+        q = self.pending_questions.pop("__planning__", None)
+        if q:
+            history = self.question_history.setdefault("__planning__", [])
+            history.append({"question": q, "answer": data.get("answer")})
         self._notify("planning")
 
     def _handle_planning_output(self, stage: str, data: dict) -> None:
@@ -618,6 +632,12 @@ class TuiState:
     def _on_pr_failed(self, data: dict) -> None:
         self.error = data.get("error", "PR creation failed")
         self._notify("error")
+        if self.phase == "pr_creating":
+            has_unshipped_failures = any(
+                t.get("state") in ("error", "blocked") for t in self.tasks.values()
+            )
+            self.phase = "partial_success" if has_unshipped_failures else "final_approval"
+            self._notify("phase")
 
     def reset(self) -> None:
         """Reset all pipeline-specific state for a new task."""
