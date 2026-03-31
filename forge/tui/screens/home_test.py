@@ -2,6 +2,7 @@
 
 import pytest
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
@@ -45,6 +46,29 @@ class HomeTestApp(App):
 
     def on_mount(self) -> None:
         self.push_screen(HomeScreen(recent_pipelines=self._pipelines))
+
+
+class FakeRepo:
+    def __init__(self, repo_id: str, path: str = "/tmp/repo", base_branch: str = "main") -> None:
+        self.id = repo_id
+        self.path = path
+        self.base_branch = base_branch
+
+
+class WorkspaceHomeTestApp(App):
+    def __init__(self, pipelines=None, repos=None):
+        super().__init__()
+        self._pipelines = pipelines
+        self._repos = repos or []
+
+    def on_mount(self) -> None:
+        self.push_screen(
+            HomeScreen(
+                recent_pipelines=self._pipelines,
+                repos=self._repos,
+                project_dir="/tmp/workspace",
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -110,6 +134,7 @@ async def test_home_screen_tab_cycles_focus():
     async with app.run_test() as pilot:
         prompt = app.screen.query_one("PromptTextArea")
         prompt.focus()
+        await pilot.pause()
         assert prompt.has_focus
 
         # Tab cycles through: prompt → base-branch → branch-name → pipeline-list
@@ -249,3 +274,39 @@ async def test_shortcut_label_resume_for_resumable_pipeline():
         # Shift+R should appear for resumable pipelines
         resume_labels = [label for key, label in bar.shortcuts if key == "Shift+R"]
         assert resume_labels == ["Resume"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_history_navigation_keeps_selected_pipeline_in_view():
+    pipelines = [
+        {
+            "id": f"p{i}",
+            "description": f"Pipeline {i}",
+            "status": "complete",
+            "created_at": "2026-03-10",
+            "total_cost_usd": float(i),
+        }
+        for i in range(1, 8)
+    ]
+    repos = [FakeRepo("wizbridge"), FakeRepo("temp"), FakeRepo("ultron")]
+    app = WorkspaceHomeTestApp(pipelines=pipelines, repos=repos)
+
+    async with app.run_test(size=(140, 24)) as pilot:
+        container = app.screen.query_one("#home-container", VerticalScroll)
+        pl = app.screen.query_one(PipelineList)
+        pl.focus()
+        await pilot.pause()
+
+        for _ in range(4):
+            pl.action_cursor_down()
+            await pilot.pause()
+
+        relative_index = pl._selected_index - pl._scroll_offset
+        selected_top = pl.region.y + (relative_index * 2)
+        selected_bottom = selected_top + 2
+        viewport_top = container.scroll_y
+        viewport_bottom = viewport_top + container.scrollable_content_region.height
+
+        assert container.scroll_y > 0
+        assert viewport_top <= selected_top
+        assert selected_bottom <= viewport_bottom
