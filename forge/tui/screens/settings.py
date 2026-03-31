@@ -105,21 +105,24 @@ class SettingsScreen(Screen):
         layout: vertical;
     }
     #settings-header {
-        height: 1;
-        padding: 0 1;
-        background: #161b22;
+        height: 3;
+        padding: 1 2;
+        background: #11161d;
         color: #58a6ff;
+        border-bottom: tall #263041;
     }
     #settings-body {
         padding: 1 2;
         overflow-y: auto;
+        background: #0d1117;
     }
     #settings-footer {
         dock: bottom;
         height: 1;
         padding: 0 1;
-        background: #161b22;
+        background: #11161d;
         color: #8b949e;
+        border-top: tall #263041;
     }
     """
 
@@ -144,7 +147,11 @@ class SettingsScreen(Screen):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static(f"[bold {ACCENT_BLUE}]SETTINGS[/]", id="settings-header")
+        yield Static(
+            f"[bold {ACCENT_BLUE}]SETTINGS[/]\n"
+            f"[{TEXT_SECONDARY}]Tune autonomy, budgets, and safety rails for how Forge ships.[/]",
+            id="settings-header",
+        )
         with VerticalScroll(id="settings-body"):
             yield Static(format_settings(self._settings), id="static-settings")
             yield Static(

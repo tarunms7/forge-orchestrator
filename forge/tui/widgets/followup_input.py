@@ -66,13 +66,26 @@ class FollowUpInput(Widget):
             super().__init__()
 
     DEFAULT_CSS = """
-    FollowUpInput { height: auto; padding: 1 0; }
+    FollowUpInput {
+        height: auto;
+        padding: 1;
+        background: #11161d;
+        border: tall #263041;
+    }
     FollowUpInput #followup-history { height: auto; margin: 0 1; }
     FollowUpInput #followup-context { height: auto; margin: 0 1; }
-    FollowUpInput #followup-label { height: 1; margin: 0 1; }
-    FollowUpInput TextArea { height: 4; margin: 0 1; }
-    FollowUpInput #followup-hint { height: 1; margin: 0 1; }
-    FollowUpInput SuggestionChips { margin: 0 1; }
+    FollowUpInput #followup-label { height: auto; margin: 0 1 1 1; }
+    FollowUpInput TextArea {
+        height: 4;
+        margin: 0 1;
+        border: tall #263041;
+        background: #0d1117;
+    }
+    FollowUpInput TextArea:focus {
+        border: tall #58a6ff;
+    }
+    FollowUpInput #followup-hint { height: auto; margin: 1 1 0 1; }
+    FollowUpInput SuggestionChips { margin: 1 1 0 1; }
     """
 
     def __init__(
@@ -95,7 +108,8 @@ class FollowUpInput(Widget):
                 id="followup-context",
             )
             yield Static(
-                "[bold #58a6ff]Follow up:[/] refine, extend, or fix...",
+                "[bold #d6a85f]NEXT MOVE[/]\n"
+                "[#8b949e]Refine the branch, fix a gap, or extend the shipped work.[/]",
                 id="followup-label",
             )
             yield FollowUpTextArea(id="followup-text")

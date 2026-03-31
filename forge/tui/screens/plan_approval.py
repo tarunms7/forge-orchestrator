@@ -129,28 +129,32 @@ class PlanApprovalScreen(Screen):
     #plan-header {
         height: 3;
         padding: 1 2;
-        background: #161b22;
+        background: #11161d;
         color: #58a6ff;
+        border-bottom: tall #263041;
     }
     #plan-cost {
         padding: 0 2;
-        background: #161b22;
+        background: #11161d;
         height: 1;
     }
     #plan-body {
         padding: 1 2;
+        background: #0d1117;
     }
     #plan-footer {
         dock: bottom;
         height: 1;
         padding: 0 1;
-        background: #161b22;
+        background: #11161d;
         color: #8b949e;
+        border-top: tall #263041;
     }
     #edit-area {
         height: 6;
         margin: 0 2;
         border: tall #d29922;
+        background: #0d1117;
         display: none;
     }
     #edit-area.visible {
@@ -169,6 +173,7 @@ class PlanApprovalScreen(Screen):
         height: auto;
         margin: 1 2;
         border: tall #3fb950;
+        background: #11161d;
         padding: 1;
         display: none;
     }

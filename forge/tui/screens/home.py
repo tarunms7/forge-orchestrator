@@ -82,20 +82,38 @@ class HomeScreen(Screen):
         width: 1fr;
         max-width: 120;
         height: 1fr;
-        padding: 0 2;
+        padding: 0 2 1 2;
     }
     ForgeLogo {
         width: 100%;
     }
+    #hero-copy {
+        width: 100%;
+        height: auto;
+        margin: 0 0 1 0;
+        content-align: center middle;
+        text-align: center;
+    }
     #input-row {
         width: 100%;
-        height: 10;
+        height: auto;
         margin: 1 0;
     }
+    #composer-card {
+        width: 1fr;
+        height: auto;
+        border: tall #263041;
+        background: #11161d;
+        padding: 1;
+    }
+    #composer-label {
+        width: 100%;
+        margin-bottom: 1;
+    }
     #prompt-input {
-        height: 10;
-        border: tall #30363d;
-        background: #161b22;
+        height: 9;
+        border: tall #263041;
+        background: #11161d;
         width: 1fr;
     }
     #prompt-input:focus {
@@ -103,11 +121,12 @@ class HomeScreen(Screen):
     }
     #shortcuts-panel {
         width: 34;
-        height: 10;
-        border: tall #30363d;
-        background: #161b22;
+        height: auto;
+        min-height: 11;
+        border: tall #263041;
+        background: #11161d;
         margin-left: 1;
-        padding: 0 1;
+        padding: 1;
         content-align: left top;
     }
     /* Do not cap height: Select + label needs ~4 lines; max-height caused clipping
@@ -170,12 +189,14 @@ class HomeScreen(Screen):
     #recent-label {
         width: 100%;
         margin: 1 0 1 0;
-        color: #6e7681;
+        color: #d6a85f;
+        border-top: tall #21262d;
+        padding-top: 1;
     }
     PipelineList {
         width: 100%;
         height: 1fr;
-        max-height: 12;
+        max-height: 14;
     }
     """
 
@@ -215,14 +236,32 @@ class HomeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         shortcuts_text = (
-            "[#e6edf3 bold]Shortcuts[/]\n"
-            "[#58a6ff]Ctrl+S[/] submit  [#58a6ff]Ctrl+U[/] clear  [#58a6ff]Tab[/] focus\n"
-            "[#58a6ff]Ctrl+P[/] palette  [#58a6ff]?[/] help"
+            "[#d6a85f bold]Launch Guide[/]\n"
+            "[#8b949e]Compose the outcome, pick the branch plan,\nthen drop into execution or resume a past run.[/]\n\n"
+            "[#e6edf3 bold]Core shortcuts[/]\n"
+            "[#58a6ff]Ctrl+S[/] submit\n"
+            "[#58a6ff]Ctrl+U[/] clear input\n"
+            "[#58a6ff]Tab[/] move focus\n"
+            "[#58a6ff]Ctrl+P[/] command palette\n"
+            "[#58a6ff]?[/] help overlay"
         )
         with Vertical(id="home-container"):
             yield ForgeLogo()
+            yield Static(
+                "[bold #e6edf3]Mission control for parallel shipping.[/]\n"
+                "[#8b949e]Describe the outcome you want. Forge plans it, fans it out, "
+                "reviews it, and brings you back a branch or PR.[/]",
+                id="hero-copy",
+            )
             with Horizontal(id="input-row"):
-                yield PromptTextArea(id="prompt-input")
+                with Vertical(id="composer-card"):
+                    yield Static(
+                        "[bold #d6a85f]What should Forge ship?[/]\n"
+                        "[#8b949e]Be outcome-first. Mention the user-facing goal, "
+                        "the constraints, and the repos involved if it spans more than one.[/]",
+                        id="composer-label",
+                    )
+                    yield PromptTextArea(id="prompt-input")
                 yield Static(shortcuts_text, id="shortcuts-panel")
             if self._is_workspace:
                 for repo in self._repos:
@@ -247,7 +286,7 @@ class HomeScreen(Screen):
                             classes="branch-label",
                         )
                         yield BranchInput(id="branch-name-input")
-            yield Static("Recent pipelines", id="recent-label")
+            yield Static("[bold]Recent pipelines[/]  [#8b949e]resume, inspect, or relaunch[/]", id="recent-label")
             yield PipelineList()
         yield ShortcutBar(
             [

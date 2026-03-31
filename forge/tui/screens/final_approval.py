@@ -16,6 +16,8 @@ from textual.widgets import Static
 from forge.core.async_utils import safe_create_task
 from forge.tui.theme import (
     ACCENT_BLUE,
+    ACCENT_CYAN,
+    ACCENT_GOLD,
     ACCENT_GREEN,
     ACCENT_RED,
     ACCENT_YELLOW,
@@ -27,6 +29,96 @@ from forge.tui.widgets.followup_input import FollowUpInput
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 logger = logging.getLogger("forge.tui.screens.final_approval")
+
+
+def _summarize_task_states(tasks: list[dict]) -> dict[str, int]:
+    summary = {
+        "done": 0,
+        "error": 0,
+        "blocked": 0,
+        "active": 0,
+        "cancelled": 0,
+    }
+    for task in tasks:
+        state = task.get("state", task.get("review", "todo"))
+        if state == "done":
+            summary["done"] += 1
+        elif state == "error":
+            summary["error"] += 1
+        elif state == "blocked":
+            summary["blocked"] += 1
+        elif state == "cancelled":
+            summary["cancelled"] += 1
+        else:
+            summary["active"] += 1
+    return summary
+
+
+def _format_launch_banner(
+    tasks: list[dict],
+    pipeline_branch: str,
+    base_branch: str,
+    *,
+    partial: bool = False,
+    multi_repo: bool = False,
+    stats: dict | None = None,
+) -> str:
+    stats = stats or {}
+    counts = _summarize_task_states(tasks)
+    title = "RECOVERY BAY" if partial else "LAUNCH BAY"
+    subtitle = (
+        f"[bold {ACCENT_YELLOW}]Completed work can ship now[/]"
+        if partial
+        else f"[bold {ACCENT_GREEN}]Ready to open the pull request[/]"
+    )
+    progress_parts = [f"{counts['done']} shipped"]
+    if counts["active"]:
+        progress_parts.append(f"{counts['active']} active")
+    if counts["error"]:
+        progress_parts.append(f"{counts['error']} failed")
+    if counts["blocked"]:
+        progress_parts.append(f"{counts['blocked']} blocked")
+    if counts["cancelled"]:
+        progress_parts.append(f"{counts['cancelled']} cancelled")
+    if multi_repo and stats.get("repo_count"):
+        progress_parts.append(f"{stats['repo_count']} repos coordinated")
+    if pipeline_branch:
+        target = (
+            f"[{TEXT_SECONDARY}]PR target:[/] [bold {ACCENT_BLUE}]{pipeline_branch}[/] "
+            f"[{TEXT_SECONDARY}]→[/] [bold {ACCENT_BLUE}]{base_branch}[/]"
+        )
+    else:
+        target = f"[{TEXT_MUTED}]PR target pending branch selection[/]"
+    return "\n".join(
+        [
+            f"[bold {ACCENT_GOLD}]{title}[/]",
+            subtitle,
+            f"[{TEXT_SECONDARY}]{'  •  '.join(progress_parts)}[/]",
+            target,
+        ]
+    )
+
+
+def _format_pr_status(
+    pipeline_branch: str,
+    base_branch: str,
+    *,
+    multi_repo: bool = False,
+) -> str:
+    if not pipeline_branch:
+        return f"[{TEXT_MUTED}]No pipeline branch available yet.[/]"
+    if multi_repo:
+        return (
+            f"[bold {ACCENT_CYAN}]PR Targets[/]\n"
+            f"[{TEXT_SECONDARY}]Forge will open per-repo pull requests into the "
+            "configured base branches when you launch.[/]"
+        )
+    return (
+        f"[bold {ACCENT_CYAN}]PR Target[/]\n"
+        f"[{TEXT_SECONDARY}]Forge will open a pull request from "
+        f"[bold {ACCENT_BLUE}]{pipeline_branch}[/] into "
+        f"[bold {ACCENT_BLUE}]{base_branch}[/].[/]"
+    )
 
 
 def format_summary_stats(stats: dict, multi_repo: bool = False) -> str:
@@ -296,9 +388,49 @@ class FinalApprovalScreen(Screen):
     ]
 
     DEFAULT_CSS = """
-    FinalApprovalScreen { align: center middle; }
-    #approval-container { width: 80; padding: 2; }
-    #pr-url { margin-top: 1; }
+    FinalApprovalScreen {
+        align: center top;
+    }
+    #approval-scroll {
+        width: 100%;
+        height: 1fr;
+    }
+    #approval-container {
+        width: 1fr;
+        max-width: 108;
+        padding: 1 2 2 2;
+    }
+    #launch-banner,
+    #stats,
+    #pr-url,
+    #task-table,
+    #approval-help {
+        background: #11161d;
+        border: tall #263041;
+        padding: 1 2;
+    }
+    #launch-banner {
+        margin-bottom: 1;
+    }
+    #behind-main-warning {
+        margin: 0 0 1 0;
+    }
+    #stats {
+        margin-top: 1;
+    }
+    #pr-url {
+        margin-top: 1;
+    }
+    #tasks-header {
+        margin: 1 0 0 0;
+        color: #d6a85f;
+    }
+    #task-table {
+        margin-top: 1;
+    }
+    #approval-help {
+        margin-top: 1;
+    }
     """
 
     def __init__(
@@ -372,7 +504,7 @@ class FinalApprovalScreen(Screen):
                 warning = self.query_one("#behind-main-warning", Static)
                 warning.update(
                     f"[bold {ACCENT_YELLOW}]⚠ Branch is {count} commit{'s' if count != 1 else ''} "
-                    f"behind {base}. PR may have merge conflicts.[/]"
+                    f"behind {base}. Sync before launch to avoid merge conflicts.[/]"
                 )
         except Exception:
             pass  # Non-critical — silently skip if git fails
@@ -381,33 +513,48 @@ class FinalApprovalScreen(Screen):
         files_count = self._stats.get("files", 0)
         pr_label = "Create PRs" if self._multi_repo else "Create PR"
         if self._partial:
-            done = sum(1 for t in self._tasks if t.get("state") == "done")
-            total = len(self._tasks)
-            header = f"Pipeline Partial — {done}/{total} Tasks Completed"
             help_text = (
-                f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  r: re-run  "
-                f"s: skip failed  f: follow up  Esc: cancel[/]"
+                f"[{TEXT_SECONDARY}]Enter launches completed work  •  d inspects the diff  "
+                f"•  r retries failures  •  s skips failures  •  f opens follow-up input[/]"
             )
         else:
-            header = "Pipeline Complete — Final Approval"
             help_text = (
-                f"\n[{TEXT_SECONDARY}]Enter: create PR  d: diff  f: follow up  "
-                f"n: new task  Esc: cancel[/]"
+                f"[{TEXT_SECONDARY}]Enter launches PR creation  •  d inspects the diff  "
+                f"•  f continues on the same branch  •  n starts a fresh mission[/]"
             )
-        with VerticalScroll():
+        with VerticalScroll(id="approval-scroll"):
             with Center():
                 with Vertical(id="approval-container"):
-                    yield Static(f"[bold {ACCENT_BLUE}]{header}[/]\n", id="header")
+                    yield Static(
+                        _format_launch_banner(
+                            self._tasks,
+                            self._pipeline_branch,
+                            self._base_branch,
+                            partial=self._partial,
+                            multi_repo=self._multi_repo,
+                            stats=self._stats,
+                        ),
+                        id="launch-banner",
+                    )
                     yield Static("", id="behind-main-warning")  # populated by _check_behind_main
                     yield Static(
-                        format_summary_stats(self._stats, multi_repo=self._multi_repo), id="stats"
+                        f"[bold {ACCENT_GOLD}]OUTCOME SUMMARY[/]\n"
+                        f"{format_summary_stats(self._stats, multi_repo=self._multi_repo)}",
+                        id="stats",
                     )
-                    yield Static("", id="pr-url")
-                    yield Static("\n[bold]Tasks:[/]", id="tasks-header")
+                    yield Static(
+                        _format_pr_status(
+                            self._pipeline_branch,
+                            self._base_branch,
+                            multi_repo=self._multi_repo,
+                        ),
+                        id="pr-url",
+                    )
+                    yield Static("[bold]Task outcomes[/]", id="tasks-header")
                     yield Static(
                         format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table"
                     )
-                    yield Static(help_text)
+                    yield Static(help_text, id="approval-help")
                     yield FollowUpInput(
                         branch=self._pipeline_branch,
                         files_changed=files_count,
@@ -474,7 +621,7 @@ class FinalApprovalScreen(Screen):
             if repo_id is not None:
                 self._per_repo_pr_urls[repo_id] = url
                 # Render all accumulated repo PR URLs
-                pr_lines = []
+                pr_lines = [f"[bold {ACCENT_GREEN}]PR created[/]"]
                 for rid, rurl in self._per_repo_pr_urls.items():
                     pr_lines.append(
                         f"[bold {ACCENT_GREEN}]{rid}:[/] [underline {ACCENT_BLUE}]{rurl}[/]"
@@ -482,7 +629,9 @@ class FinalApprovalScreen(Screen):
                 pr_widget.update("\n".join(pr_lines))
             else:
                 pr_widget.update(
-                    f"[bold {ACCENT_GREEN}]PR created:[/] [underline {ACCENT_BLUE}]{url}[/]"
+                    f"[bold {ACCENT_GREEN}]PR created[/]\n"
+                    f"[{TEXT_SECONDARY}]Review, merge, or keep iterating on the branch.[/]\n"
+                    f"[underline {ACCENT_BLUE}]{url}[/]"
                 )
         except Exception:
             pass

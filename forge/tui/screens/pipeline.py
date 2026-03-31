@@ -16,7 +16,12 @@ from textual.widgets import Input
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
-from forge.tui.theme import PHASE_DISPLAY as _PHASE_BANNER
+from forge.tui.theme import (
+    PHASE_DISPLAY as _PHASE_BANNER,
+)
+from forge.tui.theme import (
+    TEXT_MUTED,
+)
 from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.chat_thread import ChatThread, format_review_progress
 from forge.tui.widgets.copy_overlay import CopyOverlay
@@ -58,8 +63,8 @@ class PhaseBanner(Widget):
         height: 3;
         content-align: center middle;
         text-align: center;
-        background: #0d1117;
-        border-bottom: tall #21262d;
+        background: #11161d;
+        border-bottom: tall #263041;
     }
     """
 
@@ -202,8 +207,8 @@ class DecisionBadge(Widget):
     DecisionBadge {
         height: 1;
         padding: 0 1;
-        background: #161b22;
-        border-top: tall #30363d;
+        background: #11161d;
+        border-top: tall #263041;
     }
     """
 
@@ -217,8 +222,11 @@ class DecisionBadge(Widget):
 
     def render(self) -> str:
         if self._count == 0:
-            return "[#484f58]No pending decisions[/]"
-        return f"[bold #f0883e]● {self._count} decision{'s' if self._count != 1 else ''} pending[/]"
+            return f"[{TEXT_MUTED}]No decisions waiting on you[/]"
+        return (
+            f"[bold #d6a85f]◆ {self._count} decision"
+            f"{'s' if self._count != 1 else ''} pending[/]"
+        )
 
 
 class IntegrationBadge(Widget):
@@ -228,7 +236,7 @@ class IntegrationBadge(Widget):
     IntegrationBadge {
         height: 1;
         padding: 0 1;
-        background: #161b22;
+        background: #11161d;
     }
     """
 
@@ -251,8 +259,8 @@ class IntegrationBadge(Widget):
         if self._checking:
             return f"[#d2a8ff]⧗ {self._check_label}[/]"
         if self._degraded:
-            return "[bold #d29922]⚠ Pipeline Degraded[/]"
-        return ""
+            return "[bold #d29922]⚠ Integration risk detected[/]"
+        return f"[{TEXT_MUTED}]Integrations nominal[/]"
 
 
 class PipelineScreen(Screen):
@@ -281,11 +289,12 @@ class PipelineScreen(Screen):
         height: 3;
         content-align: center middle;
         text-align: center;
-        background: #0d1117;
-        border-bottom: tall #21262d;
+        background: #11161d;
+        border-bottom: tall #263041;
     }
     #split-pane {
         height: 1fr;
+        background: #0d1117;
     }
     #split-pane.full-width #left-panel {
         display: none;
@@ -294,11 +303,11 @@ class PipelineScreen(Screen):
         width: 100%;
     }
     #left-panel {
-        width: 32;
+        width: 36;
         min-width: 28;
-        max-width: 40;
-        border-right: tall #21262d;
-        background: #0d1117;
+        max-width: 44;
+        border-right: tall #263041;
+        background: #11161d;
         layout: vertical;
     }
     #left-panel TaskList {
@@ -309,6 +318,7 @@ class PipelineScreen(Screen):
     #right-panel {
         width: 1fr;
         layout: vertical;
+        background: #0d1117;
     }
     #right-panel AgentOutput {
         width: 1fr;
@@ -328,8 +338,8 @@ class PipelineScreen(Screen):
         dock: bottom;
         height: 1;
         padding: 0 1;
-        background: #161b22;
-        border-top: tall #21262d;
+        background: #11161d;
+        border-top: tall #263041;
     }
     """
 

@@ -11,6 +11,7 @@ from textual.widgets import Static
 
 from forge.tui.theme import (
     ACCENT_CYAN,
+    ACCENT_GOLD,
     ACCENT_ORANGE,
     ACCENT_PURPLE,
     TEXT_PRIMARY,
@@ -60,6 +61,28 @@ def _escape(text: str | None) -> str:
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
+def _format_state_chip(state: str | None) -> str:
+    """Render a compact state chip for the output header."""
+    if not state:
+        return ""
+    colors = {
+        "planning": ACCENT_PURPLE,
+        "planned": ACCENT_PURPLE,
+        "running": ACCENT_ORANGE,
+        "in_progress": ACCENT_ORANGE,
+        "awaiting_input": ACCENT_ORANGE,
+        "in_review": ACCENT_PURPLE,
+        "awaiting_approval": ACCENT_CYAN,
+        "merging": ACCENT_CYAN,
+        "done": "#3fb950",
+        "error": "#f85149",
+        "cancelled": TEXT_SECONDARY,
+    }
+    color = colors.get(state.lower(), TEXT_SECONDARY)
+    label = _escape(state.replace("_", " ").upper())
+    return f"[bold #0d1117 on {color}] {label} [/]"
+
+
 def _render_markdown(line: str) -> str:
     """Convert common markdown patterns to Rich markup for TUI display.
 
@@ -107,11 +130,22 @@ def _render_markdown(line: str) -> str:
 
 def format_header(task_id: str | None, title: str | None, state: str | None) -> str:
     if not task_id:
-        return "[#8b949e]No task selected[/]"
+        return (
+            f"[bold {ACCENT_GOLD}]LIVE OUTPUT[/]\n"
+            f"[{TEXT_SECONDARY}]No task selected. Select a task to inspect agent, "
+            "review, and gate output.[/]"
+        )
     if task_id == "planner":
-        return "[bold #a371f7]⚙ Planner[/] [#8b949e]exploring codebase & building task graph...[/]"
-    state_label = f" [{_escape(state)}]" if state else ""
-    return f"[bold #58a6ff]{_escape(task_id)}[/]: {_escape(title or 'Untitled')} [#8b949e]{state_label}[/]"
+        return (
+            f"[bold {ACCENT_PURPLE}]Planner Deck[/]\n"
+            f"[{TEXT_SECONDARY}]Planner exploring codebase & building task graph...[/]"
+        )
+    header = f"[bold {ACCENT_GOLD}]LIVE OUTPUT[/]  [{TEXT_SECONDARY}]task {_escape(task_id)}[/]"
+    title_line = f"[bold {TEXT_PRIMARY}]{_escape(title or 'Untitled')}[/]"
+    state_chip = _format_state_chip(state)
+    if state_chip:
+        title_line += f"  {state_chip}"
+    return f"{header}\n{title_line}"
 
 
 def format_error_detail(task_id: str, task: dict, output_lines: list[str]) -> str:
@@ -154,7 +188,10 @@ def format_output(
     if not lines:
         frame_data = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
         spinner = frame_data[0] if isinstance(frame_data, tuple) else frame_data
-        return f"{spinner} [#8b949e]Waiting for output...[/]"
+        return (
+            f"{spinner} [#8b949e]Waiting for output...[/]\n"
+            "[#484f58]Forge will stream agent, review, and gate logs here.[/]"
+        )
     global _IN_CODE_BLOCK
     _IN_CODE_BLOCK = False  # Reset at start of full render
     parts = [_render_markdown(line) for line in lines]
@@ -174,7 +211,10 @@ def format_unified_output(
     if not entries:
         frame_data = _SPINNER_FRAMES[spinner_frame % len(_SPINNER_FRAMES)]
         spinner = frame_data[0] if isinstance(frame_data, tuple) else frame_data
-        return f"{spinner} [#8b949e]Waiting for output...[/]"
+        return (
+            f"{spinner} [#8b949e]Waiting for output...[/]\n"
+            "[#484f58]Forge will stream agent, review, and gate logs here.[/]"
+        )
 
     parts: list[str] = []
     current_section: str | None = None
@@ -195,9 +235,9 @@ def format_unified_output(
                 review_count += 1
                 label = f"REVIEW {review_count}"
             else:
-                label = "AGENT"
+                label = "AGENT STREAM"
             # Full-width separator with bold label for clear visual breaks
-            bar = "─" * max(1, 50 - len(label))
+            bar = "─" * max(1, 64 - len(label))
             header = f"[{header_color} bold]───── {label} {bar}[/]"
             if parts:
                 parts.append("")  # blank line before new section
@@ -240,8 +280,8 @@ def format_unified_incremental(
             review_count += 1
             label = f"REVIEW {review_count}"
         else:
-            label = "AGENT"
-        bar = "─" * max(1, 50 - len(label))
+            label = "AGENT STREAM"
+        bar = "─" * max(1, 64 - len(label))
         header = f"[{header_color} bold]───── {label} {bar}[/]"
         if not is_first:
             parts.append("")
@@ -263,16 +303,23 @@ class AgentOutput(Widget):
     DEFAULT_CSS = """
     AgentOutput {
         layout: vertical;
+        background: #0d1117;
     }
     #agent-header {
-        height: auto;
+        height: 3;
         max-height: 3;
+        padding: 1 2 0 2;
+        background: #11161d;
+        border-bottom: tall #263041;
     }
     #agent-separator {
         height: 1;
+        padding: 0 2;
+        background: #11161d;
     }
     #agent-scroll {
         height: 1fr;
+        padding: 1 2;
     }
     """
 
@@ -303,7 +350,7 @@ class AgentOutput(Widget):
 
     def compose(self) -> ComposeResult:
         yield Static(format_header(None, None, None), id="agent-header")
-        yield Static("[#30363d]" + "─" * 60 + "[/]", id="agent-separator")
+        yield Static("[#263041]" + "━" * 72 + "[/]", id="agent-separator")
         with VerticalScroll(id="agent-scroll"):
             yield Static("", id="agent-content")
 

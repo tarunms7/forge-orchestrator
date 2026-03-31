@@ -41,7 +41,7 @@ def format_task_line(
     repo_width = 0
     repo_id = task.get("repo")
     if multi_repo and repo_id:
-        repo_prefix = f"[#79c0ff]\\[{repo_id}][/] "
+        repo_prefix = f"[#79c0ff]\\[{repo_id}][/#79c0ff] "
         repo_width = len(repo_id) + 3  # brackets + space
 
     # Build suffix parts
@@ -50,7 +50,7 @@ def format_task_line(
     file_count = len(files_changed) if files_changed else 0
 
     if task.get("_preparing") and state == "todo":
-        suffix_parts.append("[#a371f7]⚙[/]")
+        suffix_parts.append("[#a371f7]⚙ PREP[/#a371f7]")
     elif state == "error":
         suffix_parts.append("⚠")
     elif state == "merging":
@@ -61,9 +61,9 @@ def format_task_line(
         }
         merge_sub = task.get("merge_substatus", "")
         label = _MERGE_STEP_LABELS.get(merge_sub, "Merging")
-        suffix_parts.append(f"[#79c0ff]{label}…[/]")
+        suffix_parts.append(f"[#79c0ff]{label}…[/#79c0ff]")
     if file_count > 0:
-        suffix_parts.append(f"[#8b949e]{file_count} files[/]")
+        suffix_parts.append(f"[#8b949e]{file_count} files[/#8b949e]")
 
     suffix = " ".join(suffix_parts)
 
@@ -83,12 +83,15 @@ def format_task_line(
         title = title[: available - 1] + "…"
 
     # Build the final line
-    suffix_str = f" {suffix}" if suffix else ""
+    suffix_str = f" [#30363d]·[/#30363d] {suffix}" if suffix else ""
     escaped_title = _escape(title)
     if selected:
-        return f"[bold on #1f2937] [{color}]{icon} {repo_prefix}[#c9d1d9]{escaped_title}{suffix_str} [/]"
+        return (
+            f"[bold on #1f2937] [#d6a85f]▎[/#d6a85f] "
+            f"[{color}]{icon} {repo_prefix}[#e6edf3]{escaped_title}[/#e6edf3]{suffix_str} [/]"
+        )
     else:
-        return f" [{color}]{icon}[/] {repo_prefix}[#c9d1d9]{escaped_title}{suffix_str}[/]"
+        return f" [{color}]{icon}[/] {repo_prefix}[#c9d1d9]{escaped_title}[/#c9d1d9]{suffix_str}"
 
 
 class TaskList(Widget):
@@ -98,8 +101,8 @@ class TaskList(Widget):
     TaskList {
         width: 1fr;
         min-width: 25;
-        max-width: 40;
-        padding: 0 1;
+        max-width: 42;
+        padding: 0 0 0 1;
     }
     """
 
@@ -169,7 +172,10 @@ class TaskList(Widget):
     def render(self) -> str:
         if not self._tasks:
             if self._phase == "planning":
-                return "[#a371f7]⚙ Planning...[/]\n\n[#8b949e]Analyzing codebase and\ndecomposing into tasks[/]"
+                return (
+                    "[bold #d6a85f]MISSION QUEUE[/]\n"
+                    "[#8b949e]Forge is mapping the repo,\nscoring work, and preparing agents.[/]"
+                )
             return "[#8b949e]No tasks yet[/]"
         lines = []
         for i, task in enumerate(self._tasks):
