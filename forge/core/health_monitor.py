@@ -132,9 +132,7 @@ class PipelineHealthMonitor:
 
         # Check for deadlock: all remaining tasks form a blocked cycle
         if self._config.deadlock_check_enabled:
-            remaining = [
-                t for t in tasks if t.state not in ("done", "error", "cancelled")
-            ]
+            remaining = [t for t in tasks if t.state not in ("done", "error", "cancelled")]
             if remaining:
                 states = {t.id: t.state for t in remaining}
                 # Human-resolvable states are not deadlocks
@@ -170,9 +168,7 @@ class PipelineHealthMonitor:
                 await self._on_stuck_task(task_id, reason)
 
     @staticmethod
-    def _find_blocked_cycle(
-        remaining: list, states: dict[str, str]
-    ) -> list[str] | None:
+    def _find_blocked_cycle(remaining: list, states: dict[str, str]) -> list[str] | None:
         """Return task IDs forming a dependency cycle, or None if no cycle exists.
 
         A true deadlock requires every blocked task to depend only on other
@@ -220,4 +216,3 @@ class PipelineHealthMonitor:
                 if cycle is not None:
                     return cycle
         return None
-

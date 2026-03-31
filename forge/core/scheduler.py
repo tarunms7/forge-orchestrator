@@ -26,8 +26,7 @@ class Scheduler:
         return [
             t
             for t in tasks
-            if t.state == TaskState.TODO
-            and any(dep in error_ids for dep in (t.depends_on or []))
+            if t.state == TaskState.TODO and any(dep in error_ids for dep in (t.depends_on or []))
         ]
 
     @staticmethod

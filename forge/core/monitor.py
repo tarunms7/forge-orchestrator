@@ -42,7 +42,8 @@ class ResourceMonitor:
             )
         except (OSError, RuntimeError) as exc:
             logger.warning(
-                "Resource snapshot failed: %s — returning conservative defaults (blocking dispatch)", exc
+                "Resource snapshot failed: %s — returning conservative defaults (blocking dispatch)",
+                exc,
             )
             return ResourceSnapshot(
                 cpu_percent=100.0,
@@ -56,7 +57,8 @@ class ResourceMonitor:
             return snapshot
         except (OSError, RuntimeError) as exc:
             logger.warning(
-                "Resource snapshot failed: %s -- returning conservative defaults (blocking dispatch)", exc
+                "Resource snapshot failed: %s -- returning conservative defaults (blocking dispatch)",
+                exc,
             )
             return ResourceSnapshot(cpu_percent=100.0, memory_available_pct=0.0, disk_free_gb=0.0)
 

@@ -42,7 +42,7 @@ def fetch_issue(number: int, repo: str | None = None) -> GitHubIssue:
         "title,body,comments,labels,assignees,milestone",
     ]
     if repo is not None:
-        if not re.match(r'^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$', repo):
+        if not re.match(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$", repo):
             raise ValueError(f"Invalid repo format: {repo!r}. Expected 'owner/repo'.")
         cmd += ["--repo", repo]
 

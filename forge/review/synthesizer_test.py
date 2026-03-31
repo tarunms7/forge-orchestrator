@@ -186,29 +186,56 @@ def test_chunk_escalation_uses_correct_indices():
 
     chunks = [
         DiffChunk(
-            index=1, total=3, files=["a.py"], diff_text="diff a",
-            line_count=10, risk_label="LOW", risk_scores={"a.py": 10.0},
+            index=1,
+            total=3,
+            files=["a.py"],
+            diff_text="diff a",
+            line_count=10,
+            risk_label="LOW",
+            risk_scores={"a.py": 10.0},
         ),
         DiffChunk(
-            index=2, total=3, files=["b.py"], diff_text="diff b",
-            line_count=10, risk_label="MEDIUM", risk_scores={"b.py": 30.0},
+            index=2,
+            total=3,
+            files=["b.py"],
+            diff_text="diff b",
+            line_count=10,
+            risk_label="MEDIUM",
+            risk_scores={"b.py": 30.0},
         ),
         DiffChunk(
-            index=3, total=3, files=["c.py"], diff_text="diff c",
-            line_count=10, risk_label="HIGH", risk_scores={"c.py": 50.0},
+            index=3,
+            total=3,
+            files=["c.py"],
+            diff_text="diff c",
+            line_count=10,
+            risk_label="HIGH",
+            risk_scores={"c.py": 50.0},
         ),
     ]
 
     # First chunk succeeds, second times out
     ok_result = ChunkReviewResult(
-        chunk_index=1, verdict="PASS", confidence=5, issues=[],
-        cross_chunk_concerns=[], summary="ok", cost_info=ReviewCostInfo(),
-        raw_text="", timed_out=False,
+        chunk_index=1,
+        verdict="PASS",
+        confidence=5,
+        issues=[],
+        cross_chunk_concerns=[],
+        summary="ok",
+        cost_info=ReviewCostInfo(),
+        raw_text="",
+        timed_out=False,
     )
     timeout_result = ChunkReviewResult(
-        chunk_index=2, verdict="UNCERTAIN", confidence=1, issues=[],
-        cross_chunk_concerns=[], summary="timed out", cost_info=ReviewCostInfo(),
-        raw_text="", timed_out=True,
+        chunk_index=2,
+        verdict="UNCERTAIN",
+        confidence=1,
+        issues=[],
+        cross_chunk_concerns=[],
+        summary="timed out",
+        cost_info=ReviewCostInfo(),
+        raw_text="",
+        timed_out=True,
     )
 
     call_count = 0
@@ -221,7 +248,9 @@ def test_chunk_escalation_uses_correct_indices():
         return timeout_result
 
     with patch("forge.review.synthesizer.review_chunk", side_effect=mock_review_chunk):
-        with patch("forge.review.synthesizer.synthesize_results", new_callable=AsyncMock) as mock_synth:
+        with patch(
+            "forge.review.synthesizer.synthesize_results", new_callable=AsyncMock
+        ) as mock_synth:
             mock_synth.return_value = (
                 GateResult(passed=False, gate="gate2_llm_review", details="timeout"),
                 ReviewCostInfo(),
@@ -232,7 +261,11 @@ def test_chunk_escalation_uses_correct_indices():
             try:
                 _, _ = loop.run_until_complete(
                     run_chunked_review(
-                        chunks, [], "diff", "title", "desc",
+                        chunks,
+                        [],
+                        "diff",
+                        "title",
+                        "desc",
                     )
                 )
             finally:
