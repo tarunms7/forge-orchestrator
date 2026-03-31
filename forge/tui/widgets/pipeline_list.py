@@ -141,11 +141,17 @@ class PipelineList(Widget, can_focus=True):
         """Return the smallest positive height that is actually visible on screen."""
         heights = [self.size.height, self.content_region.height, self.window_region.height]
         try:
-            visible_screen_height = self.screen.size.height - self.region.y
+            widget_top = self.region.y
+            current = self
+            while current is not None:
+                region = getattr(current, "region", None)
+                if region is not None and region.height > 0:
+                    clipped_height = (region.y + region.height) - widget_top
+                    if clipped_height > 0:
+                        heights.append(clipped_height)
+                current = getattr(current, "parent", None)
         except Exception:
-            visible_screen_height = 0
-        if visible_screen_height > 0:
-            heights.append(visible_screen_height)
+            pass
         positive_heights = [height for height in heights if height > 0]
         if not positive_heights:
             return 0
