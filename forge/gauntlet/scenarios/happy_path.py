@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from forge.gauntlet.mock_pipeline import MockPipeline
-from forge.gauntlet.models import AssertionResult, ScenarioResult, StageResult
+from forge.gauntlet.models import AssertionResult, ScenarioResult
 
 TASK_DESCRIPTION = "Fix calculator bugs across backend, frontend, and shared-types repos"
 
