@@ -25,6 +25,23 @@ class PipelineTestApp(App):
         self.push_screen(PipelineScreen(self._tui_state, read_only=self._read_only))
 
 
+class PipelineMessageCaptureApp(App):
+    def __init__(self, state: TuiState | None = None) -> None:
+        super().__init__()
+        self._tui_state = state or TuiState()
+        self.answers: list[tuple[str, str]] = []
+        self.interjections: list[tuple[str, str]] = []
+
+    def on_mount(self) -> None:
+        self.push_screen(PipelineScreen(self._tui_state))
+
+    def on_chat_thread_answer_submitted(self, event) -> None:
+        self.answers.append((event.task_id, event.answer))
+
+    def on_chat_thread_interjection_submitted(self, event) -> None:
+        self.interjections.append((event.task_id, event.message))
+
+
 @pytest.mark.asyncio
 async def test_pipeline_screen_mounts():
     app = PipelineTestApp()
@@ -118,6 +135,88 @@ async def test_pipeline_shows_planner_output_during_planning():
         assert agent_output._task_id == "planner"
         assert len(agent_output._lines) == 2
         assert "Reading forge/core/daemon.py..." in agent_output._lines[0]
+
+
+@pytest.mark.asyncio
+async def test_chat_answer_submission_bubbles_to_app_once():
+    """Answer submission should bubble to the App without freezing the screen."""
+    state = TuiState()
+    app = PipelineMessageCaptureApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event(
+            "task:question",
+            {
+                "task_id": "t1",
+                "question": {
+                    "question": "Choose an option",
+                    "suggestions": ["Option A", "Option B", "Option C"],
+                },
+            },
+        )
+        await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.focus()
+        await pilot.pause()
+
+        await pilot.press("3")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.answers == [("t1", "Option C")]
+        assert chat_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_chat_interjection_submission_bubbles_to_app_once():
+    """Interjection submission should bubble to the App without re-post loops."""
+    state = TuiState()
+    app = PipelineMessageCaptureApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.focus()
+        await pilot.pause()
+
+        await pilot.press("h", "i")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.interjections == [("t1", "hi")]
+        assert chat_input.value == ""
 
 
 @pytest.mark.asyncio
