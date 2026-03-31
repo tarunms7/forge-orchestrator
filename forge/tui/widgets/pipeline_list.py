@@ -15,6 +15,7 @@ logger = logging.getLogger("forge.tui.widgets.pipeline_list")
 
 _LINES_PER_PIPELINE = 2
 _DEFAULT_VISIBLE_PIPELINES = 6
+_DESCRIPTION_PREFIX_WIDTH = 6
 
 # Map pipeline status → icon/color
 _STATUS_MAP: dict[str, tuple[str, str]] = {
@@ -77,6 +78,17 @@ def _progress_text(pipeline: dict) -> str:
     if status == "cancelled":
         return "Cancelled"
     return ""
+
+
+def _truncate_to_width(text: str, max_width: int) -> str:
+    """Truncate text to a visible width, using an ellipsis when needed."""
+    if max_width <= 0:
+        return ""
+    if len(text) <= max_width:
+        return text
+    if max_width == 1:
+        return "…"
+    return text[: max_width - 1].rstrip() + "…"
 
 
 class PipelineList(Widget, can_focus=True):
@@ -146,6 +158,13 @@ class PipelineList(Widget, can_focus=True):
             return _DEFAULT_VISIBLE_PIPELINES
         return max(1, height // _LINES_PER_PIPELINE)
 
+    def _description_width(self) -> int:
+        """Return the visible width available for the pipeline description line."""
+        width = max(self.size.width, self.content_region.width, self.window_region.width)
+        if width <= 0:
+            return 48
+        return max(12, width - _DESCRIPTION_PREFIX_WIDTH)
+
     def _clamp_scroll_offset(self, visible_count: int | None = None) -> None:
         """Keep the scroll offset within the current list bounds."""
         if visible_count is None:
@@ -194,10 +213,11 @@ class PipelineList(Widget, can_focus=True):
         end = start + visible_count
 
         lines: list[str] = []
+        description_width = self._description_width()
         for i, p in enumerate(self._pipelines[start:end], start=start):
             status = p.get("status", "unknown")
             icon, color = _STATUS_MAP.get(status, ("?", "#8b949e"))
-            desc = p.get("description", "Untitled")[:48]
+            desc = _truncate_to_width(p.get("description", "Untitled"), description_width)
             cost = p.get("total_cost_usd", 0.0) or p.get("cost", 0.0)
             date = str(p.get("created_at", ""))[:10]
             is_selected = i == self._selected_index

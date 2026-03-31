@@ -535,3 +535,27 @@ async def test_cursor_down_respects_visible_screen_slice():
         assert pl._scroll_offset == 1
         assert "Pipeline 4" in rendered
         assert "Pipeline 1" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_render_uses_available_width_for_long_descriptions():
+    app = PipelineListViewportApp(host_height=12)
+
+    async with app.run_test(size=(120, 12)) as pilot:
+        pl = app.query_one(PipelineList)
+        pl.update_pipelines(
+            [
+                {
+                    "id": "p1",
+                    "description": "Audit the code, every small detail, find out the issues everywhere",
+                    "status": "complete",
+                    "created_at": "2026-03-10T12:00:00",
+                    "total_cost_usd": 1.0,
+                }
+            ]
+        )
+        await pilot.pause()
+
+        rendered = pl.render()
+
+        assert "issues everywhere" in rendered
