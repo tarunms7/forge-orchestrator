@@ -1,6 +1,5 @@
 """Tests for forge.gauntlet.mock_pipeline."""
 
-import os
 
 import pytest
 
