@@ -91,6 +91,12 @@ def _truncate_to_width(text: str, max_width: int) -> str:
     return text[: max_width - 1].rstrip() + "…"
 
 
+def _single_line_summary(text: str) -> str:
+    """Flatten multi-line descriptions into a compact one-line summary."""
+    summary = " ".join(str(text or "").split())
+    return summary or "Untitled"
+
+
 class PipelineList(Widget, can_focus=True):
     """Navigable list of pipelines with j/k navigation and Enter to select."""
 
@@ -223,7 +229,10 @@ class PipelineList(Widget, can_focus=True):
         for i, p in enumerate(self._pipelines[start:end], start=start):
             status = p.get("status", "unknown")
             icon, color = _STATUS_MAP.get(status, ("?", "#8b949e"))
-            desc = _truncate_to_width(p.get("description", "Untitled"), description_width)
+            desc = _truncate_to_width(
+                _single_line_summary(p.get("description", "Untitled")),
+                description_width,
+            )
             cost = p.get("total_cost_usd", 0.0) or p.get("cost", 0.0)
             date = str(p.get("created_at", ""))[:10]
             is_selected = i == self._selected_index
