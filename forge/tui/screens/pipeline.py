@@ -425,6 +425,12 @@ class PipelineScreen(Screen):
             banner.set_read_only_banner(
                 f"📖 Viewing pipeline from {date_str} — press Esc to return"
             )
+            chat = self.query_one(ChatThread)
+            chat.set_read_only(
+                True,
+                "This pipeline replay is read-only. Press Esc to return. "
+                "To continue it, go back to history and use Shift+R.",
+            )
 
     def on_unmount(self) -> None:
         self._state.remove_change_callback(self._on_state_change)
@@ -927,7 +933,8 @@ class PipelineScreen(Screen):
         if self._active_view != "chat":
             self._set_view("chat")
         # Always focus the input — use a short delay to ensure layout is settled
-        self.set_timer(0.15, self._focus_chat_input)
+        if not self._read_only:
+            self.set_timer(0.15, self._focus_chat_input)
 
     def _focus_chat_input(self) -> None:
         """Focus the chat input after layout settles."""
@@ -951,7 +958,8 @@ class PipelineScreen(Screen):
         if self._active_view != "chat":
             self._set_view("chat")
         # Always focus input — delay to let layout settle
-        self.set_timer(0.15, self._focus_chat_input)
+        if not self._read_only:
+            self.set_timer(0.15, self._focus_chat_input)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1028,10 +1036,11 @@ class PipelineScreen(Screen):
 
     def action_view_chat(self) -> None:
         self._set_view("chat")
-        try:
-            self.query_one("#chat-input").focus()
-        except Exception:
-            pass
+        if not self._read_only:
+            try:
+                self.query_one("#chat-input").focus()
+            except Exception:
+                pass
 
     def action_view_diff(self) -> None:
         task = self._get_selected_task()

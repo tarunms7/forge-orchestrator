@@ -9,6 +9,8 @@ from textual.app import App
 
 from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.state import TuiState
+from forge.tui.widgets.chat_thread import ChatThread
+from forge.tui.widgets.suggestion_chips import SuggestionChips
 
 
 class PipelineTestApp(App):
@@ -135,6 +137,38 @@ async def test_pipeline_shows_planner_output_during_planning():
         assert agent_output._task_id == "planner"
         assert len(agent_output._lines) == 2
         assert "Reading forge/core/daemon.py..." in agent_output._lines[0]
+
+
+@pytest.mark.asyncio
+async def test_read_only_replay_hides_question_answer_controls():
+    """History replay should show pending questions as read-only, not interactive."""
+    state = TuiState()
+    state._replay_date = "2026-03-31T20:10:00Z"
+    state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+    state.apply_event("planner:output", {"line": "Checking the architecture..."})
+    state.apply_event(
+        "planning:question",
+        {
+            "question_id": "q1",
+            "question": {
+                "question": "Which approach should we use?",
+                "suggestions": ["A", "B", "C"],
+            },
+        },
+    )
+    app = PipelineTestApp(state=state, read_only=True)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        chat = app.screen.query_one(ChatThread)
+        chat_input = chat.query_one("#chat-input")
+        chips = chat.query_one(SuggestionChips)
+
+        assert app.screen._active_view == "chat"
+        assert chat._read_only is True
+        assert chat_input.display is False
+        assert chat_input.disabled is True
+        assert chips.display is False
+        assert "Shift+R" in chat._read_only_notice
 
 
 @pytest.mark.asyncio
