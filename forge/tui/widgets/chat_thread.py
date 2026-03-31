@@ -60,6 +60,14 @@ def format_question_card(question: dict) -> str:
     return "\n".join(parts)
 
 
+def format_read_only_notice(notice: str) -> str:
+    """Format a notice for replay/history mode where answers cannot be submitted."""
+    return (
+        f"[bold {ACCENT_BLUE}]Replay is read-only[/]\n"
+        f"[{TEXT_SECONDARY}]{_escape(notice)}[/]"
+    )
+
+
 def format_review_progress(
     strategy: str | None,
     diff_lines: int | None,
@@ -174,6 +182,10 @@ class ChatThread(Widget):
         self._work_lines: list[str] = []
         self._question: dict | None = None
         self._history: list[dict] = []
+        self._read_only = False
+        self._read_only_notice = (
+            "Press Esc to return. To continue this run, go back to history and use Shift+R."
+        )
 
     def compose(self):
         yield VerticalScroll(id="chat-scroll")
@@ -187,6 +199,36 @@ class ChatThread(Widget):
             else "Type your answer or click a suggestion..."
         )
         yield Input(placeholder=placeholder, id="chat-input")
+
+    def _update_controls(self) -> None:
+        """Sync input/chip visibility with the current mode and read-only state."""
+        try:
+            chips = self.query_one(SuggestionChips)
+            chips.display = (
+                not self._read_only and self._mode != "interjection" and bool(chips._suggestions)
+            )
+        except Exception:
+            pass
+        try:
+            inp = self.query_one("#chat-input", Input)
+            inp.disabled = self._read_only
+            inp.display = not self._read_only
+            if not self._read_only:
+                inp.placeholder = (
+                    "Type a message to the agent..."
+                    if self._mode == "interjection"
+                    else "Type your answer or click a suggestion..."
+                )
+        except Exception:
+            pass
+
+    def set_read_only(self, read_only: bool, notice: str | None = None) -> None:
+        """Toggle replay/history mode where the thread is visible but not interactive."""
+        self._read_only = read_only
+        if notice:
+            self._read_only_notice = notice
+        self._update_controls()
+        self._render_scroll_content()
 
     def _render_scroll_content(self) -> None:
         """Populate the VerticalScroll with current question, work log, and history."""
@@ -209,6 +251,9 @@ class ChatThread(Widget):
         # Show current question
         if self._question:
             scroll.mount(Static(format_question_card(self._question)))
+            if self._read_only:
+                scroll.mount(Static(""))
+                scroll.mount(Static(format_read_only_notice(self._read_only_notice)))
 
         scroll.scroll_end(animate=False)
 
@@ -222,13 +267,16 @@ class ChatThread(Widget):
         suggestions = list(question.get("suggestions", []))
         suggestions.append("Let agent decide")
         chips.update_suggestions(suggestions)
-        chips.display = True
+        self._update_controls()
         self._render_scroll_content()
         # Focus the input after a short delay to ensure rendering is complete
-        self.set_timer(0.1, self._focus_input)
+        if not self._read_only:
+            self.set_timer(0.1, self._focus_input)
 
     def _focus_input(self) -> None:
         """Focus the chat input. Called after a short delay to ensure widgets are mounted."""
+        if self._read_only:
+            return
         try:
             inp = self.query_one("#chat-input", Input)
             inp.focus()
@@ -240,8 +288,11 @@ class ChatThread(Widget):
         self.query_one(SuggestionChips).update_suggestions([])
         self.query_one("#chat-input", Input).value = ""
         self.query_one("#chat-scroll", VerticalScroll).remove_children()
+        self._update_controls()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        if self._read_only:
+            return
         text = event.value.strip()
         if not text:
             return
@@ -261,4 +312,6 @@ class ChatThread(Widget):
         event.input.value = ""
 
     def on_suggestion_chips_selected(self, event: SuggestionChips.Selected) -> None:
+        if self._read_only:
+            return
         self.post_message(self.AnswerSubmitted(self.task_id, event.text))
