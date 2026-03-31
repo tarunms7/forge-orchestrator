@@ -83,8 +83,8 @@ class PipelineList(Widget, can_focus=True):
     PipelineList {
         width: 1fr;
         height: auto;
-        max-height: 8;
-        padding: 0 1;
+        max-height: 12;
+        padding: 0;
     }
     """
 
@@ -145,11 +145,12 @@ class PipelineList(Widget, can_focus=True):
         for i, p in enumerate(self._pipelines):
             status = p.get("status", "unknown")
             icon, color = _STATUS_MAP.get(status, ("?", "#8b949e"))
-            desc = p.get("description", "Untitled")[:45]
+            desc = p.get("description", "Untitled")[:48]
             cost = p.get("total_cost_usd", 0.0) or p.get("cost", 0.0)
             date = str(p.get("created_at", ""))[:10]
             is_selected = i == self._selected_index
             resumable = is_pipeline_resumable(p)
+            status_label = status.replace("_", " ").upper()
 
             # Resume indicator: ▶ green for resumable, ● dim for read-only
             if resumable:
@@ -158,39 +159,36 @@ class PipelineList(Widget, can_focus=True):
                 resume_indicator = "[#484f58]●[/]"
 
             # Progress text
-            progress = _progress_text(p)
-            if progress:
-                if status == "error":
-                    progress_tag = f"  [#f85149]{progress}[/]"
-                elif status == "cancelled":
-                    progress_tag = f"  [#484f58]{progress}[/]"
-                else:
-                    progress_tag = f"  [#8b949e]{progress}[/]"
-            else:
-                progress_tag = ""
+            progress = _progress_text(p) or "Awaiting next action"
 
             project_dir = p.get("project_dir", "") or ""
             project_tag = ""
             if project_dir:
                 folder = os.path.basename(project_dir.rstrip("/"))[:20]
                 if folder:
-                    project_tag = f"[#8b949e]{folder}[/]  "
+                    project_tag = f"{folder}  "
 
-            # Dim read-only rows slightly
-            dim_open = "[#6e7681]" if not resumable and not is_selected else ""
-            dim_close = "[/]" if not resumable and not is_selected else ""
+            meta = f"{project_tag}{date} · ${cost:.2f}"
+            status_chip = f"[bold {color}]{status_label}[/]"
+            progress_color = "#f85149" if status == "error" else "#8b949e"
 
             if is_selected:
                 lines.append(
-                    f"[bold on #1f2937] {resume_indicator} [{color}]{icon}[/] {desc}"
-                    f"{progress_tag}  "
-                    f"{project_tag}[#8b949e]{date} · ${cost:.2f}[/] [/]"
+                    f"[bold on #11161d][#d6a85f]▎[/] {resume_indicator} [{color}]{icon}[/] "
+                    f"[#e6edf3]{desc}[/][/]"
+                )
+                lines.append(
+                    f"[on #11161d]  {status_chip}  [{progress_color}]{progress}[/]  "
+                    f"[#6e7681]{meta}[/][/]"
                 )
             else:
+                lead = "[#6e7681]" if not resumable else ""
+                tail = "[/]" if lead else ""
                 lines.append(
-                    f"  {dim_open}{resume_indicator} [{color}]{icon}[/] {desc}"
-                    f"{progress_tag}  "
-                    f"{project_tag}[#8b949e]{date} · ${cost:.2f}[/]{dim_close}"
+                    f"  {lead}{resume_indicator} [{color}]{icon}[/] [#c9d1d9]{desc}[/]{tail}"
+                )
+                lines.append(
+                    f"    {status_chip}  [{progress_color}]{progress}[/]  [#6e7681]{meta}[/]"
                 )
 
         return "\n".join(lines)

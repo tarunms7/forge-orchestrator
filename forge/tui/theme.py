@@ -11,6 +11,7 @@ from __future__ import annotations
 
 # ── Background layers ────────────────────────────────────────────────
 BG_BASE = "#0d1117"  # Deepest background (screen)
+BG_PANEL = "#11161d"  # Branded panel background
 BG_SURFACE = "#161b22"  # Cards, panels, elevated surfaces
 BG_RAISED = "#1c2128"  # Hover states, selected items
 BG_OVERLAY = "#21262d"  # Modals, overlays, dropdowns
@@ -18,6 +19,7 @@ BG_SELECTED = "#1f2937"  # Unified selection highlight for all lists
 
 # ── Border colors ────────────────────────────────────────────────────
 BORDER_DEFAULT = "#30363d"  # Default borders
+BORDER_PANEL = "#263041"  # Stronger panel borders
 BORDER_FOCUS = "#58a6ff"  # Focused input borders
 BORDER_SUBTLE = "#21262d"  # Very subtle separators
 
@@ -120,8 +122,8 @@ Screen {{
 
 /* ── Scrollbars — minimal and subtle ── */
 Scrollbar {{
-    background: {BG_SURFACE};
-    color: {BORDER_DEFAULT};
+    background: {BG_PANEL};
+    color: {BORDER_PANEL};
 }}
 ScrollbarCorner {{
     background: {BG_BASE};
@@ -129,8 +131,8 @@ ScrollbarCorner {{
 
 /* ── Input styling ── */
 Input {{
-    background: {BG_SURFACE};
-    border: tall {BORDER_DEFAULT};
+    background: {BG_PANEL};
+    border: tall {BORDER_PANEL};
     color: {TEXT_PRIMARY};
 }}
 Input:focus {{
@@ -138,8 +140,8 @@ Input:focus {{
 }}
 
 TextArea {{
-    background: {BG_SURFACE};
-    border: tall {BORDER_DEFAULT};
+    background: {BG_PANEL};
+    border: tall {BORDER_PANEL};
 }}
 TextArea:focus {{
     border: tall {BORDER_FOCUS};
@@ -147,26 +149,27 @@ TextArea:focus {{
 
 /* ── Select widget ── */
 Select {{
-    background: {BG_SURFACE};
-    border: tall {BORDER_DEFAULT};
+    background: {BG_PANEL};
+    border: tall {BORDER_PANEL};
 }}
 Select:focus {{
     border: tall {BORDER_FOCUS};
 }}
 SelectOverlay {{
     background: {BG_OVERLAY};
-    border: tall {BORDER_DEFAULT};
+    border: tall {BORDER_PANEL};
 }}
 
 /* ── DataTable ── */
 DataTable {{
     background: {BG_SURFACE};
+    border: tall {BORDER_PANEL};
 }}
 DataTable > .datatable--header {{
-    background: {BG_RAISED};
+    background: {BG_PANEL};
     color: {TEXT_SECONDARY};
 }}
 DataTable > .datatable--cursor {{
-    background: {BG_RAISED};
+    background: {BG_SELECTED};
 }}
 """

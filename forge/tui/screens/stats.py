@@ -237,8 +237,8 @@ class PurgeConfirmScreen(Screen):
         width: 50;
         height: 5;
         padding: 1 2;
-        background: #161b22;
-        border: tall #30363d;
+        background: #11161d;
+        border: tall #263041;
     }
     """
 
@@ -280,18 +280,20 @@ class PipelineDetailScreen(Screen):
         layout: vertical;
     }
     #detail-header {
-        height: 1;
-        padding: 0 1;
-        background: #161b22;
+        height: 3;
+        padding: 1 2;
+        background: #11161d;
         color: #58a6ff;
+        border-bottom: tall #263041;
     }
     #detail-body {
         padding: 1 2;
         overflow-y: auto;
+        background: #0d1117;
     }
     .detail-section-title {
         margin: 1 0 0 0;
-        color: #58a6ff;
+        color: #d6a85f;
     }
     .detail-section {
         margin: 0 0 0 0;
@@ -354,10 +356,11 @@ class StatsScreen(Screen):
         layout: vertical;
     }
     #stats-header {
-        height: 1;
-        padding: 0 1;
-        background: #161b22;
+        height: 3;
+        padding: 1 2;
+        background: #11161d;
         color: #58a6ff;
+        border-bottom: tall #263041;
     }
     #stats-loading {
         height: 3;
@@ -371,20 +374,24 @@ class StatsScreen(Screen):
     #bottom-panels {
         height: 1fr;
         min-height: 8;
+        background: #0d1117;
     }
     #trends-panel {
         width: 1fr;
         padding: 1 2;
         overflow-y: auto;
+        background: #11161d;
+        border-right: tall #263041;
     }
     #success-panel {
         width: 1fr;
         padding: 1 2;
         overflow-y: auto;
+        background: #0d1117;
     }
     .panel-title {
         margin: 0 0 1 0;
-        color: #58a6ff;
+        color: #d6a85f;
     }
     """
 
@@ -405,7 +412,11 @@ class StatsScreen(Screen):
         self._refresh_timer = None
 
     def compose(self) -> ComposeResult:
-        yield Static(f"[bold {ACCENT_BLUE}]STATS[/]", id="stats-header")
+        yield Static(
+            f"[bold {ACCENT_BLUE}]STATS[/]\n"
+            f"[{TEXT_SECONDARY}]Audit throughput, cost, reliability, and release health across Forge runs.[/]",
+            id="stats-header",
+        )
         yield Static(
             f"[{TEXT_SECONDARY}]\u23f3 Loading pipeline data...[/]",
             id="stats-loading",

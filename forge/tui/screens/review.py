@@ -25,6 +25,33 @@ logger = logging.getLogger("forge.tui.screens.review")
 _REVIEWABLE_STATES = {"in_review", "awaiting_approval"}
 
 
+def _format_review_header(state: TuiState) -> str:
+    """Build a richer review header for the currently selected task."""
+    tid = state.selected_task_id
+    if not tid or tid not in state.tasks:
+        return (
+            "[bold #a371f7]REVIEW DESK[/]\n"
+            "[#8b949e]Select a task in review to inspect its diff, verify the gates, "
+            "and make the merge decision.[/]"
+        )
+    task = state.tasks[tid]
+    title = task.get("title", "Untitled")
+    status = task.get("state", "in_review").replace("_", " ").upper()
+    return (
+        f"[bold #a371f7]REVIEW DESK[/]  [#e6edf3]{title}[/]\n"
+        f"[#79c0ff]{tid}[/]  [#8b949e]STATE[/]  [bold #d6a85f]{status}[/]"
+    )
+
+
+def _format_review_status(diff_loaded: bool) -> str:
+    if diff_loaded:
+        return (
+            "[#8b949e]a approve  x reject  e editor  / search  "
+            "j/k scroll  1-9 jump task  Esc back[/]"
+        )
+    return "[#8b949e]Loading review context…  j/k scroll  1-9 jump task  Esc back[/]"
+
+
 class ReviewAction(Message):
     """Message for approve/reject actions."""
 
@@ -42,9 +69,10 @@ class ReviewScreen(Screen):
         layout: vertical;
     }
     #review-header {
-        height: 1;
-        padding: 0 1;
-        background: #161b22;
+        height: 3;
+        padding: 1 2 0 2;
+        background: #11161d;
+        border-bottom: tall #263041;
         color: #a371f7;
     }
     DiffViewer {
@@ -54,7 +82,8 @@ class ReviewScreen(Screen):
         dock: bottom;
         height: 1;
         padding: 0 1;
-        background: #161b22;
+        background: #11161d;
+        border-top: tall #21262d;
         color: #8b949e;
     }
     """
@@ -89,13 +118,10 @@ class ReviewScreen(Screen):
         self._diff_loaded = False
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold #a371f7]REVIEW[/]", id="review-header")
+        yield Static(_format_review_header(self._state), id="review-header")
         yield DiffViewer()
         yield SearchOverlay()
-        yield Static(
-            "[a] approve  [x] reject  [e] editor  [j/k] scroll  [/] search  [1-9] jump task",
-            id="review-status",
-        )
+        yield Static(_format_review_status(False), id="review-status")
         yield ShortcutBar([("Esc", "Back")])
 
     def _update_shortcut_bar(self) -> None:
@@ -130,6 +156,7 @@ class ReviewScreen(Screen):
     def _refresh(self) -> None:
         state = self._state
         tid = state.selected_task_id
+        self.query_one("#review-header", Static).update(_format_review_header(state))
         if tid and tid in state.tasks:
             task = state.tasks[tid]
             # Always prefer daemon-computed diff (from worktree, always accurate)
@@ -152,6 +179,9 @@ class ReviewScreen(Screen):
             self._diff_loaded = bool(diff and not diff.startswith("\u23f3"))
             if self._diff_loaded != was_loaded:
                 self._update_shortcut_bar()
+            self.query_one("#review-status", Static).update(
+                _format_review_status(self._diff_loaded)
+            )
             self.query_one(DiffViewer).update_diff(tid, task.get("title", ""), diff)
 
     def action_cursor_down(self) -> None:

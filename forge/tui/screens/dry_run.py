@@ -22,8 +22,6 @@ from forge.tui.theme import (
     ACCENT_PURPLE,
     ACCENT_RED,
     ACCENT_YELLOW,
-    BG_SURFACE,
-    BORDER_DEFAULT,
     TEXT_MUTED,
     TEXT_SECONDARY,
 )
@@ -125,37 +123,43 @@ class DryRunScreen(Screen):
     #dry-run-header {{
         height: 3;
         padding: 1 2;
-        background: {BG_SURFACE};
+        background: #11161d;
         color: {ACCENT_BLUE};
+        border-bottom: tall #263041;
     }}
     #dry-run-cost {{
         padding: 0 2;
-        background: {BG_SURFACE};
+        background: #11161d;
         height: 1;
     }}
     #dry-run-panels {{
         height: 1fr;
+        background: #0d1117;
     }}
     #dag-panel {{
         width: 1fr;
         padding: 1 2;
-        border-right: tall {BORDER_DEFAULT};
+        border-right: tall #263041;
+        background: #11161d;
     }}
     #detail-panel {{
         width: 1fr;
         padding: 1 2;
+        background: #0d1117;
     }}
     #dry-run-footer {{
         dock: bottom;
         height: 1;
         padding: 0 1;
-        background: {BG_SURFACE};
+        background: #11161d;
         color: {TEXT_SECONDARY};
+        border-top: tall #263041;
     }}
     #edit-area {{
         height: 6;
         margin: 0 2;
         border: tall {ACCENT_YELLOW};
+        background: #0d1117;
         display: none;
     }}
     #edit-area.visible {{

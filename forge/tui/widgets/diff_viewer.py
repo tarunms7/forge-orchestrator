@@ -55,7 +55,7 @@ class DiffViewer(ScrollableContainer):
     DiffViewer {
         width: 100%;
         height: 1fr;
-        padding: 0 1;
+        padding: 1 2;
     }
     """
 
@@ -89,12 +89,17 @@ class DiffViewer(ScrollableContainer):
     def _refresh_content(self) -> None:
         """Update the child Static with rendered diff content."""
         if not self._task_id:
-            self._content.update(f"[{TEXT_SECONDARY}]Select a task to view its diff[/]")
+            self._content.update(
+                f"[bold {ACCENT_BLUE}]DIFF VIEWER[/]\n"
+                f"[{BORDER_DEFAULT}]" + "─" * 72 + f"[/]\n"
+                f"[{TEXT_SECONDARY}]Select a task to inspect the current delta.[/]"
+            )
             return
         header = (
-            f"[bold {ACCENT_BLUE}]{_escape(self._task_id)}[/]: {_escape(self._task_title or '')}\n"
+            f"[bold {ACCENT_BLUE}]DIFF VIEWER[/]  [#e6edf3]{_escape(self._task_title or '')}[/]\n"
+            f"[{TEXT_SECONDARY}]{_escape(self._task_id)}[/]\n"
         )
-        separator = f"[{BORDER_DEFAULT}]" + "─" * 60 + "[/]\n"
+        separator = f"[{BORDER_DEFAULT}]" + "─" * 72 + "[/]\n"
         diff_content = format_diff(self._diff_text)
         if self._search_pattern:
             diff_content, _ = apply_highlights(diff_content, self._search_pattern)
