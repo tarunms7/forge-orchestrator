@@ -345,6 +345,7 @@ class ForgeApp(App):
 
         # Planning questions use __planning__ sentinel
         is_planning = task_id == "__planning__"
+        question_id: str | None = None
 
         try:
             if is_planning:
@@ -352,42 +353,55 @@ class ForgeApp(App):
                 question_id = current.get("question_id")
                 if question_id:
                     await self._db.answer_question(question_id, answer, "human")
-                    if self._daemon and hasattr(self._daemon, "_events"):
-                        await self._daemon._events.emit(
-                            "planning:answer",
-                            {
-                                "question_id": question_id,
-                                "answer": answer,
-                            },
-                        )
                 else:
                     pending = await self._db.get_pending_questions(self._pipeline_id)
                     for q in pending:
                         if q.task_id == task_id and q.answer is None:
+                            question_id = q.id
                             await self._db.answer_question(q.id, answer, "human")
-                            if self._daemon and hasattr(self._daemon, "_events"):
-                                await self._daemon._events.emit(
-                                    "planning:answer",
-                                    {
-                                        "question_id": q.id,
-                                        "answer": answer,
-                                    },
-                                )
                             break
+                if not question_id:
+                    self.notify("That planning question is no longer pending.", severity="warning")
+                    return
             else:
                 pending = await self._db.get_pending_questions(self._pipeline_id)
                 for q in pending:
                     if q.task_id == task_id and q.answer is None:
+                        question_id = q.id
                         await self._db.answer_question(q.id, answer, "human")
                         break
-        except Exception:
+                if not question_id:
+                    self.notify("That task question is no longer pending.", severity="warning")
+                    return
+        except Exception as e:
             logger.error("Failed to record answer to DB", exc_info=True)
+            self.notify(f"Failed to save answer: {_escape_markup(e)}", severity="error")
+            return
 
         if is_planning:
+            signaled_live_planner = False
+            if self._daemon and hasattr(self._daemon, "_events"):
+                try:
+                    await self._daemon._events.emit(
+                        "planning:answer",
+                        {
+                            "question_id": question_id,
+                            "answer": answer,
+                        },
+                    )
+                    signaled_live_planner = True
+                except Exception:
+                    logger.error("Failed to emit planning:answer to daemon", exc_info=True)
             self._state.apply_event("planning:answer", {"answer": answer})
+            if not signaled_live_planner:
+                self.notify(
+                    "Answer saved, but the live planner is no longer attached. Restart planning to continue.",
+                    severity="warning",
+                    timeout=8,
+                )
         else:
-            self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
             # Notify daemon to resume the task
+            signaled_live_agent = False
             if self._daemon and hasattr(self._daemon, "_events"):
                 try:
                     await self._daemon._events.emit(
@@ -398,8 +412,22 @@ class ForgeApp(App):
                             "pipeline_id": self._pipeline_id,
                         },
                     )
+                    signaled_live_agent = True
                 except Exception:
                     logger.error("Failed to emit task:answer to daemon", exc_info=True)
+            if signaled_live_agent:
+                self._state.apply_event("task:answer", {"task_id": task_id, "answer": answer})
+            else:
+                q = self._state.pending_questions.pop(task_id, None)
+                if q:
+                    history = self._state.question_history.setdefault(task_id, [])
+                    history.append({"question": q, "answer": answer})
+                self._state._notify("tasks")
+                self.notify(
+                    "Answer saved, but the live agent is not attached right now. Resume the pipeline if it stays paused.",
+                    severity="warning",
+                    timeout=8,
+                )
 
     async def _restart_planning_from_scratch(
         self,
@@ -719,28 +747,61 @@ class ForgeApp(App):
         if not self._db or not self._pipeline_id:
             self.notify("No pipeline context for follow-up.", severity="error")
             return
-
-        prompt = event.prompt
-        if not prompt.strip():
+        if not self._daemon or not self._graph:
+            self.notify(
+                "Cannot start follow-up: the live pipeline is no longer attached. Resume it from history first.",
+                severity="error",
+            )
             return
 
-        tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
-        followup_n = sum(1 for t in tasks if "-followup-" in t.id) + 1
-        prefix = self._pipeline_id[:8]
-        task_id = f"{prefix}-followup-{followup_n}"
+        prompt = event.prompt.strip()
+        if not prompt:
+            return
 
-        done_ids = [t.id for t in tasks if t.state == "done"]
+        try:
+            tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+            followup_n = sum(1 for t in tasks if "-followup-" in t.id) + 1
+            prefix = self._pipeline_id[:8]
+            task_id = f"{prefix}-followup-{followup_n}"
 
-        await self._db.create_task(
-            id=task_id,
-            title=prompt[:80],
-            description=prompt,
-            files=[],
-            depends_on=done_ids,
-            complexity="medium",
-            pipeline_id=self._pipeline_id,
-        )
+            done_ids = [t.id for t in tasks if t.state == "done"]
 
+            await self._db.create_task(
+                id=task_id,
+                title=prompt[:80],
+                description=prompt,
+                files=[],
+                depends_on=done_ids,
+                complexity="medium",
+                pipeline_id=self._pipeline_id,
+            )
+            try:
+                await self._db.update_pipeline_status(self._pipeline_id, "executing")
+            except Exception:
+                logger.warning("Failed to persist executing status for follow-up", exc_info=True)
+        except Exception as e:
+            logger.error("Failed to queue follow-up task", exc_info=True)
+            self.notify(f"Failed to queue follow-up: {_escape_markup(e)}", severity="error")
+            return
+
+        self._state.tasks[task_id] = {
+            "id": task_id,
+            "title": prompt[:80],
+            "description": prompt,
+            "files": [],
+            "depends_on": done_ids,
+            "complexity": "medium",
+            "state": "todo",
+            "agent_cost": 0.0,
+            "error": None,
+            "repo": None,
+        }
+        if task_id not in self._state.task_order:
+            self._state.task_order.append(task_id)
+        self._state.selected_task_id = task_id
+        self._state.error = None
+        self._state._notify("tasks")
+        self._state._notify("error")
         self._state.phase = "executing"
         self._state._notify("phase")
         self._final_approval_pushed = False
@@ -749,6 +810,7 @@ class ForgeApp(App):
             self.pop_screen()
 
         await self._resume_execution()
+        self.notify("Follow-up queued and execution resumed.", severity="information")
 
     async def _reset_failed_tasks_for_retry(self, pipeline_id: str) -> int:
         """Reset failed tasks so the pipeline can resume on the same branch."""
@@ -807,19 +869,38 @@ class ForgeApp(App):
 
     async def on_final_approval_screen_rerun(self, event) -> None:
         """User wants to retry failed tasks."""
-        await self._retry_failed_pipeline(push_pipeline_screen=False)
+        try:
+            await self._retry_failed_pipeline(push_pipeline_screen=False)
+        except Exception as e:
+            logger.error("Failed to rerun pipeline from final approval", exc_info=True)
+            self.notify(f"Failed to rerun pipeline: {_escape_markup(e)}", severity="error")
 
     async def on_final_approval_screen_skip_failed(self, event) -> None:
         """User wants to skip failed tasks and finish."""
         if not self._db or not self._pipeline_id:
             return
 
-        tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
-        for t in tasks:
-            if t.state in ("error", "blocked"):
-                await self._db.update_task_state(t.id, "cancelled")
+        try:
+            tasks = await self._db.list_tasks_by_pipeline(self._pipeline_id)
+            cancelled_ids: list[str] = []
+            for t in tasks:
+                if t.state in ("error", "blocked"):
+                    await self._db.update_task_state(t.id, "cancelled")
+                    cancelled_ids.append(t.id)
+            await self._db.update_pipeline_status(self._pipeline_id, "complete")
+        except Exception as e:
+            logger.error("Failed to skip failed tasks", exc_info=True)
+            self.notify(f"Failed to finish pipeline: {_escape_markup(e)}", severity="error")
+            return
 
-        await self._db.update_pipeline_status(self._pipeline_id, "complete")
+        for task_id in cancelled_ids:
+            if task_id in self._state.tasks:
+                self._state.tasks[task_id]["state"] = "cancelled"
+                self._state.tasks[task_id].pop("error", None)
+                self._state.pending_questions.pop(task_id, None)
+        self._state.error = None
+        self._state._notify("tasks")
+        self._state._notify("error")
         self._state.phase = "final_approval"
         self._state._notify("phase")
 
@@ -827,6 +908,11 @@ class ForgeApp(App):
         while len(self.screen_stack) > 2:
             self.pop_screen()
         self._push_final_approval()
+        if cancelled_ids:
+            self.notify(
+                f"Skipped {len(cancelled_ids)} failed task{'s' if len(cancelled_ids) != 1 else ''}.",
+                severity="information",
+            )
 
     async def _resume_execution(self) -> None:
         """Re-enter the daemon execution loop for remaining TODO tasks."""

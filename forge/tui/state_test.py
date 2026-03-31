@@ -147,6 +147,28 @@ def test_apply_task_cost_update():
     assert state.tasks["t1"]["agent_cost"] == 0.5
 
 
+def test_pr_failed_returns_to_final_approval_when_all_work_is_done():
+    state = _make_state_with_task()
+    state.tasks["t1"]["state"] = "done"
+    state.phase = "pr_creating"
+
+    state.apply_event("pipeline:pr_failed", {"error": "gh pr create failed"})
+
+    assert state.error == "gh pr create failed"
+    assert state.phase == "final_approval"
+
+
+def test_pr_failed_returns_to_partial_success_when_failures_remain():
+    state = _make_state_with_task()
+    state.tasks["t1"]["state"] = "error"
+    state.phase = "pr_creating"
+
+    state.apply_event("pipeline:pr_failed", {"error": "push failed"})
+
+    assert state.error == "push failed"
+    assert state.phase == "partial_success"
+
+
 def test_on_change_callback():
     state = TuiState()
     changes = []

@@ -96,6 +96,21 @@ def test_planning_answer_removes_from_pending():
     assert "__planning__" not in state.pending_questions
 
 
+def test_planning_answer_is_added_to_history():
+    """Planning answers should be preserved for final reports and PR summaries."""
+    state = TuiState()
+    state.pending_questions["__planning__"] = {"question": "JWT or session?", "question_id": "q1"}
+
+    state.apply_event("planning:answer", {"answer": "JWT"})
+
+    assert state.question_history["__planning__"] == [
+        {
+            "question": {"question": "JWT or session?", "question_id": "q1"},
+            "answer": "JWT",
+        }
+    ]
+
+
 def test_planning_question_notifies():
     """planning:question should notify with 'planning' field."""
     state = TuiState()

@@ -517,12 +517,16 @@ async def test_planning_answer_applies_planning_answer_event():
     app = ForgeApp.__new__(ForgeApp)
     app._db = AsyncMock()
     app._db.get_pending_questions = AsyncMock(return_value=[])
+    app._db.answer_question = AsyncMock()
     app._pipeline_id = "pipe1"
     app._daemon = None
     app._state = MagicMock()
+    app._state.pending_questions = {"__planning__": {"question": "Which DB?", "question_id": "q1"}}
+    app.notify = MagicMock()
 
     await app.on_chat_thread_answer_submitted(event)
 
+    app._db.answer_question.assert_awaited_once_with("q1", "Use JWT", "human")
     app._state.apply_event.assert_called_once_with("planning:answer", {"answer": "Use JWT"})
 
 
@@ -559,6 +563,232 @@ async def test_task_answer_does_not_emit_planning_event():
     assert len(emitted) == 1
     assert emitted[0][0] == "task:answer"
     assert emitted[0][1]["task_id"] == "t1"
+
+
+@pytest.mark.asyncio
+async def test_task_answer_rejected_when_question_is_no_longer_pending():
+    """Submitting an answer for a stale question should not clear the live TUI state."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.answer = "Option A"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(return_value=[])
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = None
+    app.notify = MagicMock()
+    app._state = TuiState()
+    app._state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Review task"}}
+    app._state.pending_questions["t1"] = {"question": "Approve?"}
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    app._db.answer_question.assert_not_awaited()
+    assert app._state.tasks["t1"]["state"] == "awaiting_input"
+    assert "t1" in app._state.pending_questions
+    app.notify.assert_called_once()
+    assert "no longer pending" in app.notify.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_task_answer_without_live_agent_keeps_task_waiting():
+    """If the answer is saved but no live agent is attached, clear the question without faking a resume."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.answer = "Option A"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(
+        return_value=[MagicMock(task_id="t1", answer=None, id="q1")]
+    )
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = None
+    app.notify = MagicMock()
+    app._state = TuiState()
+    app._state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Review task"}}
+    app._state.pending_questions["t1"] = {"question": "Approve?"}
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    app._db.answer_question.assert_awaited_once_with("q1", "Option A", "human")
+    assert app._state.tasks["t1"]["state"] == "awaiting_input"
+    assert "t1" not in app._state.pending_questions
+    assert app._state.question_history["t1"] == [
+        {"question": {"question": "Approve?"}, "answer": "Option A"}
+    ]
+    app.notify.assert_called_once()
+    assert "live agent is not attached" in app.notify.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_final_approval_follow_up_queues_local_task_and_resumes():
+    """Follow-up should create the task, sync local state, and resume execution."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.list_tasks_by_pipeline = AsyncMock(
+        return_value=[
+            MagicMock(id="t-done", state="done"),
+            MagicMock(id="t-review", state="in_review"),
+        ]
+    )
+    app._db.create_task = AsyncMock()
+    app._db.update_pipeline_status = AsyncMock()
+    app._pipeline_id = "12345678-abcdef"
+    app._daemon = object()
+    app._graph = object()
+    app._resume_execution = AsyncMock()
+    app.notify = MagicMock()
+    app._final_approval_pushed = True
+    type(app).screen_stack = property(lambda self: self._test_screen_stack)
+    app._test_screen_stack = [object(), object(), object()]
+    app.pop_screen = MagicMock(side_effect=lambda: app._test_screen_stack.pop())
+    app._state = TuiState()
+    app._state.phase = "final_approval"
+    app._state.tasks = {"t-done": {"id": "t-done", "title": "Done", "state": "done"}}
+    app._state.task_order = ["t-done"]
+
+    event = MagicMock()
+    event.prompt = "Tighten the gauntlet report wording"
+
+    await app.on_final_approval_screen_follow_up(event)
+
+    app._db.create_task.assert_awaited_once_with(
+        id="12345678-followup-1",
+        title="Tighten the gauntlet report wording",
+        description="Tighten the gauntlet report wording",
+        files=[],
+        depends_on=["t-done"],
+        complexity="medium",
+        pipeline_id="12345678-abcdef",
+    )
+    app._db.update_pipeline_status.assert_awaited_once_with("12345678-abcdef", "executing")
+    app._resume_execution.assert_awaited_once()
+    assert app._state.phase == "executing"
+    assert app._state.selected_task_id == "12345678-followup-1"
+    assert app._state.task_order[-1] == "12345678-followup-1"
+    assert app._state.tasks["12345678-followup-1"]["state"] == "todo"
+    assert len(app.screen_stack) == 2
+    app.notify.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_final_approval_follow_up_requires_live_execution_context():
+    """Follow-up should fail fast if the live daemon/graph context is gone."""
+    from forge.tui.app import ForgeApp
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = None
+    app._graph = object()
+    app.notify = MagicMock()
+
+    event = MagicMock()
+    event.prompt = "Add a changelog entry"
+
+    await app.on_final_approval_screen_follow_up(event)
+
+    app.notify.assert_called_once()
+    assert "resume it from history" in app.notify.call_args[0][0].lower()
+    app._db.list_tasks_by_pipeline.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_final_approval_follow_up_db_failure_does_not_mutate_state():
+    """A DB failure while queuing follow-up should leave the final-approval state intact."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.list_tasks_by_pipeline = AsyncMock(return_value=[])
+    app._db.create_task = AsyncMock(side_effect=RuntimeError("db write failed"))
+    app._pipeline_id = "pipe1"
+    app._daemon = object()
+    app._graph = object()
+    app._resume_execution = AsyncMock()
+    app.notify = MagicMock()
+    type(app).screen_stack = property(lambda self: self._test_screen_stack)
+    app._test_screen_stack = [object(), object(), object()]
+    app.pop_screen = MagicMock(side_effect=lambda: app._test_screen_stack.pop())
+    app._state = TuiState()
+    app._state.phase = "final_approval"
+
+    event = MagicMock()
+    event.prompt = "Add a changelog entry"
+
+    await app.on_final_approval_screen_follow_up(event)
+
+    assert app._state.phase == "final_approval"
+    app._resume_execution.assert_not_awaited()
+    app.pop_screen.assert_not_called()
+    app.notify.assert_called_once()
+    assert "failed to queue follow-up" in app.notify.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_final_approval_skip_failed_syncs_local_state():
+    """Skip & finish should cancel failed tasks in DB and in the in-memory state."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.list_tasks_by_pipeline = AsyncMock(
+        return_value=[
+            MagicMock(id="t-error", state="error"),
+            MagicMock(id="t-blocked", state="blocked"),
+            MagicMock(id="t-done", state="done"),
+        ]
+    )
+    app._db.update_task_state = AsyncMock()
+    app._db.update_pipeline_status = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app.notify = MagicMock()
+    app._push_final_approval = MagicMock()
+    app._final_approval_pushed = True
+    type(app).screen_stack = property(lambda self: self._test_screen_stack)
+    app._test_screen_stack = [object(), object(), object()]
+    app.pop_screen = MagicMock(side_effect=lambda: app._test_screen_stack.pop())
+    app._state = TuiState()
+    app._state.phase = "partial_success"
+    app._state.error = "PR failed"
+    app._state.tasks = {
+        "t-error": {"id": "t-error", "title": "A", "state": "error", "error": "boom"},
+        "t-blocked": {"id": "t-blocked", "title": "B", "state": "blocked", "error": "wait"},
+        "t-done": {"id": "t-done", "title": "C", "state": "done"},
+    }
+    app._state.pending_questions["t-error"] = {"question": "Old?"}
+
+    event = MagicMock()
+
+    await app.on_final_approval_screen_skip_failed(event)
+
+    app._db.update_task_state.assert_any_await("t-error", "cancelled")
+    app._db.update_task_state.assert_any_await("t-blocked", "cancelled")
+    app._db.update_pipeline_status.assert_awaited_once_with("pipe1", "complete")
+    assert app._state.tasks["t-error"]["state"] == "cancelled"
+    assert app._state.tasks["t-blocked"]["state"] == "cancelled"
+    assert "error" not in app._state.tasks["t-error"]
+    assert "error" not in app._state.tasks["t-blocked"]
+    assert "t-error" not in app._state.pending_questions
+    assert app._state.phase == "final_approval"
+    assert app._state.error is None
+    app._push_final_approval.assert_called_once()
+    app.notify.assert_called()
 
 
 @pytest.mark.asyncio

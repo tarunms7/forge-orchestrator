@@ -513,7 +513,10 @@ class TuiState:
 
     def _on_planning_answer(self, data: dict) -> None:
         """Planning question was answered."""
-        self.pending_questions.pop("__planning__", None)
+        q = self.pending_questions.pop("__planning__", None)
+        if q:
+            history = self.question_history.setdefault("__planning__", [])
+            history.append({"question": q, "answer": data.get("answer")})
         self._notify("planning")
 
     def _handle_planning_output(self, stage: str, data: dict) -> None:
@@ -629,6 +632,12 @@ class TuiState:
     def _on_pr_failed(self, data: dict) -> None:
         self.error = data.get("error", "PR creation failed")
         self._notify("error")
+        if self.phase == "pr_creating":
+            has_unshipped_failures = any(
+                t.get("state") in ("error", "blocked") for t in self.tasks.values()
+            )
+            self.phase = "partial_success" if has_unshipped_failures else "final_approval"
+            self._notify("phase")
 
     def reset(self) -> None:
         """Reset all pipeline-specific state for a new task."""
