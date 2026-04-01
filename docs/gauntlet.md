@@ -11,7 +11,7 @@ forge gauntlet
 # Run a specific scenario
 forge gauntlet -s happy_path
 
-# Run with chaos injection (random delays + transient failures)
+# Run with chaos timing jitter on compatible scenarios
 forge gauntlet --chaos
 
 # JSON output for CI
@@ -27,7 +27,7 @@ forge gauntlet --format summary
 |---|---|---|
 | `happy_path` | Full pipeline success with no injected failures. All 6 stages run and pass. | No |
 | `multi_repo_contracts` | Cross-repo contract generation. Validates API contracts link producers to consumers, type contracts reference shared types, and tasks have correct repo assignments. | No |
-| `resume_after_interrupt` | Pipeline interrupt after execution, then resume. Verifies completed stages are preserved and remaining stages complete after restart. | Yes |
+| `resume_after_interrupt` | Pipeline interrupt after execution, persist state to disk, then resume from that saved state. Verifies completed stages are preserved and only remaining stages run after restart. | Yes |
 | `review_gate_failure` | Injected review failure. Validates pipeline stops at review, does not run integration, and correctly reports error state. | Yes |
 | `integration_failure` | Injected integration failure. Validates all 6 stages run (integration is post-merge), earlier stages remain passed, and the failure is detected. | No |
 
@@ -39,7 +39,7 @@ The default Rich report shows:
 - Per-scenario panels with stage results (pass/fail icons), assertion results, and cost
 - Artifact listings and error details for failed scenarios
 
-JSON output (`--format json`) returns the full `GauntletResult` model serialized via Pydantic, suitable for CI parsing. Summary format (`--format summary`) returns a single line like:
+JSON output (`--format json`) returns only the full `GauntletResult` model serialized via Pydantic on stdout, suitable for CI parsing. Summary format (`--format summary`) returns a single line like:
 
 ```
 Gauntlet: 5/5 passed in 12.3s
@@ -145,6 +145,6 @@ SCENARIO_FUNCTIONS["my_scenario"] = run_my_scenario
 
 - **Fixture Workspace** (`create_fixture_workspace`) sets up 3 git repos with real files and intentional bugs — a backend Flask app with a division-by-zero bug, a frontend with a wrong import field, and shared Pydantic types.
 
-- **MockPipeline** mirrors the `ForgeDaemon` stage sequence (preflight → planning → contracts → execution → review → integration) but uses deterministic task graphs and contract sets. It supports `fail_at` for injecting failures at specific stages and `chaos` for random delays.
+- **MockPipeline** mirrors the `ForgeDaemon` stage sequence (preflight → planning → contracts → execution → review → integration) but uses deterministic task graphs and contract sets. It supports `fail_at` for injecting failures at specific stages, `chaos` for random delay jitter, and persisted resume state for interruption scenarios.
 
 - **Scenarios** are async functions that exercise specific pipeline behaviors and return `ScenarioResult` with assertions about what happened. Each scenario is registered in `SCENARIO_REGISTRY` (metadata) and `SCENARIO_FUNCTIONS` (callable).

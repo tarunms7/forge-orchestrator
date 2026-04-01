@@ -2,7 +2,7 @@
 
 import pytest
 
-from forge.gauntlet.runner import GauntletRunner
+from forge.gauntlet.runner import GauntletRunner, UnknownScenarioError
 
 
 class TestGauntletRunnerBasic:
@@ -58,30 +58,22 @@ class TestGauntletRunnerFiltering:
         assert names == {"happy_path", "integration_failure"}
 
     @pytest.mark.asyncio
-    async def test_invalid_scenario_name_skipped(self, tmp_path):
-        """Invalid scenario names are silently filtered by _selected_scenarios.
-
-        The runner's _selected_scenarios() filters to names present in
-        SCENARIO_REGISTRY, so unrecognized names produce an empty run
-        rather than raising an error.
-        """
+    async def test_invalid_scenario_name_raises(self, tmp_path):
         runner = GauntletRunner(
             scenarios=["nonexistent_scenario"],
             workspace_dir=str(tmp_path),
         )
-        result = await runner.run()
-        assert len(result.scenarios) == 0
-        assert result.passed is True  # vacuously true — no scenarios failed
+        with pytest.raises(UnknownScenarioError, match="Unknown gauntlet scenario"):
+            await runner.run()
 
     @pytest.mark.asyncio
-    async def test_mix_valid_and_invalid(self, tmp_path):
+    async def test_mix_valid_and_invalid_raises(self, tmp_path):
         runner = GauntletRunner(
             scenarios=["happy_path", "nonexistent"],
             workspace_dir=str(tmp_path),
         )
-        result = await runner.run()
-        assert len(result.scenarios) == 1
-        assert result.scenarios[0].name == "happy_path"
+        with pytest.raises(UnknownScenarioError, match="Unknown gauntlet scenario"):
+            await runner.run()
 
 
 class TestGauntletRunnerChaos:
@@ -121,3 +113,12 @@ class TestGauntletRunnerLiveMode:
         assert len(result.scenarios) == 1
         assert result.scenarios[0].passed is False
         assert "not yet implemented" in result.scenarios[0].error.lower()
+
+
+class TestGauntletRunnerArtifacts:
+    @pytest.mark.asyncio
+    async def test_temp_workspace_paths_not_reported_as_artifacts(self):
+        runner = GauntletRunner(scenarios=["happy_path"])
+        result = await runner.run()
+        assert len(result.scenarios) == 1
+        assert "workspace_dir" not in result.scenarios[0].artifacts

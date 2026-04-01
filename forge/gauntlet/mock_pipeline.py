@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import subprocess
@@ -39,6 +40,7 @@ class MockPipeline:
         self.fail_at = fail_at
         self.chaos = chaos
         self._cost_usd = 0.0
+        self._state_path = os.path.join(self.workspace_dir, ".gauntlet_resume_state.json")
 
     @property
     def cost_usd(self) -> float:
@@ -53,6 +55,85 @@ class MockPipeline:
 
     def _timed(self, start: float) -> float:
         return round(time.monotonic() - start, 4)
+
+    def persist_state(
+        self,
+        *,
+        task_description: str,
+        completed_stages: list[str],
+        graph: TaskGraph | None = None,
+    ) -> str:
+        """Persist mock pipeline state so resume scenarios exercise disk round-tripping."""
+        payload: dict[str, object] = {
+            "task_description": task_description,
+            "completed_stages": completed_stages,
+            "cost_usd": self._cost_usd,
+        }
+        if graph is not None:
+            payload["graph"] = graph.model_dump(mode="json")
+
+        with open(self._state_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+        return self._state_path
+
+    def load_state(self) -> tuple[str, list[str], TaskGraph | None, float]:
+        """Load persisted mock pipeline state from disk."""
+        with open(self._state_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        graph_data = data.get("graph")
+        graph = TaskGraph.model_validate(graph_data) if graph_data is not None else None
+        return (
+            str(data["task_description"]),
+            list(data.get("completed_stages", [])),
+            graph,
+            float(data.get("cost_usd", 0.0)),
+        )
+
+    async def resume_from_state(self) -> list[StageResult]:
+        """Resume a persisted mock pipeline from the next incomplete stage."""
+        task_description, completed_stages, graph, saved_cost = self.load_state()
+        self._cost_usd = max(self._cost_usd, saved_cost)
+        completed = set(completed_stages)
+        results: list[StageResult] = []
+
+        if "preflight" not in completed:
+            preflight = await self.run_preflight()
+            results.append(preflight)
+            if not preflight.passed:
+                return results
+
+        if "planning" not in completed:
+            planning, graph = await self.run_planning(task_description)
+            results.append(planning)
+            if not planning.passed or graph is None:
+                return results
+        elif graph is None:
+            raise ValueError("Resume state is missing TaskGraph data after planning completed")
+
+        if "contracts" not in completed:
+            contracts = await self.run_contracts(graph)
+            results.append(contracts)
+            if not contracts.passed:
+                return results
+
+        if "execution" not in completed:
+            execution = await self.run_execution(graph)
+            results.append(execution)
+            if not execution.passed:
+                return results
+
+        if "review" not in completed:
+            review = await self.run_review(graph)
+            results.append(review)
+            if not review.passed:
+                return results
+
+        if "integration" not in completed:
+            integration = await self.run_integration()
+            results.append(integration)
+
+        return results
 
     async def run_preflight(self) -> StageResult:
         """Validate repos exist and workspace is valid."""

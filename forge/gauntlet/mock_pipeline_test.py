@@ -307,3 +307,44 @@ class TestMissingRepo:
         result = await p.run_preflight()
         assert result.passed is False
         assert "Missing repos" in result.details
+
+
+class TestResumeState:
+    @pytest.mark.asyncio
+    async def test_persist_and_load_state_round_trip(self, pipeline):
+        _, graph = await pipeline.run_planning("Fix bugs")
+        assert graph is not None
+
+        state_path = pipeline.persist_state(
+            task_description="Fix bugs",
+            completed_stages=["preflight", "planning"],
+            graph=graph,
+        )
+
+        task_description, completed_stages, loaded_graph, cost_usd = pipeline.load_state()
+        assert os.path.isfile(state_path)
+        assert task_description == "Fix bugs"
+        assert completed_stages == ["preflight", "planning"]
+        assert loaded_graph is not None
+        assert [task.id for task in loaded_graph.tasks] == [task.id for task in graph.tasks]
+        assert cost_usd == pipeline.cost_usd
+
+    @pytest.mark.asyncio
+    async def test_resume_from_state_runs_only_remaining_stages(self, pipeline, workspace):
+        preflight = await pipeline.run_preflight()
+        planning, graph = await pipeline.run_planning("Fix bugs")
+        contracts = await pipeline.run_contracts(graph)
+        execution = await pipeline.run_execution(graph)
+        assert all(stage.passed for stage in [preflight, planning, contracts, execution])
+
+        pipeline.persist_state(
+            task_description="Fix bugs",
+            completed_stages=["preflight", "planning", "contracts", "execution"],
+            graph=graph,
+        )
+
+        resumed = MockPipeline(workspace_dir=pipeline.workspace_dir, repos=workspace)
+        results = await resumed.resume_from_state()
+
+        assert [stage.name for stage in results] == ["review", "integration"]
+        assert all(stage.passed for stage in results)
