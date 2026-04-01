@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -864,3 +864,84 @@ def test_chat_thread_interjection_event_type():
     from forge.tui.bus import TUI_EVENT_TYPES
 
     assert "task:interjection" in TUI_EVENT_TYPES
+
+
+@pytest.mark.asyncio
+async def test_final_approval_multirepo_pr_creation_recovers_when_pipeline_repos_json_missing():
+    """Multi-repo PR creation should fall back to the app's live repo config for older pipelines."""
+    from forge.core.models import RepoConfig
+    from forge.tui.app import ForgeApp
+    from forge.tui.pr_creator import MultiRepoPrResult
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._project_dir = "/workspace"
+    app._pipeline_id = "pipe-1"
+    app._repos = [
+        RepoConfig(id="wizbridge", path="/workspace/WizBridge", base_branch="main"),
+        RepoConfig(id="temp", path="/workspace/temp", base_branch="main"),
+    ]
+    app._get_pipeline_branch = AsyncMock(return_value="forge/content-length")
+    app._pipeline_description = MagicMock(return_value="Fix media transform content length")
+    app.notify = MagicMock()
+    app._state = MagicMock()
+    app._state.question_history = {}
+    app._state.elapsed_seconds = 120
+    app._state.total_cost_usd = 1.41
+    app._state.task_order = ["t1"]
+    app._state.tasks = {
+        "t1": {
+            "title": "Add content-length comparison",
+            "description": "Update WizBridge media file handling",
+            "state": "done",
+            "repo_id": "wizbridge",
+            "cost_usd": 1.41,
+            "merge_result": {
+                "success": True,
+                "linesAdded": 58,
+                "linesRemoved": 0,
+                "filesChanged": 2,
+            },
+            "files": ["internal/services/mediafile/media_file_service.go"],
+        }
+    }
+    app._state.apply_event = MagicMock()
+    app._db = AsyncMock()
+    app._db.get_pipeline = AsyncMock(
+        return_value=MagicMock(
+            base_branch="main",
+            get_repos=MagicMock(
+                return_value=[
+                    {
+                        "id": "default",
+                        "path": "/workspace",
+                        "base_branch": "main",
+                        "branch_name": "forge/content-length",
+                    }
+                ]
+            ),
+        )
+    )
+    app._db.update_pipeline_repos_json = AsyncMock()
+
+    with (
+        patch(
+            "forge.tui.pr_creator.create_prs_multi_repo",
+            new_callable=AsyncMock,
+            return_value=MultiRepoPrResult(
+                pr_urls={"wizbridge": "https://github.com/org/WizBridge/pull/291"},
+                failures={},
+            ),
+        ) as mock_create_prs,
+        patch("forge.tui.pr_creator.maybe_start_ci_fix", new_callable=AsyncMock),
+        patch("forge.tui.app.os.path.exists", return_value=True),
+        patch.object(type(app), "screen", new_callable=PropertyMock, return_value=MagicMock()),
+    ):
+        await app.on_final_approval_screen_create_pr(MagicMock())
+
+    called_repos = mock_create_prs.await_args.kwargs["repos"]
+    assert called_repos["wizbridge"]["project_dir"] == "/workspace/WizBridge"
+    assert called_repos["temp"]["project_dir"] == "/workspace/temp"
+    app._db.update_pipeline_repos_json.assert_awaited_once()
+    repos_json = app._db.update_pipeline_repos_json.await_args.args[1]
+    assert '"id": "wizbridge"' in repos_json
+    assert '"path": "/workspace/WizBridge"' in repos_json
