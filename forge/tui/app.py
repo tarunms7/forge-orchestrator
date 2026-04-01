@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -70,6 +71,82 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
             }
         )
     return summaries
+
+
+def _is_multi_repo_configs(repos: list) -> bool:
+    """Return True when the current app repo config represents a multi-repo workspace."""
+    return len(repos) > 1 or (len(repos) == 1 and getattr(repos[0], "id", "default") != "default")
+
+
+def _build_pipeline_repos_json(repos: list) -> str | None:
+    """Serialize multi-repo config for DB persistence."""
+    if not _is_multi_repo_configs(repos):
+        return None
+
+    data: list[dict[str, str]] = []
+    for repo in repos:
+        data.append(
+            {
+                "id": repo.id,
+                "path": os.path.realpath(repo.path),
+                "base_branch": repo.base_branch,
+                "branch_name": "",
+            }
+        )
+    return json.dumps(data)
+
+
+def _resolve_multi_repo_pr_targets(
+    *,
+    repos_list: list[dict],
+    current_repos: list,
+    workspace_dir: str,
+    fallback_base_branch: str,
+    fallback_branch: str,
+) -> tuple[dict[str, dict], dict[str, str], list[dict]]:
+    """Resolve per-repo PR targets from persisted pipeline data and live repo config."""
+    repo_cfg_by_id = {repo.id: repo for repo in current_repos}
+
+    normalized_entries = list(repos_list)
+    if len(normalized_entries) <= 1 and _is_multi_repo_configs(current_repos):
+        normalized_entries = json.loads(_build_pipeline_repos_json(current_repos) or "[]")
+
+    repos: dict[str, dict] = {}
+    pipeline_branches: dict[str, str] = {}
+    resolved_entries: list[dict] = []
+
+    for entry in normalized_entries:
+        repo_id = entry.get("id") or entry.get("repo_id", "default")
+        repo_cfg = repo_cfg_by_id.get(repo_id)
+
+        raw_path = entry.get("path") or entry.get("project_dir") or getattr(repo_cfg, "path", "")
+        if not raw_path:
+            raise ValueError(f"Missing path for repo '{repo_id}'")
+        repo_path = (
+            os.path.realpath(os.path.join(workspace_dir, raw_path))
+            if not os.path.isabs(raw_path)
+            else os.path.realpath(raw_path)
+        )
+        if not os.path.exists(os.path.join(repo_path, ".git")):
+            raise ValueError(f"Repo '{repo_id}' path is not a git checkout: {repo_path}")
+
+        base_branch = entry.get("base_branch") or getattr(repo_cfg, "base_branch", "") or fallback_base_branch
+        branch_name = entry.get("branch_name") or entry.get("branch") or fallback_branch
+
+        repos[repo_id] = {
+            "project_dir": repo_path,
+            "base_branch": base_branch,
+        }
+        pipeline_branches[repo_id] = branch_name
+
+        resolved_entry = dict(entry)
+        resolved_entry["id"] = repo_id
+        resolved_entry["path"] = repo_path
+        resolved_entry["base_branch"] = base_branch
+        resolved_entry["branch_name"] = branch_name
+        resolved_entries.append(resolved_entry)
+
+    return repos, pipeline_branches, resolved_entries
 
 
 async def detect_server(base_url: str = "http://localhost:8000", timeout: float = 0.1) -> bool:
@@ -579,20 +656,15 @@ class ForgeApp(App):
                 pass
 
         # ── Multi-repo PR creation ──────────────────────────────────────
-        if len(repos_list) > 1:
-            import json
-
+        if len(repos_list) > 1 or _is_multi_repo_configs(self._repos):
             try:
-                repos: dict[str, dict] = {}
-                pipeline_branches: dict[str, str] = {}
-                for entry in repos_list:
-                    # get_repos() returns "id" and "path"; support both old and new field names
-                    rid = entry.get("id") or entry.get("repo_id", "default")
-                    repos[rid] = {
-                        "project_dir": entry.get("path") or entry.get("project_dir", project_dir),
-                        "base_branch": entry.get("base_branch", base_branch),
-                    }
-                    pipeline_branches[rid] = entry.get("branch_name") or entry.get("branch", branch)
+                repos, pipeline_branches, repos_list = _resolve_multi_repo_pr_targets(
+                    repos_list=repos_list,
+                    current_repos=self._repos,
+                    workspace_dir=project_dir,
+                    fallback_base_branch=base_branch,
+                    fallback_branch=branch,
+                )
 
                 result = await create_prs_multi_repo(
                     task_summaries=task_summaries,
@@ -1143,6 +1215,7 @@ class ForgeApp(App):
             branch_name=branch_name if branch_name else None,
             project_path=self._project_dir,
             project_name=os.path.basename(self._project_dir),
+            repos_json=_build_pipeline_repos_json(repos),
         )
 
         self._pipeline_start_time = asyncio.get_running_loop().time()

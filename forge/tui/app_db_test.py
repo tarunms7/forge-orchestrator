@@ -1,5 +1,6 @@
 """Tests for ForgeApp DB integration."""
 
+import json
 import os
 from unittest.mock import patch
 
@@ -340,5 +341,94 @@ async def test_run_plan_passes_project_path_to_create_pipeline(tmp_project, cent
         assert len(create_calls) == 1
         assert create_calls[0]["project_path"] == tmp_project
         assert create_calls[0]["project_name"] == os.path.basename(tmp_project)
+
+        await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_run_plan_persists_repos_json_for_multi_repo(tmp_project, central_db_dir):
+    """_run_plan should persist repos_json when the TUI is operating in multi-repo mode."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from forge.core.models import RepoConfig
+    from forge.tui.app import ForgeApp
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        await app._init_db()
+
+        backend_dir = os.path.join(tmp_project, "backend")
+        frontend_dir = os.path.join(tmp_project, "frontend")
+        os.makedirs(backend_dir, exist_ok=True)
+        os.makedirs(frontend_dir, exist_ok=True)
+        app._repos = [
+            RepoConfig(id="backend", path=backend_dir, base_branch="main"),
+            RepoConfig(id="frontend", path=frontend_dir, base_branch="develop"),
+        ]
+
+        mock_daemon = MagicMock()
+        mock_graph = MagicMock()
+        mock_graph.tasks = [
+            MagicMock(
+                id="t1",
+                title="T",
+                description="D",
+                files=[],
+                depends_on=[],
+                complexity=MagicMock(value="low"),
+            )
+        ]
+        mock_daemon.plan = AsyncMock(return_value=mock_graph)
+
+        original_create = app._db.create_pipeline
+        create_calls = []
+
+        async def tracked_create(**kwargs):
+            create_calls.append(kwargs)
+            return await original_create(**kwargs)
+
+        app._db.create_pipeline = tracked_create
+
+        mock_preflight_report = MagicMock()
+        mock_preflight_report.passed = True
+        mock_preflight_report.warnings = []
+
+        with (
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon),
+            patch("forge.core.events.EventEmitter"),
+            patch.object(app, "push_screen"),
+            patch(
+                "forge.core.preflight.run_preflight",
+                new_callable=AsyncMock,
+                return_value=mock_preflight_report,
+            ),
+        ):
+            app._bus = MagicMock()
+            app._source = MagicMock()
+            app._source.connect = MagicMock()
+            with (
+                patch("forge.tui.app.EventBus", return_value=app._bus),
+                patch("forge.tui.app.EmbeddedSource", return_value=app._source),
+            ):
+                await app._run_plan("test task")
+
+        assert len(create_calls) == 1
+        repos_json = create_calls[0]["repos_json"]
+        assert repos_json is not None
+        repos_data = json.loads(repos_json)
+        assert repos_data == [
+            {
+                "id": "backend",
+                "path": os.path.realpath(backend_dir),
+                "base_branch": "main",
+                "branch_name": "",
+            },
+            {
+                "id": "frontend",
+                "path": os.path.realpath(frontend_dir),
+                "base_branch": "develop",
+                "branch_name": "",
+            },
+        ]
 
         await app._db.close()
