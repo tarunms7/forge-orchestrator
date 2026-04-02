@@ -21,11 +21,14 @@ jobs:
       - name: Install dependencies
         run: pip install -e '.[dev,web]'
 
+      - name: Pin Ruff
+        run: python -m pip install 'ruff==0.15.8'
+
       - name: Ruff lint
-        run: ruff check forge/
+        run: python -m ruff check forge/
 
       - name: Ruff format check
-        run: ruff format --check forge/
+        run: python -m ruff format --check forge/
 
       - name: Run tests
         run: |
