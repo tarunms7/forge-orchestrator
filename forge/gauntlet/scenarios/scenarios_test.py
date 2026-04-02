@@ -132,6 +132,24 @@ class TestResumeAfterInterrupt:
         result = await run_resume_after_interrupt(pipeline, repos)
         assert result.artifacts.get("interrupt_after_stage") == "execution"
 
+    @pytest.mark.asyncio
+    async def test_resume_round_trip_assertion_passes(self, workspace):
+        base, repos = workspace
+        pipeline = MockPipeline(workspace_dir=base, repos=repos)
+        result = await run_resume_after_interrupt(pipeline, repos)
+        round_trip = next(a for a in result.assertions if a.name == "resume_state_round_trips")
+        assert round_trip.passed is True
+
+    @pytest.mark.asyncio
+    async def test_resume_only_runs_remaining_stages(self, workspace):
+        base, repos = workspace
+        pipeline = MockPipeline(workspace_dir=base, repos=repos)
+        result = await run_resume_after_interrupt(pipeline, repos)
+        remaining = next(
+            a for a in result.assertions if a.name == "resume_only_runs_remaining_stages"
+        )
+        assert remaining.passed is True
+
 
 class TestReviewGateFailure:
     @pytest.mark.asyncio

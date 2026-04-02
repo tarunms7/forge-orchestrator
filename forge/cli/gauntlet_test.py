@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
 from forge.cli.gauntlet import gauntlet
 from forge.gauntlet.models import GauntletResult, ScenarioResult
+from forge.gauntlet.runner import UnknownScenarioError
 
 
 def _make_result(passed: bool = True) -> GauntletResult:
@@ -43,7 +45,18 @@ def test_gauntlet_json_format(mock_runner_cls):
     runner = CliRunner()
     result = runner.invoke(gauntlet, ["--format", "json"], obj={"verbose": False})
     assert result.exit_code == 0
-    assert '"happy_path"' in result.output
+    payload = json.loads(result.output)
+    assert payload["scenarios"][0]["name"] == "happy_path"
+
+
+@patch("forge.gauntlet.runner.GauntletRunner")
+def test_gauntlet_summary_format(mock_runner_cls):
+    mock_runner_cls.return_value.run = AsyncMock(return_value=_make_result())
+
+    runner = CliRunner()
+    result = runner.invoke(gauntlet, ["--format", "summary"], obj={"verbose": False})
+    assert result.exit_code == 0
+    assert result.output.strip() == "Gauntlet: 1/1 passed in 1.0s"
 
 
 @patch("forge.gauntlet.runner.GauntletRunner")
@@ -86,6 +99,18 @@ def test_gauntlet_scenario_filter(mock_runner_cls):
     runner = CliRunner()
     result = runner.invoke(gauntlet, ["-s", "happy_path"], obj={"verbose": False})
     assert result.exit_code == 0
+
+
+@patch("forge.gauntlet.runner.GauntletRunner")
+def test_gauntlet_invalid_scenario_exits_nonzero(mock_runner_cls):
+    mock_runner_cls.return_value.run = AsyncMock(
+        side_effect=UnknownScenarioError("Unknown gauntlet scenario(s): bad")
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(gauntlet, ["-s", "bad"], obj={"verbose": False})
+    assert result.exit_code == 2
+    assert "Unknown gauntlet scenario" in result.output
 
 
 @patch("forge.gauntlet.runner.GauntletRunner")

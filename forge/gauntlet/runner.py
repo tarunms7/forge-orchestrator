@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import time
@@ -11,6 +12,10 @@ from forge.gauntlet.fixtures import create_fixture_workspace
 from forge.gauntlet.mock_pipeline import MockPipeline
 from forge.gauntlet.models import GauntletResult, ScenarioResult
 from forge.gauntlet.scenarios import SCENARIO_FUNCTIONS, SCENARIO_REGISTRY
+
+
+class UnknownScenarioError(ValueError):
+    """Raised when a caller requests gauntlet scenarios that do not exist."""
 
 
 class GauntletRunner:
@@ -32,7 +37,14 @@ class GauntletRunner:
     def _selected_scenarios(self) -> list[str]:
         """Return the list of scenario names to run."""
         if self.scenarios:
-            return [s for s in self.scenarios if s in SCENARIO_REGISTRY]
+            unknown = [s for s in self.scenarios if s not in SCENARIO_REGISTRY]
+            if unknown:
+                available = ", ".join(sorted(SCENARIO_REGISTRY))
+                unknown_str = ", ".join(sorted(set(unknown)))
+                raise UnknownScenarioError(
+                    f"Unknown gauntlet scenario(s): {unknown_str}. Available scenarios: {available}"
+                )
+            return list(self.scenarios)
         return list(SCENARIO_REGISTRY.keys())
 
     async def run(self) -> GauntletResult:
@@ -90,6 +102,18 @@ class GauntletRunner:
             )
 
             result = await scenario_fn(pipeline, repos)
+            if tmp_dir and result.artifacts:
+                tmp_root = os.path.abspath(tmp_dir)
+                retained_artifacts: dict[str, str] = {}
+                for key, value in result.artifacts.items():
+                    if not isinstance(value, str):
+                        retained_artifacts[key] = value
+                        continue
+                    artifact_path = os.path.abspath(value)
+                    if artifact_path == tmp_root or artifact_path.startswith(tmp_root + os.sep):
+                        continue
+                    retained_artifacts[key] = value
+                result.artifacts = retained_artifacts
             result.duration_s = round(time.monotonic() - start, 4)
             result.cost_usd = pipeline.cost_usd
             return result

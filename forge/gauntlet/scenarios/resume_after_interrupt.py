@@ -59,21 +59,25 @@ async def run_resume_after_interrupt(
         )
     )
 
-    # Phase 2: Simulate resume — the pipeline picks up from review stage
-    # In a real pipeline, the daemon would detect completed execution and skip to review
-    # Here we simulate by running remaining stages on a fresh pipeline (same workspace)
+    completed_stage_names = [stage.name for stage in stages if stage.passed]
+    state_path = pipeline.persist_state(
+        task_description=TASK_DESCRIPTION,
+        completed_stages=completed_stage_names,
+        graph=graph,
+    )
+
+    # Phase 2: Simulate resume using persisted state on disk so the scenario
+    # validates state round-tripping rather than sharing in-memory objects.
     resume_pipeline = MockPipeline(
         workspace_dir=pipeline.workspace_dir,
         repos=pipeline.repos,
         chaos=pipeline.chaos,
     )
-
-    # Resumed pipeline runs review and integration
-    review = await resume_pipeline.run_review(graph)
-    stages.append(review)
-
-    integration = await resume_pipeline.run_integration()
-    stages.append(integration)
+    task_description, loaded_completed_stages, loaded_graph, _ = resume_pipeline.load_state()
+    resumed_stages = await resume_pipeline.resume_from_state()
+    stages.extend(resumed_stages)
+    review = next((stage for stage in resumed_stages if stage.name == "review"), None)
+    integration = next((stage for stage in resumed_stages if stage.name == "integration"), None)
 
     # Assert: completed stages stay completed (preflight/planning/contracts/execution from phase 1)
     phase1_passed = all(s.passed for s in stages[:4])
@@ -88,7 +92,7 @@ async def run_resume_after_interrupt(
     )
 
     # Assert: remaining stages execute and complete after resume
-    phase2_passed = review.passed and integration.passed
+    phase2_passed = review is not None and review.passed and integration is not None and integration.passed
     assertions.append(
         AssertionResult(
             name="remaining_stages_complete_after_resume",
@@ -96,6 +100,33 @@ async def run_resume_after_interrupt(
             message="Review and integration completed after resume"
             if phase2_passed
             else f"Post-resume failures: review={review.passed}, integration={integration.passed}",
+        )
+    )
+
+    state_round_trip_ok = (
+        task_description == TASK_DESCRIPTION
+        and loaded_completed_stages == completed_stage_names
+        and loaded_graph is not None
+        and [task.id for task in loaded_graph.tasks] == [task.id for task in graph.tasks]
+    )
+    assertions.append(
+        AssertionResult(
+            name="resume_state_round_trips",
+            passed=state_round_trip_ok,
+            message="Resume state persisted and reloaded correctly"
+            if state_round_trip_ok
+            else "Resume state did not reload the expected task graph",
+        )
+    )
+
+    resumed_only_remaining_stages = [stage.name for stage in resumed_stages] == ["review", "integration"]
+    assertions.append(
+        AssertionResult(
+            name="resume_only_runs_remaining_stages",
+            passed=resumed_only_remaining_stages,
+            message="Resume skipped completed work and ran only review/integration"
+            if resumed_only_remaining_stages
+            else f"Resume ran stages: {[stage.name for stage in resumed_stages]}",
         )
     )
 
@@ -124,8 +155,8 @@ async def run_resume_after_interrupt(
         )
     )
 
-    artifacts["workspace_dir"] = pipeline.workspace_dir
     artifacts["interrupt_after_stage"] = "execution"
+    artifacts["resume_state_file"] = state_path
     scenario_passed = all(a.passed for a in assertions)
     return ScenarioResult(
         name="resume_after_interrupt",

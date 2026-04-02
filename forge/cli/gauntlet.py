@@ -15,7 +15,7 @@ import click
 @click.option(
     "--live", is_flag=True, default=False, help="Run against real Claude SDK (expensive, slow)"
 )
-@click.option("--format", "fmt", type=click.Choice(["rich", "json"]), default="rich")
+@click.option("--format", "fmt", type=click.Choice(["rich", "json", "summary"]), default="rich")
 @click.option("--output", "-o", type=click.Path(), default=None, help="Write JSON report to file")
 @click.option("--verbose", "-v", is_flag=True, default=False)
 @click.pass_context
@@ -30,7 +30,7 @@ def gauntlet(
 ) -> None:
     """Run the Forge gauntlet — end-to-end pipeline scenario tests."""
     from forge.gauntlet.report import format_report_json, format_report_rich, format_report_summary
-    from forge.gauntlet.runner import GauntletRunner
+    from forge.gauntlet.runner import GauntletRunner, UnknownScenarioError
 
     if live and not chaos:
         click.echo(
@@ -45,6 +45,8 @@ def gauntlet(
 
     try:
         result = asyncio.run(runner.run())
+    except UnknownScenarioError as e:
+        raise click.BadParameter(str(e), param_hint="--scenario") from e
     except KeyboardInterrupt:
         click.echo("\nGauntlet interrupted by user.")
         raise SystemExit(1)
@@ -58,17 +60,17 @@ def gauntlet(
 
     if fmt == "rich":
         format_report_rich(result, verbose=verbose)
-    else:
+        click.echo(format_report_summary(result))
+    elif fmt == "json":
         click.echo(format_report_json(result))
+    else:
+        click.echo(format_report_summary(result))
 
     if output:
         json_str = format_report_json(result)
         with open(output, "w", encoding="utf-8") as f:
             f.write(json_str)
-        click.echo(f"Report written to {output}")
-
-    # Print one-line summary for CI
-    click.echo(format_report_summary(result))
+        click.echo(f"Report written to {output}", err=(fmt == "json"))
 
     if not result.passed:
         raise SystemExit(1)
