@@ -78,6 +78,74 @@ async def test_load_recent_pipelines_includes_id(tmp_project, central_db_dir):
 
 
 @pytest.mark.asyncio
+async def test_load_recent_pipelines_derives_multi_repo_pr_counts(tmp_project, central_db_dir):
+    """Recent history should reflect per-repo PR URLs stored inside repos_json."""
+    from forge.tui.app import ForgeApp
+
+    repos = [
+        {
+            "repo_id": "wizbridge",
+            "project_dir": "/tmp/wizbridge",
+            "base_branch": "main",
+            "branch_name": "forge/fix-thing",
+            "pr_url": "https://github.com/org/wizbridge/pull/1",
+        },
+        {
+            "repo_id": "temp",
+            "project_dir": "/tmp/temp",
+            "base_branch": "main",
+            "branch_name": "forge/fix-thing",
+            "pr_url": "https://github.com/org/temp/pull/2",
+        },
+    ]
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        await app._init_db()
+        await app._db.create_pipeline(
+            id="test-multi",
+            description="Multi-repo pipeline",
+            project_dir="/tmp/workspace",
+            model_strategy="auto",
+            repos_json=json.dumps(repos),
+        )
+        result = await app._load_recent_pipelines()
+        assert len(result) == 1
+        assert result[0]["repo_count"] == 2
+        assert result[0]["pr_count"] == 2
+        assert result[0]["pr_url"] is None
+        await app._db.close()
+
+
+@pytest.mark.asyncio
+async def test_load_recent_pipelines_recovers_pr_state_from_events(tmp_project, central_db_dir):
+    """Older rows without persisted PR URLs should still render correctly from event history."""
+    from forge.tui.app import ForgeApp
+
+    with patch("forge.core.paths.forge_data_dir", return_value=central_db_dir):
+        app = ForgeApp(project_dir=tmp_project)
+        await app._init_db()
+        await app._db.create_pipeline(
+            id="test-event-pr",
+            description="Event-backed PR",
+            project_dir="/tmp/project",
+            model_strategy="auto",
+        )
+        await app._db.log_event(
+            pipeline_id="test-event-pr",
+            task_id=None,
+            event_type="pipeline:pr_created",
+            payload={"pr_url": "https://github.com/org/repo/pull/42"},
+        )
+        result = await app._load_recent_pipelines()
+        assert len(result) == 1
+        assert result[0]["pr_url"] == "https://github.com/org/repo/pull/42"
+        assert result[0]["pr_count"] == 1
+        assert result[0]["repo_count"] == 1
+        await app._db.close()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_replay_loading(tmp_project, central_db_dir):
     """on_pipeline_list_selected should create replay state and push read-only screen."""
     from forge.tui.app import ForgeApp

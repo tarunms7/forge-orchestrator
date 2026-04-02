@@ -44,15 +44,39 @@ RESUMABLE_STATUSES: set[str] = {
 }
 
 
+def _pr_status_counts(pipeline: dict) -> tuple[int, int]:
+    """Return (pr_count, repo_count) for single- and multi-repo history rows."""
+    repo_count = int(pipeline.get("repo_count") or 1)
+    pr_count = int(pipeline.get("pr_count") or 0)
+    if not pipeline.get("repo_count"):
+        pr_count = 1 if pipeline.get("pr_url") else 0
+    return pr_count, max(1, repo_count)
+
+
 def is_pipeline_resumable(pipeline: dict) -> bool:
     """Return True if the pipeline can be resumed, False if read-only."""
     status = pipeline.get("status", "unknown")
     if status in RESUMABLE_STATUSES:
         return True
-    # complete without PR is resumable (needs PR creation)
-    if status == "complete" and not pipeline.get("pr_url"):
-        return True
+    # complete without a PR (or with only some multi-repo PRs created) is resumable
+    if status == "complete":
+        pr_count, repo_count = _pr_status_counts(pipeline)
+        if pr_count < repo_count:
+            return True
     return False
+
+
+def _format_pr_progress(pr_count: int, repo_count: int) -> str:
+    """Format PR progress text for history rows."""
+    if repo_count <= 1:
+        return "✓ PR created" if pr_count else "✓ Done — no PR yet"
+    if pr_count >= repo_count:
+        noun = "PR" if pr_count == 1 else "PRs"
+        return f"✓ {pr_count} {noun} created"
+    if pr_count > 0:
+        noun = "PR" if pr_count == 1 else "PRs"
+        return f"✓ {pr_count}/{repo_count} {noun} created"
+    return "✓ Done — no PRs yet"
 
 
 def _progress_text(pipeline: dict) -> str:
@@ -64,9 +88,8 @@ def _progress_text(pipeline: dict) -> str:
     if status in ("executing", "interrupted", "partial_success", "retrying"):
         return f"{done}/{total} tasks done"
     if status == "complete":
-        if pipeline.get("pr_url"):
-            return "✓ PR created"
-        return "✓ Done — no PR yet"
+        pr_count, repo_count = _pr_status_counts(pipeline)
+        return _format_pr_progress(pr_count, repo_count)
     if status == "planning":
         return "Planning…"
     if status == "planned":

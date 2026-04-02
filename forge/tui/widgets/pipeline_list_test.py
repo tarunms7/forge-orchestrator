@@ -261,11 +261,19 @@ class TestResumeEligibility:
             is False
         )
 
+    def test_complete_multi_repo_with_all_prs_is_read_only(self):
+        assert (
+            is_pipeline_resumable({"status": "complete", "repo_count": 2, "pr_count": 2}) is False
+        )
+
     def test_complete_without_pr_is_resumable(self):
         assert is_pipeline_resumable({"status": "complete", "pr_url": None}) is True
 
     def test_complete_empty_pr_is_resumable(self):
         assert is_pipeline_resumable({"status": "complete"}) is True
+
+    def test_complete_multi_repo_with_missing_prs_is_resumable(self):
+        assert is_pipeline_resumable({"status": "complete", "repo_count": 2, "pr_count": 1}) is True
 
     def test_cancelled_is_read_only(self):
         assert is_pipeline_resumable({"status": "cancelled"}) is False
@@ -300,6 +308,14 @@ class TestProgressText:
     def test_complete_without_pr(self):
         p = {"status": "complete", "pr_url": None}
         assert _progress_text(p) == "✓ Done — no PR yet"
+
+    def test_complete_multi_repo_with_all_prs(self):
+        p = {"status": "complete", "repo_count": 2, "pr_count": 2}
+        assert _progress_text(p) == "✓ 2 PRs created"
+
+    def test_complete_multi_repo_with_partial_prs(self):
+        p = {"status": "complete", "repo_count": 3, "pr_count": 1}
+        assert _progress_text(p) == "✓ 1/3 PR created"
 
     def test_planning(self):
         assert _progress_text({"status": "planning"}) == "Planning…"
