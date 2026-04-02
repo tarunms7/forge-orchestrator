@@ -190,7 +190,9 @@ class ForgeApp(App):
                 pr_url = r.get("pr_url")
                 pr_count, repo_count = _recent_pipeline_pr_counts(r)
                 try:
-                    pr_events = await self._db.list_events(r["id"], event_type="pipeline:pr_created")
+                    pr_events = await self._db.list_events(
+                        r["id"], event_type="pipeline:pr_created"
+                    )
                 except Exception:
                     pr_events = []
                 if pr_events:

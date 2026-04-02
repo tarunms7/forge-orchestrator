@@ -62,10 +62,7 @@ def format_question_card(question: dict) -> str:
 
 def format_read_only_notice(notice: str) -> str:
     """Format a notice for replay/history mode where answers cannot be submitted."""
-    return (
-        f"[bold {ACCENT_BLUE}]Replay is read-only[/]\n"
-        f"[{TEXT_SECONDARY}]{_escape(notice)}[/]"
-    )
+    return f"[bold {ACCENT_BLUE}]Replay is read-only[/]\n[{TEXT_SECONDARY}]{_escape(notice)}[/]"
 
 
 def format_chat_idle_notice() -> str:
