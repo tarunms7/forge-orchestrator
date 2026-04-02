@@ -61,7 +61,7 @@ def test_final_approval_screen_default_pipeline_branch():
 
 
 def test_show_pr_url_updates_widget():
-    """show_pr_url should update the #pr-url Static widget."""
+    """show_pr_url should update the launch status with the PR URL."""
     screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
     # Mock query_one to return a mock Static widget
     mock_widget = MagicMock()
@@ -71,10 +71,10 @@ def test_show_pr_url_updates_widget():
 
     # query_one is called for #pr-url and ShortcutBar (for _update_shortcut_bar)
     assert screen.query_one.call_count >= 1
-    mock_widget.update.assert_called_once()
-    call_arg = mock_widget.update.call_args[0][0]
+    assert mock_widget.update.call_count >= 1
+    call_arg = mock_widget.update.call_args_list[-1].args[0]
     assert "https://github.com/org/repo/pull/42" in call_arg
-    assert "PR created" in call_arg
+    assert "PR live" in call_arg
 
 
 def test_show_pr_url_handles_missing_widget():
@@ -83,6 +83,19 @@ def test_show_pr_url_handles_missing_widget():
     screen.query_one = MagicMock(side_effect=Exception("no widget"))
     # Should not raise
     screen.show_pr_url("https://example.com/pull/1")
+
+
+def test_show_pipeline_target_updates_widgets():
+    """show_pipeline_target should refresh banner/status copy once branch resolves."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="")
+    mock_widget = MagicMock()
+    screen.query_one = MagicMock(return_value=mock_widget)
+
+    screen.show_pipeline_target("forge/ready", "main")
+
+    updated = " ".join(call.args[0] for call in mock_widget.update.call_args_list)
+    assert "forge/ready" in updated
+    assert "main" in updated
 
 
 def test_action_view_diff_no_branch_notifies():
@@ -607,6 +620,13 @@ class TestFinalApprovalShortcutBar:
         after_labels = [label for _, label in after]
         assert "Enter" not in after_keys  # Create PR removed
         assert "Done" in after_labels  # Done added
+
+    def test_create_pr_action_disabled_after_pr_created(self):
+        """Create PR should be disabled once the PR already exists."""
+        screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+        assert screen.check_action("create_pr", ()) is True
+        screen._pr_created = True
+        assert screen.check_action("create_pr", ()) is False
 
     def test_show_pr_url_updates_shortcuts(self):
         """show_pr_url should set _pr_created and update shortcut bar."""

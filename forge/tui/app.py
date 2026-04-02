@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -38,6 +39,25 @@ def _escape_markup(text: str) -> str:
     Textual notifications/toasts.
     """
     return str(text).replace("[", "\\[")
+
+
+def _recent_pipeline_pr_counts(row: dict) -> tuple[int, int]:
+    """Return (pr_count, repo_count) for a recent pipeline DB row."""
+    pr_url = row.get("pr_url")
+    repos_json = row.get("repos_json")
+    if not repos_json:
+        return (1 if pr_url else 0), 1
+    try:
+        repos = json.loads(repos_json)
+    except Exception:
+        return (1 if pr_url else 0), 1
+    if not isinstance(repos, list) or not repos:
+        return (1 if pr_url else 0), 1
+    repo_count = max(1, len(repos))
+    pr_count = sum(1 for repo in repos if isinstance(repo, dict) and repo.get("pr_url"))
+    if repo_count == 1 and not pr_count and pr_url:
+        pr_count = 1
+    return pr_count, repo_count
 
 
 def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
@@ -165,22 +185,53 @@ class ForgeApp(App):
             return []
         try:
             rows = await self._db.get_pipeline_list_with_counts(limit=10)
-            return [
-                {
-                    "id": r["id"],
-                    "description": r.get("description") or "",
-                    "status": r.get("status") or "unknown",
-                    "created_at": r.get("created_at") or "",
-                    "cost": r.get("cost") or 0.0,
-                    "total_cost_usd": r.get("cost") or 0.0,
-                    "project_dir": r.get("project_dir") or "",
-                    "total_tasks": r.get("total_tasks", 0),
-                    "tasks_done": r.get("tasks_done", 0),
-                    "tasks_error": r.get("tasks_error", 0),
-                    "pr_url": r.get("pr_url"),
-                }
-                for r in rows
-            ]
+            recent: list[dict] = []
+            for r in rows:
+                pr_url = r.get("pr_url")
+                pr_count, repo_count = _recent_pipeline_pr_counts(r)
+                try:
+                    pr_events = await self._db.list_events(r["id"], event_type="pipeline:pr_created")
+                except Exception:
+                    pr_events = []
+                if pr_events:
+                    event_urls: list[str] = []
+                    event_repo_ids: set[str] = set()
+                    for evt in pr_events:
+                        payload = evt.payload or {}
+                        if not isinstance(payload, dict):
+                            continue
+                        url = payload.get("pr_url")
+                        repo_id = payload.get("repo_id")
+                        if url:
+                            event_urls.append(url)
+                        if repo_id:
+                            event_repo_ids.add(repo_id)
+                    unique_urls = list(dict.fromkeys(event_urls))
+                    event_pr_count = len(event_repo_ids) if event_repo_ids else len(unique_urls)
+                    if event_pr_count:
+                        pr_count = max(pr_count, event_pr_count)
+                        if repo_count == 1 and event_pr_count > 1:
+                            repo_count = event_pr_count
+                        if not pr_url and len(unique_urls) == 1:
+                            pr_url = unique_urls[0]
+                recent.append(
+                    {
+                        "id": r["id"],
+                        "description": r.get("description") or "",
+                        "status": r.get("status") or "unknown",
+                        "created_at": r.get("created_at") or "",
+                        "cost": r.get("cost") or 0.0,
+                        "total_cost_usd": r.get("cost") or 0.0,
+                        "project_dir": r.get("project_dir") or "",
+                        "total_tasks": r.get("total_tasks", 0),
+                        "tasks_done": r.get("tasks_done", 0),
+                        "tasks_error": r.get("tasks_error", 0),
+                        "pr_url": pr_url,
+                        "pr_count": pr_count,
+                        "repo_count": repo_count,
+                    }
+                )
+            return recent
         except Exception:
             logger.debug("Failed to load pipeline history", exc_info=True)
             return []
@@ -331,7 +382,7 @@ class ForgeApp(App):
             try:
                 screen = self.screen
                 if isinstance(screen, FinalApprovalScreen):
-                    screen._pipeline_branch = branch
+                    screen.show_pipeline_target(branch, self._cached_base_branch)
             except Exception:
                 pass
 
@@ -706,6 +757,11 @@ class ForgeApp(App):
             )
             if pr_url:
                 self._state.apply_event("pipeline:pr_created", {"pr_url": pr_url})
+                if self._db and self._pipeline_id:
+                    try:
+                        await self._db.set_pipeline_pr_url(self._pipeline_id, pr_url)
+                    except Exception:
+                        logger.warning("Failed to persist pipeline PR URL", exc_info=True)
                 # Show PR URL inline on the FinalApprovalScreen
                 try:
                     screen = self.screen

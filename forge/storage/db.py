@@ -971,6 +971,7 @@ class Database:
                         "tasks_done": sum(1 for t in tasks if t.state == "done"),
                         "tasks_error": sum(1 for t in tasks if t.state == "error"),
                         "pr_url": p.pr_url,
+                        "repos_json": p.repos_json,
                         "project_dir": p.project_dir,
                     }
                 )

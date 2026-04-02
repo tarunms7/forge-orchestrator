@@ -61,16 +61,25 @@ def _format_launch_banner(
     *,
     partial: bool = False,
     multi_repo: bool = False,
+    pr_created: bool = False,
+    pr_count: int = 0,
     stats: dict | None = None,
 ) -> str:
     stats = stats or {}
     counts = _summarize_task_states(tasks)
     title = "RECOVERY BAY" if partial else "LAUNCH BAY"
-    subtitle = (
-        f"[bold {ACCENT_YELLOW}]Completed work can ship now[/]"
-        if partial
-        else f"[bold {ACCENT_GREEN}]Ready to open the pull request[/]"
-    )
+    if pr_created:
+        subtitle = (
+            f"[bold {ACCENT_GREEN}]{pr_count} pull request{'s' if pr_count != 1 else ''} live[/]"
+            if pr_count
+            else f"[bold {ACCENT_GREEN}]Pull request live[/]"
+        )
+    else:
+        subtitle = (
+            f"[bold {ACCENT_YELLOW}]Completed work can ship now[/]"
+            if partial
+            else f"[bold {ACCENT_GREEN}]Ready to open the pull request[/]"
+        )
     progress_parts = [f"{counts['done']} shipped"]
     if counts["active"]:
         progress_parts.append(f"{counts['active']} active")
@@ -82,13 +91,18 @@ def _format_launch_banner(
         progress_parts.append(f"{counts['cancelled']} cancelled")
     if multi_repo and stats.get("repo_count"):
         progress_parts.append(f"{stats['repo_count']} repos coordinated")
-    if pipeline_branch:
+    if multi_repo:
+        target = (
+            f"[{TEXT_SECONDARY}]Launch opens one pull request per repo into its configured "
+            "base branch.[/]"
+        )
+    elif pipeline_branch:
         target = (
             f"[{TEXT_SECONDARY}]PR target:[/] [bold {ACCENT_BLUE}]{pipeline_branch}[/] "
             f"[{TEXT_SECONDARY}]→[/] [bold {ACCENT_BLUE}]{base_branch}[/]"
         )
     else:
-        target = f"[{TEXT_MUTED}]PR target pending branch selection[/]"
+        target = f"[{TEXT_MUTED}]Branch target loading…[/]"
     return "\n".join(
         [
             f"[bold {ACCENT_GOLD}]{title}[/]",
@@ -99,22 +113,28 @@ def _format_launch_banner(
     )
 
 
-def _format_pr_status(
+def _format_launch_status(
     pipeline_branch: str,
     base_branch: str,
     *,
     multi_repo: bool = False,
+    per_repo_pr_urls: dict[str, str] | None = None,
 ) -> str:
-    if not pipeline_branch:
-        return f"[{TEXT_MUTED}]No pipeline branch available yet.[/]"
+    per_repo_pr_urls = per_repo_pr_urls or {}
+    if per_repo_pr_urls:
+        lines = [f"[bold {ACCENT_GREEN}]PR live[/]"]
+        for rid, url in sorted(per_repo_pr_urls.items()):
+            lines.append(f"[bold {ACCENT_GREEN}]{rid}:[/] [underline {ACCENT_BLUE}]{url}[/]")
+        return "\n".join(lines)
     if multi_repo:
         return (
-            f"[bold {ACCENT_CYAN}]PR Targets[/]\n"
-            f"[{TEXT_SECONDARY}]Forge will open per-repo pull requests into the "
-            "configured base branches when you launch.[/]"
+            f"[bold {ACCENT_CYAN}]Launch plan[/]\n"
+            f"[{TEXT_SECONDARY}]Press Enter to push the prepared repo branches and open the PRs.[/]"
         )
+    if not pipeline_branch:
+        return f"[{TEXT_MUTED}]Branch target loading…[/]"
     return (
-        f"[bold {ACCENT_CYAN}]PR Target[/]\n"
+        f"[bold {ACCENT_CYAN}]Launch plan[/]\n"
         f"[{TEXT_SECONDARY}]Forge will open a pull request from "
         f"[bold {ACCENT_BLUE}]{pipeline_branch}[/] into "
         f"[bold {ACCENT_BLUE}]{base_branch}[/].[/]"
@@ -397,14 +417,13 @@ class FinalApprovalScreen(Screen):
     }
     #approval-container {
         width: 1fr;
-        max-width: 108;
+        max-width: 116;
         padding: 1 2 2 2;
     }
     #launch-banner,
     #stats,
-    #pr-url,
-    #task-table,
-    #approval-help {
+    #launch-status,
+    #task-table {
         background: #11161d;
         border: tall #263041;
         padding: 1 2;
@@ -418,7 +437,7 @@ class FinalApprovalScreen(Screen):
     #stats {
         margin-top: 1;
     }
-    #pr-url {
+    #launch-status {
         margin-top: 1;
     }
     #tasks-header {
@@ -428,7 +447,7 @@ class FinalApprovalScreen(Screen):
     #task-table {
         margin-top: 1;
     }
-    #approval-help {
+    #approval-container FollowUpInput {
         margin-top: 1;
     }
     """
@@ -455,9 +474,12 @@ class FinalApprovalScreen(Screen):
         self._per_repo_pr_urls = per_repo_pr_urls or {}
         self._repos = repos or []
         self._pr_created = False
+        self._single_pr_url = ""
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Dynamically enable/disable actions based on partial mode."""
+        if action == "create_pr":
+            return not self._pr_created
         if action in ("rerun", "skip_failed"):
             return self._partial  # only available in partial mode
         if action == "new_task":
@@ -472,7 +494,7 @@ class FinalApprovalScreen(Screen):
     async def _check_behind_main(self) -> None:
         """Check if pipeline branch is behind the base branch and show warning."""
         project_dir = self._get_project_dir()
-        if not project_dir or not self._pipeline_branch:
+        if self._multi_repo or not project_dir or not self._pipeline_branch:
             return
         base = self._base_branch
         try:
@@ -512,49 +534,27 @@ class FinalApprovalScreen(Screen):
     def compose(self):
         files_count = self._stats.get("files", 0)
         pr_label = "Create PRs" if self._multi_repo else "Create PR"
-        if self._partial:
-            help_text = (
-                f"[{TEXT_SECONDARY}]Enter launches completed work  •  d inspects the diff  "
-                f"•  r retries failures  •  s skips failures  •  f opens follow-up input[/]"
-            )
-        else:
-            help_text = (
-                f"[{TEXT_SECONDARY}]Enter launches PR creation  •  d inspects the diff  "
-                f"•  f continues on the same branch  •  n starts a fresh mission[/]"
-            )
         with VerticalScroll(id="approval-scroll"):
             with Center():
                 with Vertical(id="approval-container"):
                     yield Static(
-                        _format_launch_banner(
-                            self._tasks,
-                            self._pipeline_branch,
-                            self._base_branch,
-                            partial=self._partial,
-                            multi_repo=self._multi_repo,
-                            stats=self._stats,
-                        ),
+                        self._render_launch_banner(),
                         id="launch-banner",
                     )
                     yield Static("", id="behind-main-warning")  # populated by _check_behind_main
+                    yield Static(
+                        self._render_launch_status(),
+                        id="launch-status",
+                    )
                     yield Static(
                         f"[bold {ACCENT_GOLD}]OUTCOME SUMMARY[/]\n"
                         f"{format_summary_stats(self._stats, multi_repo=self._multi_repo)}",
                         id="stats",
                     )
-                    yield Static(
-                        _format_pr_status(
-                            self._pipeline_branch,
-                            self._base_branch,
-                            multi_repo=self._multi_repo,
-                        ),
-                        id="pr-url",
-                    )
                     yield Static("[bold]Task outcomes[/]", id="tasks-header")
                     yield Static(
                         format_task_table(self._tasks, multi_repo=self._multi_repo), id="task-table"
                     )
-                    yield Static(help_text, id="approval-help")
                     yield FollowUpInput(
                         branch=self._pipeline_branch,
                         files_changed=files_count,
@@ -580,6 +580,47 @@ class FinalApprovalScreen(Screen):
                     ("Esc", "Back"),
                 ]
             )
+
+    def _pr_count(self) -> int:
+        if self._per_repo_pr_urls:
+            return len(self._per_repo_pr_urls)
+        return 1 if self._single_pr_url else 0
+
+    def _render_launch_banner(self) -> str:
+        return _format_launch_banner(
+            self._tasks,
+            self._pipeline_branch,
+            self._base_branch,
+            partial=self._partial,
+            multi_repo=self._multi_repo,
+            pr_created=self._pr_created,
+            pr_count=self._pr_count(),
+            stats=self._stats,
+        )
+
+    def _render_launch_status(self) -> str:
+        if self._single_pr_url:
+            return (
+                f"[bold {ACCENT_GREEN}]PR live[/]\n"
+                f"[{TEXT_SECONDARY}]Review, merge, or keep iterating on the branch.[/]\n"
+                f"[underline {ACCENT_BLUE}]{self._single_pr_url}[/]"
+            )
+        return _format_launch_status(
+            self._pipeline_branch,
+            self._base_branch,
+            multi_repo=self._multi_repo,
+            per_repo_pr_urls=self._per_repo_pr_urls,
+        )
+
+    def _refresh_launch_widgets(self) -> None:
+        try:
+            self.query_one("#launch-banner", Static).update(self._render_launch_banner())
+        except Exception:
+            pass
+        try:
+            self.query_one("#launch-status", Static).update(self._render_launch_status())
+        except Exception:
+            pass
 
     def _update_shortcut_bar(self) -> None:
         """Update shortcut bar based on current mode and PR state."""
@@ -616,26 +657,20 @@ class FinalApprovalScreen(Screen):
     def show_pr_url(self, url: str, repo_id: str | None = None) -> None:
         """Display PR URL(s) inline, with optional per-repo labeling."""
         self._pr_created = True
-        try:
-            pr_widget = self.query_one("#pr-url", Static)
-            if repo_id is not None:
-                self._per_repo_pr_urls[repo_id] = url
-                # Render all accumulated repo PR URLs
-                pr_lines = [f"[bold {ACCENT_GREEN}]PR created[/]"]
-                for rid, rurl in self._per_repo_pr_urls.items():
-                    pr_lines.append(
-                        f"[bold {ACCENT_GREEN}]{rid}:[/] [underline {ACCENT_BLUE}]{rurl}[/]"
-                    )
-                pr_widget.update("\n".join(pr_lines))
-            else:
-                pr_widget.update(
-                    f"[bold {ACCENT_GREEN}]PR created[/]\n"
-                    f"[{TEXT_SECONDARY}]Review, merge, or keep iterating on the branch.[/]\n"
-                    f"[underline {ACCENT_BLUE}]{url}[/]"
-                )
-        except Exception:
-            pass
+        if repo_id is not None:
+            self._per_repo_pr_urls[repo_id] = url
+        else:
+            self._single_pr_url = url
+        self._refresh_launch_widgets()
         self._update_shortcut_bar()
+
+    def show_pipeline_target(self, branch: str, base_branch: str) -> None:
+        """Update branch target info after the screen is already mounted."""
+        self._pipeline_branch = branch
+        self._base_branch = base_branch
+        self._refresh_launch_widgets()
+        if not self._multi_repo and self.is_running:
+            safe_create_task(self._check_behind_main(), logger=logger, name="refresh-behind-main")
 
     def action_new_task(self) -> None:
         """Return to HomeScreen for a new task, cleaning up pipeline state."""

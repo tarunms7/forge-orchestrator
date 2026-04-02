@@ -1544,6 +1544,7 @@ async def test_get_pipeline_list_with_counts(db: Database):
     assert p2["total_tasks"] == 1
     assert p2["tasks_done"] == 1
     assert p2["tasks_error"] == 0
+    assert "repos_json" in p2
 
 
 async def test_get_pipeline_list_with_counts_respects_limit(db: Database):
