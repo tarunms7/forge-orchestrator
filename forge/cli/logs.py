@@ -8,7 +8,6 @@ import os
 
 import click
 from rich.console import Console
-from rich.text import Text
 
 # ── Color mapping for event types ──────────────────────────────────────
 _EVENT_COLORS: dict[str, str] = {
@@ -22,6 +21,16 @@ _EVENT_COLORS: dict[str, str] = {
     "info": "cyan",
     "start": "cyan",
     "pending": "dim",
+}
+
+_ANSI_CODES: dict[str, str] = {
+    "green": "32",
+    "red": "31",
+    "yellow": "33",
+    "cyan": "36",
+    "blue": "34",
+    "white": "37",
+    "dim": "2",
 }
 
 
@@ -46,6 +55,14 @@ def _summarize_payload(payload: dict | None, max_len: int = 120) -> str:
     # Fallback: compact JSON
     text = json.dumps(payload, default=str, separators=(",", ":"))
     return text[:max_len] + "..." if len(text) > max_len else text
+
+
+def _ansi(text: str, style: str) -> str:
+    """Wrap text in ANSI styling so color survives non-terminal test buffers."""
+    code = _ANSI_CODES.get(style)
+    if not code:
+        return text
+    return f"\x1b[{code}m{text}\x1b[0m"
 
 
 async def _fetch_events(db_path: str, pipeline_id: str) -> list[dict]:
@@ -101,24 +118,23 @@ def logs(pipeline_id: str, db_path: str | None) -> None:
 
     console = Console()
     for ev in events:
-        line = Text()
-
-        # Timestamp (dim)
         ts = ev["created_at"] or "unknown"
-        line.append(f"{ts}  ", style="dim")
-
-        # Event type (color-coded)
         etype = ev["event_type"]
         color = _color_for_event(etype)
-        line.append(f"[{etype}]", style=color)
+        parts = [_ansi(ts, "dim"), _ansi(f"[{etype}]", color)]
 
-        # Task ID if present
         if ev["task_id"]:
-            line.append(f"  task={ev['task_id']}", style="blue")
+            parts.append(_ansi(f"task={ev['task_id']}", "blue"))
 
-        # Payload summary
         summary = _summarize_payload(ev["payload"])
         if summary:
-            line.append(f"  {summary}", style="white")
+            parts.append(_ansi(summary, "white"))
 
-        console.print(line)
+        console.print(
+            "  ".join(parts),
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+            overflow="ignore",
+            no_wrap=True,
+        )

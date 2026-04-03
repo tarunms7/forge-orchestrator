@@ -83,6 +83,7 @@ class TuiState:
 
         # Merge progress substatus (task_id → step label)
         self.merge_substatus: dict[str, str] = {}
+        self.scheduling: dict | None = None
 
         # Multi-repo state
         self.repos: list[dict] = []
@@ -178,6 +179,10 @@ class TuiState:
         if tid and step:
             self.merge_substatus[tid] = step
             self._notify("tasks")  # triggers task list re-render
+
+    def _on_scheduling_update(self, data: dict) -> None:
+        self.scheduling = data
+        self._notify("scheduling")
 
     def _on_agent_output(self, data: dict) -> None:
         tid = data.get("task_id", "")
@@ -455,6 +460,7 @@ class TuiState:
         self.error = None
         self.total_cost_usd = 0.0
         self.planning_stage = ""
+        self.scheduling = None
         self.phase = "planning"
         self._notify("phase")
 
@@ -670,6 +676,7 @@ class TuiState:
         self.integration_checks.clear()
         self.integration_prompt = None
         self.integration_final_gate = None
+        self.scheduling = None
         # Multi-repo state
         self.repos = []
         self.per_repo_pr_urls = {}
@@ -719,6 +726,7 @@ class TuiState:
         "task:merge_progress": _on_merge_progress,
         "task:awaiting_approval": _on_awaiting_approval,
         "task:review_diff": _on_review_diff,
+        "pipeline:scheduling_update": _on_scheduling_update,
         "planner:output": _on_planner_output,
         "planning:question": _on_planning_question,
         "planning:answer": _on_planning_answer,

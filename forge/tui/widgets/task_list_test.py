@@ -158,6 +158,42 @@ def test_format_task_line_selected_with_files_valid_markup():
     console.print(line)  # Will raise MarkupError if broken
 
 
+def test_format_task_line_ready_priority_hint():
+    task = {
+        "id": "t1",
+        "title": "Auth",
+        "state": "todo",
+        "_queue_status": "ready",
+        "_priority_rank": 1,
+    }
+    line = format_task_line(task, selected=False)
+    assert "NEXT" in line
+
+
+def test_format_task_line_waiting_hint():
+    task = {
+        "id": "t1",
+        "title": "Auth UI",
+        "state": "todo",
+        "_queue_status": "waiting",
+        "_blocked_reason": "Waiting on auth-api, auth-db",
+    }
+    line = format_task_line(task, selected=False)
+    assert "wait auth-api +1" in line
+
+
+def test_format_task_line_human_wait_hint():
+    task = {
+        "id": "t1",
+        "title": "Review contract",
+        "state": "awaiting_input",
+        "_queue_status": "human_wait",
+        "_blocked_reason": "Human decision required before resume",
+    }
+    line = format_task_line(task, selected=False)
+    assert "needs input" in line
+
+
 # ── Multi-repo display tests ─────────────────────────────────────────────
 
 

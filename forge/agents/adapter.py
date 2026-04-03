@@ -111,7 +111,8 @@ def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> 
             "DON'T ASK when:\n"
             "- The spec is clear and you know exactly what to do\n"
             "- It's a naming, formatting, or minor style choice\n"
-            "- You can verify your assumption by reading existing code\n\n"
+            "- You can verify your assumption by reading existing code\n"
+            "- You're at least 80% confident and can validate the decision with code or tests\n\n"
             "EXAMPLES:\n"
             '- Spec says "add caching" but doesn\'t mention TTL or eviction strategy → ASK\n'
             '- Spec says "add a login button to the nav bar" and you can see the nav component → DON\'T ASK\n'

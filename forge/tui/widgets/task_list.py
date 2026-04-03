@@ -23,6 +23,45 @@ def _escape(text: str | None) -> str:
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
+def _queue_hint(task: dict) -> str:
+    """Return a compact queue hint derived from scheduler insight."""
+    status = task.get("_queue_status", "")
+    priority_rank = task.get("_priority_rank")
+    reason = str(task.get("_blocked_reason", "") or "").strip()
+
+    if status == "ready" and priority_rank:
+        if priority_rank == 1:
+            return "[#3fb950]NEXT[/#3fb950]"
+        return f"[#58a6ff]P{priority_rank}[/#58a6ff]"
+
+    if status == "human_wait":
+        if "approval" in reason.lower():
+            return "[#d29922]needs approval[/#d29922]"
+        return "[#d29922]needs input[/#d29922]"
+
+    if reason.startswith("Waiting on "):
+        deps = [part.strip() for part in reason.removeprefix("Waiting on ").split(",") if part.strip()]
+        if deps:
+            suffix = f" +{len(deps) - 1}" if len(deps) > 1 else ""
+            return f"[#8b949e]wait {deps[0]}{suffix}[/#8b949e]"
+
+    if reason.startswith("Blocked by failed dependency: "):
+        dep = reason.removeprefix("Blocked by failed dependency: ").strip()
+        return f"[#f0883e]blocked {dep}[/#f0883e]"
+
+    if reason.startswith("Blocked by failed dependencies: "):
+        deps = [
+            part.strip()
+            for part in reason.removeprefix("Blocked by failed dependencies: ").split(",")
+            if part.strip()
+        ]
+        if deps:
+            suffix = f" +{len(deps) - 1}" if len(deps) > 1 else ""
+            return f"[#f0883e]blocked {deps[0]}{suffix}[/#f0883e]"
+
+    return ""
+
+
 def format_task_line(
     task: dict, *, selected: bool, multi_repo: bool = False, icon_frame: int = 0
 ) -> str:
@@ -62,6 +101,9 @@ def format_task_line(
         merge_sub = task.get("merge_substatus", "")
         label = _MERGE_STEP_LABELS.get(merge_sub, "Merging")
         suffix_parts.append(f"[#79c0ff]{label}…[/#79c0ff]")
+    queue_hint = _queue_hint(task)
+    if queue_hint:
+        suffix_parts.append(queue_hint)
     if file_count > 0:
         suffix_parts.append(f"[#8b949e]{file_count} files[/#8b949e]")
 

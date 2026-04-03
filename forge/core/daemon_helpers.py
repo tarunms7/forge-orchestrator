@@ -23,6 +23,7 @@ console = make_console()
 
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
 _FORGE_LEARNING_MARKER = "FORGE_LEARNING:"
+_REVIEW_DIFF_EXCLUDES = (".claude/", ".forge/", ".gitignore")
 
 
 async def async_subprocess(
@@ -311,6 +312,39 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
     return f"🔧 {tool}"
 
 
+def _is_review_excluded_path(path: str) -> bool:
+    """Return True when a diff path points at Forge-managed infrastructure."""
+    normalized = path.strip()
+    return normalized == ".gitignore" or normalized.startswith(".claude/") or normalized.startswith(
+        ".forge/"
+    )
+
+
+def _filter_review_diff(diff_text: str) -> str:
+    """Strip Forge-managed file blocks from a unified diff."""
+    if not diff_text or "diff --git " not in diff_text:
+        return diff_text
+
+    parts = re.split(r"(?=^diff --git )", diff_text, flags=re.MULTILINE)
+    kept: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if not part.startswith("diff --git "):
+            kept.append(part)
+            continue
+        header = part.splitlines()[0] if part.splitlines() else ""
+        match = re.match(r"diff --git a/(.+?) b/(.+)$", header)
+        if not match:
+            kept.append(part)
+            continue
+        left_path, right_path = match.groups()
+        if _is_review_excluded_path(left_path) or _is_review_excluded_path(right_path):
+            continue
+        kept.append(part)
+    return "".join(kept)
+
+
 async def update_repos_json_branches(
     db,
     pipeline_id: str,
@@ -500,11 +534,6 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
     Forge infrastructure files (.claude/, .forge/, .gitignore) are excluded
     from the diff so the LLM reviewer only sees agent work product.
     """
-    # Pathspec exclusions: hide Forge infrastructure files from review diffs.
-    # The agent may write .claude/settings.json (permissions) or modify
-    # .gitignore — these are orchestrator artifacts, not task output.
-    _DIFF_EXCLUDES = ["--", ":(exclude).claude/", ":(exclude).forge/", ":(exclude).gitignore"]
-
     # ── Fast path: explicit base ref ──────────────────────────────────
     if base_ref is not None:
         verify = await async_subprocess(
@@ -513,10 +542,10 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
         )
         if verify.returncode == 0:
             result = await async_subprocess(
-                ["git", "diff", base_ref, "HEAD"] + _DIFF_EXCLUDES,
+                ["git", "diff", base_ref, "HEAD"],
                 cwd=worktree_path,
             )
-            return result.stdout
+            return _filter_review_diff(result.stdout)
         logger.warning(
             "_get_diff_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",
@@ -546,7 +575,7 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
     if verify.returncode == 0:
         # Normal case: diff the agent's commits against their base
         result = await async_subprocess(
-            ["git", "diff", heuristic_ref, "HEAD"] + _DIFF_EXCLUDES,
+            ["git", "diff", heuristic_ref, "HEAD"],
             cwd=worktree_path,
         )
     else:
@@ -557,11 +586,11 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
         )
         empty_tree = empty_tree_result.stdout.strip()
         result = await async_subprocess(
-            ["git", "diff", empty_tree, "HEAD"] + _DIFF_EXCLUDES,
+            ["git", "diff", empty_tree, "HEAD"],
             cwd=worktree_path,
         )
 
-    return result.stdout
+    return _filter_review_diff(result.stdout)
 
 
 async def _resolve_ref(repo_path: str, ref: str) -> str | None:
