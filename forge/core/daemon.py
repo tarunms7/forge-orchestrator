@@ -48,7 +48,7 @@ from forge.core.models import AgentState, RepoConfig, TaskGraph, TaskState, row_
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
 from forge.core.sanitize import validate_task_id
-from forge.core.scheduler import Scheduler
+from forge.core.scheduler import Scheduler, SchedulingAnalysis
 from forge.core.state import TaskStateMachine
 from forge.learning.store import format_lessons_block, row_to_lesson
 from forge.merge.worker import MergeWorker
@@ -183,10 +183,14 @@ def _should_use_deep_planning(
         return True
     if planning_mode == "simple":
         return False
+    try:
+        total_files_value = int(total_files)
+    except (TypeError, ValueError):
+        total_files_value = 0
     # Auto mode heuristics
     if spec_path:
         return True
-    if total_files > 100:
+    if total_files_value > 100:
         return True
     # Structured input (markdown headers, numbered lists, bullet lists)
     if re.search(r"^#{1,3}\s", user_input, re.MULTILINE):
@@ -232,6 +236,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Task list cache — avoids re-fetching from DB every poll iteration
         self._cached_tasks: list | None = None
         self._task_cache_time: float = 0.0
+        self._last_scheduling_fingerprint: str | None = None
 
         # Multi-repo support: build repos dict
         if repos:
@@ -271,6 +276,38 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             logger.warning(
                 "Failed to persist event %s to DB (non-fatal)", event_type, exc_info=True
             )
+
+    async def _emit_scheduling_update(
+        self,
+        *,
+        db: Database,
+        pipeline_id: str,
+        analysis: SchedulingAnalysis,
+        agents,
+        dispatch_plan: list[tuple[str, str]],
+    ) -> None:
+        """Persist queue insight only when the scheduler view meaningfully changes."""
+        working_count = sum(1 for agent in agents if agent.state == AgentState.WORKING.value)
+        idle_count = sum(1 for agent in agents if agent.state == AgentState.IDLE.value)
+        payload = analysis.to_payload(dispatching_now=[task_id for task_id, _ in dispatch_plan])
+        payload.update(
+            {
+                "idle_agents": idle_count,
+                "busy_agents": working_count,
+                "max_agents": self._effective_max_agents,
+                "available_slots": max(0, self._effective_max_agents - working_count),
+            }
+        )
+        fingerprint = json.dumps(payload, sort_keys=True)
+        if fingerprint == self._last_scheduling_fingerprint:
+            return
+        self._last_scheduling_fingerprint = fingerprint
+        await self._emit(
+            "pipeline:scheduling_update",
+            payload,
+            db=db,
+            pipeline_id=pipeline_id,
+        )
 
     # ── Multi-repo initialization & infrastructure ─────────────────────
 
@@ -1129,6 +1166,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Reset phase-emission guards so review/merging phases emit correctly
         self._review_phase_emitted = False
         self._merging_phase_emitted = False
+        self._last_scheduling_fingerprint = None
         prefix = pid[:8]
 
         # Multi-repo: validate repos and resolve base branches
@@ -2323,9 +2361,20 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             from forge.core.models import row_to_agent
 
             agent_records = [row_to_agent(a) for a in agents]
+            scheduling = Scheduler.analyze(task_records)
             dispatch_plan = Scheduler.dispatch_plan(
-                task_records, agent_records, self._effective_max_agents
+                task_records,
+                agent_records,
+                self._effective_max_agents,
             )
+            if pipeline_id:
+                await self._emit_scheduling_update(
+                    db=db,
+                    pipeline_id=pipeline_id,
+                    analysis=scheduling,
+                    agents=agents,
+                    dispatch_plan=dispatch_plan,
+                )
 
             # Check for in_review tasks that need resume dispatch
             has_in_review = any(

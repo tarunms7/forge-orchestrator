@@ -103,6 +103,27 @@ class TestDispatchPlan:
         plan = Scheduler.dispatch_plan(tasks, agents, max_agents=4)
         assert plan == []
 
+    def test_prioritizes_critical_path_over_leaf_work(self):
+        tasks = [
+            _record("root"),
+            _record("leaf"),
+            _record("mid", depends_on=["root"]),
+            _record("tail", depends_on=["mid"]),
+        ]
+        ready = Scheduler.ready_tasks(tasks)
+        assert [task.id for task in ready][:2] == ["root", "leaf"]
+
+    def test_prioritizes_task_that_unlocks_more_downstream_work(self):
+        tasks = [
+            _record("fanout"),
+            _record("single"),
+            _record("child-a", depends_on=["fanout"]),
+            _record("child-b", depends_on=["fanout"]),
+            _record("single-child", depends_on=["single"]),
+        ]
+        ready = Scheduler.ready_tasks(tasks)
+        assert [task.id for task in ready][:2] == ["fanout", "single"]
+
 
 class TestErrorDependencies:
     def test_task_depending_on_error_not_ready(self):
@@ -168,3 +189,45 @@ class TestDependsOnNoneSafety:
         )
         ready = Scheduler.ready_tasks([task])
         assert [t.id for t in ready] == ["x"]
+
+
+class TestSchedulingAnalysis:
+    def test_analysis_classifies_waiting_blocked_and_human_wait(self):
+        tasks = [
+            _record("done", state=TaskState.DONE),
+            _record("broken", state=TaskState.ERROR),
+            _record("ready"),
+            _record("waiting", depends_on=["done", "ready"]),
+            _record("blocked", depends_on=["broken"]),
+            _record("question", state=TaskState.AWAITING_INPUT),
+            _record("review", state=TaskState.IN_REVIEW),
+        ]
+
+        analysis = Scheduler.analyze(tasks)
+
+        assert analysis.ready_task_ids == ("ready",)
+        assert analysis.waiting_task_ids == ("waiting",)
+        assert analysis.blocked_task_ids == ("blocked",)
+        assert analysis.human_wait_task_ids == ("question",)
+        assert analysis.active_task_ids == ("review",)
+        assert analysis.error_task_ids == ("broken",)
+        assert analysis.done_task_ids == ("done",)
+        assert analysis.task_insights["blocked"].reason == "Blocked by failed dependency: broken"
+        assert analysis.task_insights["waiting"].reason == "Waiting on ready"
+
+    def test_analysis_payload_includes_next_up_and_task_metadata(self):
+        tasks = [
+            _record("a"),
+            _record("b"),
+            _record("c", depends_on=["a"]),
+            _record("d", depends_on=["c"]),
+        ]
+
+        analysis = Scheduler.analyze(tasks)
+        payload = analysis.to_payload(dispatching_now=["a"])
+
+        assert payload["critical_path_length"] == 3
+        assert payload["dispatching_now"] == ["a"]
+        assert payload["next_up"][0]["task_id"] == "a"
+        assert payload["tasks"]["a"]["priority_rank"] == 1
+        assert payload["tasks"]["b"]["status"] == "ready"

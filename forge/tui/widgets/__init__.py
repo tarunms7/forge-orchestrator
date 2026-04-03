@@ -13,6 +13,7 @@ from forge.tui.widgets.help_overlay import HelpEntry, HelpOverlay
 from forge.tui.widgets.logo import ForgeLogo
 from forge.tui.widgets.pipeline_list import PipelineList
 from forge.tui.widgets.progress_bar import PipelineProgress
+from forge.tui.widgets.queue_status import QueueStatus
 from forge.tui.widgets.review_gates import ReviewGates
 from forge.tui.widgets.search_overlay import SearchOverlay
 from forge.tui.widgets.shortcut_bar import ShortcutBar
@@ -37,6 +38,7 @@ __all__ = [
     "ForgeLogo",
     "PipelineList",
     "PipelineProgress",
+    "QueueStatus",
     "ReviewGates",
     "SearchOverlay",
     "ShortcutBar",

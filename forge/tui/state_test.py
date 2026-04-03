@@ -45,6 +45,7 @@ def test_initial_state_new_fields():
     assert state.preflight_error is None
     assert state.followup_tasks == {}
     assert state.followup_output == {}
+    assert state.scheduling is None
 
 
 def test_apply_phase_changed():
@@ -124,6 +125,23 @@ def test_apply_cost_update():
     state = TuiState()
     state.apply_event("pipeline:cost_update", {"total_cost_usd": 1.23})
     assert state.total_cost_usd == 1.23
+
+
+def test_apply_scheduling_update():
+    state = TuiState()
+    payload = {
+        "ready_count": 1,
+        "active_count": 2,
+        "blocked_count": 1,
+        "critical_path_length": 4,
+        "tasks": {
+            "t1": {"status": "ready", "priority_rank": 1, "reason": "Highest-leverage ready task"}
+        },
+    }
+
+    state.apply_event("pipeline:scheduling_update", payload)
+
+    assert state.scheduling == payload
 
 
 def test_apply_task_cost_update():

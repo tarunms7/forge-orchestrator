@@ -28,6 +28,7 @@ from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.dag import DagOverlay
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.progress_bar import PipelineProgress
+from forge.tui.widgets.queue_status import QueueStatus
 from forge.tui.widgets.search_overlay import SearchOverlay
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 from forge.tui.widgets.suggestion_chips import SuggestionChips
@@ -268,6 +269,7 @@ class PipelineScreen(Screen):
 
     Left panel (hidden during planning, shown during execution):
       - TaskList
+      - QueueStatus
       - DecisionBadge
       - IntegrationBadge
 
@@ -392,6 +394,7 @@ class PipelineScreen(Screen):
         with Horizontal(id="split-pane"):
             with Vertical(id="left-panel"):
                 yield TaskList()
+                yield QueueStatus()
                 yield DecisionBadge()
                 yield IntegrationBadge()
             with Vertical(id="right-panel"):
@@ -496,6 +499,7 @@ class PipelineScreen(Screen):
             "planner_output",
             "contracts_output",
             "planning",
+            "scheduling",
         ):
             # Invalidate diff cache for tasks whose state changed (new merge → new diff)
             if field == "tasks":
@@ -701,12 +705,15 @@ class PipelineScreen(Screen):
         task_list = self.query_one(TaskList)
         agent_output = self.query_one(AgentOutput)
         progress = self.query_one(PipelineProgress)
+        queue_status = self.query_one(QueueStatus)
         dag = self.query_one(DagOverlay)
         phase_banner = self.query_one(PhaseBanner)
         decision_badge = self.query_one(DecisionBadge)
         self._refresh_integration_badge()
+        queue_status.update(state.scheduling)
 
         ordered_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
+        scheduling_tasks = (state.scheduling or {}).get("tasks", {})
         # Inject merge substatus and preparing flag into task dicts for display
         is_preparing = state.phase in ("contracts", "countdown")
         for t in ordered_tasks:
@@ -719,6 +726,15 @@ class PipelineScreen(Screen):
                 t["_preparing"] = True
             else:
                 t.pop("_preparing", None)
+            scheduling_info = scheduling_tasks.get(t["id"], {})
+            if scheduling_info:
+                t["_queue_status"] = scheduling_info.get("status", "")
+                t["_priority_rank"] = scheduling_info.get("priority_rank")
+                t["_blocked_reason"] = scheduling_info.get("reason", "")
+            else:
+                t.pop("_queue_status", None)
+                t.pop("_priority_rank", None)
+                t.pop("_blocked_reason", None)
         task_list.update_tasks(
             ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo
         )
