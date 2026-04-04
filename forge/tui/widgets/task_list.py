@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import re
+
 from textual.message import Message
 from textual.widget import Widget
 
 from forge.tui.theme import STATE_COLORS, STATE_ICONS
 
 MAX_WIDTH = 40
+MIN_WIDTH = 24
+_FOLLOWUP_TASK_RE = re.compile(r"-followup-(\d+)$")
 
 _ANIMATED_ICONS: dict[str, list[str]] = {
-    "in_progress": ["⚙", "⚡", "⚙", "⚡"],
+    "in_progress": ["●", "◉", "○", "◉"],
     "in_review": ["◉", "○", "◉", "○"],
     "merging": ["◈", "◇", "◈", "◇"],
 }
@@ -64,8 +68,28 @@ def _queue_hint(task: dict) -> str:
     return ""
 
 
+def _followup_wave(task_id: str | None) -> int | None:
+    """Return the follow-up wave number encoded in synthetic follow-up task ids."""
+    if not task_id:
+        return None
+    match = _FOLLOWUP_TASK_RE.search(task_id)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _format_followup_separator(wave: int) -> str:
+    """Render a compact divider before each follow-up wave."""
+    return f"[#6e7681]──[/] [bold #d6a85f]Follow-up {wave}[/] [#6e7681]────────────────[/]"
+
+
 def format_task_line(
-    task: dict, *, selected: bool, multi_repo: bool = False, icon_frame: int = 0
+    task: dict,
+    *,
+    selected: bool,
+    multi_repo: bool = False,
+    icon_frame: int = 0,
+    max_width: int = MAX_WIDTH,
 ) -> str:
     state = task.get("state", "todo")
     # Use animated icon for selected active tasks
@@ -119,7 +143,7 @@ def format_task_line(
 
         suffix_visible_len = len(re.sub(r"\[.*?\]", "", suffix)) + 1  # +1 for space before suffix
 
-    available = MAX_WIDTH - 3 - repo_width - suffix_visible_len  # 3 = " X " icon prefix
+    available = max_width - 3 - repo_width - suffix_visible_len  # 3 = " X " icon prefix
     if available < 4:
         available = 4
 
@@ -146,8 +170,8 @@ class TaskList(Widget):
     DEFAULT_CSS = """
     TaskList {
         width: 1fr;
-        min-width: 25;
-        max-width: 42;
+        min-width: 32;
+        max-width: 52;
         padding: 0 0 0 1;
     }
     """
@@ -224,13 +248,20 @@ class TaskList(Widget):
                 )
             return "[#8b949e]No tasks yet[/]"
         lines = []
+        last_followup_wave: int | None = None
+        max_width = max(MIN_WIDTH, (self.size.width or MAX_WIDTH) - 4)
         for i, task in enumerate(self._tasks):
+            wave = _followup_wave(task.get("id"))
+            if wave is not None and wave != last_followup_wave:
+                lines.append(_format_followup_separator(wave))
+                last_followup_wave = wave
             lines.append(
                 format_task_line(
                     task,
                     selected=(i == self._selected_index),
                     multi_repo=self._multi_repo,
                     icon_frame=self._icon_frame,
+                    max_width=max_width,
                 )
             )
         return "\n".join(lines)

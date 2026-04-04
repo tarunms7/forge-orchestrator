@@ -23,7 +23,7 @@ console = make_console()
 
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
 _FORGE_LEARNING_MARKER = "FORGE_LEARNING:"
-_REVIEW_DIFF_EXCLUDES = (".claude/", ".forge/", ".gitignore")
+_REVIEW_DIFF_EXCLUDES = (".claude/", ".forge/")
 
 
 async def async_subprocess(
@@ -315,11 +315,7 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
 def _is_review_excluded_path(path: str) -> bool:
     """Return True when a diff path points at Forge-managed infrastructure."""
     normalized = path.strip()
-    return (
-        normalized == ".gitignore"
-        or normalized.startswith(".claude/")
-        or normalized.startswith(".forge/")
-    )
+    return normalized.startswith(".claude/") or normalized.startswith(".forge/")
 
 
 def _filter_review_diff(diff_text: str) -> str:
@@ -533,8 +529,10 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
     branches from repos with no prior history) by diffing against the
     empty tree.
 
-    Forge infrastructure files (.claude/, .forge/, .gitignore) are excluded
-    from the diff so the LLM reviewer only sees agent work product.
+    Forge infrastructure files under ``.claude/`` and ``.forge/`` are excluded
+    from the diff so the LLM reviewer only sees agent work product. Repo-level
+    files like ``.gitignore`` are preserved because they can be real task
+    deliverables and must remain visible to review.
     """
     # ── Fast path: explicit base ref ──────────────────────────────────
     if base_ref is not None:

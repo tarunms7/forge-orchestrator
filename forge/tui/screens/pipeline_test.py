@@ -1269,6 +1269,12 @@ async def test_sidebar_shown_during_error():
         assert not split_pane.has_class("full-width")
 
 
+def test_pipeline_sidebar_css_is_wider_for_task_titles():
+    assert "width: 42;" in PipelineScreen.DEFAULT_CSS
+    assert "min-width: 34;" in PipelineScreen.DEFAULT_CSS
+    assert "max-width: 52;" in PipelineScreen.DEFAULT_CSS
+
+
 # ── Streaming double-render fix tests ─────────────────────────────
 
 

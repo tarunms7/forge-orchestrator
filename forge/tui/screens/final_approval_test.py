@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from textual.app import App, ComposeResult
@@ -13,7 +13,7 @@ from forge.tui.screens.final_approval import (
     format_summary_stats,
     format_task_table,
 )
-from forge.tui.widgets.followup_input import FollowUpInput
+from forge.tui.widgets.followup_input import FollowUpInput, FollowUpTextArea
 
 
 def test_format_summary_stats():
@@ -273,6 +273,21 @@ def test_action_submit_followup_handles_missing():
     screen.query_one = MagicMock(side_effect=Exception("no widget"))
     # Should not raise
     screen.action_submit_followup()
+
+
+def test_action_create_pr_submits_followup_when_composer_focused():
+    """Enter should submit the follow-up instead of opening the PR when composer is focused."""
+    screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+    screen.action_submit_followup = MagicMock()
+    screen.post_message = MagicMock()
+
+    with patch.object(
+        FinalApprovalScreen, "focused", new_callable=PropertyMock, return_value=FollowUpTextArea()
+    ):
+        screen.action_create_pr()
+
+    screen.action_submit_followup.assert_called_once()
+    screen.post_message.assert_not_called()
 
 
 def test_on_follow_up_input_submitted():
@@ -594,6 +609,31 @@ class TestFinalApprovalShortcutBar:
         assert "s" in keys  # Skip & Finish
         assert "Retry Failed" in labels
         assert "Skip & Finish" in labels
+
+    def test_followup_focus_shortcuts(self):
+        """When the composer is focused, the shortcut bar should show follow-up actions."""
+        from forge.tui.widgets.shortcut_bar import ShortcutBar
+
+        screen = FinalApprovalScreen(stats={}, tasks=[], pipeline_branch="feat/x")
+
+        captured: list[list[tuple[str, str]]] = []
+        mock_bar = MagicMock(spec=ShortcutBar)
+        mock_bar.update_shortcuts = lambda s: captured.append(list(s))
+        screen.query_one = MagicMock(return_value=mock_bar)
+
+        with patch.object(
+            FinalApprovalScreen,
+            "focused",
+            new_callable=PropertyMock,
+            return_value=FollowUpTextArea(),
+        ):
+            screen._update_shortcut_bar()
+
+        shortcuts = captured[-1]
+        assert ("Enter", "Submit follow-up") in shortcuts
+        assert ("Ctrl+S", "Submit follow-up") in shortcuts
+        assert ("Ctrl+U", "Clear") in shortcuts
+        assert ("Esc", "Back to actions") in shortcuts
 
     def test_shortcuts_after_pr_created(self):
         """After PR is created, shortcuts should remove Create PR and add Done."""

@@ -9,11 +9,13 @@ import pytest
 
 from forge.core.daemon_helpers import (
     _extract_implementation_summary,
+    _filter_review_diff,
     _find_related_test_files,
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
     _is_pytest_cmd,
+    _is_review_excluded_path,
     _load_conventions_md,
     _parse_forge_learning,
     _parse_forge_question,
@@ -155,6 +157,59 @@ class TestGetDiffVsMainBaseRef:
             result = await _get_diff_vs_main("/repo", base_ref=None)
 
         assert result == "some diff\n"
+
+
+class TestReviewDiffFiltering:
+    def test_filter_review_diff_keeps_gitignore_changes(self):
+        diff = (
+            "diff --git a/.gitignore b/.gitignore\n"
+            "--- a/.gitignore\n"
+            "+++ b/.gitignore\n"
+            "@@ -1 +1,2 @@\n"
+            " node_modules/\n"
+            "+uv.lock\n"
+            "diff --git a/web/src/stores/taskStore.ts b/web/src/stores/taskStore.ts\n"
+            "--- a/web/src/stores/taskStore.ts\n"
+            "+++ b/web/src/stores/taskStore.ts\n"
+            "@@ -1 +1 @@\n"
+            "+const x = 1;\n"
+        )
+
+        filtered = _filter_review_diff(diff)
+
+        assert "diff --git a/.gitignore b/.gitignore" in filtered
+        assert "+uv.lock" in filtered
+        assert "taskStore.ts" in filtered
+
+    def test_filter_review_diff_excludes_forge_managed_dirs_only(self):
+        diff = (
+            "diff --git a/.forge/forge.toml b/.forge/forge.toml\n"
+            "--- a/.forge/forge.toml\n"
+            "+++ b/.forge/forge.toml\n"
+            "@@ -1 +1 @@\n"
+            "+mode = 'full'\n"
+            "diff --git a/.claude/state.json b/.claude/state.json\n"
+            "--- a/.claude/state.json\n"
+            "+++ b/.claude/state.json\n"
+            "@@ -1 +1 @@\n"
+            "+{}\n"
+            "diff --git a/.gitignore b/.gitignore\n"
+            "--- a/.gitignore\n"
+            "+++ b/.gitignore\n"
+            "@@ -1 +1,2 @@\n"
+            "+uv.lock\n"
+        )
+
+        filtered = _filter_review_diff(diff)
+
+        assert ".forge/forge.toml" not in filtered
+        assert ".claude/state.json" not in filtered
+        assert "diff --git a/.gitignore b/.gitignore" in filtered
+
+    def test_review_excluded_path_keeps_repo_level_gitignore(self):
+        assert _is_review_excluded_path(".forge/forge.toml") is True
+        assert _is_review_excluded_path(".claude/worktrees/task/file.py") is True
+        assert _is_review_excluded_path(".gitignore") is False
 
 
 class TestGetChangedFilesVsMainBaseRef:
