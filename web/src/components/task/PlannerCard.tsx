@@ -72,22 +72,28 @@ function PlannerLogModal({ lines, onClose }: { lines: string[]; onClose: () => v
 export default function PlannerCard() {
   const rawPlannerOutput = useTaskStore((s) => s.plannerOutput);
   const phase = useTaskStore((s) => s.phase);
+  const plannerStartedAt = useTaskStore((s) => s.plannerStartedAt);
+  const plannerLastActivityAt = useTaskStore((s) => s.plannerLastActivityAt);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [showModal, setShowModal] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const isActive = phase === "planning";
 
-  // Deduplicate and strip JSON code blocks from planner output — the raw task
-  // graph JSON is noisy and the user already sees it as the structured plan panel.
-  const plannerOutput = useMemo(() => {
-    const deduped = rawPlannerOutput.filter((line, i, arr) => {
-      const trimmed = line.trim();
-      return arr.findIndex((l) => l.trim() === trimmed) === i;
-    });
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isActive]);
 
+  // Strip JSON code blocks from planner output — the raw task graph JSON is
+  // noisy and the user already sees it as the structured plan panel.
+  // Keep repeated lines and only collapse consecutive duplicates so visible
+  // planner activity is not mistaken for a frozen run.
+  const visiblePlannerLines = useMemo(() => {
     const result: string[] = [];
     let inJsonFence = false;
-    for (const line of deduped) {
+    for (const line of rawPlannerOutput) {
       const trimmed = line.trim();
       if (/^```json\b/.test(trimmed)) {
         inJsonFence = true;
@@ -104,7 +110,37 @@ export default function PlannerCard() {
     }
     return result;
   }, [rawPlannerOutput]);
-  const lineCount = plannerOutput.length;
+
+  const plannerOutput = useMemo(() => {
+    const result: Array<{ text: string; count: number }> = [];
+    for (const line of visiblePlannerLines) {
+      const trimmed = line.trim();
+      const last = result[result.length - 1];
+      if (last && last.text.trim() === trimmed) {
+        last.count += 1;
+      } else {
+        result.push({ text: line, count: 1 });
+      }
+    }
+    return result;
+  }, [visiblePlannerLines]);
+  const lineCount = plannerOutput.reduce((sum, line) => sum + line.count, 0);
+
+  const elapsedMs = isActive && plannerStartedAt ? Math.max(0, nowMs - plannerStartedAt) : 0;
+  const idleMs = isActive && plannerLastActivityAt ? Math.max(0, nowMs - plannerLastActivityAt) : 0;
+
+  const formatDuration = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  };
+
+  const latestLine = plannerOutput.at(-1)?.text?.trim() ?? "";
+  const reassurance =
+    idleMs >= 20000
+      ? "Planner is still working. Silent stretches are normal while it reads files and thinks."
+      : null;
 
   // Auto-scroll during active planning
   useEffect(() => {
@@ -155,31 +191,47 @@ export default function PlannerCard() {
           )}
         </div>
 
+        {isActive && (
+          <div className="planner-meta">
+            <span>{elapsedMs > 0 ? `Elapsed ${formatDuration(elapsedMs)}` : "Starting..."}</span>
+            <span>{plannerLastActivityAt ? `Last update ${formatDuration(idleMs)} ago` : "Waiting for first planner output"}</span>
+            {latestLine && <span>Latest: {latestLine}</span>}
+          </div>
+        )}
+
         {/* Streaming output — only visible during active planning */}
         {isActive && lineCount > 0 && (
           <div ref={scrollRef} className="planner-body">
             {plannerOutput.map((line, i) => (
               <div
-                key={i}
-                className={`terminal-line ${i === lineCount - 1 ? "active" : ""}`}
+                key={`${i}-${line.text.trim()}`}
+                className={`terminal-line ${i === plannerOutput.length - 1 ? "active" : ""}`}
               >
-                <FormattedLine text={line} />
+                <FormattedLine text={line.text} />
+                {line.count > 1 && <span className="planner-line-count">×{line.count}</span>}
               </div>
             ))}
+            {reassurance && <div className="planner-hint">{reassurance}</div>}
           </div>
         )}
 
         {/* Loading indicator when no output yet */}
         {isActive && lineCount === 0 && (
           <div className="planner-body" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span className="terminal-line active">Analyzing project and decomposing task...</span>
+            <span className="terminal-line active">
+              Analyzing project and decomposing task...
+              {plannerStartedAt && ` ${formatDuration(elapsedMs)}`}
+            </span>
           </div>
         )}
       </div>
 
       {/* Planner Log Modal */}
       {showModal && (
-        <PlannerLogModal lines={plannerOutput} onClose={() => setShowModal(false)} />
+        <PlannerLogModal
+          lines={visiblePlannerLines}
+          onClose={() => setShowModal(false)}
+        />
       )}
     </>
   );
