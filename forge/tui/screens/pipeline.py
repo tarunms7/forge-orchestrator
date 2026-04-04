@@ -303,9 +303,9 @@ class PipelineScreen(Screen):
         width: 100%;
     }
     #left-panel {
-        width: 36;
-        min-width: 28;
-        max-width: 44;
+        width: 42;
+        min-width: 34;
+        max-width: 52;
         border-right: tall #263041;
         background: #11161d;
         layout: vertical;
