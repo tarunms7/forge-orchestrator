@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/stores/authStore";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -16,15 +16,10 @@ function isPublicPath(pathname: string): boolean {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(true);
-
-  // Restore sidebar state from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem("forge-sidebar");
-    if (saved === "expanded") {
-      setCollapsed(false);
-    }
-  }, []);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("forge-sidebar") !== "expanded";
+  });
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
