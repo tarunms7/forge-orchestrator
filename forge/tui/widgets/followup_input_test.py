@@ -131,6 +131,19 @@ def test_focus_input_handles_missing():
     widget.focus_input()
 
 
+def test_followup_text_area_enter_submits_parent_widget():
+    from forge.tui.widgets.followup_input import FollowUpTextArea
+
+    ta = FollowUpTextArea()
+    widget = FollowUpInput()
+    widget.submit = MagicMock()
+    ta._parent = widget
+
+    ta.action_submit_followup()
+
+    widget.submit.assert_called_once()
+
+
 def test_submit_posts_message():
     widget = FollowUpInput(branch="feat/x", files_changed=3)
     mock_ta = MagicMock()

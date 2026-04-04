@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 from textual.message import Message
 from textual.widget import Widget
 
 from forge.tui.theme import STATE_COLORS, STATE_ICONS
 
 MAX_WIDTH = 40
+_FOLLOWUP_TASK_RE = re.compile(r"-followup-(\d+)$")
 
 _ANIMATED_ICONS: dict[str, list[str]] = {
     "in_progress": ["⚙", "⚡", "⚙", "⚡"],
@@ -60,6 +63,21 @@ def _queue_hint(task: dict) -> str:
             return f"[#f0883e]blocked {deps[0]}{suffix}[/#f0883e]"
 
     return ""
+
+
+def _followup_wave(task_id: str | None) -> int | None:
+    """Return the follow-up wave number encoded in synthetic follow-up task ids."""
+    if not task_id:
+        return None
+    match = _FOLLOWUP_TASK_RE.search(task_id)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _format_followup_separator(wave: int) -> str:
+    """Render a compact divider before each follow-up wave."""
+    return f"[#6e7681]──[/] [bold #d6a85f]Follow-up {wave}[/] [#6e7681]────────────────[/]"
 
 
 def format_task_line(
@@ -222,7 +240,12 @@ class TaskList(Widget):
                 )
             return "[#8b949e]No tasks yet[/]"
         lines = []
+        last_followup_wave: int | None = None
         for i, task in enumerate(self._tasks):
+            wave = _followup_wave(task.get("id"))
+            if wave is not None and wave != last_followup_wave:
+                lines.append(_format_followup_separator(wave))
+                last_followup_wave = wave
             lines.append(
                 format_task_line(
                     task,

@@ -1,6 +1,6 @@
 """Tests for TaskList widget."""
 
-from forge.tui.widgets.task_list import STATE_ICONS, format_task_line
+from forge.tui.widgets.task_list import STATE_ICONS, TaskList, _followup_wave, format_task_line
 
 
 def test_state_icons_all_states():
@@ -192,6 +192,24 @@ def test_format_task_line_human_wait_hint():
     }
     line = format_task_line(task, selected=False)
     assert "needs input" in line
+
+
+def test_followup_wave_parses_synthetic_task_ids():
+    assert _followup_wave("12345678-followup-2") == 2
+    assert _followup_wave("plain-task") is None
+
+
+def test_task_list_render_inserts_followup_separators():
+    widget = TaskList()
+    widget._tasks = [
+        {"id": "t1", "title": "Initial task", "state": "done"},
+        {"id": "12345678-followup-1", "title": "Tighten CI fix", "state": "todo"},
+        {"id": "12345678-followup-2", "title": "Polish copy", "state": "todo"},
+    ]
+    rendered = widget.render()
+    assert "Follow-up 1" in rendered
+    assert "Follow-up 2" in rendered
+    assert "Tighten CI fix" in rendered
 
 
 # ── Multi-repo display tests ─────────────────────────────────────────────
