@@ -15,25 +15,25 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const refreshToken = useAuthStore((s) => s.refreshToken);
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(!isPublicPath(pathname));
+  const isPublic = isPublicPath(pathname);
+  // Only need to refresh if not public and no token
+  const needsRefresh = !isPublic && !token;
+  const [refreshing, setRefreshing] = useState(needsRefresh);
 
   useEffect(() => {
-    if (isPublicPath(pathname)) {
-      setChecking(false);
+    if (!needsRefresh) {
       return;
     }
-    if (token) {
-      setChecking(false);
-      return;
-    }
-    // No token in memory — try refresh
+    let cancelled = false;
     refreshToken().then((ok) => {
+      if (cancelled) return;
       if (!ok) router.push("/login");
-      setChecking(false);
+      setRefreshing(false);
     });
-  }, [token, pathname, router, refreshToken]);
+    return () => { cancelled = true; };
+  }, [needsRefresh, router, refreshToken]);
 
-  if (checking) {
+  if (refreshing) {
     return (
       <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "var(--bg-base)" }}>
         <div style={{ color: "var(--text-tertiary)" }}>Loading...</div>
@@ -41,7 +41,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!token && !isPublicPath(pathname)) return null;
+  if (!token && !isPublic) return null;
 
   return <>{children}</>;
 }

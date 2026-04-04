@@ -219,8 +219,9 @@ export default function TaskForm({ value, onChange }: TaskFormProps) {
 
   // Clean up all created object URLs on unmount
   useEffect(() => {
+    const urls = createdUrlsRef.current;
     return () => {
-      createdUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
 
