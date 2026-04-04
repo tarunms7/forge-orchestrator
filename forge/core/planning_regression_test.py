@@ -238,12 +238,37 @@ async def test_handle_retry_allows_max_retries_then_errors():
     db = _make_mock_db()
     worktree_mgr = MagicMock(spec=WorktreeManager)
 
-    # Test retries 0 through 4 (should retry, not error)
-    for retry_count in range(5):
+    # Patch asyncio.sleep to avoid real backoff delays in _handle_retry
+    with patch("forge.core.daemon_merge.asyncio.sleep", new_callable=AsyncMock):
+        # Test retries 0 through 4 (should retry, not error)
+        for retry_count in range(5):
+            emitter_calls.clear()
+
+            task_record = MagicMock()
+            task_record.retry_count = retry_count
+            db.get_task.return_value = task_record
+
+            await daemon._handle_retry(
+                db=db,
+                task_id="task-1",
+                worktree_mgr=worktree_mgr,
+                review_feedback="fix this",
+                pipeline_id="pipe-789",
+            )
+
+            # Should have called retry_task, not update_task_state to error
+            db.retry_task.assert_called_with("task-1", review_feedback="fix this")
+            assert any(
+                evt == "task:state_changed" and data.get("state") == "retrying"
+                for evt, data in emitter_calls
+            ), f"retry_count={retry_count} should emit retrying state"
+
+        # Test retry_count = 5 (should mark as error)
         emitter_calls.clear()
+        db.retry_task.reset_mock()
 
         task_record = MagicMock()
-        task_record.retry_count = retry_count
+        task_record.retry_count = 5  # equals max_retries → error
         db.get_task.return_value = task_record
 
         await daemon._handle_retry(
@@ -254,35 +279,13 @@ async def test_handle_retry_allows_max_retries_then_errors():
             pipeline_id="pipe-789",
         )
 
-        # Should have called retry_task, not update_task_state to error
-        db.retry_task.assert_called_with("task-1", review_feedback="fix this")
+        # Should have called update_task_state to ERROR, not retry_task
+        db.update_task_state.assert_called_with("task-1", "error")
+        db.retry_task.assert_not_called()
         assert any(
-            evt == "task:state_changed" and data.get("state") == "retrying"
+            evt == "task:state_changed" and data.get("state") == "error"
             for evt, data in emitter_calls
-        ), f"retry_count={retry_count} should emit retrying state"
-
-    # Test retry_count = 5 (should mark as error)
-    emitter_calls.clear()
-    db.retry_task.reset_mock()
-
-    task_record = MagicMock()
-    task_record.retry_count = 5  # equals max_retries → error
-    db.get_task.return_value = task_record
-
-    await daemon._handle_retry(
-        db=db,
-        task_id="task-1",
-        worktree_mgr=worktree_mgr,
-        review_feedback="fix this",
-        pipeline_id="pipe-789",
-    )
-
-    # Should have called update_task_state to ERROR, not retry_task
-    db.update_task_state.assert_called_with("task-1", "error")
-    db.retry_task.assert_not_called()
-    assert any(
-        evt == "task:state_changed" and data.get("state") == "error" for evt, data in emitter_calls
-    ), "retry_count=5 should emit error state"
+        ), "retry_count=5 should emit error state"
 
 
 # -- Test: plan_ready data includes tasks but no phase field -----------------
