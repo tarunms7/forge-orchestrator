@@ -1,5 +1,7 @@
 """Tests for forge.gauntlet.runner — GauntletRunner orchestration."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from forge.gauntlet.runner import GauntletRunner, UnknownScenarioError
@@ -103,16 +105,93 @@ class TestGauntletRunnerChaos:
 
 class TestGauntletRunnerLiveMode:
     @pytest.mark.asyncio
-    async def test_live_mode_returns_error(self, tmp_path):
-        runner = GauntletRunner(
-            scenarios=["happy_path"],
-            live=True,
-            workspace_dir=str(tmp_path),
-        )
-        result = await runner.run()
-        assert len(result.scenarios) == 1
-        assert result.scenarios[0].passed is False
-        assert "not yet implemented" in result.scenarios[0].error.lower()
+    async def test_live_mode_sdk_unavailable(self, tmp_path):
+        """When claude CLI is not on PATH, live mode returns a clear error."""
+        with patch("forge.gauntlet.runner._claude_cli_available", return_value=False):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+            assert len(result.scenarios) == 1
+            assert result.scenarios[0].passed is False
+            assert "claude cli not found" in result.scenarios[0].error.lower()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_creates_daemon_and_runs(self, tmp_path):
+        """When claude CLI is available, live mode instantiates ForgeDaemon and calls run()."""
+        mock_daemon_instance = AsyncMock()
+        mock_daemon_instance.run = AsyncMock(return_value=None)
+
+        with (
+            patch("forge.gauntlet.runner._claude_cli_available", return_value=True),
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon_instance) as mock_cls,
+        ):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+
+            assert len(result.scenarios) == 1
+            assert result.scenarios[0].passed is True
+            # Verify ForgeDaemon was constructed with correct args
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["project_dir"] == str(tmp_path)
+            assert len(call_kwargs["repos"]) == 3
+            # Verify daemon.run() was called with the task description
+            mock_daemon_instance.run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_timeout_returns_failure(self, tmp_path):
+        """When daemon.run() exceeds timeout, live mode returns a timeout error."""
+        import asyncio
+
+        async def slow_run(*args, **kwargs):
+            await asyncio.sleep(999)
+
+        mock_daemon_instance = AsyncMock()
+        mock_daemon_instance.run = slow_run
+
+        with (
+            patch("forge.gauntlet.runner._claude_cli_available", return_value=True),
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon_instance),
+            patch("forge.gauntlet.runner.LIVE_SCENARIO_TIMEOUT", 0.1),
+        ):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+
+            assert len(result.scenarios) == 1
+            assert result.scenarios[0].passed is False
+            assert "timed out" in result.scenarios[0].error.lower()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_daemon_exception_returns_failure(self, tmp_path):
+        """When daemon.run() raises, live mode captures the error."""
+        mock_daemon_instance = AsyncMock()
+        mock_daemon_instance.run = AsyncMock(side_effect=RuntimeError("SDK auth failed"))
+
+        with (
+            patch("forge.gauntlet.runner._claude_cli_available", return_value=True),
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon_instance),
+        ):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+
+            assert len(result.scenarios) == 1
+            assert result.scenarios[0].passed is False
+            assert "SDK auth failed" in result.scenarios[0].error
 
 
 class TestGauntletRunnerArtifacts:
