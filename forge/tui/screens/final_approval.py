@@ -7,6 +7,7 @@ import logging
 import os
 from collections import OrderedDict
 
+from textual import events
 from textual.binding import Binding
 from textual.containers import Center, Vertical, VerticalScroll
 from textual.message import Message
@@ -25,7 +26,7 @@ from forge.tui.theme import (
     TEXT_SECONDARY,
 )
 from forge.tui.widgets.diff_viewer import DiffViewer
-from forge.tui.widgets.followup_input import FollowUpInput
+from forge.tui.widgets.followup_input import FollowUpInput, FollowUpTextArea
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 logger = logging.getLogger("forge.tui.screens.final_approval")
@@ -490,6 +491,7 @@ class FinalApprovalScreen(Screen):
         safe_create_task(self._check_behind_main(), logger=logger, name="check-behind-main")
         # Keep screen-level shortcuts active by default; follow-up input is opt-in via "f".
         self.focus()
+        self._update_shortcut_bar()
 
     async def _check_behind_main(self) -> None:
         """Check if pipeline branch is behind the base branch and show warning."""
@@ -624,7 +626,14 @@ class FinalApprovalScreen(Screen):
 
     def _update_shortcut_bar(self) -> None:
         """Update shortcut bar based on current mode and PR state."""
-        if self._pr_created:
+        if isinstance(self.focused, FollowUpTextArea):
+            shortcuts = [
+                ("Enter", "Submit follow-up"),
+                ("Ctrl+S", "Submit follow-up"),
+                ("Ctrl+U", "Clear"),
+                ("Esc", "Back to actions"),
+            ]
+        elif self._pr_created:
             shortcuts: list[tuple[str, str]] = [
                 ("d", "Diff"),
                 ("f", "Follow-up"),
@@ -654,6 +663,15 @@ class FinalApprovalScreen(Screen):
         except Exception:
             pass
 
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        self._update_shortcut_bar()
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        self.call_after_refresh(self._update_shortcut_bar)
+
+    def on_focus(self, event: events.Focus) -> None:
+        self.call_after_refresh(self._update_shortcut_bar)
+
     def show_pr_url(self, url: str, repo_id: str | None = None) -> None:
         """Display PR URL(s) inline, with optional per-repo labeling."""
         self._pr_created = True
@@ -677,6 +695,9 @@ class FinalApprovalScreen(Screen):
         self.app.action_reset_for_new_task()
 
     def action_create_pr(self) -> None:
+        if isinstance(self.focused, FollowUpTextArea):
+            self.action_submit_followup()
+            return
         self.post_message(self.CreatePR())
 
     def action_rerun(self) -> None:
@@ -691,6 +712,7 @@ class FinalApprovalScreen(Screen):
         try:
             followup = self.query_one(FollowUpInput)
             followup.focus_input()
+            self._update_shortcut_bar()
         except Exception:
             pass
 

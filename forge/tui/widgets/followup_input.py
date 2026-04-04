@@ -39,9 +39,24 @@ class FollowUpTextArea(TextArea):
     """TextArea subclass with escape-to-unfocus and clear-input bindings."""
 
     BINDINGS = [
+        Binding("enter", "submit_followup", "Submit", show=False, priority=True),
         Binding("ctrl+u", "clear_input", "Clear", show=False, priority=True),
         Binding("escape", "unfocus", "Back", show=False, priority=True),
     ]
+
+    def action_submit_followup(self) -> None:
+        """Submit the enclosing follow-up composer instead of bubbling Enter to the screen."""
+        parent = self.parent
+        while parent is not None:
+            if isinstance(parent, FollowUpInput):
+                parent.submit()
+                return
+            parent = getattr(parent, "parent", None)
+
+        try:
+            self.screen.action_submit_followup()
+        except Exception:
+            pass
 
     def action_clear_input(self) -> None:
         """Clear the text area content and reset cursor."""
@@ -109,12 +124,13 @@ class FollowUpInput(Widget):
             )
             yield Static(
                 "[bold #d6a85f]NEXT MOVE[/]\n"
-                "[#8b949e]Refine the branch, fix a gap, or extend the shipped work.[/]",
+                "[#8b949e]Queue another task on this branch. Forge will return to "
+                "execution and stream it in the mission view.[/]",
                 id="followup-label",
             )
             yield FollowUpTextArea(id="followup-text")
             yield Static(
-                "[#6e7681]Ctrl+S to submit  •  f to focus[/]",
+                "[#6e7681]Enter or Ctrl+S to submit  •  Esc returns to shortcuts[/]",
                 id="followup-hint",
             )
             yield SuggestionChips(self._suggestions)
