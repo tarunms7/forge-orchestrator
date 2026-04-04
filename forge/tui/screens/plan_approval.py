@@ -192,7 +192,7 @@ class PlanApprovalScreen(Screen):
 
     BINDINGS = [
         Binding("enter", "approve", "Approve & Execute", show=True, priority=True),
-        Binding("escape", "cancel_or_close", "Cancel", show=True, priority=True),
+        Binding("escape", "cancel_or_close", "Save & Exit", show=True, priority=True),
         Binding("j", "cursor_down", "Next task", show=False),
         Binding("k", "cursor_up", "Prev task", show=False),
         Binding("e", "edit_task", "Edit description", show=False),
@@ -214,7 +214,11 @@ class PlanApprovalScreen(Screen):
             super().__init__()
 
     class PlanCancelled(Message):
-        """User cancelled the plan."""
+        """User exited plan review and wants to continue later."""
+
+        def __init__(self, tasks: list[dict] | None = None) -> None:
+            self.tasks = tasks
+            super().__init__()
 
     def __init__(
         self,
@@ -257,7 +261,7 @@ class PlanApprovalScreen(Screen):
                 )
                 yield Static("")
         yield Static(
-            "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [Esc] cancel",
+            "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [Esc] save & exit",
             id="plan-footer",
         )
         yield ShortcutBar(
@@ -268,7 +272,7 @@ class PlanApprovalScreen(Screen):
                 ("x", "Remove"),
                 ("a", "Add"),
                 ("J/K", "Reorder"),
-                ("Esc", "Cancel"),
+                ("Esc", "Save & Exit"),
             ]
         )
 
@@ -400,7 +404,7 @@ class PlanApprovalScreen(Screen):
                 ("x", "Remove"),
                 ("a", "Add"),
                 ("J/K", "Reorder"),
-                ("Esc", "Cancel"),
+                ("Esc", "Save & Exit"),
             ]
         try:
             bar = self.query_one(ShortcutBar)
@@ -551,7 +555,7 @@ class PlanApprovalScreen(Screen):
         if self._editing is not None:
             self._close_editor()
             return
-        self.post_message(self.PlanCancelled())
+        self.post_message(self.PlanCancelled(tasks=self._active_tasks))
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handle text area changes — no-op, just prevent bubbling."""

@@ -178,7 +178,7 @@ class DryRunScreen(Screen):
 
     BINDINGS = [
         Binding("enter", "approve", "Approve & Execute", show=True, priority=True),
-        Binding("escape", "cancel_or_close", "Cancel", show=True, priority=True),
+        Binding("escape", "cancel_or_close", "Save & Exit", show=True, priority=True),
         Binding("j", "cursor_down", "Next task", show=False),
         Binding("k", "cursor_up", "Prev task", show=False),
         Binding("down", "cursor_down", "Next task", show=False),
@@ -196,7 +196,11 @@ class DryRunScreen(Screen):
             super().__init__()
 
     class PlanCancelled(Message):
-        """User cancelled the dry-run plan."""
+        """User exited dry-run plan review and wants to continue later."""
+
+        def __init__(self, tasks: list[dict] | None = None) -> None:
+            self.tasks = tasks
+            super().__init__()
 
     def __init__(
         self,
@@ -240,7 +244,7 @@ class DryRunScreen(Screen):
                     )
                 yield Static(detail, id="detail-content")
         yield Static(
-            "[Enter] approve  [e] edit  [f] files  [c] complexity  [j/k] navigate  [Esc] cancel",
+            "[Enter] approve  [e] edit  [f] files  [c] complexity  [j/k] navigate  [Esc] save & exit",
             id="dry-run-footer",
         )
         yield ShortcutBar(
@@ -248,7 +252,7 @@ class DryRunScreen(Screen):
                 ("Enter", "Approve Plan"),
                 ("\u2191\u2193", "Navigate"),
                 ("e", "Edit"),
-                ("Esc", "Cancel"),
+                ("Esc", "Save & Exit"),
             ]
         )
 
@@ -397,7 +401,7 @@ class DryRunScreen(Screen):
         if self._editing is not None:
             self._close_editor()
             return
-        self.post_message(self.PlanCancelled())
+        self.post_message(self.PlanCancelled(tasks=self._active_tasks))
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handle text area changes — prevent bubbling."""

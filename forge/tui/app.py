@@ -1341,13 +1341,7 @@ class ForgeApp(App):
     async def on_plan_approval_screen_plan_approved(self, event) -> None:
         """User approved the plan — persist status + start contract generation + execution."""
         self.pop_screen()  # Remove PlanApprovalScreen, back to PipelineScreen
-        # Persist 'planned' status and task graph so resume can skip planning
-        if self._db and self._pipeline_id and self._graph:
-            try:
-                await self._db.update_pipeline_status(self._pipeline_id, "planned")
-                await self._db.set_pipeline_plan(self._pipeline_id, self._graph.model_dump_json())
-            except Exception:
-                logger.debug("Failed to persist plan approval", exc_info=True)
+        await self._persist_planned_graph(getattr(event, "tasks", None))
         # Launch contracts + execution as a single background task so the
         # TUI event loop stays responsive and can show progress.
         self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
@@ -1356,35 +1350,23 @@ class ForgeApp(App):
     async def on_dry_run_screen_plan_approved(self, event) -> None:
         """User approved dry-run plan — start full execution."""
         self.pop_screen()  # Remove DryRunScreen, back to PipelineScreen
-        # If user edited tasks, update self._graph with the edited tasks
-        if event.tasks:
-            from forge.core.models import TaskComplexity
-
-            for orig_task, edit in zip(self._graph.tasks, event.tasks, strict=False):
-                orig_task.title = edit.get("title", orig_task.title)
-                orig_task.description = edit.get("description", orig_task.description)
-                orig_task.files = edit.get("files", orig_task.files)
-                if hasattr(orig_task.complexity, "value"):
-                    orig_task.complexity = TaskComplexity(
-                        edit.get("complexity", orig_task.complexity.value)
-                    )
+        await self._persist_planned_graph(getattr(event, "tasks", None))
         self._daemon_task = asyncio.create_task(self._run_contracts_and_execute())
         self._daemon_task.add_done_callback(self._on_daemon_done)
 
     async def on_dry_run_screen_plan_cancelled(self, event) -> None:
-        """User cancelled dry-run plan — clean up."""
+        """User exited dry-run plan review — save the plan and return home."""
         self.pop_screen()  # Remove DryRunScreen
         self.pop_screen()  # Remove PipelineScreen, back to HomeScreen
         if self._elapsed_timer:
             self._elapsed_timer.stop()
         if self._source:
             self._source.disconnect()
-        if self._db and self._pipeline_id:
-            try:
-                await self._db.update_pipeline_status(self._pipeline_id, "cancelled")
-            except Exception:
-                logger.debug("Failed to update cancelled status", exc_info=True)
+        await self._persist_planned_graph(getattr(event, "tasks", None))
         self._replace_state(TuiState())
+        self._daemon = None
+        self._graph = None
+        self.notify("Plan saved. Resume it from history with Shift+R.", severity="information")
 
     async def _run_contracts_and_execute(self) -> None:
         """Generate contracts, run countdown, then execute.
@@ -1441,21 +1423,36 @@ class ForgeApp(App):
             countdown_done.set()
 
     async def on_plan_approval_screen_plan_cancelled(self, event) -> None:
-        """User cancelled the plan — clean up and return to HomeScreen."""
+        """User exited plan review — save the plan and return to HomeScreen."""
         self.pop_screen()  # Remove PlanApprovalScreen
         self.pop_screen()  # Remove PipelineScreen, back to HomeScreen
         if self._elapsed_timer:
             self._elapsed_timer.stop()
         if self._source:
             self._source.disconnect()
-        if self._db and self._pipeline_id:
-            try:
-                await self._db.update_pipeline_status(self._pipeline_id, "cancelled")
-            except Exception:
-                logger.debug("Failed to update cancelled pipeline status", exc_info=True)
+        await self._persist_planned_graph(getattr(event, "tasks", None))
         self._daemon = None
         self._graph = None
-        self.notify("Plan cancelled.", severity="warning")
+        self.notify("Plan saved. Resume it from history with Shift+R.", severity="information")
+
+    async def _persist_planned_graph(self, tasks: list[dict] | None = None) -> None:
+        """Persist the current plan so the pipeline can be resumed without replanning."""
+        if tasks:
+            from forge.core.models import TaskDefinition, TaskGraph
+
+            conventions = getattr(self._graph, "conventions", None) if self._graph else None
+            integration_hints = getattr(self._graph, "integration_hints", None) if self._graph else None
+            self._graph = TaskGraph(
+                tasks=[TaskDefinition.model_validate(task) for task in tasks],
+                conventions=conventions,
+                integration_hints=integration_hints,
+            )
+
+        if self._db and self._pipeline_id and self._graph:
+            try:
+                await self._db.set_pipeline_plan(self._pipeline_id, self._graph.model_dump_json())
+            except Exception:
+                logger.debug("Failed to persist planned graph", exc_info=True)
 
     async def _run_execute(self) -> None:
         """Execute the approved plan."""
