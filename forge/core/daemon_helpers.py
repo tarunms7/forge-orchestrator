@@ -315,8 +315,10 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
 def _is_review_excluded_path(path: str) -> bool:
     """Return True when a diff path points at Forge-managed infrastructure."""
     normalized = path.strip()
-    return normalized == ".gitignore" or normalized.startswith(".claude/") or normalized.startswith(
-        ".forge/"
+    return (
+        normalized == ".gitignore"
+        or normalized.startswith(".claude/")
+        or normalized.startswith(".forge/")
     )
 
 

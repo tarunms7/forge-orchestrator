@@ -222,7 +222,7 @@ def test_default_max_retries_is_5():
 # -- Test: _handle_retry allows exactly max_retries retries ------------------
 
 
-@patch('asyncio.sleep', new_callable=AsyncMock)
+@patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_handle_retry_allows_max_retries_then_errors(mock_sleep):
     """_handle_retry() retries for retry_count 0..4, then marks error at retry_count=5."""
     settings = ForgeSettings()

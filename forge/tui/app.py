@@ -149,7 +149,9 @@ def _resolve_multi_repo_pr_targets(
         if not os.path.exists(os.path.join(repo_path, ".git")):
             raise ValueError(f"Repo '{repo_id}' path is not a git checkout: {repo_path}")
 
-        base_branch = entry.get("base_branch") or getattr(repo_cfg, "base_branch", "") or fallback_base_branch
+        base_branch = (
+            entry.get("base_branch") or getattr(repo_cfg, "base_branch", "") or fallback_base_branch
+        )
         branch_name = entry.get("branch_name") or entry.get("branch") or fallback_branch
 
         repos[repo_id] = {

@@ -18,7 +18,9 @@ def _summarize_reason(reason: str) -> str:
     if not reason:
         return "scheduler is recalculating"
     if reason.startswith("Waiting on "):
-        deps = [part.strip() for part in reason.removeprefix("Waiting on ").split(",") if part.strip()]
+        deps = [
+            part.strip() for part in reason.removeprefix("Waiting on ").split(",") if part.strip()
+        ]
         if not deps:
             return "waiting on dependencies"
         if len(deps) == 1:
