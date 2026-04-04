@@ -41,6 +41,15 @@ def test_task_auto_decided_resumes_locally():
     assert state.tasks["t1"]["state"] == "in_progress"
 
 
+def test_task_state_change_clears_stale_pending_question():
+    state = TuiState()
+    state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Test"}}
+    state.pending_questions = {"t1": {"id": "q1", "question": "Which?"}}
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_review"})
+    assert "t1" not in state.pending_questions
+    assert state.tasks["t1"]["state"] == "in_review"
+
+
 def test_review_gate_started():
     state = TuiState()
     state.tasks = {"t1": {"id": "t1", "state": "in_review", "title": "Test"}}
