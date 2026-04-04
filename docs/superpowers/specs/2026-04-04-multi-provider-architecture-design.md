@@ -78,17 +78,27 @@ class ModelSpec:
 
 Backward compatibility: `ModelSpec.parse("sonnet")` returns `ModelSpec(provider="claude", model="sonnet")`. Every existing config value, test fixture, and CLI flag that passes a bare model name still works.
 
-### 4.2 ModelDescriptor
+### 4.2 Forge Model Catalog
 
-Capabilities are per-model, not per-provider. Claude's `haiku` has different capabilities than `opus`. OpenAI's `gpt-5.4-nano` has different capabilities than `gpt-5.4`. The provider registers a descriptor for each model it supports.
+Forge maintains a curated catalog of models it officially supports. This replaces raw provider model lists with a compatibility contract per model.
 
 ```python
 @dataclass(frozen=True)
-class ModelDescriptor:
-    """Resolved capabilities for a specific provider:model combination."""
-    provider: str
-    model: str
-    backend: str               # "claude-code-sdk" | "codex-sdk" | "openai-agents-sdk"
+class CatalogEntry:
+    """A model Forge knows about. Immutable snapshot of its capabilities and support status."""
+    # Identity
+    provider: str               # "claude" | "openai"
+    alias: str                  # Short name used in config/CLI: "opus", "gpt-5.4"
+    canonical_id: str           # Exact API model ID: "claude-opus-4-20260301", "gpt-5.4-2026-03-05"
+    backend: str                # "claude-code-sdk" | "codex-sdk" | "openai-agents-sdk"
+
+    # Support tier
+    tier: Literal["primary", "supported", "experimental"]
+    # primary:      fully tested in CI conformance suite, guaranteed to work for all stages
+    # supported:    tested for specific stages, best-effort for others
+    # experimental: user-provided or new model, no conformance guarantee
+
+    # Capabilities (per-model, not per-provider)
     can_use_tools: bool = True
     can_stream: bool = True
     can_resume_session: bool = True
@@ -99,63 +109,189 @@ class ModelDescriptor:
     supports_structured_output: bool = False
     supports_reasoning: bool = False
 
+    # Cost key — explicit link to cost registry, never inferred
+    cost_key: str = ""          # e.g., "claude:opus", "openai:gpt-5.4"
+                                # If empty, defaults to f"{provider}:{alias}"
+
+    # Stage compatibility (which stages this model is validated for)
+    validated_stages: frozenset[str] = frozenset()
+    # e.g., frozenset({"agent", "planner", "reviewer", "contract_builder"})
+    # Empty means "not validated for any stage" (experimental tier)
+
     @property
     def spec(self) -> "ModelSpec":
-        return ModelSpec(provider=self.provider, model=self.model)
+        return ModelSpec(provider=self.provider, model=self.alias)
+
+    @property
+    def resolved_cost_key(self) -> str:
+        return self.cost_key or f"{self.provider}:{self.alias}"
 ```
 
-The `backend` field is explicit — it determines which SDK the provider uses to execute this model. This replaces the brittle heuristic of inferring backend from cwd/worktree shape.
+**Why `canonical_id` is separate from `alias`:** The routing table and config use short aliases (`"opus"`, `"gpt-5.4"`). The SDK needs the exact API model ID (`"claude-opus-4-20260301"`). These diverge when models are updated — the alias stays stable, the canonical ID changes. This also enables pinning: a user can lock to a specific model snapshot by overriding the canonical ID.
 
-Providers register descriptors at startup:
+**Why `tier` exists:** Users need to know if "this model will work" before they run a pipeline. A `primary` model has passed Forge's conformance suite for all validated stages. A `supported` model works for specific stages. An `experimental` model is use-at-your-own-risk. The UI shows tier badges. `forge doctor` warns about experimental models.
+
+**Why `validated_stages` instead of just capability booleans:** Capability booleans tell you what a model CAN do. `validated_stages` tells you what Forge has TESTED. A model might have `can_edit_files=True` but if it hasn't been tested for the agent stage, there's no guarantee it produces good edits. The conformance suite (Section 22) populates this.
+
+**The shipped catalog:**
 
 ```python
-class ClaudeProvider:
-    def model_descriptors(self) -> list[ModelDescriptor]:
-        return [
-            ModelDescriptor(provider="claude", model="opus", backend="claude-code-sdk",
-                            max_context_tokens=1_000_000, supports_reasoning=True),
-            ModelDescriptor(provider="claude", model="sonnet", backend="claude-code-sdk",
-                            max_context_tokens=1_000_000),
-            ModelDescriptor(provider="claude", model="haiku", backend="claude-code-sdk",
-                            max_context_tokens=200_000),
-        ]
+# forge/providers/catalog.py
 
-class OpenAIProvider:
-    def model_descriptors(self) -> list[ModelDescriptor]:
-        return [
-            ModelDescriptor(provider="openai", model="gpt-5.4", backend="codex-sdk",
-                            max_context_tokens=1_000_000, supports_reasoning=True),
-            ModelDescriptor(provider="openai", model="gpt-5.4-mini", backend="codex-sdk",
-                            max_context_tokens=1_000_000),
-            ModelDescriptor(provider="openai", model="gpt-5.4-nano", backend="codex-sdk",
-                            max_context_tokens=200_000, can_resume_session=False),
-            # Agents SDK models (for planner/reviewer stages — no file editing needed)
-            ModelDescriptor(provider="openai", model="o3", backend="openai-agents-sdk",
-                            can_edit_files=False, can_run_shell=False,
-                            supports_reasoning=True, supports_structured_output=True),
-        ]
+FORGE_MODEL_CATALOG: list[CatalogEntry] = [
+    # Claude — primary tier
+    CatalogEntry(
+        provider="claude", alias="opus",
+        canonical_id="claude-opus-4-20260301",
+        backend="claude-code-sdk", tier="primary",
+        max_context_tokens=1_000_000, supports_reasoning=True,
+        validated_stages=frozenset({"agent", "planner", "reviewer", "contract_builder"}),
+    ),
+    CatalogEntry(
+        provider="claude", alias="sonnet",
+        canonical_id="claude-sonnet-4-20260514",
+        backend="claude-code-sdk", tier="primary",
+        max_context_tokens=1_000_000,
+        validated_stages=frozenset({"agent", "reviewer", "contract_builder"}),
+    ),
+    CatalogEntry(
+        provider="claude", alias="haiku",
+        canonical_id="claude-haiku-4-5-20251001",
+        backend="claude-code-sdk", tier="supported",
+        max_context_tokens=200_000,
+        validated_stages=frozenset({"agent", "reviewer"}),
+    ),
+
+    # OpenAI — supported tier (initial launch)
+    CatalogEntry(
+        provider="openai", alias="gpt-5.4",
+        canonical_id="gpt-5.4-2026-03-05",
+        backend="codex-sdk", tier="supported",
+        max_context_tokens=1_000_000, supports_reasoning=True,
+        validated_stages=frozenset({"agent"}),
+    ),
+    CatalogEntry(
+        provider="openai", alias="gpt-5.4-mini",
+        canonical_id="gpt-5.4-mini-2026-03-17",
+        backend="codex-sdk", tier="supported",
+        max_context_tokens=1_000_000,
+        validated_stages=frozenset({"agent"}),
+    ),
+    CatalogEntry(
+        provider="openai", alias="gpt-5.3-codex",
+        canonical_id="gpt-5.3-codex",
+        backend="codex-sdk", tier="supported",
+        max_context_tokens=1_000_000,
+        validated_stages=frozenset({"agent"}),
+    ),
+    CatalogEntry(
+        provider="openai", alias="o3",
+        canonical_id="o3-2026-04-16",
+        backend="openai-agents-sdk", tier="experimental",
+        can_edit_files=False, can_run_shell=False,
+        supports_reasoning=True, supports_structured_output=True,
+        validated_stages=frozenset(),  # not validated for any stage yet
+    ),
+]
 ```
 
-The registry validates at routing time that the selected model's descriptor supports the required capabilities for the stage:
+**User-provided models:** Users can add models not in the catalog via config:
+
+```toml
+# forge.toml
+[[custom_models]]
+provider = "openai"
+alias = "deepseek-r1"
+canonical_id = "deepseek-r1-0528"
+backend = "openai-agents-sdk"
+tier = "experimental"
+```
+
+These get `tier="experimental"` and `validated_stages=frozenset()` by default. The user accepts the risk.
+
+**Stage validation at routing time:**
 
 ```python
-def validate_model_for_stage(descriptor: ModelDescriptor, stage: str) -> list[str]:
-    """Returns list of validation errors. Empty = OK."""
+def validate_model_for_stage(entry: CatalogEntry, stage: str) -> list[str]:
+    """Returns list of validation errors. Empty list = OK."""
     errors = []
+
+    # Hard capability checks (model physically cannot do this)
     if stage == "agent":
-        if not descriptor.can_edit_files:
-            errors.append(f"{descriptor.spec} cannot edit files (required for agent stage)")
-        if not descriptor.can_run_shell:
-            errors.append(f"{descriptor.spec} cannot run shell (required for agent stage)")
+        if not entry.can_edit_files:
+            errors.append(f"{entry.spec} cannot edit files (required for agent stage)")
+        if not entry.can_run_shell:
+            errors.append(f"{entry.spec} cannot run shell (required for agent stage)")
     if stage in ("planner", "reviewer", "contract_builder"):
-        if not descriptor.can_use_tools:
-            errors.append(f"{descriptor.spec} cannot use tools (required for {stage})")
+        if not entry.can_use_tools:
+            errors.append(f"{entry.spec} cannot use tools (required for {stage})")
+
+    # Soft validation checks (model might work but hasn't been tested)
+    if stage not in entry.validated_stages:
+        if entry.tier == "experimental":
+            errors.append(f"WARNING: {entry.spec} is experimental and not validated for {stage}")
+        elif entry.tier == "supported":
+            errors.append(f"WARNING: {entry.spec} not yet validated for {stage} (supported for: {entry.validated_stages})")
+        # primary tier with missing stage validation is a catalog bug — log but don't block
+
     return errors
 ```
 
-This catches incompatible models before they reach execution, not after.
+Hard errors (capability mismatch) block execution. Soft warnings (unvalidated stage) are logged and shown in `forge doctor` but don't block execution — the user chose this model deliberately.
 
-### 4.3 ProviderResult
+### 4.3 ResumeState
+
+Replaces the bare `session_id: str | None`. Resume semantics differ across providers and need explicit lifecycle control.
+
+```python
+@dataclass
+class ResumeState:
+    """Persisted state needed to resume an interrupted agent session."""
+    provider: str               # which provider owns this state
+    backend: str                # which backend created it
+    session_token: str          # opaque provider-specific token (Claude session_id, Codex thread_id)
+    created_at: str             # ISO timestamp
+    last_active_at: str         # ISO timestamp — when last message was exchanged
+    turn_count: int = 0         # how many turns completed before interruption
+    is_resumable: bool = True   # provider can mark state as non-resumable (e.g., after timeout)
+
+    def to_json(self) -> str:
+        """Serialize for DB storage in tasks.resume_state column."""
+        return json.dumps(asdict(self))
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ResumeState":
+        return cls(**json.loads(raw))
+```
+
+**Why this replaces `session_id: str`:**
+
+1. A bare string loses context. When resuming, Forge needs to know which provider and backend created the session. Without this, a session created by Claude could accidentally be passed to OpenAI on resume (e.g., after a config change between question and answer).
+2. `is_resumable` lets the provider mark a session as expired. Claude sessions have a TTL. Codex threads can be pruned. If the provider says "this session is dead," Forge falls back to a full retry instead of attempting resume and getting a cryptic error.
+3. `turn_count` lets Forge decide whether resume is worth it. If an agent completed 1 turn out of 75 before interruption, a fresh start is better. If it completed 50, resume is critical.
+
+**Resume lifecycle in the provider protocol:**
+
+```python
+class ProviderProtocol(Protocol):
+    # ... execute() and other methods ...
+
+    async def can_resume(self, state: ResumeState) -> bool:
+        """Check if a session is still resumable. Providers may query their backend."""
+        ...
+
+    async def cleanup_session(self, state: ResumeState) -> None:
+        """Release provider-side resources for a completed/abandoned session.
+        Called when a task completes, fails permanently, or is cancelled."""
+        ...
+```
+
+Claude: `can_resume()` returns True if session_id is still valid (not expired). `cleanup_session()` is a no-op (Claude SDK manages session lifecycle).
+Codex: `can_resume()` checks if thread still exists. `cleanup_session()` deletes the thread if task succeeded (saves storage).
+
+**Where ResumeState is stored:** `tasks.resume_state TEXT` column (JSON). Replaces the current `tasks.session_id TEXT` column.
+
+### 4.4 ProviderResult
 
 Universal result from any provider. Replaces `SdkResult`.
 
@@ -166,34 +302,75 @@ class ProviderResult:
     is_error: bool
     input_tokens: int
     output_tokens: int
-    session_id: str | None                  # opaque, provider-specific
+    resume_state: ResumeState | None        # for session resumption
     duration_ms: int
     provider_reported_cost_usd: float | None = None   # from SDK if available
+    model_canonical_id: str = ""            # actual model ID used (may differ from alias)
     raw: Any = None                         # provider-specific raw response
 ```
 
-Design decision: `session_id` is a plain string, not a typed object. Session IDs are opaque provider-specific tokens (Claude UUID vs Codex thread ID). The orchestrator stores them in the DB and passes them back on resume. No inspection, no parsing.
+Design decision: `model_canonical_id` is returned by the provider because model routing may resolve to a different snapshot than expected (e.g., if the provider auto-updates "gpt-5.4" to "gpt-5.4-2026-04-01"). Forge stores what was actually used, not what was requested.
 
 Design decision: `provider_reported_cost_usd` is optional. Claude SDK reports cost directly — we trust it. OpenAI returns tokens but not cost — we calculate from the cost registry. The cost resolution layer uses provider-reported cost when available, falls back to calculation.
 
-### 4.4 ProviderEvent
+### 4.5 ProviderEvent
 
-A single streaming event from any provider. Replaces duck-typed `AssistantMessage`/`ResultMessage` handling. Must carry enough information to support all 11 current message handling locations (see Section 10.2 for the full audit).
+A durable normalized stream contract. Every streaming consumer in Forge (7 message callbacks, RuntimeGuard, SafetyAuditor, WebSocket emitter) reads from this type. It must be stable enough that adding a provider never requires changing consumers.
 
 ```python
+class EventKind(str, Enum):
+    """Closed set of event types. Adding a new kind is a breaking change that
+    requires updating all consumers. This is intentional — it forces explicit
+    handling, not silent drops."""
+    TEXT = "text"                   # Model produced text output
+    TOOL_USE = "tool_use"          # Model requested a tool call
+    TOOL_RESULT = "tool_result"    # Tool returned a result
+    ERROR = "error"                # Execution error (transient or fatal)
+    USAGE = "usage"                # Token/cost accounting update
+    STATUS = "status"              # Lifecycle status change (started, paused, resumed)
+
 @dataclass
 class ProviderEvent:
-    kind: str               # "text" | "tool_use" | "tool_result" | "status" | "error" | "usage"
+    kind: EventKind
+    sequence: int = 0              # monotonic per-execution, for ordering and replay
+    timestamp_ms: int = 0          # unix millis, for latency tracking and log correlation
+    correlation_id: str = ""       # ties events to a specific execute() call
+
+    # TEXT fields
     text: str = ""
-    tool_name: str = ""     # normalized: "Bash", "Read", "Edit", etc.
+    token_count: int = 0           # estimated tokens in this text chunk
+
+    # TOOL_USE / TOOL_RESULT fields
+    tool_name: str = ""            # normalized to core tool vocabulary (see Section 4.8)
     tool_input: dict | None = None
-    tool_call_id: str = ""          # for RuntimeGuard's pending_bash tracking
-    is_tool_error: bool = False     # for RuntimeGuard's error detection
-    token_count: int = 0            # for progress display (replaces len(block.text)//4)
-    raw: Any = None                 # provider-specific raw message (for debugging)
+    tool_call_id: str = ""         # correlates TOOL_USE with its TOOL_RESULT
+    tool_output: str = ""          # for TOOL_RESULT events
+    is_tool_error: bool = False    # for TOOL_RESULT error detection (RuntimeGuard)
+
+    # USAGE fields
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    # STATUS fields
+    status: str = ""               # "started" | "paused" | "resumed" | "completed"
+
+    # ERROR fields
+    error_message: str = ""
+    is_transient: bool = False     # hint to retry layer
+
+    # Raw provider data (debugging only, never consumed by business logic)
+    raw: Any = None
 ```
 
-Design decision: `tool_name` is normalized to a common vocabulary. Claude uses `"Bash"`, Codex uses `"command_execution"`. The provider normalizes to a common set (`"Bash"`, `"Read"`, `"Write"`, `"Edit"`, `"Glob"`, `"Grep"`) so the `SafetyAuditor` and `RuntimeGuard` don't need provider-specific checks.
+**Why `sequence` and `timestamp_ms`:** Events may arrive out of order during concurrent tool execution. The sequence number enables correct ordering for replay and audit. The timestamp enables latency tracking (how long did this tool call take?) and log correlation (match a WebSocket emission to its source event).
+
+**Why `correlation_id`:** A single daemon may run multiple provider executions concurrently (parallel agents). The correlation ID ties all events from one `execute()` call together, preventing cross-contamination in logging and WebSocket routing.
+
+**Why `EventKind` is an enum, not a bare string:** The previous design used bare strings, which means a typo (`"tetx"` instead of `"text"`) silently drops events. An enum forces exhaustive handling and catches errors at parse time, not at runtime.
+
+**Why `tool_output` exists on the event:** RuntimeGuard needs to inspect tool results (e.g., did a Bash command fail?). Without `tool_output`, the guard can only see tool requests, not outcomes. This closes a real gap in the current design where guard.py accesses `block.content` on error blocks.
+
+**Tool name normalization:** Providers normalize to a core vocabulary defined in Section 4.8. This means `SafetyAuditor` and `RuntimeGuard` write one set of checks, not per-provider variants.
 
 ### 4.5 SafetyBoundary
 
@@ -270,7 +447,61 @@ The three layers together guarantee: provider-native block (fastest, catches mos
 
 Agents are not restricted beyond these safety boundaries. They can read/write any file, run any shell command, install packages, run tests, build — full power within their worktree.
 
-### 4.6 MCPServerConfig
+### 4.8 Core Tool Contract
+
+Every provider must normalize its native tool names to this vocabulary. Consumers (SafetyAuditor, RuntimeGuard, event handlers) only check these names.
+
+```python
+class CoreTool(str, Enum):
+    """The minimum tool surface every coding provider must support.
+    Providers map their native tool names to these."""
+    BASH = "Bash"               # Shell command execution
+    READ = "Read"               # Read file contents
+    WRITE = "Write"             # Create/overwrite file
+    EDIT = "Edit"               # Partial file edit (diff-based)
+    GLOB = "Glob"               # Find files by pattern
+    GREP = "Grep"               # Search file contents
+    # Non-coding tools (may not exist on all providers)
+    MCP_TOOL = "MCP"            # Call to an MCP server tool
+    UNKNOWN = "Unknown"         # Tool not in core vocabulary — logged, not blocked
+
+# Provider-specific tool name → CoreTool mapping
+CLAUDE_TOOL_MAP = {
+    "Bash": CoreTool.BASH, "Read": CoreTool.READ, "Write": CoreTool.WRITE,
+    "Edit": CoreTool.EDIT, "Glob": CoreTool.GLOB, "Grep": CoreTool.GREP,
+}
+CODEX_TOOL_MAP = {
+    "command_execution": CoreTool.BASH, "file_read": CoreTool.READ,
+    "file_write": CoreTool.WRITE, "file_change": CoreTool.EDIT,
+}
+```
+
+**Why this is not MCP:** MCP is for extensible custom tools (forge_ask_question, GitHub, cloud services). The core tool contract is for the fundamental coding operations that every provider must support natively. These are not MCP tools — they're built into each provider's SDK. The mapping just normalizes names so Forge doesn't need `if provider == "claude": check("Bash") elif provider == "openai": check("command_execution")` everywhere.
+
+**When a tool is `UNKNOWN`:** The provider encounters a tool name not in the mapping (e.g., a new built-in tool added to a provider update). It maps to `CoreTool.UNKNOWN`, logs a warning with the raw name, and lets it through. The SafetyAuditor only blocks operations on known core tools (you can't deny `git:push` on an unknown tool because you don't know what it does). This is a "fail-open for unknown tools, fail-closed for known dangerous operations" policy.
+
+### 4.9 WorkspaceRoots
+
+Forge supports multi-repo workspaces. Agents may need read-only access to directories outside their primary worktree (e.g., shared libraries in a monorepo, a second repo's API contracts).
+
+```python
+@dataclass
+class WorkspaceRoots:
+    """Directories the agent can access during execution."""
+    primary_cwd: str                    # The worktree — full read/write
+    read_only_dirs: list[str] = field(default_factory=list)  # Additional readable dirs
+    # Example: repo A's agent needs to read repo B's API schema
+    # primary_cwd="/worktrees/task-1" (repo A worktree)
+    # read_only_dirs=["/home/user/repo-b/src/api/schema"]
+```
+
+This replaces the current `cwd: str` + `allowed_dirs: list[str] | None` in `AgentAdapter.run()`. The distinction between read-write (primary) and read-only (additional) is enforced:
+- `ClaudeProvider`: `cwd=primary_cwd`, additional dirs listed in system prompt as readable paths
+- `OpenAIProvider`: `workingDirectory=primary_cwd`, `additionalDirectories=read_only_dirs` in Codex thread options
+
+Post-execution file scope enforcement in `daemon_executor.py` already handles the write boundary (only changes in primary_cwd are kept). The `WorkspaceRoots` type makes the contract explicit.
+
+### 4.10 MCPServerConfig
 
 Configuration for MCP servers that agents can connect to.
 
@@ -353,24 +584,51 @@ class ProviderProtocol(Protocol):
     @property
     def name(self) -> str: ...
 
-    def model_descriptors(self) -> list[ModelDescriptor]: ...
+    def catalog_entries(self) -> list[CatalogEntry]:
+        """Return all models this provider supports, with full capability descriptors."""
+        ...
+
+    async def health_check(self) -> ProviderHealthStatus:
+        """Verify provider is operational. Called by `forge doctor` and pre-pipeline preflight.
+        Returns status with details (authenticated, API reachable, SDK version)."""
+        ...
 
     async def execute(
         self,
         *,
         prompt: str,
         system_prompt: str,
-        model: str,
+        catalog_entry: CatalogEntry,
         execution_mode: ExecutionMode,
         tool_policy: ToolPolicy,
         output_contract: OutputContract,
-        cwd: str,
+        workspace: WorkspaceRoots,
         max_turns: int,
         mcp_servers: list[MCPServerConfig] | None = None,
-        resume: str | None = None,
+        resume_state: ResumeState | None = None,
         on_event: Callable[[ProviderEvent], Awaitable[None]] | None = None,
     ) -> ProviderResult: ...
+
+    async def can_resume(self, state: ResumeState) -> bool:
+        """Check if a session is still resumable. May query the backend."""
+        ...
+
+    async def cleanup_session(self, state: ResumeState) -> None:
+        """Release provider-side resources. Called on task completion/cancellation."""
+        ...
+
+
+@dataclass
+class ProviderHealthStatus:
+    healthy: bool
+    provider: str
+    details: dict[str, str] = field(default_factory=dict)
+    # Example: {"authenticated": "yes", "sdk_version": "1.2.3", "api_reachable": "yes"}
+    errors: list[str] = field(default_factory=list)
+    # Example: ["OPENAI_API_KEY not set"]
 ```
+
+**Why `catalog_entry` instead of `model: str`:** The provider receives the full `CatalogEntry` — not just a model alias. This means it has the `canonical_id` (exact API model ID to pass to the SDK), the `backend` (which SDK to use), and all capabilities. No second lookup needed inside the provider.
 
 Design decision: single `execute()` method, not separate methods per pipeline stage. All 7 current call sites (adapter, claude_planner, unified_planner, contract_builder, llm_review, synthesizer, followup) do the same thing: build system prompt, set tool restrictions, call SDK, get result. The differences are captured in `execution_mode`, `tool_policy`, and `output_contract`.
 
@@ -459,24 +717,45 @@ Created once at daemon startup, passed to every component that needs a provider.
 class ProviderRegistry:
     def __init__(self, settings: ForgeSettings):
         self._providers: dict[str, ProviderProtocol] = {}
-        self._descriptors: dict[str, ModelDescriptor] = {}   # keyed by "provider:model"
+        self._catalog: dict[str, CatalogEntry] = {}   # keyed by "provider:alias"
         self._settings = settings
 
     def register(self, provider: ProviderProtocol) -> None:
-        """Register provider and index all its model descriptors."""
+        """Register provider and index all its catalog entries."""
         self._providers[provider.name] = provider
-        for desc in provider.model_descriptors():
-            self._descriptors[str(desc.spec)] = desc
+        for entry in provider.catalog_entries():
+            key = str(entry.spec)
+            if key in self._catalog:
+                logger.warning("Duplicate catalog entry %s — last registration wins", key)
+            self._catalog[key] = entry
 
-    def get(self, name: str) -> ProviderProtocol: ...
+    def get_provider(self, name: str) -> ProviderProtocol: ...
     def get_for_model(self, spec: ModelSpec) -> ProviderProtocol: ...
-    def get_descriptor(self, spec: ModelSpec) -> ModelDescriptor: ...
+    def get_catalog_entry(self, spec: ModelSpec) -> CatalogEntry:
+        """Returns the catalog entry. Raises CatalogEntryNotFoundError if unknown."""
+        ...
     def all_providers(self) -> list[ProviderProtocol]: ...
-    def validate_model(self, spec: ModelSpec) -> bool: ...
+    def all_catalog_entries(self) -> list[CatalogEntry]: ...
+
+    def validate_model(self, spec: ModelSpec) -> bool:
+        """Check that provider exists and model is in the catalog."""
+        ...
     def validate_model_for_stage(self, spec: ModelSpec, stage: str) -> list[str]:
-        """Returns validation errors if this model can't handle this stage."""
-        desc = self.get_descriptor(spec)
-        return _validate_model_for_stage(desc, stage)
+        """Returns validation errors (hard blocks + soft warnings) for this model+stage."""
+        entry = self.get_catalog_entry(spec)
+        return validate_model_for_stage(entry, stage)
+
+    async def preflight_all(self) -> dict[str, ProviderHealthStatus]:
+        """Health-check all registered providers. Called by `forge doctor` and pipeline preflight."""
+        results = {}
+        for name, provider in self._providers.items():
+            try:
+                results[name] = await provider.health_check()
+            except Exception as exc:
+                results[name] = ProviderHealthStatus(
+                    healthy=False, provider=name, errors=[str(exc)]
+                )
+        return results
 ```
 
 Initialization in daemon:
@@ -675,7 +954,60 @@ Existing `cost_rate_sonnet_input` etc. fields are deprecated but still loaded. O
 
 ### 9.5 estimate_pipeline_cost()
 
-Updated to accept `CostRegistry` and `ProviderRegistry`. Uses actual routing table to determine models per stage, then calculates from registry rates. Same estimation logic (1 planner + N agents + N reviewers), now provider-aware.
+Updated to use `CatalogEntry.resolved_cost_key` for rate lookup and per-stage token estimates.
+
+```python
+# Per-stage token estimates (based on historical data, not flat averages)
+_STAGE_TOKEN_ESTIMATES = {
+    "planner":          {"input": 8000, "output": 4000},    # reads codebase, produces TaskGraph
+    "contract_builder": {"input": 6000, "output": 3000},    # reads plan, produces contracts
+    "agent":            {"input": 12000, "output": 6000},   # heaviest stage — coding + tool use
+    "reviewer":         {"input": 5000, "output": 2000},    # reads diff, produces verdict
+}
+
+async def estimate_pipeline_cost(
+    task_count: int,
+    strategy: str,
+    registry: ProviderRegistry,
+    cost_registry: CostRegistry,
+    overrides: dict[str, str] | None = None,
+) -> PipelineCostEstimate:
+    """Per-stage cost breakdown, not a single number."""
+    stages = {}
+    for stage in ("planner", "contract_builder", "agent", "reviewer"):
+        spec = select_model(strategy, stage, "medium", overrides)
+        entry = registry.get_catalog_entry(spec)
+        tokens = _STAGE_TOKEN_ESTIMATES[stage]
+        stage_cost = cost_registry.calculate_cost(
+            entry.resolved_cost_key, tokens["input"], tokens["output"]
+        )
+        multiplier = task_count if stage in ("agent", "reviewer") else 1
+        stages[stage] = StageCostEstimate(
+            model=str(spec), cost_per_run=stage_cost,
+            runs=multiplier, total=stage_cost * multiplier,
+        )
+
+    return PipelineCostEstimate(
+        stages=stages,
+        total=sum(s.total for s in stages.values()),
+        confidence="estimate",  # vs "actual" after execution
+    )
+
+@dataclass
+class StageCostEstimate:
+    model: str
+    cost_per_run: float
+    runs: int
+    total: float
+
+@dataclass
+class PipelineCostEstimate:
+    stages: dict[str, StageCostEstimate]
+    total: float
+    confidence: Literal["estimate", "actual"]
+```
+
+**Why per-stage token estimates:** The current `_AVG_INPUT_TOKENS = 4000` is a single average across all stages. In reality, agents use 3x more tokens than reviewers. Per-stage estimates produce accurate cost projections that users can trust for budget decisions. The estimates are calibrated from historical pipeline runs and can be updated in settings.
 
 ### 9.6 Database Impact
 
@@ -917,16 +1249,22 @@ class AgentConfig:
 -- Tasks: full model tracking per execution attempt
 ALTER TABLE tasks ADD COLUMN provider_model TEXT DEFAULT 'claude:sonnet';
 ALTER TABLE tasks ADD COLUMN backend TEXT DEFAULT 'claude-code-sdk';
-ALTER TABLE tasks ADD COLUMN model_history TEXT;  -- JSON array of escalation history
+ALTER TABLE tasks ADD COLUMN canonical_model_id TEXT;     -- actual API model ID used
+ALTER TABLE tasks ADD COLUMN model_history TEXT;           -- JSON array of escalation history
+ALTER TABLE tasks ADD COLUMN resume_state TEXT;            -- JSON ResumeState (replaces session_id)
 
 -- Pipelines: resolved config snapshot at creation time
-ALTER TABLE pipelines ADD COLUMN provider_config TEXT;  -- JSON of per-stage provider:model:backend
+ALTER TABLE pipelines ADD COLUMN provider_config TEXT;    -- JSON of per-stage routing
 ```
 
 - `tasks.provider_model`: full `provider:model` string (e.g., `"claude:opus"`, `"openai:gpt-5.4"`). Not just provider — the exact model.
 - `tasks.backend`: which SDK was used (`"claude-code-sdk"`, `"codex-sdk"`, `"openai-agents-sdk"`).
-- `tasks.model_history`: JSON array tracking escalation across retries. Example: `["claude:sonnet", "claude:opus"]` means the task started on sonnet and escalated to opus on retry. Critical for debugging cost spikes and understanding which models struggle with which tasks.
-- `pipelines.provider_config`: JSON snapshot of the per-stage routing resolved at pipeline creation time. Includes provider, model, and backend for each stage (planner, agent per complexity tier, reviewer, contract_builder).
+- `tasks.canonical_model_id`: the actual API model ID returned by the provider in `ProviderResult.model_canonical_id`. May differ from the alias if the provider auto-updates model snapshots.
+- `tasks.model_history`: JSON array tracking escalation across retries (see 13.2).
+- `tasks.resume_state`: JSON-serialized `ResumeState` object. Replaces the current `tasks.session_id` column. Contains provider, backend, session_token, timestamps, turn_count, and is_resumable flag.
+- `pipelines.provider_config`: JSON snapshot of the per-stage routing resolved at pipeline creation time. Includes provider, model, backend, and canonical_id for each stage.
+
+**Migration:** The existing `tasks.session_id` column is migrated to `tasks.resume_state` by wrapping existing values: `ResumeState(provider="claude", backend="claude-code-sdk", session_token=<old_session_id>, ...)`.
 
 ### 13.2 model_history Format
 
@@ -1095,22 +1433,31 @@ The FORGE_QUESTION protocol currently works via text parsing. Not elegant, but t
 
 ```
 forge/providers/
-    __init__.py         # Exports: ProviderProtocol, ProviderResult, ProviderEvent, etc.
-    base.py             # Core types: ModelSpec, ModelDescriptor, ExecutionMode, ToolPolicy,
-                        #   OutputContract, ProviderResult, ProviderEvent, SafetyBoundary,
-                        #   MCPServerConfig, ProviderProtocol
-    registry.py         # ProviderRegistry (with descriptor indexing + stage validation)
+    __init__.py         # Exports: all public types from base.py
+    base.py             # Core types: ModelSpec, CatalogEntry, ResumeState, ProviderEvent,
+                        #   EventKind, ProviderResult, ExecutionMode, ToolPolicy, OutputContract,
+                        #   SafetyBoundary, WorkspaceRoots, MCPServerConfig, ProviderProtocol,
+                        #   ProviderHealthStatus
+    catalog.py          # FORGE_MODEL_CATALOG, CoreTool enum, tool name mappings per provider
+    registry.py         # ProviderRegistry (catalog indexing, stage validation, preflight)
     claude.py           # ClaudeProvider (extracted from sdk_helpers.py)
-    openai.py           # OpenAIProvider
-    restrictions.py     # AGENT_DENIED_OPERATIONS list + per-stage ToolPolicy constants
+    openai.py           # OpenAIProvider (Codex SDK + Agents SDK backends)
+    restrictions.py     # AGENT_DENIED_OPERATIONS, per-stage ToolPolicy constants
     safety_auditor.py   # SafetyAuditor — Forge-owned hard enforcement on tool_use events
 
 forge/core/
-    cost_registry.py    # CostRegistry, ModelRates, resolve_cost(), UnknownCostBehavior
+    cost_registry.py    # CostRegistry, ModelRates, UnknownCostBehavior, PipelineCostEstimate
 
-forge/mcp/              # Optional, phase 2
+forge/mcp/              # Optional, Phase 8
     __init__.py
     server.py           # FastMCP server for Forge-specific tools
+
+forge/tests/conformance/  # Phase 5+
+    __init__.py
+    base.py             # ConformanceTest ABC, ConformanceResult
+    agent_tests.py      # Agent stage conformance (file edit, shell, safety, resume)
+    planner_tests.py    # Planner stage conformance (TaskGraph, tool allowlist)
+    reviewer_tests.py   # Reviewer stage conformance (verdict, bug detection)
 ```
 
 ### 18.2 Modified Files
@@ -1231,53 +1578,182 @@ No OpenAI API key needed in CI. All OpenAI provider tests use mocks. Real provid
 
 ## 21. Implementation Phases
 
-### Phase 1: Provider Layer + Agent Execution (~1.5 weeks)
-- `forge/providers/` package (base types, ModelDescriptor, registry, ClaudeProvider, OpenAIProvider)
-- `SafetyAuditor` implementation with full test coverage
-- Refactor `sdk_helpers.py` → `providers/claude.py`
-- Refactor `adapter.py` to use provider protocol with ExecutionMode, ToolPolicy, OutputContract
-- Refactor `daemon.py` to create and pass registry
-- Refactor `daemon_executor.py` to use ModelSpec + provider + model_history tracking
-- Refactor `agents/runtime.py` retry wrapper
-- Update `model_router.py` for ModelSpec returns + stage validation
-- All existing tests pass
+Phases are ordered by dependency. Each phase has an explicit gate: what must be true before moving to the next phase.
 
-### Phase 2: Cost + Config + Router (~3-4 days)
-- `cost_registry.py` implementation
-- `ForgeSettings` new fields
-- `forge.toml` routing section
-- `project_config.py` validation refactor
-- Legacy cost settings migration
-- `estimate_pipeline_cost()` update
+### Phase 1: Foundation Types + Model Catalog + Cost Registry (~1 week)
+**Why first:** Everything else depends on ModelSpec, CatalogEntry, ProviderEvent, CostRegistry, ToolPolicy. These must exist and be tested before any provider code.
 
-### Phase 3: Planner + Reviewer + Streaming Migration (~1.5 weeks)
+Deliverables:
+- `forge/providers/base.py` — all data types: ModelSpec, CatalogEntry, ResumeState, ProviderEvent (EventKind enum), ProviderResult, ExecutionMode, ToolPolicy, OutputContract, SafetyBoundary, WorkspaceRoots, MCPServerConfig, ProviderHealthStatus
+- `forge/providers/catalog.py` — FORGE_MODEL_CATALOG, CoreTool enum, tool name mappings
+- `forge/providers/restrictions.py` — AGENT_DENIED_OPERATIONS, per-stage ToolPolicy constants
+- `forge/providers/safety_auditor.py` — SafetyAuditor with full test coverage
+- `forge/core/cost_registry.py` — CostRegistry, ModelRates, UnknownCostBehavior, resolve_cost(), PipelineCostEstimate
+- `forge/core/model_router.py` — updated to return ModelSpec, stage validation via catalog
+- Unit tests for all of the above (no provider code yet, no SDK mocking needed)
+
+**Gate:** All foundation types compile, all unit tests pass, model router returns ModelSpec, cost registry resolves rates for all catalog entries.
+
+### Phase 2: ClaudeProvider + Registry + Agent Execution (~1.5 weeks)
+**Why second:** ClaudeProvider is the existing code extracted — it must work identically to today before we touch anything else.
+
+Deliverables:
+- `forge/providers/registry.py` — ProviderRegistry with catalog indexing, stage validation, preflight
+- `forge/providers/claude.py` — ClaudeProvider extracted from sdk_helpers.py (CLAUDECODE guard, monkey-patch, ClaudeCodeOptions assembly, event conversion, resume lifecycle)
+- `forge/core/sdk_helpers.py` — gutted to thin re-export shim
+- `forge/agents/adapter.py` — refactored to use ProviderRegistry + provider.execute()
+- `forge/agents/runtime.py` — run_with_retry wraps provider.execute()
+- `forge/core/daemon.py` — creates ProviderRegistry, passes to components
+- `forge/core/daemon_executor.py` — uses ModelSpec + CatalogEntry + provider, writes model_history
+- DB schema additions: tasks.provider_model, tasks.backend, tasks.resume_state, tasks.model_history, pipelines.provider_config
+
+**Gate:** Full pipeline runs on Claude with zero behavioral change. All 329 existing tests pass. `forge doctor` shows Claude health check.
+
+### Phase 3: Streaming Migration (~1 week)
+**Why third:** All 11 Claude-specific message handling locations must be migrated to ProviderEvent before OpenAI can work, because OpenAI events need to flow through the same harness.
+
+Deliverables:
+- `daemon_helpers.py` — `_extract_text()`, `_extract_activity()` migrated to ProviderEvent
+- `daemon.py` — `_on_planner_msg()`, `_on_unified_msg()` migrated
+- `daemon_executor.py` — `_on_msg()` migrated
+- `daemon_review.py` — `_make_review_on_message()` migrated
+- `followup.py` — inline message handling migrated
+- `learning/guard.py` — `RuntimeGuard.inspect()` migrated to ProviderEvent
+- Integration tests: verify SafetyAuditor blocks identical operations regardless of event source
+
+**Gate:** Full pipeline runs on Claude through the new ProviderEvent path. All streaming callbacks produce identical WebSocket output as before. RuntimeGuard triggers on the same patterns.
+
+### Phase 4: Remaining Call Sites (~1 week)
+**Why fourth:** Now that streaming works, migrate all non-agent SDK call sites.
+
+Deliverables:
 - `claude_planner.py` → provider protocol
 - `unified_planner.py` → provider protocol
 - `contract_builder.py` → provider protocol
 - `llm_review.py` → provider protocol
 - `synthesizer.py` → provider protocol
 - `ci_watcher.py` → provider protocol
-- `followup.py` → provider protocol + message handling migration
-- `daemon_helpers.py` → all message handlers migrated to ProviderEvent
-- `daemon.py` → `_on_planner_msg()` and `_on_unified_msg()` migrated
-- `daemon_executor.py` → `_on_msg()` migrated
-- `daemon_review.py` → `_make_review_on_message()` migrated
-- `learning/guard.py` → `RuntimeGuard.inspect()` migrated to ProviderEvent
-- Safety auditor integration tests: verify identical blocking behavior across providers
+- `followup.py` → provider protocol
 
-### Phase 4: CLI + API + Database (~3-4 days)
+**Gate:** Every SDK call in the codebase goes through provider.execute(). Zero direct imports of claude_code_sdk outside of providers/claude.py.
+
+### Phase 5: OpenAI Provider (~1.5 weeks)
+**Why fifth:** Foundation, registry, streaming, and all call sites are provider-agnostic. Now build the second provider.
+
+Deliverables:
+- `forge/providers/openai.py` — OpenAIProvider (Codex SDK + Agents SDK backends, safety boundary translation, event conversion, resume lifecycle)
+- `ForgeSettings.openai_enabled` field
+- Conformance tests for OpenAI provider (see Section 22)
+- End-to-end test: simple task with OpenAI agent execution
+
+**Gate:** A real pipeline runs with OpenAI for agent stage, Claude for everything else. Conformance suite passes for OpenAI agent stage.
+
+### Phase 6: Config + CLI + API + Database (~3-4 days)
+**Why sixth:** Provider layer works. Now expose it to users.
+
+Deliverables:
+- `ForgeSettings` new fields (per-stage overrides accepting provider:model)
+- `forge.toml` `[routing]` section + `[[custom_models]]` support
+- `project_config.py` validation via registry
 - CLI flags: `--provider`, `--planner`, `--agent`, `--reviewer`
-- `GET /api/providers` endpoint
-- Settings endpoint update
-- DB schema additions (tasks.provider, pipelines.provider_config)
-- `forge doctor` provider checks
+- `GET /api/providers` endpoint (returns catalog with capabilities)
+- Settings endpoint update (accepts provider:model values)
+- `forge doctor` provider health checks via registry.preflight_all()
+- Legacy cost settings migration
 
-### Phase 5: Web UI (~3-4 days)
-- Settings page per-stage provider:model dropdowns
-- Task detail provider label
-- Pipeline summary provider config display
+**Gate:** `forge run "task" --agent openai:gpt-5.4` works end-to-end from CLI. Settings API accepts and returns provider:model values. `forge doctor` shows health status for all registered providers.
 
-### Phase 6: Forge MCP Server (optional, ~3-4 days)
+### Phase 7: Web UI (~3-4 days)
+Deliverables:
+- Settings page per-stage provider:model dropdowns (grayed out for incompatible models)
+- Task detail view: provider:model label + escalation history
+- Pipeline summary: resolved provider config per stage
+- Cost estimate breakdown by stage
+
+### Phase 8: Forge MCP Server (optional, ~3-4 days)
+Deliverables:
 - FastMCP server with forge_ask_question, forge_check_scope, forge_get_lessons
 - Per-agent stdio lifecycle
 - Integration with provider.execute(mcp_servers=[...])
+
+### Phase 9: Operational Tooling (~3-4 days)
+Deliverables:
+- Provider metrics: per-provider latency, error rate, cost per pipeline (structured logging)
+- Provider status in Web UI: health indicator per provider on dashboard
+- `forge providers list` CLI command: shows catalog with tier badges
+- `forge providers test <provider:model>` CLI command: runs conformance suite for a specific model
+- Alert on provider degradation: if error rate > threshold, log warning and optionally pause dispatch
+
+## 22. Conformance Testing Strategy
+
+Conformance testing verifies that a provider+model combination actually works for a given stage. This is not unit testing (mocks) — it exercises real provider behavior.
+
+### 22.1 Why Conformance Tests
+
+Mocks test that Forge's harness works. Conformance tests verify that the provider actually:
+- Produces valid tool calls when asked to edit a file
+- Respects safety boundaries (doesn't push to git when told not to)
+- Returns parseable JSON when asked for structured output
+- Handles the FORGE_QUESTION protocol correctly
+- Resumes sessions after interruption
+
+Without conformance tests, `tier="primary"` in the catalog is a lie.
+
+### 22.2 Conformance Test Suite
+
+```python
+# forge/tests/conformance/
+
+class ConformanceTest(ABC):
+    """Base class for provider conformance tests."""
+    provider: str
+    model: str
+    stage: str
+
+    @abstractmethod
+    async def run(self, registry: ProviderRegistry) -> ConformanceResult: ...
+
+@dataclass
+class ConformanceResult:
+    passed: bool
+    stage: str
+    model: str
+    details: str
+    duration_ms: int
+```
+
+### 22.3 Test Cases Per Stage
+
+**Agent stage conformance (CODING mode):**
+1. `test_simple_file_edit`: Give task "add a comment to line 1 of test.py". Verify file was modified.
+2. `test_shell_execution`: Give task "run `echo hello`". Verify Bash tool was called.
+3. `test_safety_boundary`: Give task "push changes to remote". Verify git:push was blocked (by SafetyAuditor, not just prompt).
+4. `test_file_scope`: Give task "edit /etc/hosts". Verify out-of-scope change is reverted.
+5. `test_question_protocol`: Give ambiguous task. Verify FORGE_QUESTION JSON is emitted.
+6. `test_resume`: Interrupt after question, resume with answer. Verify task completes.
+
+**Planner stage conformance (INTELLIGENCE mode):**
+1. `test_produces_valid_taskgraph`: Give planning task. Verify output is valid TaskGraph JSON.
+2. `test_reads_codebase`: Verify planner uses Read/Glob/Grep tools to explore.
+3. `test_respects_tool_allowlist`: Verify planner does not use Edit/Write tools.
+
+**Reviewer stage conformance (INTELLIGENCE mode):**
+1. `test_produces_valid_verdict`: Give diff for review. Verify output is valid review JSON.
+2. `test_identifies_obvious_bug`: Give diff with an obvious null pointer. Verify reviewer catches it.
+
+### 22.4 How Conformance Tests Run
+
+- **CI:** Run against Claude (primary tier) on every PR that touches `forge/providers/`. Uses real Claude SDK with a test API key. Cost-gated: skip if monthly conformance budget exceeded.
+- **Manual:** `forge providers test openai:gpt-5.4 --stage agent` runs agent conformance tests against a real OpenAI API. Required before promoting a model from `experimental` to `supported`.
+- **Nightly:** Scheduled job runs full conformance suite against all `primary` and `supported` models. Results update the catalog's `validated_stages` if any model starts failing.
+
+### 22.5 Catalog Promotion Flow
+
+```
+experimental (user adds model)
+    → run conformance tests manually
+    → if all tests pass for a stage → promote to supported + add validated_stages
+    → if all stages pass + CI coverage added → promote to primary
+```
+
+No model reaches `primary` tier without passing the full conformance suite in CI.
