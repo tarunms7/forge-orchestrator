@@ -488,8 +488,18 @@ Forge closes this gap with a worktree-level git ref snapshot:
 
 ```python
 # In daemon_executor.py, before agent execution:
+
+# INVARIANT: worktrees are always pristine before agent start.
+# WorktreeManager.create() checks out a clean branch. Retries start from
+# the same clean ref (pre_agent_ref). If a worktree is reused, it is
+# reset to the pipeline branch HEAD before the agent runs.
+# This invariant means `git reset --hard pre_agent_ref` in Layer C
+# is always safe — there are no legitimate pre-existing uncommitted changes
+# to destroy, because the worktree was clean when the agent started.
+
 pre_agent_ref = await _run_git("rev-parse", "HEAD", cwd=worktree_path)
 pre_agent_status = await _run_git("status", "--porcelain", cwd=worktree_path)
+assert pre_agent_status.strip() == "", f"Worktree not pristine: {pre_agent_status}"
 
 # In Layer C, after agent execution (or abort):
 post_agent_ref = await _run_git("rev-parse", "HEAD", cwd=worktree_path)
@@ -512,7 +522,47 @@ This already partially exists in `daemon_executor.py` (the pre-retry snapshot an
 - Detect and abort any in-progress rebase/merge/cherry-pick state.
 - For `git:clean` and `git:stash`: these affect the working tree but not HEAD. Post-execution file scope enforcement catches new deletions (files in the pre-agent snapshot that are now missing get restored from the git index).
 
-The net result: for the denied operations that matter (git push, network exfil, privilege escalation, destructive local git), at least one layer provides hard pre-execution blocking for each provider. Layer B catches and aborts on violation. Layer C reverts any side effects using git ref snapshots, not just file scope. The behavior is equivalent across providers — not identical in mechanism, but identical in outcome.
+**Shared repository metadata (git:tag, git:remote):**
+
+In worktree setups, `git tag` and `git remote` mutate the common `.git` directory shared by all worktrees — not the worktree's own state. HEAD ref snapshots and working-tree reverts do not undo these mutations.
+
+Forge handles this with a pre/post metadata snapshot:
+
+```python
+# Before agent execution:
+pre_tags = set(await _run_git("tag", "--list", cwd=worktree_path))
+pre_remotes = set(await _run_git("remote", cwd=worktree_path))
+
+# After agent execution (or abort):
+post_tags = set(await _run_git("tag", "--list", cwd=worktree_path))
+post_remotes = set(await _run_git("remote", cwd=worktree_path))
+
+# Revert new tags
+for tag in (post_tags - pre_tags):
+    await _run_git("tag", "-d", tag, cwd=worktree_path)
+    logger.warning("Agent created tag '%s' — deleted", tag)
+
+# Revert new remotes
+for remote in (post_remotes - pre_remotes):
+    await _run_git("remote", "remove", remote, cwd=worktree_path)
+    logger.warning("Agent added remote '%s' — removed", remote)
+
+# Detect modified remotes (URL changed)
+for remote in pre_remotes:
+    if remote in post_remotes:
+        pre_url = await _run_git("remote", "get-url", remote, cwd=worktree_path)
+        # Compare against stored pre-run URL; restore if changed
+```
+
+This closes the gap for all denied git operations that affect shared metadata. The full Layer C verification set:
+- HEAD ref: snapshot + hard reset on mismatch
+- Working tree: file scope enforcement
+- Rebase/merge/cherry-pick state: detect markers, abort
+- Tags: snapshot + delete new tags
+- Remotes: snapshot + remove new remotes, restore modified URLs
+- Stash: `git stash list` before/after, drop agent-created stashes
+
+The net result: for every denied operation, at least one layer provides hard pre-execution blocking for each provider. Layer B catches and aborts on violation. Layer C verifies and reverts all side effects — working tree, refs, and shared metadata. The behavior is equivalent across providers — not identical in mechanism, but identical in outcome.
 
 Agents are not restricted beyond these safety boundaries. They can read/write any file, run any shell command, install packages, run tests, build — full power within their worktree.
 
@@ -624,7 +674,17 @@ Provider-level communication of read-only directories is advisory (prompt text f
                os.remove(path)  # new file in read-only dir — delete it
    ```
 
-   **Size limit**: read_only_dirs above `MAX_RO_SNAPSHOT_BYTES` (default 50MB) are not backed up — only hash-checked. If a write is detected but no backup exists, Forge logs a CRITICAL error and marks the task as FAILED. This prevents unbounded temp disk usage while still detecting violations.
+   **Mounting rules for read_only_dirs:**
+
+   Every read-only directory must satisfy at least one of these conditions at mount time (validated during preflight, before the agent runs):
+
+   | Condition | Recovery mechanism |
+   |---|---|
+   | Path is inside a Git repo | `git checkout` restores any modified tracked files; untracked files deleted |
+   | Total size < `MAX_RO_SNAPSHOT_BYTES` (default 50MB) | Full temp backup before agent, byte-level restore after |
+   | Neither of the above | **Rejected at mount time.** Forge refuses to mount this path as read-only because it cannot guarantee recovery. Error: "Cannot mount {path} as read_only: not a git repo and exceeds snapshot size limit. Use a git-tracked path or reduce directory size." |
+
+   This is a hard rule, not a best-effort fallback. If Forge cannot guarantee recovery for a read-only root, it does not allow the agent to access it at all. Users who need large non-git dirs can either: (a) initialize a git repo in them (`git init && git add . && git commit`), or (b) increase `MAX_RO_SNAPSHOT_BYTES` if they have the disk space.
 
 2. **SafetyAuditor tool-level check** (Layer B): When a `TOOL_USE` event targets a file path (Edit, Write operations), the auditor checks if the path falls under `read_only_dirs`. If so, it returns `ABORT`. For MCP tools this is a pre-execution block. For built-in tools, the session is killed and changes are reverted.
 
@@ -730,7 +790,51 @@ Stage-specific contracts:
 - `reviewer`: `OutputContract(format="json", json_schema=REVIEW_VERDICT_SCHEMA)`
 - `followup`, `synthesizer`: `OutputContract(format="freeform")`
 
-### 5.4 Protocol Definition
+### 5.4 Execution Handle
+
+`execute()` does not return a `ProviderResult` directly. It returns an `ExecutionHandle` that provides both the abort primitive and the eventual result. This solves the problem that a fresh run can hit a safety violation before any `ResumeState` exists.
+
+```python
+class ExecutionHandle:
+    """Live handle to an in-flight provider execution.
+    Returned immediately when execute() is called.
+    Provides abort capability from the first event onward."""
+
+    async def abort(self) -> None:
+        """Immediately terminate this execution. Safe to call at any time,
+        including before any events have been emitted.
+        After abort(), result() returns ProviderResult with is_error=True."""
+        ...
+
+    async def result(self) -> ProviderResult:
+        """Await the final result. Blocks until execution completes or is aborted."""
+        ...
+
+    @property
+    def is_running(self) -> bool: ...
+```
+
+The caller pattern:
+
+```python
+handle = await provider.start(prompt=..., system_prompt=..., ...)
+
+# on_event callback can call handle.abort() at any time
+async def on_event(event: ProviderEvent) -> None:
+    verdict = auditor.check(event)
+    if verdict == AuditVerdict.ABORT:
+        await handle.abort()   # kills the run immediately, no ResumeState needed
+        return
+    # ... normal event processing ...
+
+result = await handle.result()  # blocks until done or aborted
+```
+
+Implementation:
+- `ClaudeProvider`: The handle wraps the `query()` async generator. `abort()` throws `GeneratorExit` into it.
+- `OpenAIProvider`: The handle wraps the Codex thread. `abort()` closes the SSE stream or calls `thread.cancel()`.
+
+### 5.5 Protocol Definition
 
 ```python
 class ProviderProtocol(Protocol):
@@ -754,7 +858,7 @@ class ProviderProtocol(Protocol):
         """
         ...
 
-    async def execute(
+    async def start(
         self,
         *,
         prompt: str,
@@ -768,13 +872,18 @@ class ProviderProtocol(Protocol):
         mcp_servers: list[MCPServerConfig] | None = None,
         resume_state: ResumeState | None = None,
         on_event: Callable[[ProviderEvent], Awaitable[None]] | None = None,
-    ) -> ProviderResult: ...
+    ) -> ExecutionHandle:
+        """Start an execution and return a handle immediately.
+        The handle provides abort() for cancellation and result() for the final output.
+        on_event is called for every streaming event; the callback can call handle.abort()
+        at any time to terminate the run."""
+        ...
 
     async def can_resume(self, state: ResumeState) -> bool:
         """Check if a session is still resumable. May query the backend."""
         ...
 
-    async def abort(self, state: ResumeState) -> None:
+    async def abort(self, handle: "ExecutionHandle") -> None:
         """Immediately terminate an in-flight execution. Called by SafetyAuditor
         when a violation is detected during streaming.
 
@@ -994,7 +1103,7 @@ ForgeDaemon(settings)
       └── passed to CIWatcher()
 ```
 
-Each component calls `providers.get_for_model(spec)` to get the right provider, then calls `provider.execute(...)`.
+Each component calls `providers.get_for_model(spec)` to get the right provider, then calls `provider.start(...)`.
 
 ## 8. Model Router Refactor
 
@@ -1259,7 +1368,7 @@ The scope is significantly larger than just two helper functions. A thorough aud
 ### 10.3 New Flow
 
 ```
-provider.execute() calls on_event(ProviderEvent) → Forge harness extracts text/activity → WebSocket → UI
+provider.start() → ExecutionHandle; on_event(ProviderEvent) fires during execution → Forge harness extracts text/activity → WebSocket → UI; handle.result() returns ProviderResult when done
 ```
 
 Each provider converts its native messages to `ProviderEvent` **inside the provider**. The harness only ever sees `ProviderEvent`. This means ALL 11 locations above change to use `ProviderEvent` fields instead of Claude types.
@@ -1331,10 +1440,12 @@ Providers catch internal errors, log provider-specific details, and re-raise cle
 async def run_with_retry(
     provider: ProviderProtocol,
     *,
-    prompt, system_prompt, spec, cwd, max_turns,
-    safety_boundary, mcp_servers, resume, on_event,
-    max_retries: int = 2,
+    prompt, system_prompt, catalog_entry, execution_mode, tool_policy,
+    output_contract, workspace, max_turns, mcp_servers, resume_state,
+    on_event, max_retries: int = 2,
 ) -> ProviderResult:
+    # Calls provider.start(...) → handle, then handle.result()
+    # on_event callback can call handle.abort() if SafetyAuditor returns ABORT
 ```
 
 - Retries on transient errors (rate_limit, 429, 503, connection reset, timeout)
@@ -1619,7 +1730,7 @@ async def forge_get_lessons(pattern, file_path) -> dict: ...
 
 ### 17.2 Lifecycle
 
-Started per-agent as a stdio subprocess scoped to the task. Passed to `provider.execute(mcp_servers=[config])`. Both Claude and Codex connect natively. Server process dies when agent finishes.
+Started per-agent as a stdio subprocess scoped to the task. Passed to `provider.start(mcp_servers=[config])`. Both Claude and Codex connect natively. Server process dies when agent finishes.
 
 ### 17.3 Why Optional for Launch
 
@@ -1663,13 +1774,13 @@ forge/tests/conformance/  # Phase 5+
 ```
 forge/core/sdk_helpers.py       # Gutted — logic moves to providers/claude.py
                                 # File kept as thin re-export for any external consumers
-forge/agents/adapter.py         # AgentAdapter.run() takes ProviderRegistry, uses provider.execute()
+forge/agents/adapter.py         # AgentAdapter.run() takes ProviderRegistry, uses provider.start()
 forge/core/model_router.py      # select_model() returns ModelSpec, table uses provider:model values
 forge/core/cost_estimator.py    # Delegates to CostRegistry
 forge/core/daemon.py            # Creates ProviderRegistry, passes to components
-forge/core/daemon_executor.py   # Uses ModelSpec + provider.execute() instead of direct SDK calls
+forge/core/daemon_executor.py   # Uses ModelSpec + provider.start() instead of direct SDK calls
 forge/core/daemon_helpers.py    # _extract_text/_extract_activity take ProviderEvent
-forge/core/claude_planner.py    # Uses provider.execute() instead of direct SDK calls
+forge/core/claude_planner.py    # Uses provider.start() instead of direct SDK calls
 forge/core/planning/unified_planner.py  # Same
 forge/core/contract_builder.py  # Same
 forge/review/llm_review.py      # Same
@@ -1678,7 +1789,7 @@ forge/core/ci_watcher.py        # Same
 forge/core/followup.py          # Same + message handling migration
 forge/core/preflight.py         # Updated provider health checks
 forge/learning/guard.py         # RuntimeGuard.inspect() migrated to ProviderEvent
-forge/agents/runtime.py         # run_with_retry wraps provider.execute()
+forge/agents/runtime.py         # run_with_retry wraps provider.start()
 forge/config/settings.py        # New fields: openai_enabled, per-stage overrides
 forge/config/project_config.py  # Validation via registry.validate_model()
 forge/cli/main.py               # New CLI flags: --provider, --planner, --agent, --reviewer
@@ -1709,7 +1820,7 @@ Every existing test passes on day one with zero changes to test logic. The refac
 - `ClaudeProvider` wraps the exact same code path as current `sdk_query()`.
 - `ModelSpec.parse("sonnet")` returns `ModelSpec(provider="claude", model="sonnet")`.
 - `select_model()` returns `ModelSpec` — tests update assertions mechanically.
-- Tests that mock `sdk_query()` now mock `ClaudeProvider.execute()`.
+- Tests that mock `sdk_query()` now mock `ClaudeProvider.start()` (returns a mock `ExecutionHandle`).
 
 ### 19.3 New Test Files
 
@@ -1799,8 +1910,8 @@ Deliverables:
 - `forge/providers/registry.py` — ProviderRegistry with catalog indexing, stage validation, preflight
 - `forge/providers/claude.py` — ClaudeProvider extracted from sdk_helpers.py (CLAUDECODE guard, monkey-patch, ClaudeCodeOptions assembly, event conversion, resume lifecycle)
 - `forge/core/sdk_helpers.py` — gutted to thin re-export shim
-- `forge/agents/adapter.py` — refactored to use ProviderRegistry + provider.execute()
-- `forge/agents/runtime.py` — run_with_retry wraps provider.execute()
+- `forge/agents/adapter.py` — refactored to use ProviderRegistry + provider.start()
+- `forge/agents/runtime.py` — run_with_retry wraps provider.start()
 - `forge/core/daemon.py` — creates ProviderRegistry, passes to components
 - `forge/core/daemon_executor.py` — uses ModelSpec + CatalogEntry + provider, writes model_history
 - DB schema additions: tasks.provider_model, tasks.backend, tasks.resume_state, tasks.model_history, pipelines.provider_config
@@ -1833,7 +1944,7 @@ Deliverables:
 - `ci_watcher.py` → provider protocol
 - `followup.py` → provider protocol
 
-**Gate:** Every SDK call in the codebase goes through provider.execute(). Zero direct imports of claude_code_sdk outside of providers/claude.py.
+**Gate:** Every SDK call in the codebase goes through provider.start(). Zero direct imports of claude_code_sdk outside of providers/claude.py.
 
 ### Phase 5: OpenAI Provider (~1.5 weeks)
 **Why fifth:** Foundation, registry, streaming, and all call sites are provider-agnostic. Now build the second provider.
@@ -1872,7 +1983,7 @@ Deliverables:
 Deliverables:
 - FastMCP server with forge_ask_question, forge_check_scope, forge_get_lessons
 - Per-agent stdio lifecycle
-- Integration with provider.execute(mcp_servers=[...])
+- Integration with provider.start(mcp_servers=[...])
 
 ### Phase 9: Operational Tooling (~3-4 days)
 Deliverables:
