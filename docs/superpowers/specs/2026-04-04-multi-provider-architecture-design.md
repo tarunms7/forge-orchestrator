@@ -372,7 +372,7 @@ class ProviderEvent:
 
 **Tool name normalization:** Providers normalize to a core vocabulary defined in Section 4.8. This means `SafetyAuditor` and `RuntimeGuard` write one set of checks, not per-provider variants.
 
-### 4.5 SafetyBoundary
+### 4.6 SafetyBoundary
 
 Operations agents must never perform autonomously. Provider-agnostic expression of the existing `AGENT_DISALLOWED_TOOLS` list.
 
@@ -415,12 +415,15 @@ This is the primary defense. For Claude, it is airtight (SDK enforcement). For C
 
 **Layer B: Real-time violation detector (Forge-owned, aborts session on violation)**
 
-The `SafetyAuditor` monitors the event stream and terminates the agent session immediately if a violation is detected. This is NOT a pre-execution gate — by the time `on_event` fires with `kind=TOOL_USE`, the provider SDK may have already started executing the tool. What Layer B does is:
+The `SafetyAuditor` monitors the event stream and terminates the agent session immediately if a violation is detected. This is NOT a pre-execution gate for built-in tools — by the time `on_event` fires with `kind=TOOL_USE`, the provider SDK may have already started executing the tool. What Layer B does is:
 
 1. Detect the violation in the event stream.
-2. Immediately terminate the agent session (provider.cleanup_session()).
+2. Call `provider.abort(state)` to kill the in-flight execution.
 3. Mark the task as FAILED with a safety violation reason.
-4. Log the violation for audit.
+4. Layer C (post-execution revert) cleans up any side effects.
+5. Log the violation for audit.
+
+The `abort()` method on the provider protocol (Section 5.4) is the cancellation primitive that makes this work. It is separate from `cleanup_session()` — abort kills an active run, cleanup releases resources after a run ends.
 
 ```python
 class SafetyAuditor:
@@ -474,14 +477,46 @@ Built-in tools on both Claude Code and Codex auto-execute within their SDK — t
 | Tool type | Layer A (pre-execution) | Layer B (real-time) | Layer C (post-execution) |
 |---|---|---|---|
 | Claude built-in (Bash, Read, etc.) | `disallowed_tools` — hard block | Abort on violation | File scope revert |
-| Codex built-in (shell, file_write, etc.) | Kernel sandbox + prompt | Abort on violation | File scope revert |
+| Codex built-in (shell, file_write, etc.) | Kernel sandbox + prompt | Abort on violation | Git ref rollback + file scope revert |
 | MCP tools (Forge-owned) | SafetyAuditor — hard block | N/A (already blocked) | File scope revert |
 
-The net result: for the denied operations that matter (git push, network exfil, privilege escalation), at least one layer provides hard pre-execution blocking for each provider. Layer B catches the gaps. Layer C cleans up. The behavior is equivalent across providers — not identical in mechanism, but identical in outcome.
+**Codex git operation safety — closing the gap:**
+
+The denied-operation set includes destructive local git commands: `git:reset_hard`, `git:checkout`, `git:clean`, `git:stash`, `git:merge`, `git:cherry_pick`. These can destroy local state irreversibly. Claude blocks them via `disallowed_tools` (hard). Codex relies on prompt instructions (soft). Layer B can abort after the fact, but the damage may already be done.
+
+Forge closes this gap with a worktree-level git ref snapshot:
+
+```python
+# In daemon_executor.py, before agent execution:
+pre_agent_ref = await _run_git("rev-parse", "HEAD", cwd=worktree_path)
+pre_agent_status = await _run_git("status", "--porcelain", cwd=worktree_path)
+
+# In Layer C, after agent execution (or abort):
+post_agent_ref = await _run_git("rev-parse", "HEAD", cwd=worktree_path)
+if pre_agent_ref != post_agent_ref:
+    # Agent moved HEAD (reset, checkout, merge, cherry-pick, rebase)
+    # Restore to pre-agent state
+    await _run_git("reset", "--hard", pre_agent_ref, cwd=worktree_path)
+    logger.warning("Agent moved HEAD from %s to %s — reverted", pre_agent_ref, post_agent_ref)
+
+# Check for interrupted rebase/merge state
+for marker in (".git/rebase-merge", ".git/rebase-apply", ".git/MERGE_HEAD"):
+    if (Path(worktree_path) / marker).exists():
+        await _run_git("rebase", "--abort", cwd=worktree_path)
+        # or git merge --abort, depending on marker
+```
+
+This already partially exists in `daemon_executor.py` (the pre-retry snapshot and interrupted-rebase detection). The change is making it explicit and comprehensive:
+- Snapshot HEAD ref before every agent run (not just retries)
+- After execution, verify HEAD hasn't moved. If it has, hard reset to pre-agent ref.
+- Detect and abort any in-progress rebase/merge/cherry-pick state.
+- For `git:clean` and `git:stash`: these affect the working tree but not HEAD. Post-execution file scope enforcement catches new deletions (files in the pre-agent snapshot that are now missing get restored from the git index).
+
+The net result: for the denied operations that matter (git push, network exfil, privilege escalation, destructive local git), at least one layer provides hard pre-execution blocking for each provider. Layer B catches and aborts on violation. Layer C reverts any side effects using git ref snapshots, not just file scope. The behavior is equivalent across providers — not identical in mechanism, but identical in outcome.
 
 Agents are not restricted beyond these safety boundaries. They can read/write any file, run any shell command, install packages, run tests, build — full power within their worktree.
 
-### 4.8 Core Tool Contract
+### 4.7 Core Tool Contract
 
 Every provider must normalize its native tool names to this vocabulary. Consumers (SafetyAuditor, RuntimeGuard, event handlers) only check these names.
 
@@ -542,7 +577,7 @@ def handle_unknown_tool(event: ProviderEvent, catalog_entry: CatalogEntry) -> Au
 
 **Recovery:** When a provider SDK update introduces a new tool, the fix is: update the `CoreTool` mapping in `catalog.py`, run conformance tests, and release. This is a one-line change, not an architecture change.
 
-### 4.9 WorkspaceRoots
+### 4.8 WorkspaceRoots
 
 Forge supports multi-repo workspaces. Agents may need read-only access to directories outside their primary worktree (e.g., shared libraries in a monorepo, a second repo's API contracts).
 
@@ -563,7 +598,33 @@ This replaces the current `cwd: str` + `allowed_dirs: list[str] | None` in `Agen
 
 Provider-level communication of read-only directories is advisory (prompt text for Claude, `additionalDirectories` for Codex). Neither provider can enforce the read-only boundary at the SDK level. Therefore Forge enforces it with two hard mechanisms:
 
-1. **Post-execution filesystem diff** (Layer C in safety model): After agent execution, `daemon_executor.py` computes a diff of all modified files. Any write to a path under `read_only_dirs` (or outside `primary_cwd` entirely) is reverted via `git checkout`. This already exists for file scope enforcement — the change is extending it to explicitly check `read_only_dirs` paths.
+1. **Post-execution filesystem recovery** (Layer C in safety model): After agent execution, `daemon_executor.py` checks for unauthorized writes to `read_only_dirs` or paths outside `primary_cwd`. Recovery depends on the path type:
+   - **Git-tracked paths in primary_cwd worktree**: reverted via `git checkout -- <path>` (existing behavior).
+   - **Paths in read_only_dirs that are Git repos**: reverted via `git checkout` in that repo's working tree.
+   - **Paths in read_only_dirs that are NOT Git repos**: Forge takes a lightweight snapshot before agent execution. For each read_only_dir, record `{path: mtime, size, sha256}` for all files. After execution, compare. Any modified file is restored from a temp copy. Implementation: `shutil.copytree` of read_only_dirs to a temp staging area before the agent runs, then `shutil.copy2` to restore any modified files after.
+   - **Untracked new files**: deleted unconditionally (they didn't exist before the agent ran).
+
+   ```python
+   # Before agent execution:
+   ro_snapshots: dict[str, dict[str, FileSnapshot]] = {}
+   for ro_dir in workspace.read_only_dirs:
+       ro_snapshots[ro_dir] = snapshot_directory(ro_dir)  # {path: (mtime, size, sha256)}
+       # For small dirs: also copy to temp for byte-level restore
+       if dir_size(ro_dir) < MAX_RO_SNAPSHOT_BYTES:  # e.g., 50MB
+           backup_path = shutil.copytree(ro_dir, temp / hashlib.md5(ro_dir))
+
+   # After agent execution:
+   for ro_dir, pre_snapshot in ro_snapshots.items():
+       post_snapshot = snapshot_directory(ro_dir)
+       for path, pre_info in pre_snapshot.items():
+           if path not in post_snapshot or post_snapshot[path] != pre_info:
+               restore_file(path, backup_path, ro_dir)  # copy from temp backup
+       for path in post_snapshot:
+           if path not in pre_snapshot:
+               os.remove(path)  # new file in read-only dir — delete it
+   ```
+
+   **Size limit**: read_only_dirs above `MAX_RO_SNAPSHOT_BYTES` (default 50MB) are not backed up — only hash-checked. If a write is detected but no backup exists, Forge logs a CRITICAL error and marks the task as FAILED. This prevents unbounded temp disk usage while still detecting violations.
 
 2. **SafetyAuditor tool-level check** (Layer B): When a `TOOL_USE` event targets a file path (Edit, Write operations), the auditor checks if the path falls under `read_only_dirs`. If so, it returns `ABORT`. For MCP tools this is a pre-execution block. For built-in tools, the session is killed and changes are reverted.
 
@@ -593,7 +654,7 @@ class SafetyAuditor:
 
 The provider still communicates `read_only_dirs` to the model (so it knows not to try), but enforcement does not depend on the model obeying.
 
-### 4.10 MCPServerConfig
+### 4.9 MCPServerConfig
 
 Configuration for MCP servers that agents can connect to.
 
@@ -627,7 +688,7 @@ The daemon sets this explicitly per stage:
 - `agent`, `ci_fix`: `ExecutionMode.CODING`
 - `planner`, `unified_planner`, `contract_builder`, `reviewer`, `synthesizer`, `followup`: `ExecutionMode.INTELLIGENCE`
 
-The provider uses `execution_mode` + the model's `backend` field from `ModelDescriptor` to pick the right SDK.
+The provider uses `execution_mode` + the model's `backend` field from `CatalogEntry` to pick the right SDK.
 
 ### 5.2 Tool Policy
 
@@ -713,8 +774,28 @@ class ProviderProtocol(Protocol):
         """Check if a session is still resumable. May query the backend."""
         ...
 
+    async def abort(self, state: ResumeState) -> None:
+        """Immediately terminate an in-flight execution. Called by SafetyAuditor
+        when a violation is detected during streaming.
+
+        Contract:
+        - MUST terminate the underlying SDK call as fast as possible.
+        - MUST be safe to call concurrently with an active execute() coroutine.
+        - After abort() returns, the execute() coroutine MUST either raise
+          ProviderAbortedError or return a ProviderResult with is_error=True.
+        - Any side effects from partially-executed tool calls remain on disk
+          for Layer C (post-execution revert) to clean up.
+
+        Implementation:
+        - Claude: Cancel the async generator (throw into the query() iterator).
+        - Codex: Call thread.cancel() or close the SSE stream.
+        """
+        ...
+
     async def cleanup_session(self, state: ResumeState) -> None:
-        """Release provider-side resources. Called on task completion/cancellation."""
+        """Release provider-side resources AFTER execution is complete or aborted.
+        Called on task completion, permanent failure, or cancellation.
+        NOT for interrupting active execution — use abort() for that."""
         ...
 
 
@@ -746,17 +827,13 @@ Wraps `claude-code-sdk`. This is the current `sdk_helpers.py` code extracted int
 class ClaudeProvider:
     name = "claude"
 
-    capabilities = ProviderCapabilities(
-        can_use_tools=True,
-        can_stream=True,
-        can_resume_session=True,
-        can_restrict_tools=True,
-        can_run_shell=True,
-        can_edit_files=True,
-        supports_mcp_servers=True,
-        max_context_tokens=1_000_000,
-    )
+    def catalog_entries(self) -> list[CatalogEntry]:
+        """Returns entries from FORGE_MODEL_CATALOG for provider='claude',
+        plus any user-defined custom models from forge.toml."""
+        return [e for e in FORGE_MODEL_CATALOG if e.provider == "claude"] + self._custom_models
 ```
+
+Per-model capabilities come from `CatalogEntry` (Section 4.2), not from a provider-level property. There is no `capabilities` field on the provider.
 
 Internal responsibilities:
 - Remove `CLAUDECODE` env var before SDK calls (nested session guard)
@@ -776,17 +853,13 @@ Wraps OpenAI Codex SDK and Agents SDK via the Responses API.
 class OpenAIProvider:
     name = "openai"
 
-    capabilities = ProviderCapabilities(
-        can_use_tools=True,
-        can_stream=True,
-        can_resume_session=True,
-        can_restrict_tools=True,
-        can_run_shell=True,
-        can_edit_files=True,
-        supports_mcp_servers=True,
-        max_context_tokens=1_000_000,
-    )
+    def catalog_entries(self) -> list[CatalogEntry]:
+        """Returns entries from FORGE_MODEL_CATALOG for provider='openai',
+        plus any user-defined custom models from forge.toml."""
+        return [e for e in FORGE_MODEL_CATALOG if e.provider == "openai"] + self._custom_models
 ```
+
+Per-model capabilities come from `CatalogEntry` (Section 4.2), not from a provider-level property.
 
 Internal responsibilities:
 - Select backend based on `execution_mode` parameter: `CODING` → Codex SDK, `INTELLIGENCE` → Agents SDK. No heuristics, no filesystem inspection.
@@ -802,10 +875,10 @@ Model list comes exclusively from the Forge Model Catalog. No runtime API discov
 
 | Claude event | OpenAI event | ProviderEvent.kind |
 |---|---|---|
-| `AssistantMessage` with text blocks | `item.completed` type=`agent_message` | `"text"` |
-| `AssistantMessage` with tool_use block | `item.started` type=`command_execution`/`file_change` | `"tool_use"` |
-| `ResultMessage` | `turn.completed` | Final text as `TEXT`, then `STATUS` with `status="completed"` |
-| SDK exception | `turn.failed` or `error` | `"error"` |
+| `AssistantMessage` with text blocks | `item.completed` type=`agent_message` | `EventKind.TEXT` |
+| `AssistantMessage` with tool_use block | `item.started` type=`command_execution`/`file_change` | `EventKind.TOOL_USE` |
+| `ResultMessage` | `turn.completed` | Final text as `EventKind.TEXT`, then `EventKind.STATUS` with `status="completed"` |
+| SDK exception | `turn.failed` or `error` | `EventKind.ERROR` |
 
 Conversion happens inside each provider. The common harness only sees `ProviderEvent`.
 
@@ -1191,36 +1264,25 @@ provider.execute() calls on_event(ProviderEvent) → Forge harness extracts text
 
 Each provider converts its native messages to `ProviderEvent` **inside the provider**. The harness only ever sees `ProviderEvent`. This means ALL 11 locations above change to use `ProviderEvent` fields instead of Claude types.
 
-### 10.4 ProviderEvent Must Carry Enough Information
+### 10.4 ProviderEvent Contract
 
-The `ProviderEvent` type needs additional fields to support all current use cases:
-
-```python
-@dataclass
-class ProviderEvent:
-    kind: str               # "text" | "tool_use" | "tool_result" | "status" | "error" | "usage"
-    text: str = ""
-    tool_name: str = ""
-    tool_input: dict | None = None
-    tool_call_id: str = ""          # for RuntimeGuard's pending_bash tracking
-    is_tool_error: bool = False     # for RuntimeGuard's error detection
-    token_count: int = 0            # for progress/token counting (replaces len(block.text)//4)
-    raw: Any = None
-```
+The canonical `ProviderEvent` definition is in Section 4.5. It is NOT redefined here. All streaming consumers use the same type with the `EventKind` enum — never bare strings.
 
 ### 10.5 Migration of Each Location
+
+All `event.kind` checks use the `EventKind` enum, never bare strings. This is enforced by the enum type at parse time.
 
 | Location | Current | After |
 |---|---|---|
 | `_extract_text()` | isinstance + block.text | `event.kind == EventKind.TEXT` → `event.text` |
-| `_extract_activity()` | isinstance + block.name | `event.kind == "tool_use"` → `event.tool_name` |
-| `_on_planner_msg()` | isinstance + block iteration + token counting | `event.kind == "text"` → `event.text` + `event.token_count` |
+| `_extract_activity()` | isinstance + block.name | `event.kind == EventKind.TOOL_USE` → `event.tool_name` |
+| `_on_planner_msg()` | isinstance + block iteration + token counting | `event.kind == EventKind.TEXT` → `event.text` + `event.token_count` |
 | `_on_unified_msg()` | same as planner | same migration |
 | `_on_msg()` (executor) | passes raw to guard | passes `ProviderEvent` to guard |
 | `_on_msg()` (review) | calls _extract_text | same as _extract_text migration |
-| `on_message()` (followup) | hasattr checks | `event.kind` checks |
-| `guard.inspect()` | deep block introspection | `event.kind == "tool_use"` + `event.tool_call_id` + `event.is_tool_error` |
-| `sdk_helpers.py` stream | isinstance ResultMessage | moves inside ClaudeProvider |
+| `on_message()` (followup) | hasattr checks | `event.kind == EventKind.TEXT` / `EventKind.TOOL_USE` checks |
+| `guard.inspect()` | deep block introspection | `event.kind == EventKind.TOOL_USE` + `event.tool_call_id` + `event.is_tool_error` |
+| `sdk_helpers.py` stream | isinstance ResultMessage | moves inside ClaudeProvider; terminal event is `EventKind.STATUS` with `status="completed"` |
 
 ### 10.6 RuntimeGuard Migration
 
@@ -1238,16 +1300,16 @@ def inspect(self, message):
 
 # After:
 def inspect(self, event: ProviderEvent):
-    if event.kind == "tool_use" and event.tool_name == "Bash":
+    if event.kind == EventKind.TOOL_USE and event.tool_name == CoreTool.BASH:
         command = (event.tool_input or {}).get("command", "")
         self._pending_bash[event.tool_call_id] = command
-    elif event.kind == "tool_result" and event.is_tool_error:
+    elif event.kind == EventKind.TOOL_RESULT and event.is_tool_error:
         if event.tool_call_id in self._pending_bash:
             # error in a bash command we were tracking
             ...
 ```
 
-Note: `tool_name == "Bash"` is Claude Code's tool name. Codex uses `command_execution`. The `SafetyAuditor` (Section 4.5) normalizes tool names before they reach the guard, OR the guard checks both names. This must be tested explicitly.
+Note: `tool_name` is already normalized to `CoreTool` values by the provider (Section 4.7). The guard never sees raw provider tool names like `"command_execution"` — it always sees `CoreTool.BASH`. This normalization is tested in provider conformance tests.
 
 Everything downstream of these 11 locations (WebSocket emission, UI rendering) stays the same because they already consume plain strings.
 
@@ -1652,7 +1714,7 @@ Every existing test passes on day one with zero changes to test logic. The refac
 ### 19.3 New Test Files
 
 ```
-forge/providers/base_test.py            # ModelSpec, ModelDescriptor, ProviderResult, ProviderEvent
+forge/providers/base_test.py            # ModelSpec, CatalogEntry, ResumeState, ProviderResult, ProviderEvent
 forge/providers/registry_test.py        # Register, get, validate, stage validation, descriptor indexing
 forge/providers/claude_test.py          # Execute, safety boundary translation, event conversion
 forge/providers/openai_test.py          # Execute, sandbox config, event conversion, resume
@@ -1880,7 +1942,7 @@ class ConformanceResult:
 ### 22.4 How Conformance Tests Run
 
 - **CI (Claude, full suite):** Run against Claude (primary tier) on every PR that touches `forge/providers/`. Uses real Claude SDK with a test API key. Cost-gated: skip if monthly conformance budget exceeded.
-- **CI (OpenAI, smoke gate):** On PRs that touch `forge/providers/` or `forge/providers/openai.py`, run a single lightweight real-provider smoke test: `test_simple_file_edit` for agent stage against `openai:gpt-5.4-mini` (cheapest supported model). This catches real SDK/API breakage before merge. Cost per run: ~$0.01. If the smoke test fails, the PR cannot merge.
+- **CI (OpenAI, smoke gate):** On PRs that touch any file in the provider contract surface — `forge/providers/`, `forge/agents/runtime.py`, `forge/agents/adapter.py`, `forge/core/daemon_executor.py`, `forge/core/daemon_helpers.py`, `forge/core/model_router.py`, `forge/learning/guard.py`, or `forge/core/cost_registry.py` — run a single lightweight real-provider smoke test: `test_simple_file_edit` for agent stage against `openai:gpt-5.4-mini` (cheapest supported model). This catches real SDK/API breakage in shared layers before merge. Cost per run: ~$0.01. If the smoke test fails, the PR cannot merge. The trigger path list is maintained in CI config and updated when new shared-layer files are added.
 - **Manual (full OpenAI suite):** `forge providers test openai:gpt-5.4 --stage agent` runs the full agent conformance suite against a real OpenAI API. Required before promoting a model from `experimental` to `supported`.
 - **Nightly (regression):** Scheduled job runs full conformance suite against all `primary` and `supported` models. Results are reported as observed health (see 22.6), NOT as catalog mutations.
 
