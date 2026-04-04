@@ -274,7 +274,7 @@ class ResumeState:
 
 ```python
 class ProviderProtocol(Protocol):
-    # ... execute() and other methods ...
+    # ... start() and other methods ...
 
     async def can_resume(self, state: ResumeState) -> bool:
         """Check if a session is still resumable. Providers may query their backend."""
@@ -334,7 +334,7 @@ class ProviderEvent:
     kind: EventKind
     sequence: int = 0              # monotonic per-execution, for ordering and replay
     timestamp_ms: int = 0          # unix millis, for latency tracking and log correlation
-    correlation_id: str = ""       # ties events to a specific execute() call
+    correlation_id: str = ""       # ties events to a specific start() call
 
     # TEXT fields
     text: str = ""
@@ -364,7 +364,7 @@ class ProviderEvent:
 
 **Why `sequence` and `timestamp_ms`:** Events may arrive out of order during concurrent tool execution. The sequence number enables correct ordering for replay and audit. The timestamp enables latency tracking (how long did this tool call take?) and log correlation (match a WebSocket emission to its source event).
 
-**Why `correlation_id`:** A single daemon may run multiple provider executions concurrently (parallel agents). The correlation ID ties all events from one `execute()` call together, preventing cross-contamination in logging and WebSocket routing.
+**Why `correlation_id`:** A single daemon may run multiple provider executions concurrently (parallel agents). The correlation ID ties all events from one `start()` call together, preventing cross-contamination in logging and WebSocket routing.
 
 **Why `EventKind` is an enum, not a bare string:** The previous design used bare strings, which means a typo (`"tetx"` instead of `"text"`) silently drops events. An enum forces exhaustive handling and catches errors at parse time, not at runtime.
 
@@ -534,8 +534,10 @@ pre_tags = await _snapshot_tags(worktree_path)
 #   Returns dict[str, str]: {"v1.0": "abc123", "v2.0": "def456"}
 #   Built from: git tag -l --format='%(refname:short) %(objectname:short)'
 pre_remotes = await _snapshot_remotes(worktree_path)
-#   Returns dict[str, str]: {"origin": "https://github.com/..."}
-#   Built from: git remote -v (parse fetch URLs)
+#   Returns dict[str, str]: {"origin": "<full config blob>", ...}
+#   Built from: git config --get-regexp 'remote\..*'
+#   Captures ALL remote config: url, pushurl, fetch refspecs, mirror, prune, etc.
+#   Restoration: git config --remove-section remote.<name>, then re-apply all keys
 
 # After agent execution (or abort):
 post_tags = await _snapshot_tags(worktree_path)
@@ -561,18 +563,16 @@ for tag in (pre_tags.keys() & post_tags.keys()):
                         tag, post_tags[tag], pre_tags[tag])
 
 # --- Remotes: handle additions, deletions, and URL mutations ---
-for remote in (post_remotes.keys() - pre_remotes.keys()):
-    await _run_git("remote", "remove", remote, cwd=worktree_path)
-    logger.warning("Agent added remote '%s' — removed", remote)
-
-for remote in (pre_remotes.keys() - post_remotes.keys()):
-    await _run_git("remote", "add", remote, pre_remotes[remote], cwd=worktree_path)
-    logger.warning("Agent deleted remote '%s' — restored with URL %s", remote, pre_remotes[remote])
-
-for remote in (pre_remotes.keys() & post_remotes.keys()):
-    if pre_remotes[remote] != post_remotes[remote]:
-        await _run_git("remote", "set-url", remote, pre_remotes[remote], cwd=worktree_path)
-        logger.warning("Agent changed remote '%s' URL — restored", remote)
+# Remotes: full config-section restore (not just URL)
+post_remotes = await _snapshot_remotes(worktree_path)
+if pre_remotes != post_remotes:
+    # Wipe all current remote config and restore from pre-snapshot
+    for remote in post_remotes:
+        await _run_git("config", "--remove-section", f"remote.{remote}", cwd=worktree_path)
+    for remote, config_blob in pre_remotes.items():
+        for key, value in _parse_config_blob(config_blob):
+            await _run_git("config", f"remote.{remote}.{key}", value, cwd=worktree_path)
+    logger.warning("Agent mutated remote config — fully restored from pre-agent snapshot")
 ```
 
 This closes the gap for all denied git operations that affect shared metadata. The full Layer C verification set:
@@ -701,8 +701,8 @@ Provider-level communication of read-only directories is advisory (prompt text f
 
    | Condition | Recovery mechanism |
    |---|---|
-   | Path is inside a Git repo AND repo is clean (`git status --porcelain` is empty) | `git checkout` restores any modified tracked files; untracked files deleted |
-   | Path is inside a Git repo BUT repo has local modifications | Treated as non-git: full temp backup if under size limit, otherwise rejected |
+   | Path is inside a Git repo AND repo is fully clean (`git status --porcelain --ignored` is empty — no modified, untracked, OR ignored files) | `git checkout` + delete untracked restores exact pre-agent state |
+   | Path is inside a Git repo BUT has any local state (modified, untracked, or ignored files) | Treated as non-git: full temp backup if under size limit, otherwise rejected. Rationale: `git checkout` cannot restore ignored files, so a repo with ignored content is not exactly recoverable via git alone. |
    | Total size < `MAX_RO_SNAPSHOT_BYTES` (default 50MB) | Full temp backup before agent, byte-level restore after |
    | Neither of the above | **Rejected at mount time.** Forge refuses to mount this path as read-only because it cannot guarantee recovery. Error: "Cannot mount {path} as read_only: not a git repo and exceeds snapshot size limit. Use a git-tracked path or reduce directory size." |
 
@@ -814,12 +814,12 @@ Stage-specific contracts:
 
 ### 5.4 Execution Handle
 
-`execute()` does not return a `ProviderResult` directly. It returns an `ExecutionHandle` that provides both the abort primitive and the eventual result. This solves the problem that a fresh run can hit a safety violation before any `ResumeState` exists.
+`start()` does not return a `ProviderResult` directly. It returns an `ExecutionHandle` that provides both the abort primitive and the eventual result. This solves the problem that a fresh run can hit a safety violation before any `ResumeState` exists.
 
 ```python
 class ExecutionHandle:
     """Live handle to an in-flight provider execution.
-    Returned immediately when execute() is called.
+    Returned immediately when start() is called.
     Provides abort capability from the first event onward."""
 
     async def abort(self) -> None:
@@ -940,7 +940,7 @@ class ProviderHealthStatus:
 
 **Why `catalog_entry` instead of `model: str`:** The provider receives the full `CatalogEntry` — not just a model alias. This means it has the `canonical_id` (exact API model ID to pass to the SDK), the `backend` (which SDK to use), and all capabilities. No second lookup needed inside the provider.
 
-Design decision: single `execute()` method, not separate methods per pipeline stage. All 7 current call sites (adapter, claude_planner, unified_planner, contract_builder, llm_review, synthesizer, followup) do the same thing: build system prompt, set tool restrictions, call SDK, get result. The differences are captured in `execution_mode`, `tool_policy`, and `output_contract`.
+Design decision: single `start()` method, not separate methods per pipeline stage. All 7 current call sites (adapter, claude_planner, unified_planner, contract_builder, llm_review, synthesizer, followup) do the same thing: build system prompt, set tool restrictions, call SDK, get result. The differences are captured in `execution_mode`, `tool_policy`, and `output_contract`.
 
 Design decision: `on_event` is async. The daemon's event emission is always async. Making the callback async by contract eliminates the sync/async mismatch in the current codebase.
 
