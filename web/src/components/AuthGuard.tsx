@@ -15,18 +15,14 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const refreshToken = useAuthStore((s) => s.refreshToken);
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(!isPublicPath(pathname));
+  const [checking, setChecking] = useState(() => {
+    if (isPublicPath(pathname)) return false;
+    if (useAuthStore.getState().token) return false;
+    return true;
+  });
 
   useEffect(() => {
-    if (isPublicPath(pathname)) {
-      setChecking(false);
-      return;
-    }
-    if (token) {
-      setChecking(false);
-      return;
-    }
-    // No token in memory — try refresh
+    if (isPublicPath(pathname) || token) return;
     refreshToken().then((ok) => {
       if (!ok) router.push("/login");
       setChecking(false);
