@@ -76,6 +76,7 @@ timeout = 60
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+exclude = [".claude", ".codegraph", "screenshots", "dist", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
