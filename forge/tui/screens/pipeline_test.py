@@ -1222,6 +1222,24 @@ def test_phase_banner_icon_preserved():
     assert "E  X  E  C  U  T  I  O  N" in rendered
 
 
+def test_phase_banner_static_render_has_top_gutter_for_vertical_centering():
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    banner = PhaseBanner()
+    banner._phase = "executing"
+    rendered = banner.render()
+    assert rendered.startswith("\n")
+
+
+def test_phase_banner_countdown_render_has_top_gutter_for_vertical_centering():
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    banner = PhaseBanner()
+    banner._countdown_value = 3
+    rendered = banner.render()
+    assert rendered.startswith("\n")
+
+
 # ── Dynamic sidebar tests ──────────────────────────────────────
 
 

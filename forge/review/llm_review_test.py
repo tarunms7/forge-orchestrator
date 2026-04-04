@@ -62,6 +62,7 @@ class TestBuildReviewPrompt:
         assert "src/auth.py" in prompt
         assert "src/models.py" in prompt
         assert "OUT OF SCOPE" in prompt
+        assert "read the current file before failing" in prompt
 
     def test_includes_prior_feedback_on_retry(self):
         """Prior reviewer feedback appears for re-reviews."""
@@ -74,6 +75,7 @@ class TestBuildReviewPrompt:
         assert "PRIOR REVIEW CONTEXT" in prompt
         assert "Missing error handling in line 42" in prompt
         assert "Prior feedback is context" in prompt
+        assert "Prior feedback may also be stale" in prompt
 
     def test_includes_prior_diff_on_retry(self):
         """Prior diff appears alongside prior feedback."""
@@ -322,6 +324,12 @@ class TestReviewSystemPrompt:
         from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
 
         assert "Do NOT nitpick pure style preferences" in REVIEW_SYSTEM_PROMPT
+
+    def test_prompt_forbids_hallucinated_git_verification(self):
+        from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+
+        assert "Do NOT claim you ran `git`" in REVIEW_SYSTEM_PROMPT
+        assert "Prior review feedback can be stale" in REVIEW_SYSTEM_PROMPT
 
 
 class TestRetryPromptNoSuppression:

@@ -170,9 +170,12 @@ class PhaseBanner(Widget):
         self.refresh()
 
     def render(self) -> str:
+        def _vertically_center(text: str) -> str:
+            return f"\n{text}" if text else text
+
         # Countdown takes priority over everything
         if self._countdown_value > 0:
-            return (
+            return _vertically_center(
                 f"[bold #e3b341]⚡  L A U N C H I N G   I N[/]\n"
                 f"[bold #f0883e]  {self._countdown_value}  [/]"
             )
@@ -185,7 +188,7 @@ class PhaseBanner(Widget):
             display = f"[bold {self._target_colour}]{self._target_icon}{resolved}[/][#484f58]{scrambled}[/]"
             if self._read_only_banner:
                 display += f"\n[dim]{self._read_only_banner}[/]"
-            return display
+            return _vertically_center(display)
 
         # Normal static render
         label, colour = _PHASE_BANNER.get(self._phase, ("Unknown", "#8b949e"))
@@ -199,7 +202,7 @@ class PhaseBanner(Widget):
         banner = f"[bold {colour}]{icon_prefix}{spaced}[/]"
         if self._read_only_banner:
             banner += f"\n[dim]{self._read_only_banner}[/]"
-        return banner
+        return _vertically_center(banner)
 
 
 class DecisionBadge(Widget):
