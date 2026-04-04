@@ -418,7 +418,7 @@ This is the primary defense. For Claude, it is airtight (SDK enforcement). For C
 The `SafetyAuditor` monitors the event stream and terminates the agent session immediately if a violation is detected. This is NOT a pre-execution gate for built-in tools — by the time `on_event` fires with `kind=TOOL_USE`, the provider SDK may have already started executing the tool. What Layer B does is:
 
 1. Detect the violation in the event stream.
-2. Call `provider.abort(state)` to kill the in-flight execution.
+2. Call `handle.abort()` to kill the in-flight execution (see Section 5.4).
 3. Mark the task as FAILED with a safety violation reason.
 4. Layer C (post-execution revert) cleans up any side effects.
 5. Log the violation for audit.
@@ -529,29 +529,50 @@ In worktree setups, `git tag` and `git remote` mutate the common `.git` director
 Forge handles this with a pre/post metadata snapshot:
 
 ```python
-# Before agent execution:
-pre_tags = set(await _run_git("tag", "--list", cwd=worktree_path))
-pre_remotes = set(await _run_git("remote", cwd=worktree_path))
+# Before agent execution — capture full object-level state:
+pre_tags = await _snapshot_tags(worktree_path)
+#   Returns dict[str, str]: {"v1.0": "abc123", "v2.0": "def456"}
+#   Built from: git tag -l --format='%(refname:short) %(objectname:short)'
+pre_remotes = await _snapshot_remotes(worktree_path)
+#   Returns dict[str, str]: {"origin": "https://github.com/..."}
+#   Built from: git remote -v (parse fetch URLs)
 
 # After agent execution (or abort):
-post_tags = set(await _run_git("tag", "--list", cwd=worktree_path))
-post_remotes = set(await _run_git("remote", cwd=worktree_path))
+post_tags = await _snapshot_tags(worktree_path)
+post_remotes = await _snapshot_remotes(worktree_path)
 
-# Revert new tags
-for tag in (post_tags - pre_tags):
+# Full object-level snapshots, not just name sets:
+#   pre_tags:    dict[str, str]  — tag name → object SHA it points to
+#   pre_remotes: dict[str, str]  — remote name → fetch URL
+
+# --- Tags: handle additions, deletions, and force-moves ---
+for tag in (post_tags.keys() - pre_tags.keys()):
     await _run_git("tag", "-d", tag, cwd=worktree_path)
     logger.warning("Agent created tag '%s' — deleted", tag)
 
-# Revert new remotes
-for remote in (post_remotes - pre_remotes):
+for tag in (pre_tags.keys() - post_tags.keys()):
+    await _run_git("tag", tag, pre_tags[tag], cwd=worktree_path)
+    logger.warning("Agent deleted tag '%s' — restored to %s", tag, pre_tags[tag])
+
+for tag in (pre_tags.keys() & post_tags.keys()):
+    if pre_tags[tag] != post_tags[tag]:
+        await _run_git("tag", "-f", tag, pre_tags[tag], cwd=worktree_path)
+        logger.warning("Agent retargeted tag '%s' from %s to %s — restored",
+                        tag, post_tags[tag], pre_tags[tag])
+
+# --- Remotes: handle additions, deletions, and URL mutations ---
+for remote in (post_remotes.keys() - pre_remotes.keys()):
     await _run_git("remote", "remove", remote, cwd=worktree_path)
     logger.warning("Agent added remote '%s' — removed", remote)
 
-# Detect modified remotes (URL changed)
-for remote in pre_remotes:
-    if remote in post_remotes:
-        pre_url = await _run_git("remote", "get-url", remote, cwd=worktree_path)
-        # Compare against stored pre-run URL; restore if changed
+for remote in (pre_remotes.keys() - post_remotes.keys()):
+    await _run_git("remote", "add", remote, pre_remotes[remote], cwd=worktree_path)
+    logger.warning("Agent deleted remote '%s' — restored with URL %s", remote, pre_remotes[remote])
+
+for remote in (pre_remotes.keys() & post_remotes.keys()):
+    if pre_remotes[remote] != post_remotes[remote]:
+        await _run_git("remote", "set-url", remote, pre_remotes[remote], cwd=worktree_path)
+        logger.warning("Agent changed remote '%s' URL — restored", remote)
 ```
 
 This closes the gap for all denied git operations that affect shared metadata. The full Layer C verification set:
@@ -680,7 +701,8 @@ Provider-level communication of read-only directories is advisory (prompt text f
 
    | Condition | Recovery mechanism |
    |---|---|
-   | Path is inside a Git repo | `git checkout` restores any modified tracked files; untracked files deleted |
+   | Path is inside a Git repo AND repo is clean (`git status --porcelain` is empty) | `git checkout` restores any modified tracked files; untracked files deleted |
+   | Path is inside a Git repo BUT repo has local modifications | Treated as non-git: full temp backup if under size limit, otherwise rejected |
    | Total size < `MAX_RO_SNAPSHOT_BYTES` (default 50MB) | Full temp backup before agent, byte-level restore after |
    | Neither of the above | **Rejected at mount time.** Forge refuses to mount this path as read-only because it cannot guarantee recovery. Error: "Cannot mount {path} as read_only: not a git repo and exceeds snapshot size limit. Use a git-tracked path or reduce directory size." |
 
@@ -830,6 +852,17 @@ async def on_event(event: ProviderEvent) -> None:
 result = await handle.result()  # blocks until done or aborted
 ```
 
+**Callback ordering guarantee:** `start()` MUST return the `ExecutionHandle` before any `on_event` callback fires. This is a hard contract. The implementation achieves this by constructing the handle synchronously inside `start()`, then launching the streaming loop as a background task that the handle owns. The caller receives the handle, wires up the SafetyAuditor in the `on_event` callback, and only then does `handle.result()` begin consuming events. Sequence:
+
+```
+1. handle = await provider.start(on_event=callback, ...)   # handle returned
+2. callback is now wired to SafetyAuditor with handle.abort()
+3. result = await handle.result()   # starts consuming events, callback fires
+4. callback can call handle.abort() on any event
+```
+
+**Cancellation surface:** `ExecutionHandle.abort()` is the ONLY way to cancel a run. There is no `provider.abort()` method. The handle owns the cancellation mechanism internally — the provider constructs it when building the handle. This eliminates ambiguity about who owns cancellation.
+
 Implementation:
 - `ClaudeProvider`: The handle wraps the `query()` async generator. `abort()` throws `GeneratorExit` into it.
 - `OpenAIProvider`: The handle wraps the Codex thread. `abort()` closes the SSE stream or calls `thread.cancel()`.
@@ -883,23 +916,10 @@ class ProviderProtocol(Protocol):
         """Check if a session is still resumable. May query the backend."""
         ...
 
-    async def abort(self, handle: "ExecutionHandle") -> None:
-        """Immediately terminate an in-flight execution. Called by SafetyAuditor
-        when a violation is detected during streaming.
-
-        Contract:
-        - MUST terminate the underlying SDK call as fast as possible.
-        - MUST be safe to call concurrently with an active execute() coroutine.
-        - After abort() returns, the execute() coroutine MUST either raise
-          ProviderAbortedError or return a ProviderResult with is_error=True.
-        - Any side effects from partially-executed tool calls remain on disk
-          for Layer C (post-execution revert) to clean up.
-
-        Implementation:
-        - Claude: Cancel the async generator (throw into the query() iterator).
-        - Codex: Call thread.cancel() or close the SSE stream.
-        """
-        ...
+    # NOTE: There is no abort() on the provider protocol.
+    # Cancellation is ONLY via ExecutionHandle.abort() (Section 5.4).
+    # The handle is the single cancellation surface. The provider implements
+    # the abort mechanism internally when constructing the handle.
 
     async def cleanup_session(self, state: ResumeState) -> None:
         """Release provider-side resources AFTER execution is complete or aborted.
