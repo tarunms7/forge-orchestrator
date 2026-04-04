@@ -220,6 +220,15 @@ class ExecutorMixin:
                 )
                 await db.release_agent(agent_id)
                 return
+            if await self._maybe_accept_scope_clean_noop(
+                db,
+                task,
+                worktree_path,
+                pid,
+                pipeline_branch=pipeline_branch,
+            ):
+                await db.release_agent(agent_id)
+                return
             console.print(f"[red]{task_id}: all changes were outside file scope[/red]")
             reverted_list = "\n".join(f"  - {f}" for f in reverted_files)
             await self._handle_retry(
@@ -1105,6 +1114,15 @@ class ExecutorMixin:
                 )
                 await db.release_agent(agent_id)
                 return
+            if await self._maybe_accept_scope_clean_noop(
+                db,
+                task,
+                worktree_path,
+                pid,
+                pipeline_branch=pipeline_branch,
+            ):
+                await db.release_agent(agent_id)
+                return
             console.print(
                 f"[red]{task_id}: all changes were outside file scope (after resume)[/red]"
             )
@@ -1451,6 +1469,86 @@ class ExecutorMixin:
             description="check remaining",
         )
         return bool(remaining.stdout.strip()), out_of_scope
+
+    async def _maybe_accept_scope_clean_noop(
+        self,
+        db,
+        task,
+        worktree_path: str,
+        pipeline_id: str,
+        *,
+        pipeline_branch: str | None,
+    ) -> bool:
+        """Accept a no-op task after scope cleanup when scoped verification is already green.
+
+        This handles stale tasks that only touched out-of-scope files transiently
+        (often via broad test/lint commands), but whose owned surface is already
+        passing. In that case, consuming retries and blocking dependents is worse
+        than treating the task as satisfied.
+        """
+        resolve_test_cmd = getattr(self, "_resolve_test_cmd", None)
+        gate_test = getattr(self, "_gate_test", None)
+        if not callable(resolve_test_cmd) or not callable(gate_test):
+            return False
+        if not task.files:
+            return False
+
+        prev_pipeline_test_cmd = getattr(self, "_pipeline_test_cmd", None)
+        try:
+            pipeline = await db.get_pipeline(pipeline_id) if pipeline_id else None
+            if pipeline:
+                self._pipeline_test_cmd = getattr(pipeline, "test_cmd", None)
+            test_cmd = resolve_test_cmd(repo_id=getattr(task, "repo_id", None))
+            if not test_cmd:
+                return False
+
+            gate_timeout = max(60, self._settings.agent_timeout_seconds // 2)
+            console.print(
+                f"[blue]{task.id}: verifying scoped no-op after scope cleanup...[/blue]"
+            )
+            test_result = await gate_test(
+                worktree_path,
+                test_cmd,
+                gate_timeout,
+                changed_files=list(task.files or []),
+                allowed_files=list(task.files or []),
+                pipeline_branch=pipeline_branch,
+            )
+            if getattr(test_result, "infra_error", False):
+                logger.info(
+                    "Task %s scope-clean no-op verification hit infra error: %s",
+                    task.id,
+                    getattr(test_result, "details", ""),
+                )
+                return False
+            if not test_result.passed:
+                logger.info(
+                    "Task %s scope-clean no-op verification failed: %s",
+                    task.id,
+                    getattr(test_result, "details", ""),
+                )
+                return False
+
+            console.print(
+                f"[bold green]{task.id}: scoped tests already pass — marking done[/bold green]"
+            )
+            await db.update_task_state(task.id, TaskState.DONE.value)
+            await self._emit(
+                "task:state_changed",
+                {"task_id": task.id, "state": "done"},
+                db=db,
+                pipeline_id=pipeline_id,
+            )
+            return True
+        except Exception:
+            logger.debug(
+                "Failed to verify scope-clean no-op task %s (non-fatal)",
+                getattr(task, "id", "<unknown>"),
+                exc_info=True,
+            )
+            return False
+        finally:
+            self._pipeline_test_cmd = prev_pipeline_test_cmd
 
     # -- post-review merge with Tier 1/Tier 2 --------------------------
 

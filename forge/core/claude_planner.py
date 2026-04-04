@@ -150,11 +150,10 @@ class ClaudePlannerLLM(PlannerLLM):
             model=self._model,
             # Read-only tools: planner explores the codebase but must NOT
             # write files — its only output is the TaskGraph JSON in the
-            # result text.  Without these settings the SDK defaults give
-            # all tools + interactive permission mode, causing Write
-            # attempts to hang (no terminal) and waste turns.
+            # result text. Use bypassPermissions so read-only tool use stays
+            # unattended while the allowed_tools list still prevents writes.
             allowed_tools=["Read", "Glob", "Grep", "Bash"],
-            permission_mode="acceptEdits",
+            permission_mode="bypassPermissions",
         )
         if self._cwd:
             options.cwd = self._cwd

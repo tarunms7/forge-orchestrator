@@ -7,6 +7,7 @@ import pytest
 
 from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 from forge.merge.worker import MergeResult
+from forge.review.pipeline import GateResult
 
 
 def _make_proc(
@@ -949,3 +950,74 @@ class TestPrepareWorktreeRebaseAbort:
         # _run_git should NOT have been called for rebase abort
         for call in mock_git.call_args_list:
             assert call.args[0] != ["rebase", "--abort"]
+
+
+@pytest.mark.asyncio
+async def test_scope_clean_noop_marks_done_when_scoped_tests_pass():
+    """A stale task should resolve as done when scoped verification is already green."""
+    mixin = ExecutorMixin()
+    mixin._settings = MagicMock(agent_timeout_seconds=600)
+    mixin._pipeline_test_cmd = None
+    mixin._resolve_test_cmd = MagicMock(return_value="pytest -q")
+    mixin._gate_test = AsyncMock(
+        return_value=GateResult(passed=True, gate="gate1_5_test", details="ok")
+    )
+    mixin._emit = AsyncMock()
+
+    db = AsyncMock()
+    db.get_pipeline = AsyncMock(return_value=MagicMock(test_cmd="pytest -q"))
+    task = MagicMock()
+    task.id = "t1"
+    task.files = ["forge/agents/adapter.py", "forge/agents/adapter_test.py"]
+    task.repo_id = "default"
+
+    accepted = await mixin._maybe_accept_scope_clean_noop(
+        db,
+        task,
+        "/wt/task-1",
+        "pipe-1",
+        pipeline_branch="forge/pipeline-test",
+    )
+
+    assert accepted is True
+    mixin._gate_test.assert_awaited_once()
+    gate_call = mixin._gate_test.await_args
+    assert gate_call.args[:3] == ("/wt/task-1", "pytest -q", 300)
+    assert gate_call.kwargs["changed_files"] == task.files
+    assert gate_call.kwargs["allowed_files"] == task.files
+    assert gate_call.kwargs["pipeline_branch"] == "forge/pipeline-test"
+    db.update_task_state.assert_awaited_once_with("t1", "done")
+    mixin._emit.assert_awaited_once()
+    assert mixin._pipeline_test_cmd is None
+
+
+@pytest.mark.asyncio
+async def test_scope_clean_noop_does_not_mark_done_when_scoped_tests_fail():
+    """Failed scoped verification should fall back to the normal retry path."""
+    mixin = ExecutorMixin()
+    mixin._settings = MagicMock(agent_timeout_seconds=600)
+    mixin._pipeline_test_cmd = None
+    mixin._resolve_test_cmd = MagicMock(return_value="pytest -q")
+    mixin._gate_test = AsyncMock(
+        return_value=GateResult(passed=False, gate="gate1_5_test", details="1 failed")
+    )
+    mixin._emit = AsyncMock()
+
+    db = AsyncMock()
+    db.get_pipeline = AsyncMock(return_value=MagicMock(test_cmd="pytest -q"))
+    task = MagicMock()
+    task.id = "t1"
+    task.files = ["forge/tui/screens/pipeline.py"]
+    task.repo_id = "default"
+
+    accepted = await mixin._maybe_accept_scope_clean_noop(
+        db,
+        task,
+        "/wt/task-1",
+        "pipe-1",
+        pipeline_branch="forge/pipeline-test",
+    )
+
+    assert accepted is False
+    db.update_task_state.assert_not_awaited()
+    mixin._emit.assert_not_awaited()

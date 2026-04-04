@@ -100,7 +100,7 @@ class ContractBuilderLLM:
             max_turns=10,  # Allow reading existing code for context
             model=self._model,
             allowed_tools=["Read", "Glob", "Grep", "Bash"],
-            permission_mode="acceptEdits",
+            permission_mode="bypassPermissions",
         )
         if self._cwd:
             options.cwd = self._cwd
