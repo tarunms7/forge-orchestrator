@@ -34,7 +34,13 @@ def test_forge_logo_contains_orchestrator_text() -> None:
 
 
 def test_forge_logo_matches_expected_ascii_art() -> None:
-    """Logo should match the expected FORGE art exactly."""
+    """Logo should match the expected FORGE art exactly.
+
+    EXPECTED_LOGO_PLAIN was verified against the current FORGE_LOGO: after
+    stripping Rich markup tags and rstrip()-ing each line, the strings are
+    identical (lines 3–4 of the logo have trailing spaces inside [/] tags
+    that rstrip normalises away).
+    """
     # Strip trailing whitespace per line (logo source has padding before [/] tags)
     plain = "\n".join(line.rstrip() for line in _strip_markup(FORGE_LOGO).split("\n")).strip()
     assert plain == EXPECTED_LOGO_PLAIN
