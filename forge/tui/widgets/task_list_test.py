@@ -146,6 +146,14 @@ def test_format_task_line_error_badge_with_long_title_truncates():
     assert "1 files" in line
 
 
+def test_format_task_line_respects_custom_max_width():
+    task = {"id": "t1", "title": "A" * 40, "state": "todo"}
+    narrow = format_task_line(task, selected=False, max_width=24)
+    wide = format_task_line(task, selected=False, max_width=56)
+    assert "…" in narrow
+    assert wide.count("A") > narrow.count("A")
+
+
 def test_format_task_line_selected_with_files_valid_markup():
     """Selected task with files_changed should produce valid Rich markup."""
     from io import StringIO
@@ -293,6 +301,12 @@ def test_format_task_line_animated_icon_in_progress():
     # Frame 1 should show second icon
     line2 = format_task_line(task, selected=True, icon_frame=1)
     assert _ANIMATED_ICONS["in_progress"][1] in line2
+
+
+def test_in_progress_animation_uses_stable_glyph_family():
+    from forge.tui.widgets.task_list import _ANIMATED_ICONS
+
+    assert _ANIMATED_ICONS["in_progress"] == ["●", "◉", "○", "◉"]
 
 
 def test_format_task_line_non_selected_no_animation():
