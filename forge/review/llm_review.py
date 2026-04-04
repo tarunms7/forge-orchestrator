@@ -81,7 +81,15 @@ Do NOT use UNCERTAIN for:
 - Do NOT nitpick pure style preferences (variable naming, import ordering) when
   no linter flags them. Focus on things that affect correctness and reliability.
 - If a "Pipeline Task Context" section lists sibling tasks and their file scopes,
-  do NOT fail for missing integration code that belongs to a sibling task's scope."""
+  do NOT fail for missing integration code that belongs to a sibling task's scope.
+- You do NOT have live git history or branch state. Do NOT claim you ran `git`
+  commands, inspected other branches, or verified repository state unless that
+  evidence appears in the provided diff or files you actually read.
+- Prior review feedback can be stale on retries. If prior feedback says an
+  in-scope deliverable is missing, you MUST read the current file before
+  failing for that reason.
+- The current in-scope files and the FULL DIFF are more trustworthy than prior
+  feedback. Do not repeat a prior failure blindly without re-checking."""
 
 
 async def gate2_llm_review(
@@ -344,7 +352,9 @@ def _build_review_prompt(
             "Test files that correspond to in-scope source files "
             "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed.\n"
             "If the diff contains changes to files outside this list (excluding related test files), "
-            "FAIL immediately with 'OUT OF SCOPE' and list the violating files.\n\n"
+            "FAIL immediately with 'OUT OF SCOPE' and list the violating files.\n"
+            "If prior feedback claims a required in-scope file is missing, read the current file "
+            "before failing. Retries may already contain committed fixes from an earlier attempt.\n\n"
         )
     if risk_map_header:
         parts.append(f"{risk_map_header}\n\n")
@@ -367,7 +377,9 @@ def _build_review_prompt(
             "Verify the specific issues above were addressed, AND do a full review of the\n"
             "current code. If you find new genuine issues (bugs, security, error handling),\n"
             "FAIL — regardless of whether they were in the prior feedback or not.\n"
-            "Prior feedback is context, not a ceiling on what you can flag.\n\n"
+            "Prior feedback is context, not a ceiling on what you can flag.\n"
+            "Prior feedback may also be stale. If it says a deliverable is missing, re-check the\n"
+            "current in-scope file before repeating that claim.\n\n"
         )
     if delta_diff:
         delta_snippet = delta_diff[:6000]
