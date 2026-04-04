@@ -864,6 +864,70 @@ async def test_skip_cancels_task_when_error():
         screen.action_skip_task()
 
 
+@pytest.mark.asyncio
+async def test_retry_emits_when_error():
+    """action_retry_task calls db.update_task_state('todo') for errored task."""
+    state = TuiState()
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Test",
+                    "description": "",
+                    "files": [],
+                    "depends_on": [],
+                    "complexity": "low",
+                }
+            ]
+        },
+    )
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
+    app = PipelineTestApp(state=state)
+    mock_db = MagicMock()
+    mock_db.update_task_state = AsyncMock()
+    app._db = mock_db
+    async with app.run_test() as pilot:
+        app.screen.action_retry_task()
+        await pilot.pause()
+        await pilot.pause()
+        mock_db.update_task_state.assert_called_once_with("t1", "todo")
+        assert state.tasks["t1"]["state"] == "todo"
+
+
+@pytest.mark.asyncio
+async def test_skip_emits_when_error():
+    """action_skip_task calls db.update_task_state('cancelled') for errored task."""
+    state = TuiState()
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Test",
+                    "description": "",
+                    "files": [],
+                    "depends_on": [],
+                    "complexity": "low",
+                }
+            ]
+        },
+    )
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "fail"})
+    app = PipelineTestApp(state=state)
+    mock_db = MagicMock()
+    mock_db.update_task_state = AsyncMock()
+    app._db = mock_db
+    async with app.run_test() as pilot:
+        app.screen.action_skip_task()
+        await pilot.pause()
+        await pilot.pause()
+        mock_db.update_task_state.assert_called_once_with("t1", "cancelled")
+        assert state.tasks["t1"]["state"] == "cancelled"
+
+
 # ── Read-only mode tests ──────────────────────────────────────────
 
 
