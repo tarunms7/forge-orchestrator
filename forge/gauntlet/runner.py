@@ -276,7 +276,9 @@ class GauntletRunner:
         contracts_generated = bool(getattr(pipeline, "contracts_json", None))
         task_states = [t.state for t in tasks]
         all_done = bool(tasks) and all(state == "done" for state in task_states)
-        no_terminal_failures = not any(state in ("error", "blocked", "cancelled") for state in task_states)
+        no_terminal_failures = not any(
+            state in ("error", "blocked", "cancelled") for state in task_states
+        )
         pipeline_complete = bool(pipeline) and getattr(pipeline, "status", "") == "complete"
 
         assertions = [

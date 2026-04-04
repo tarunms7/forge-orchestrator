@@ -44,7 +44,9 @@ def _queue_hint(task: dict) -> str:
         return "[#d29922]needs input[/#d29922]"
 
     if reason.startswith("Waiting on "):
-        deps = [part.strip() for part in reason.removeprefix("Waiting on ").split(",") if part.strip()]
+        deps = [
+            part.strip() for part in reason.removeprefix("Waiting on ").split(",") if part.strip()
+        ]
         if deps:
             suffix = f" +{len(deps) - 1}" if len(deps) > 1 else ""
             return f"[#8b949e]wait {deps[0]}{suffix}[/#8b949e]"

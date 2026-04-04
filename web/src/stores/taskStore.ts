@@ -120,6 +120,10 @@ export interface PipelineState {
     budget_limit_usd?: number;
     github_issue_url?: string | null;
     github_issue_number?: number | null;
+    ci_fix_status?: string;
+    ci_fix_attempt?: number;
+    ci_fix_max_retries?: number;
+    ci_fix_cost_usd?: number;
   }) => void;
   handleEvent: (event: {
     event: string;
@@ -360,10 +364,10 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       budgetLimitUsd: (data.budget_limit_usd as number) || 0,
       githubIssueUrl: (data.github_issue_url as string) ?? null,
       githubIssueNumber: (data.github_issue_number as number) ?? null,
-      ciFixStatus: (data as any).ci_fix_status || "idle",
-      ciFixAttempt: (data as any).ci_fix_attempt || 0,
-      ciFixMaxRetries: (data as any).ci_fix_max_retries || 3,
-      ciFixCostUsd: (data as any).ci_fix_cost_usd || 0,
+      ciFixStatus: (data.ci_fix_status as PipelineState["ciFixStatus"]) || "idle",
+      ciFixAttempt: (data.ci_fix_attempt as number) || 0,
+      ciFixMaxRetries: (data.ci_fix_max_retries as number) || 3,
+      ciFixCostUsd: (data.ci_fix_cost_usd as number) || 0,
     });
   },
   reset: () =>

@@ -52,7 +52,7 @@ export default function EditablePlanPanel() {
     }
   }, [editedTasks, tasks, setEditedTasks]);
 
-  const taskList = editedTasks || [];
+  const taskList = useMemo(() => editedTasks || [], [editedTasks]);
 
   // dnd-kit sensors
   const sensors = useSensors(
