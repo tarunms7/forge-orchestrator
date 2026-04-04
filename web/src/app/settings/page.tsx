@@ -484,7 +484,7 @@ function DeleteConfirmDialog({
 
 export default function SettingsPage() {
   const token = useAuthStore((s) => s.token);
-  const { requestPermission } = useNotifications();
+  useNotifications();
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
