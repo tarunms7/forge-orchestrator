@@ -71,6 +71,8 @@ export interface PipelineState {
   phase: "idle" | "planning" | "planned" | "contracts" | "executing" | "reviewing" | "paused" | "complete" | "cancelled" | "error";
   tasks: Record<string, TaskState>;
   plannerOutput: string[];
+  plannerStartedAt: number | null;
+  plannerLastActivityAt: number | null;
   timeline: TimelineEntry[];
   prUrl: string | null;
   prLoading: boolean;
@@ -184,6 +186,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   phase: "idle",
   tasks: {},
   plannerOutput: [],
+  plannerStartedAt: null,
+  plannerLastActivityAt: null,
   timeline: [],
   prUrl: null,
   prLoading: false,
@@ -358,6 +362,9 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       timeline,
       prUrl: data.pr_url ?? null,
       plannerOutput: data.planner_output ?? [],
+      plannerStartedAt: phase === "planning" ? (get().plannerStartedAt ?? Date.now()) : null,
+      plannerLastActivityAt:
+        phase === "planning" ? (data.planner_output?.length ? Date.now() : get().plannerLastActivityAt) : null,
       hydrationError: null,
       pipelineCost: (data.total_cost_usd as number) || 0,
       estimatedCostUsd: (data.estimated_cost_usd as number) || 0,
@@ -376,6 +383,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       phase: "idle",
       tasks: {},
       plannerOutput: [],
+      plannerStartedAt: null,
+      plannerLastActivityAt: null,
       timeline: [],
       prUrl: null,
       prLoading: false,
@@ -420,7 +429,21 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       switch (eventName) {
         case "pipeline:phase_changed": {
           if (data.phase === "complete") sendNotification("Pipeline complete", "All tasks finished");
-          return { phase: data.phase as PipelineState["phase"], timeline: newTimeline };
+          const nextPhase = data.phase as PipelineState["phase"];
+          if (nextPhase === "planning") {
+            return {
+              phase: nextPhase,
+              plannerStartedAt: state.plannerStartedAt ?? Date.now(),
+              plannerLastActivityAt: Date.now(),
+              timeline: newTimeline,
+            };
+          }
+          return {
+            phase: nextPhase,
+            plannerStartedAt: nextPhase === "idle" ? null : state.plannerStartedAt,
+            plannerLastActivityAt: nextPhase === "idle" ? null : state.plannerLastActivityAt,
+            timeline: newTimeline,
+          };
         }
 
         case "pipeline:plan_ready": {
@@ -489,6 +512,8 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
             phase: "planning" as PipelineState["phase"],
             tasks: {},
             plannerOutput: [],
+            plannerStartedAt: Date.now(),
+            plannerLastActivityAt: Date.now(),
             prUrl: null,
             prLoading: false,
             prError: null,
@@ -718,6 +743,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
         case "planner:output":
           return {
             plannerOutput: [...state.plannerOutput, data.line as string],
+            plannerLastActivityAt: Date.now(),
             timeline: newTimeline,
           };
 

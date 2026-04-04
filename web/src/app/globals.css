@@ -561,6 +561,19 @@ body {
   margin-left: 6px;
   font-size: 12px;
 }
+.planner-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.06), transparent);
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.planner-meta span {
+  white-space: nowrap;
+}
 .planner-body {
   padding: 16px;
   max-height: 360px;
@@ -572,6 +585,16 @@ body {
 .terminal-line {
   color: var(--text-secondary);
   padding: 1px 0;
+}
+.planner-line-count {
+  margin-left: 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+.planner-hint {
+  margin-top: 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 .terminal-line.active { color: var(--text-primary); }
 .terminal-line.highlight-line { color: var(--green); }
