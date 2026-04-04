@@ -92,7 +92,9 @@ async def run_resume_after_interrupt(
     )
 
     # Assert: remaining stages execute and complete after resume
-    phase2_passed = review is not None and review.passed and integration is not None and integration.passed
+    phase2_passed = (
+        review is not None and review.passed and integration is not None and integration.passed
+    )
     assertions.append(
         AssertionResult(
             name="remaining_stages_complete_after_resume",
@@ -119,7 +121,10 @@ async def run_resume_after_interrupt(
         )
     )
 
-    resumed_only_remaining_stages = [stage.name for stage in resumed_stages] == ["review", "integration"]
+    resumed_only_remaining_stages = [stage.name for stage in resumed_stages] == [
+        "review",
+        "integration",
+    ]
     assertions.append(
         AssertionResult(
             name="resume_only_runs_remaining_stages",

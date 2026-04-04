@@ -622,7 +622,10 @@ class TestFinalApprovalShortcutBar:
         screen.query_one = MagicMock(return_value=mock_bar)
 
         with patch.object(
-            FinalApprovalScreen, "focused", new_callable=PropertyMock, return_value=FollowUpTextArea()
+            FinalApprovalScreen,
+            "focused",
+            new_callable=PropertyMock,
+            return_value=FollowUpTextArea(),
         ):
             screen._update_shortcut_bar()
 

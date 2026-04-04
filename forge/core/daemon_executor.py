@@ -1503,9 +1503,7 @@ class ExecutorMixin:
                 return False
 
             gate_timeout = max(60, self._settings.agent_timeout_seconds // 2)
-            console.print(
-                f"[blue]{task.id}: verifying scoped no-op after scope cleanup...[/blue]"
-            )
+            console.print(f"[blue]{task.id}: verifying scoped no-op after scope cleanup...[/blue]")
             test_result = await gate_test(
                 worktree_path,
                 test_cmd,

@@ -1331,9 +1331,7 @@ class PipelineScreen(Screen):
 
         tasks = await db.list_tasks_by_pipeline(pipeline_id)
         dependents_map: dict[str, list[str]] = {}
-        cancellable_ids = {
-            task.id for task in tasks if task.state not in ("done", "cancelled")
-        }
+        cancellable_ids = {task.id for task in tasks if task.state not in ("done", "cancelled")}
         for task in tasks:
             for dep_id in task.depends_on or []:
                 dependents_map.setdefault(dep_id, []).append(task.id)

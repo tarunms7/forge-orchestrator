@@ -135,7 +135,9 @@ class Scheduler:
         """Produce (task_id, agent_id) pairs for dispatch."""
         analysis = analysis or Scheduler.analyze(tasks)
         task_index = {task.id: task for task in tasks}
-        ready = [task_index[task_id] for task_id in analysis.ready_task_ids if task_id in task_index]
+        ready = [
+            task_index[task_id] for task_id in analysis.ready_task_ids if task_id in task_index
+        ]
         idle = [a for a in agents if a.state == AgentState.IDLE]
 
         working_count = sum(1 for a in agents if a.state == AgentState.WORKING)
