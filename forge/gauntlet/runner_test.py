@@ -1,5 +1,8 @@
 """Tests for forge.gauntlet.runner — GauntletRunner orchestration."""
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from forge.gauntlet.runner import GauntletRunner, UnknownScenarioError
@@ -103,16 +106,115 @@ class TestGauntletRunnerChaos:
 
 class TestGauntletRunnerLiveMode:
     @pytest.mark.asyncio
-    async def test_live_mode_returns_error(self, tmp_path):
+    async def test_live_mode_rejects_unsupported_scenario(self, tmp_path):
         runner = GauntletRunner(
-            scenarios=["happy_path"],
+            scenarios=["resume_after_interrupt"],
             live=True,
             workspace_dir=str(tmp_path),
         )
         result = await runner.run()
         assert len(result.scenarios) == 1
         assert result.scenarios[0].passed is False
-        assert "not yet implemented" in result.scenarios[0].error.lower()
+        assert "currently supports only" in result.scenarios[0].error.lower()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_sdk_unavailable(self, tmp_path):
+        with patch("forge.gauntlet.runner._claude_cli_available", return_value=False):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+            assert len(result.scenarios) == 1
+            assert result.scenarios[0].passed is False
+            assert "claude cli not found" in result.scenarios[0].error.lower()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_builds_validated_result_from_pipeline_db(self, tmp_path):
+        mock_daemon_instance = AsyncMock()
+        mock_daemon_instance.run = AsyncMock(return_value=None)
+        mock_daemon_instance._pipeline_id = "pipe-1"
+
+        mock_db = AsyncMock()
+        mock_db.get_pipeline = AsyncMock(
+            return_value=SimpleNamespace(
+                status="complete",
+                task_graph_json='{"tasks":[{"id":"t1"},{"id":"t2"}]}',
+                contracts_json='{"api_contracts":[],"type_contracts":[]}',
+                total_cost_usd=1.25,
+            )
+        )
+        mock_db.list_tasks_by_pipeline = AsyncMock(
+            return_value=[
+                SimpleNamespace(id="t1", state="done"),
+                SimpleNamespace(id="t2", state="done"),
+            ]
+        )
+
+        with (
+            patch("forge.gauntlet.runner._claude_cli_available", return_value=True),
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon_instance) as mock_cls,
+            patch("forge.storage.db.Database", return_value=mock_db),
+        ):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+
+        assert len(result.scenarios) == 1
+        scenario = result.scenarios[0]
+        assert scenario.passed is True
+        assert scenario.cost_usd == 1.25
+        assert scenario.artifacts["mode"] == "live"
+        assert [stage.name for stage in scenario.stages] == ["planning", "contracts", "execution"]
+        assert all(stage.passed for stage in scenario.stages)
+        assert all(assertion.passed for assertion in scenario.assertions)
+        mock_cls.assert_called_once()
+        mock_daemon_instance.run.assert_awaited_once()
+        mock_db.get_pipeline.assert_awaited_once_with("pipe-1")
+        mock_db.list_tasks_by_pipeline.assert_awaited_once_with("pipe-1")
+
+    @pytest.mark.asyncio
+    async def test_live_mode_fails_when_pipeline_validation_fails(self, tmp_path):
+        mock_daemon_instance = AsyncMock()
+        mock_daemon_instance.run = AsyncMock(return_value=None)
+        mock_daemon_instance._pipeline_id = "pipe-2"
+
+        mock_db = AsyncMock()
+        mock_db.get_pipeline = AsyncMock(
+            return_value=SimpleNamespace(
+                status="partial_success",
+                task_graph_json='{"tasks":[{"id":"t1"}]}',
+                contracts_json=None,
+                total_cost_usd=0.5,
+            )
+        )
+        mock_db.list_tasks_by_pipeline = AsyncMock(
+            return_value=[
+                SimpleNamespace(id="t1", state="done"),
+                SimpleNamespace(id="t2", state="blocked"),
+            ]
+        )
+
+        with (
+            patch("forge.gauntlet.runner._claude_cli_available", return_value=True),
+            patch("forge.core.daemon.ForgeDaemon", return_value=mock_daemon_instance),
+            patch("forge.storage.db.Database", return_value=mock_db),
+        ):
+            runner = GauntletRunner(
+                scenarios=["happy_path"],
+                live=True,
+                workspace_dir=str(tmp_path),
+            )
+            result = await runner.run()
+
+        scenario = result.scenarios[0]
+        assert scenario.passed is False
+        assert "failed validation" in (scenario.error or "").lower()
+        assert any(not assertion.passed for assertion in scenario.assertions)
 
 
 class TestGauntletRunnerArtifacts:

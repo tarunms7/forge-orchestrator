@@ -59,7 +59,13 @@ Live mode uses the real `ForgeDaemon` and Claude SDK instead of `MockPipeline`. 
 
 Use live mode for pre-release validation or when you need to verify the full stack including SDK integration. For regular development and CI, mock mode (the default) is sufficient.
 
-> **Note:** Live mode is not yet implemented. Running with `--live` will return an error indicating this.
+Current live-mode support is intentionally narrow:
+
+- Only `happy_path` is supported in live mode today
+- Forge isolates live gauntlet runs into a scenario-local `FORGE_DATA_DIR` so they do not pollute your normal Forge database
+- Results are validated from the persisted pipeline and task state, so a completed daemon run is not treated as an automatic pass
+
+Other scenarios still run only in mock mode until they have scenario-specific live assertions.
 
 ## Adding New Scenarios
 
