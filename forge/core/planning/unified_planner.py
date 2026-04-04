@@ -143,8 +143,10 @@ class UnifiedPlanner:
                 model=self._model,
                 # Planner runs in the MAIN REPO (not a worktree) — must NOT write files.
                 # Edit/Write are blocked to prevent polluting the user's working tree.
+                # Use bypassPermissions so read-only Bash/Read/Glob/Grep calls do not
+                # stall on interactive approval prompts during unattended Forge runs.
                 disallowed_tools=["Edit", "Write", "NotebookEdit"],
-                permission_mode="acceptEdits",
+                permission_mode="bypassPermissions",
             )
             if self._cwd:
                 options.cwd = self._cwd

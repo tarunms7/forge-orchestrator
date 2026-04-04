@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from textual.app import App
@@ -838,6 +839,57 @@ async def test_retry_resets_task_when_error():
 
 
 @pytest.mark.asyncio
+async def test_retry_uses_daemon_and_unblocks_dependents():
+    """Inline retry should use daemon recovery so blocked dependents recover too."""
+    state = TuiState()
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Root",
+                    "description": "",
+                    "files": [],
+                    "depends_on": [],
+                    "complexity": "low",
+                },
+                {
+                    "id": "t2",
+                    "title": "Child",
+                    "description": "",
+                    "files": [],
+                    "depends_on": ["t1"],
+                    "complexity": "low",
+                },
+            ]
+        },
+    )
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "boom"})
+    state.apply_event("task:state_changed", {"task_id": "t2", "state": "blocked"})
+    app = PipelineTestApp(state=state)
+    app._pipeline_id = "pipe-1"
+    app._db = MagicMock()
+    app._db.list_tasks_by_pipeline = AsyncMock(
+        return_value=[
+            SimpleNamespace(id="t1", state="todo", error=None),
+            SimpleNamespace(id="t2", state="todo", error=None),
+        ]
+    )
+    app._daemon = MagicMock()
+    app._daemon.retry_task = AsyncMock()
+
+    async with app.run_test() as pilot:
+        app.screen.action_retry_task()
+        await pilot.pause()
+
+    app._daemon.retry_task.assert_awaited_once_with("t1", app._db, "pipe-1")
+    assert state.tasks["t1"]["state"] == "todo"
+    assert state.tasks["t2"]["state"] == "todo"
+    assert "error" not in state.tasks["t1"]
+
+
+@pytest.mark.asyncio
 async def test_skip_cancels_task_when_error():
     """action_skip_task marks errored task as cancelled."""
     state = TuiState()
@@ -862,6 +914,81 @@ async def test_skip_cancels_task_when_error():
         screen = app.screen
         # Without a DB, skip logs a warning but doesn't crash
         screen.action_skip_task()
+
+
+@pytest.mark.asyncio
+async def test_skip_cancels_transitive_dependents():
+    """Inline skip should cancel the skipped task and its blocked dependents."""
+    state = TuiState()
+    state.apply_event(
+        "pipeline:plan_ready",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "title": "Root",
+                    "description": "",
+                    "files": [],
+                    "depends_on": [],
+                    "complexity": "low",
+                },
+                {
+                    "id": "t2",
+                    "title": "Child",
+                    "description": "",
+                    "files": [],
+                    "depends_on": ["t1"],
+                    "complexity": "low",
+                },
+                {
+                    "id": "t3",
+                    "title": "Grandchild",
+                    "description": "",
+                    "files": [],
+                    "depends_on": ["t2"],
+                    "complexity": "low",
+                },
+            ]
+        },
+    )
+    state.apply_event("task:state_changed", {"task_id": "t1", "state": "error", "error": "boom"})
+    state.apply_event("task:state_changed", {"task_id": "t2", "state": "blocked"})
+    state.apply_event("task:state_changed", {"task_id": "t3", "state": "blocked"})
+    app = PipelineTestApp(state=state)
+    app._pipeline_id = "pipe-1"
+    app._db = MagicMock()
+    app._db.update_task_state = AsyncMock()
+    app._db.list_tasks_by_pipeline = AsyncMock(
+        side_effect=[
+            [
+                SimpleNamespace(id="t1", state="error", depends_on=[]),
+                SimpleNamespace(id="t2", state="blocked", depends_on=["t1"]),
+                SimpleNamespace(id="t3", state="blocked", depends_on=["t2"]),
+            ],
+            [
+                SimpleNamespace(id="t1", state="cancelled", error=None),
+                SimpleNamespace(id="t2", state="cancelled", error=None),
+                SimpleNamespace(id="t3", state="cancelled", error=None),
+            ],
+        ]
+    )
+
+    async with app.run_test() as pilot:
+        app.screen.action_skip_task()
+        await pilot.pause()
+
+    app._db.update_task_state.assert_has_awaits(
+        [
+            call("t1", "cancelled"),
+            call("t2", "cancelled"),
+            call("t3", "cancelled"),
+        ],
+        any_order=False,
+    )
+    assert state.tasks["t1"]["state"] == "cancelled"
+    assert state.tasks["t2"]["state"] == "cancelled"
+    assert state.tasks["t3"]["state"] == "cancelled"
+    assert "error" not in state.tasks["t1"]
 
 
 # ── Read-only mode tests ──────────────────────────────────────────

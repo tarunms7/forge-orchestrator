@@ -337,7 +337,7 @@ async def review_chunk(
         max_turns=40,
         model=model,
         allowed_tools=["Read", "Glob", "Grep"],
-        permission_mode="acceptEdits",
+        permission_mode="bypassPermissions",
     )
     if worktree_path:
         options.cwd = worktree_path
@@ -542,7 +542,7 @@ async def synthesize_results(
         max_turns=5,
         model=model,
         allowed_tools=[],
-        permission_mode="acceptEdits",
+        permission_mode="bypassPermissions",
     )
     if worktree_path:
         options.cwd = worktree_path

@@ -218,7 +218,7 @@ async def gate2_llm_review(
         max_turns=75,
         model=model,
         allowed_tools=["Read", "Glob", "Grep"],
-        permission_mode="acceptEdits",
+        permission_mode="bypassPermissions",
     )
     if worktree_path:
         options.cwd = worktree_path

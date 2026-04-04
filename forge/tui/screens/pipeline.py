@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections import deque
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -1263,6 +1264,27 @@ class PipelineScreen(Screen):
         tid = task["id"]
         safe_create_task(self._retry_task(tid), name=f"retry-{tid}")
 
+    async def _sync_pipeline_tasks_from_db(self, pipeline_id: str) -> None:
+        """Refresh local task states from the DB after an inline recovery action."""
+        db = getattr(self.app, "_db", None)
+        if not db:
+            return
+        tasks = await db.list_tasks_by_pipeline(pipeline_id)
+        updated = False
+        for task in tasks:
+            if task.id not in self._state.tasks:
+                continue
+            local = self._state.tasks[task.id]
+            local["state"] = task.state
+            error = getattr(task, "error", None)
+            if task.state == "error" and error:
+                local["error"] = error
+            else:
+                local.pop("error", None)
+            updated = True
+        if updated:
+            self._state._notify("tasks")
+
     async def _retry_task(self, task_id: str) -> None:
         """Reset an errored task to 'todo' and let the daemon re-dispatch it."""
         try:
@@ -1270,11 +1292,18 @@ class PipelineScreen(Screen):
             if not db:
                 logger.warning("Cannot retry task %s: no database connection", task_id)
                 return
-            await db.update_task_state(task_id, "todo")
-            # Update TUI state immediately so user sees the change
-            if task_id in self._state.tasks:
-                self._state.tasks[task_id]["state"] = "todo"
-                self._state._notify("tasks")
+            pipeline_id = getattr(self.app, "_pipeline_id", None)
+            daemon = getattr(self.app, "_daemon", None)
+            if daemon and pipeline_id:
+                await daemon.retry_task(task_id, db, pipeline_id)
+                await self._sync_pipeline_tasks_from_db(pipeline_id)
+            else:
+                await db.update_task_state(task_id, "todo")
+                # Update TUI state immediately so user sees the change
+                if task_id in self._state.tasks:
+                    self._state.tasks[task_id]["state"] = "todo"
+                    self._state.tasks[task_id].pop("error", None)
+                    self._state._notify("tasks")
             logger.info("Task %s reset to 'todo' for retry", task_id)
         except Exception:
             logger.exception("Failed to retry task %s", task_id)
@@ -1294,6 +1323,36 @@ class PipelineScreen(Screen):
         tid = task["id"]
         safe_create_task(self._skip_task(tid), name=f"skip-{tid}")
 
+    async def _cancel_task_subgraph(self, task_id: str, pipeline_id: str) -> list[str]:
+        """Cancel a skipped task plus all unfinished transitive dependents."""
+        db = getattr(self.app, "_db", None)
+        if not db:
+            return []
+
+        tasks = await db.list_tasks_by_pipeline(pipeline_id)
+        dependents_map: dict[str, list[str]] = {}
+        cancellable_ids = {
+            task.id for task in tasks if task.state not in ("done", "cancelled")
+        }
+        for task in tasks:
+            for dep_id in task.depends_on or []:
+                dependents_map.setdefault(dep_id, []).append(task.id)
+
+        cancelled: list[str] = []
+        queue: deque[str] = deque([task_id])
+        seen: set[str] = set()
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            if current in cancellable_ids:
+                await db.update_task_state(current, "cancelled")
+                cancelled.append(current)
+            for dependent_id in dependents_map.get(current, []):
+                queue.append(dependent_id)
+        return cancelled
+
     async def _skip_task(self, task_id: str) -> None:
         """Mark an errored task as cancelled so the pipeline can proceed."""
         try:
@@ -1301,10 +1360,16 @@ class PipelineScreen(Screen):
             if not db:
                 logger.warning("Cannot skip task %s: no database connection", task_id)
                 return
-            await db.update_task_state(task_id, "cancelled")
-            if task_id in self._state.tasks:
-                self._state.tasks[task_id]["state"] = "cancelled"
-                self._state._notify("tasks")
+            pipeline_id = getattr(self.app, "_pipeline_id", None)
+            if pipeline_id:
+                await self._cancel_task_subgraph(task_id, pipeline_id)
+                await self._sync_pipeline_tasks_from_db(pipeline_id)
+            else:
+                await db.update_task_state(task_id, "cancelled")
+                if task_id in self._state.tasks:
+                    self._state.tasks[task_id]["state"] = "cancelled"
+                    self._state.tasks[task_id].pop("error", None)
+                    self._state._notify("tasks")
             logger.info("Task %s skipped (cancelled)", task_id)
         except Exception:
             logger.exception("Failed to skip task %s", task_id)
