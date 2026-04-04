@@ -403,47 +403,81 @@ AGENT_DENIED_OPERATIONS = [
 
 ### Safety Enforcement: Three-Layer Model
 
-The safety model must produce identical behavior regardless of provider. A hallucinating agent must be blocked the same way whether it runs on Claude or Codex. This is achieved through three enforcement layers, all Forge-owned:
+The safety model must produce equivalent outcomes regardless of provider. A hallucinating agent that attempts `git push` must be stopped whether it runs on Claude or Codex. This is achieved through three layers with different enforcement timing:
 
-**Layer A: Provider-native enforcement (best effort, provider-specific)**
-Each provider translates `denied_operations` to its strongest native mechanism:
-- `ClaudeProvider`: `disallowed_tools` in `ClaudeCodeOptions` (hard SDK-level block)
-- `OpenAIProvider`: Codex `sandbox_mode` + explicit deny rules in developer message
+**Layer A: Pre-execution gate (provider-native, prevents tool from running)**
 
-**Layer B: Forge-owned output audit (hard, provider-agnostic)**
-After every `on_event` callback with `kind="tool_use"`, Forge's `SafetyAuditor` checks the tool call against the `ToolPolicy` BEFORE the tool executes. This is NOT inside the provider — it wraps the provider.
+Each provider translates `denied_operations` to its strongest native mechanism that blocks tools BEFORE they execute:
+- `ClaudeProvider`: `disallowed_tools` in `ClaudeCodeOptions`. This is a hard SDK-level block — Claude Code will not execute a disallowed tool call, period. The model's request is rejected and it must try something else.
+- `OpenAIProvider (Codex)`: Kernel-level sandbox (`sandbox_mode="workspace-write"`) blocks filesystem/network operations at the OS level. For git-specific denials (push, rebase), the developer message contains explicit instructions.
+
+This is the primary defense. For Claude, it is airtight (SDK enforcement). For Codex, filesystem/network operations are airtight (kernel sandbox). Git-operation denials on Codex are prompt-based and therefore softer — which is why Layer B exists.
+
+**Layer B: Real-time violation detector (Forge-owned, aborts session on violation)**
+
+The `SafetyAuditor` monitors the event stream and terminates the agent session immediately if a violation is detected. This is NOT a pre-execution gate — by the time `on_event` fires with `kind=TOOL_USE`, the provider SDK may have already started executing the tool. What Layer B does is:
+
+1. Detect the violation in the event stream.
+2. Immediately terminate the agent session (provider.cleanup_session()).
+3. Mark the task as FAILED with a safety violation reason.
+4. Log the violation for audit.
 
 ```python
 class SafetyAuditor:
-    """Forge-owned hard enforcement. Runs on every tool_use event from any provider."""
+    """Forge-owned violation detector. Monitors every event from any provider.
+    Cannot pre-empt tool execution for built-in tools (SDKs auto-execute those).
+    CAN pre-empt MCP tool execution (Forge controls the MCP server)."""
 
     def __init__(self, policy: ToolPolicy):
         self._policy = policy
+        self._violations: list[SafetyViolation] = []
 
-    def check(self, event: ProviderEvent) -> AuditResult:
-        """Returns ALLOW, BLOCK, or WARN. BLOCK raises and terminates the agent."""
-        if event.kind != "tool_use":
-            return AuditResult.ALLOW
+    def check(self, event: ProviderEvent) -> AuditVerdict:
+        """Returns ALLOW, ABORT, or WARN.
+        ABORT: terminates the agent session. The caller must stop the execution loop.
+        For MCP tools (where Forge owns the server): ABORT prevents execution.
+        For built-in tools (where the SDK auto-executes): ABORT kills the session
+        after the tool ran, but before the agent can act on the result."""
+        if event.kind != EventKind.TOOL_USE:
+            return AuditVerdict.ALLOW
 
-        # Check against denied operations
         for pattern in self._policy.denied_operations:
             if self._matches(event.tool_name, event.tool_input, pattern):
-                return AuditResult.BLOCK
+                self._violations.append(SafetyViolation(
+                    tool=event.tool_name, input=event.tool_input,
+                    pattern=pattern, timestamp_ms=event.timestamp_ms,
+                ))
+                return AuditVerdict.ABORT
 
-        # Check against allowlist if in allowlist mode
         if self._policy.mode == "allowlist":
             if event.tool_name not in self._policy.allowed_tools:
-                return AuditResult.BLOCK
+                return AuditVerdict.ABORT
 
-        return AuditResult.ALLOW
+        return AuditVerdict.ALLOW
 ```
 
-This means even if a provider's native enforcement fails (e.g., the prompt-based instruction is ignored by a hallucinating model), Forge catches it. The auditor runs in the common harness, not inside the provider.
+**For MCP tools (Forge-controlled), Layer B IS a pre-execution gate.** The Forge MCP server receives the tool call, checks with the SafetyAuditor, and refuses to execute if ABORT. The model gets an error response and must try something else. This is equivalent to Claude's `disallowed_tools` but works for any provider.
 
-**Layer C: Post-execution file scope enforcement (existing, unchanged)**
-`daemon_executor.py` already reverts out-of-scope file changes after agent execution. This layer stays as-is and catches anything that slipped through A and B.
+**For built-in tools (SDK-controlled), Layer B is a fast abort.** The tool may have started running, but the session is killed before the agent can chain further actions. Combined with Layer C, the damage is contained.
 
-The three layers together guarantee: provider-native block (fastest, catches most) → Forge audit (catches provider failures) → post-execution revert (catches everything else). The behavior is identical across providers because layers B and C are provider-agnostic.
+**Layer C: Post-execution boundary enforcement (Forge-owned, reverts damage)**
+
+`daemon_executor.py` already reverts out-of-scope file changes after agent execution. This layer is the final safety net — it catches anything that got through A and B. Specifically:
+- File scope enforcement: reverts writes outside `WorkspaceRoots.primary_cwd`
+- Read-only directory enforcement: reverts writes to `WorkspaceRoots.read_only_dirs` paths (see Section 4.9)
+- Git state enforcement: verifies no pushes, rebases, or branch deletions occurred
+
+**Why this is honest about the limitations:**
+
+Built-in tools on both Claude Code and Codex auto-execute within their SDK — there is no way to insert a synchronous approval gate between the model's tool request and the SDK's tool execution for native tools. Claiming otherwise would be a lie that eventually produces a production incident. Instead:
+
+| Tool type | Layer A (pre-execution) | Layer B (real-time) | Layer C (post-execution) |
+|---|---|---|---|
+| Claude built-in (Bash, Read, etc.) | `disallowed_tools` — hard block | Abort on violation | File scope revert |
+| Codex built-in (shell, file_write, etc.) | Kernel sandbox + prompt | Abort on violation | File scope revert |
+| MCP tools (Forge-owned) | SafetyAuditor — hard block | N/A (already blocked) | File scope revert |
+
+The net result: for the denied operations that matter (git push, network exfil, privilege escalation), at least one layer provides hard pre-execution blocking for each provider. Layer B catches the gaps. Layer C cleans up. The behavior is equivalent across providers — not identical in mechanism, but identical in outcome.
 
 Agents are not restricted beyond these safety boundaries. They can read/write any file, run any shell command, install packages, run tests, build — full power within their worktree.
 
@@ -478,7 +512,35 @@ CODEX_TOOL_MAP = {
 
 **Why this is not MCP:** MCP is for extensible custom tools (forge_ask_question, GitHub, cloud services). The core tool contract is for the fundamental coding operations that every provider must support natively. These are not MCP tools — they're built into each provider's SDK. The mapping just normalizes names so Forge doesn't need `if provider == "claude": check("Bash") elif provider == "openai": check("command_execution")` everywhere.
 
-**When a tool is `UNKNOWN`:** The provider encounters a tool name not in the mapping (e.g., a new built-in tool added to a provider update). It maps to `CoreTool.UNKNOWN`, logs a warning with the raw name, and lets it through. The SafetyAuditor only blocks operations on known core tools (you can't deny `git:push` on an unknown tool because you don't know what it does). This is a "fail-open for unknown tools, fail-closed for known dangerous operations" policy.
+**When a tool is `UNKNOWN`:** The provider encounters a tool name not in the mapping (e.g., a new built-in tool added in a provider SDK update). Behavior depends on the model's catalog tier:
+
+```python
+def handle_unknown_tool(event: ProviderEvent, catalog_entry: CatalogEntry) -> AuditVerdict:
+    if catalog_entry.tier in ("primary", "supported"):
+        # Fail closed. A validated model should only use tools we've mapped.
+        # An unknown tool means the provider SDK updated and Forge's mapping is stale.
+        # Block it and log an actionable error so maintainers update the mapping.
+        logger.error(
+            "UNKNOWN tool '%s' from %s tier model %s. "
+            "Provider SDK may have been updated. Update CoreTool mapping in catalog.py. "
+            "Blocking execution.",
+            event.raw, catalog_entry.tier, catalog_entry.spec,
+        )
+        return AuditVerdict.ABORT
+    else:  # experimental
+        # Fail open with warning. Experimental models are use-at-your-own-risk.
+        logger.warning(
+            "UNKNOWN tool '%s' from experimental model %s. Allowing (no safety guarantee).",
+            event.raw, catalog_entry.spec,
+        )
+        return AuditVerdict.ALLOW
+```
+
+**Why fail-closed for validated tiers:** A `primary` or `supported` model has a complete tool mapping in the catalog. If an unknown tool appears, it means the provider SDK was updated and introduced a new built-in tool that Forge hasn't reviewed. That tool could have side effects (network access, file deletion, process management) that violate safety boundaries. Blocking it immediately and logging an actionable error is safer than letting an unreviewed tool run in production.
+
+**Why fail-open for experimental:** Experimental models have no safety guarantee by definition. The user accepted the risk when they configured an experimental model. Blocking unknown tools would make experimental models unusable for testing new provider capabilities, which defeats the purpose of the tier.
+
+**Recovery:** When a provider SDK update introduces a new tool, the fix is: update the `CoreTool` mapping in `catalog.py`, run conformance tests, and release. This is a one-line change, not an architecture change.
 
 ### 4.9 WorkspaceRoots
 
@@ -495,11 +557,41 @@ class WorkspaceRoots:
     # read_only_dirs=["/home/user/repo-b/src/api/schema"]
 ```
 
-This replaces the current `cwd: str` + `allowed_dirs: list[str] | None` in `AgentAdapter.run()`. The distinction between read-write (primary) and read-only (additional) is enforced:
-- `ClaudeProvider`: `cwd=primary_cwd`, additional dirs listed in system prompt as readable paths
-- `OpenAIProvider`: `workingDirectory=primary_cwd`, `additionalDirectories=read_only_dirs` in Codex thread options
+This replaces the current `cwd: str` + `allowed_dirs: list[str] | None` in `AgentAdapter.run()`.
 
-Post-execution file scope enforcement in `daemon_executor.py` already handles the write boundary (only changes in primary_cwd are kept). The `WorkspaceRoots` type makes the contract explicit.
+**Enforcement is Forge-owned, not provider-dependent:**
+
+Provider-level communication of read-only directories is advisory (prompt text for Claude, `additionalDirectories` for Codex). Neither provider can enforce the read-only boundary at the SDK level. Therefore Forge enforces it with two hard mechanisms:
+
+1. **Post-execution filesystem diff** (Layer C in safety model): After agent execution, `daemon_executor.py` computes a diff of all modified files. Any write to a path under `read_only_dirs` (or outside `primary_cwd` entirely) is reverted via `git checkout`. This already exists for file scope enforcement — the change is extending it to explicitly check `read_only_dirs` paths.
+
+2. **SafetyAuditor tool-level check** (Layer B): When a `TOOL_USE` event targets a file path (Edit, Write operations), the auditor checks if the path falls under `read_only_dirs`. If so, it returns `ABORT`. For MCP tools this is a pre-execution block. For built-in tools, the session is killed and changes are reverted.
+
+```python
+class SafetyAuditor:
+    def __init__(self, policy: ToolPolicy, workspace: WorkspaceRoots):
+        self._policy = policy
+        self._workspace = workspace
+
+    def check(self, event: ProviderEvent) -> AuditVerdict:
+        # ... existing policy checks ...
+
+        # Workspace boundary check for file-modifying tools
+        if event.kind == EventKind.TOOL_USE and event.tool_name in (CoreTool.EDIT, CoreTool.WRITE):
+            target_path = (event.tool_input or {}).get("file_path", "")
+            if target_path and self._is_read_only(target_path):
+                return AuditVerdict.ABORT
+        return AuditVerdict.ALLOW
+
+    def _is_read_only(self, path: str) -> bool:
+        resolved = os.path.realpath(path)
+        for ro_dir in self._workspace.read_only_dirs:
+            if resolved.startswith(os.path.realpath(ro_dir)):
+                return True
+        return False
+```
+
+The provider still communicates `read_only_dirs` to the model (so it knows not to try), but enforcement does not depend on the model obeying.
 
 ### 4.10 MCPServerConfig
 
@@ -588,9 +680,17 @@ class ProviderProtocol(Protocol):
         """Return all models this provider supports, with full capability descriptors."""
         ...
 
-    async def health_check(self) -> ProviderHealthStatus:
+    async def health_check(self, backend: str | None = None) -> ProviderHealthStatus:
         """Verify provider is operational. Called by `forge doctor` and pre-pipeline preflight.
-        Returns status with details (authenticated, API reachable, SDK version)."""
+
+        If backend is None, checks all backends this provider supports.
+        If backend is specified (e.g., 'codex-sdk'), checks only that backend.
+
+        For OpenAI: backend='codex-sdk' checks Codex SDK + API key.
+                    backend='openai-agents-sdk' checks Agents SDK + API key.
+                    backend=None checks both.
+        For Claude: backend is always 'claude-code-sdk', so the parameter is ignored.
+        """
         ...
 
     async def execute(
@@ -666,7 +766,7 @@ Internal responsibilities:
 - Async iterate over `query()`, convert each `AssistantMessage`/`ResultMessage` to `ProviderEvent`
 - Extract `ResultMessage` fields into `ProviderResult` including `provider_reported_cost_usd` from `total_cost_usd`
 
-`available_models()`: returns from a config-driven list in `ForgeSettings`. Claude Code SDK does not expose a model list API.
+Model list comes exclusively from the Forge Model Catalog (Section 4.2). The provider does not discover models at runtime — it declares `catalog_entries()` from the shipped catalog plus any user-defined custom models in `forge.toml`.
 
 ### 6.2 OpenAIProvider
 
@@ -696,7 +796,7 @@ Internal responsibilities:
 - Stream execution via `thread.runStreamed()`, convert Codex events to `ProviderEvent`
 - Extract usage from `turn.completed` event, calculate cost from cost registry (OpenAI does not report cost directly)
 
-`available_models()`: fetched from OpenAI API (`GET /v1/models`), cached with periodic refresh. Static fallback list if API call fails.
+Model list comes exclusively from the Forge Model Catalog. No runtime API discovery. When OpenAI ships a new model, it is added to the catalog (with `tier="experimental"` initially) via a Forge release or user's `forge.toml [[custom_models]]`.
 
 ### 6.3 Event Mapping
 
@@ -704,7 +804,7 @@ Internal responsibilities:
 |---|---|---|
 | `AssistantMessage` with text blocks | `item.completed` type=`agent_message` | `"text"` |
 | `AssistantMessage` with tool_use block | `item.started` type=`command_execution`/`file_change` | `"tool_use"` |
-| `ResultMessage` | `turn.completed` | `"result"` (terminal) |
+| `ResultMessage` | `turn.completed` | Final text as `TEXT`, then `STATUS` with `status="completed"` |
 | SDK exception | `turn.failed` or `error` | `"error"` |
 
 Conversion happens inside each provider. The common harness only sees `ProviderEvent`.
@@ -746,14 +846,45 @@ class ProviderRegistry:
         return validate_model_for_stage(entry, stage)
 
     async def preflight_all(self) -> dict[str, ProviderHealthStatus]:
-        """Health-check all registered providers. Called by `forge doctor` and pipeline preflight."""
+        """Health-check all registered providers, per-backend.
+        Called by `forge doctor` and pipeline preflight."""
         results = {}
         for name, provider in self._providers.items():
+            # Collect all backends this provider's catalog entries use
+            backends = set(
+                e.backend for e in self._catalog.values() if e.provider == name
+            )
+            for backend in backends:
+                key = f"{name}:{backend}"
+                try:
+                    results[key] = await provider.health_check(backend=backend)
+                except Exception as exc:
+                    results[key] = ProviderHealthStatus(
+                        healthy=False, provider=name,
+                        details={"backend": backend},
+                        errors=[str(exc)],
+                    )
+        return results
+
+    async def preflight_for_pipeline(
+        self, resolved_models: dict[str, ModelSpec]
+    ) -> dict[str, ProviderHealthStatus]:
+        """Health-check only the providers/backends needed for this specific pipeline.
+        Faster than preflight_all. Called before pipeline execution."""
+        needed_backends: set[tuple[str, str]] = set()
+        for spec in resolved_models.values():
+            entry = self.get_catalog_entry(spec)
+            needed_backends.add((entry.provider, entry.backend))
+        results = {}
+        for provider_name, backend in needed_backends:
+            key = f"{provider_name}:{backend}"
+            provider = self.get_provider(provider_name)
             try:
-                results[name] = await provider.health_check()
+                results[key] = await provider.health_check(backend=backend)
             except Exception as exc:
-                results[name] = ProviderHealthStatus(
-                    healthy=False, provider=name, errors=[str(exc)]
+                results[key] = ProviderHealthStatus(
+                    healthy=False, provider=provider_name,
+                    details={"backend": backend}, errors=[str(exc)],
                 )
         return results
 ```
@@ -805,18 +936,21 @@ _DEFAULT_ROUTING_TABLE = {
         "contract_builder": {"low": "claude:opus", "medium": "claude:opus", "high": "claude:opus"},
         "agent":            {"low": "claude:sonnet", "medium": "claude:opus", "high": "claude:opus"},
         "reviewer":         {"low": "claude:sonnet", "medium": "claude:sonnet", "high": "claude:sonnet"},
+        "ci_fix":           {"low": "claude:sonnet", "medium": "claude:sonnet", "high": "claude:opus"},
     },
     "fast": {
         "planner":          {"low": "claude:sonnet", "medium": "claude:sonnet", "high": "claude:sonnet"},
         "contract_builder": {"low": "claude:sonnet", "medium": "claude:sonnet", "high": "claude:sonnet"},
         "agent":            {"low": "claude:haiku", "medium": "claude:haiku", "high": "claude:haiku"},
         "reviewer":         {"low": "claude:haiku", "medium": "claude:sonnet", "high": "claude:sonnet"},
+        "ci_fix":           {"low": "claude:haiku", "medium": "claude:sonnet", "high": "claude:sonnet"},
     },
     "quality": {
         "planner":          {"low": "claude:opus", "medium": "claude:opus", "high": "claude:opus"},
         "contract_builder": {"low": "claude:opus", "medium": "claude:opus", "high": "claude:opus"},
         "agent":            {"low": "claude:opus", "medium": "claude:opus", "high": "claude:opus"},
         "reviewer":         {"low": "claude:sonnet", "medium": "claude:sonnet", "high": "claude:sonnet"},
+        "ci_fix":           {"low": "claude:sonnet", "medium": "claude:opus", "high": "claude:opus"},
     },
 }
 ```
@@ -963,6 +1097,7 @@ _STAGE_TOKEN_ESTIMATES = {
     "contract_builder": {"input": 6000, "output": 3000},    # reads plan, produces contracts
     "agent":            {"input": 12000, "output": 6000},   # heaviest stage — coding + tool use
     "reviewer":         {"input": 5000, "output": 2000},    # reads diff, produces verdict
+    "ci_fix":           {"input": 10000, "output": 5000},   # reads CI output + fixes code
 }
 
 async def estimate_pipeline_cost(
@@ -974,7 +1109,7 @@ async def estimate_pipeline_cost(
 ) -> PipelineCostEstimate:
     """Per-stage cost breakdown, not a single number."""
     stages = {}
-    for stage in ("planner", "contract_builder", "agent", "reviewer"):
+    for stage in ("planner", "contract_builder", "agent", "reviewer", "ci_fix"):
         spec = select_model(strategy, stage, "medium", overrides)
         entry = registry.get_catalog_entry(spec)
         tokens = _STAGE_TOKEN_ESTIMATES[stage]
@@ -1077,7 +1212,7 @@ class ProviderEvent:
 
 | Location | Current | After |
 |---|---|---|
-| `_extract_text()` | isinstance + block.text | `event.kind in ("text", "result")` → `event.text` |
+| `_extract_text()` | isinstance + block.text | `event.kind == EventKind.TEXT` → `event.text` |
 | `_extract_activity()` | isinstance + block.name | `event.kind == "tool_use"` → `event.tool_name` |
 | `_on_planner_msg()` | isinstance + block iteration + token counting | `event.kind == "text"` → `event.text` + `event.token_count` |
 | `_on_unified_msg()` | same as planner | same migration |
@@ -1223,6 +1358,7 @@ agent_medium = "openai:gpt-5.4"
 agent_high = "claude:opus"
 reviewer = "claude:sonnet"
 contract_builder = "claude:opus"
+ci_fix = "claude:sonnet"
 ```
 
 ### 12.4 Config Validation
@@ -1237,7 +1373,7 @@ class AgentConfig:
     def validate(self, registry: ProviderRegistry) -> None:
         spec = ModelSpec.parse(self.model)
         if not registry.validate_model(spec):
-            available = [f"{p.name}:{m}" for p in registry.all_providers() for m in p.available_models()]
+            available = [str(e.spec) for e in registry.all_catalog_entries()]
             raise ConfigError(f"Unknown model '{self.model}'. Available: {available}")
 ```
 
@@ -1288,7 +1424,7 @@ Written to by `daemon_executor.py` after each agent execution attempt, before th
 `GET /api/settings` response adds:
 - `openai_enabled: bool`
 - `available_providers: list[str]` (populated from registry)
-- `available_models: dict[str, list[str]]` (populated from registry)
+- `catalog: list[CatalogEntrySummary]` (populated from registry, replaces raw model lists)
 
 Per-stage model values now accept `"provider:model"` format. Bare values like `"opus"` still work.
 
@@ -1743,9 +1879,10 @@ class ConformanceResult:
 
 ### 22.4 How Conformance Tests Run
 
-- **CI:** Run against Claude (primary tier) on every PR that touches `forge/providers/`. Uses real Claude SDK with a test API key. Cost-gated: skip if monthly conformance budget exceeded.
-- **Manual:** `forge providers test openai:gpt-5.4 --stage agent` runs agent conformance tests against a real OpenAI API. Required before promoting a model from `experimental` to `supported`.
-- **Nightly:** Scheduled job runs full conformance suite against all `primary` and `supported` models. Results update the catalog's `validated_stages` if any model starts failing.
+- **CI (Claude, full suite):** Run against Claude (primary tier) on every PR that touches `forge/providers/`. Uses real Claude SDK with a test API key. Cost-gated: skip if monthly conformance budget exceeded.
+- **CI (OpenAI, smoke gate):** On PRs that touch `forge/providers/` or `forge/providers/openai.py`, run a single lightweight real-provider smoke test: `test_simple_file_edit` for agent stage against `openai:gpt-5.4-mini` (cheapest supported model). This catches real SDK/API breakage before merge. Cost per run: ~$0.01. If the smoke test fails, the PR cannot merge.
+- **Manual (full OpenAI suite):** `forge providers test openai:gpt-5.4 --stage agent` runs the full agent conformance suite against a real OpenAI API. Required before promoting a model from `experimental` to `supported`.
+- **Nightly (regression):** Scheduled job runs full conformance suite against all `primary` and `supported` models. Results are reported as observed health (see 22.6), NOT as catalog mutations.
 
 ### 22.5 Catalog Promotion Flow
 
@@ -1757,3 +1894,36 @@ experimental (user adds model)
 ```
 
 No model reaches `primary` tier without passing the full conformance suite in CI.
+
+**Promotions are code changes.** Moving a model from experimental to supported means updating the `FORGE_MODEL_CATALOG` in `catalog.py`, adding validated_stages, and committing. This goes through code review. Promotions are never automated.
+
+### 22.6 Observed Health vs Catalog Tier (Separation of Concerns)
+
+The catalog tier (`primary`/`supported`/`experimental`) is a **stable promise** that only changes through deliberate code changes. Nightly conformance results are a **volatile signal** that reflects current provider health.
+
+These are separate data:
+
+```python
+@dataclass
+class ObservedModelHealth:
+    """Volatile. Updated by nightly conformance runs. NOT the catalog."""
+    spec: ModelSpec
+    last_checked: str                 # ISO timestamp
+    stages_passing: frozenset[str]    # which stages passed in the last run
+    stages_failing: frozenset[str]    # which stages failed
+    failure_details: dict[str, str]   # stage → error message
+    consecutive_failures: int = 0     # how many nightly runs in a row have failed
+```
+
+Storage: `forge/providers/health_state.json` (local, not in DB). Updated by the nightly job. Read by `forge doctor` and the Web UI dashboard.
+
+**What happens when nightly health degrades:**
+- `forge doctor` shows a warning: "claude:haiku is failing reviewer conformance tests (3 consecutive nights). The model is still `supported` tier but may be experiencing provider issues."
+- Web UI shows a yellow indicator next to the model in the settings dropdown.
+- The catalog tier does NOT change. The model is still `supported`.
+
+**When does the catalog tier change?**
+- **Demotion:** A maintainer investigates the nightly failures. If the failures are due to a real capability regression (not a transient outage), the maintainer submits a PR to demote the model (remove stages from `validated_stages` or change tier). This is reviewed and merged like any other code change.
+- **Promotion:** After a model has been `supported` for N nightly runs with zero failures, a maintainer can submit a PR to promote it to `primary`. This requires adding CI coverage for the model.
+
+The key principle: **the catalog is a stable contract, not an operational side effect.** Users can trust that a `primary` model will work today and tomorrow. Transient provider outages don't flap the compatibility promise.
