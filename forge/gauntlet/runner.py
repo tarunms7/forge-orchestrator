@@ -195,7 +195,7 @@ class GauntletRunner:
                 artifacts={"workspace_dir": workspace_base, "mode": "live"},
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ScenarioResult(
                 name=name,
                 passed=False,
