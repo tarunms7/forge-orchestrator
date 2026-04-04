@@ -431,6 +431,11 @@ class TestPlanApprovedMessage:
         msg = PlanApprovalScreen.PlanApproved(tasks=tasks)
         assert msg.tasks[0]["title"] == "EDITED"
 
+    def test_plan_cancelled_includes_tasks(self):
+        tasks = _sample_tasks()
+        msg = PlanApprovalScreen.PlanCancelled(tasks=tasks)
+        assert msg.tasks == tasks
+
     def test_active_tasks_used_for_approval(self):
         """When approved, only non-removed tasks should be included."""
         screen = PlanApprovalScreen(_sample_tasks())

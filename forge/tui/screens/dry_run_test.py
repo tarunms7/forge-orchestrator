@@ -261,8 +261,9 @@ class TestDryRunMessages:
         assert msg.tasks[0]["title"] == "EDITED"
 
     def test_plan_cancelled_instantiates(self):
-        msg = DryRunScreen.PlanCancelled()
+        msg = DryRunScreen.PlanCancelled(tasks=_sample_tasks())
         assert isinstance(msg, DryRunScreen.PlanCancelled)
+        assert msg.tasks == _sample_tasks()
 
 
 # ---------------------------------------------------------------------------

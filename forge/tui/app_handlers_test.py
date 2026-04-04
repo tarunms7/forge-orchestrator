@@ -945,3 +945,40 @@ async def test_final_approval_multirepo_pr_creation_recovers_when_pipeline_repos
     repos_json = app._db.update_pipeline_repos_json.await_args.args[1]
     assert '"id": "wizbridge"' in repos_json
     assert '"path": "/workspace/WizBridge"' in repos_json
+
+
+@pytest.mark.asyncio
+async def test_plan_review_escape_saves_plan_instead_of_cancelling():
+    """Esc from plan review should persist the plan for later resume, not mark it cancelled."""
+    from forge.core.models import TaskGraph
+    from forge.tui.app import ForgeApp
+
+    tasks = [
+        {
+            "id": "task-1",
+            "title": "Keep planned work",
+            "description": "Do not lose this plan on exit.",
+            "files": ["forge/providers/base.py"],
+            "depends_on": [],
+            "complexity": "medium",
+        }
+    ]
+
+    app = ForgeApp.__new__(ForgeApp)
+    app.pop_screen = MagicMock()
+    app.notify = MagicMock()
+    app._elapsed_timer = MagicMock()
+    app._source = MagicMock()
+    app._db = AsyncMock()
+    app._pipeline_id = "pipe-1"
+    app._graph = TaskGraph.model_validate({"tasks": tasks})
+    app._daemon = object()
+
+    await app.on_plan_approval_screen_plan_cancelled(MagicMock(tasks=tasks))
+
+    app._db.set_pipeline_plan.assert_awaited_once()
+    assert app._db.set_pipeline_plan.await_args.args[0] == "pipe-1"
+    app._db.update_pipeline_status.assert_not_awaited()
+    assert app._daemon is None
+    assert app._graph is None
+    app.notify.assert_called_once()
