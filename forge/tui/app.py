@@ -1806,17 +1806,24 @@ class ForgeApp(App):
                 import json as _json
 
                 graph_data = _json.loads(ctx["task_graph_json"])
-                tasks_dict = graph_data.get("tasks", {})
+                raw_tasks = graph_data.get("tasks", [])
+                if isinstance(raw_tasks, dict):
+                    tasks_iter = [{"id": tid, **task_data} for tid, task_data in raw_tasks.items()]
+                elif isinstance(raw_tasks, list):
+                    tasks_iter = raw_tasks
+                else:
+                    tasks_iter = []
                 plan_tasks = [
                     {
-                        "id": tid,
+                        "id": t.get("id", ""),
                         "title": t.get("title", ""),
                         "description": t.get("description", ""),
                         "files": t.get("files", []),
                         "depends_on": t.get("depends_on", []),
                         "complexity": t.get("complexity", "medium"),
                     }
-                    for tid, t in tasks_dict.items()
+                    for t in tasks_iter
+                    if t.get("id")
                 ]
                 if plan_tasks:
                     self.push_screen(PipelineScreen(self._state))

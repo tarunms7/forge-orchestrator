@@ -313,6 +313,77 @@ async def test_history_resume_partial_pipeline_retries_failed_tasks():
 
 
 @pytest.mark.asyncio
+async def test_history_resume_planned_pipeline_with_list_task_graph_reopens_plan():
+    """Planned pipeline resume should accept the persisted list-shaped task graph."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.pipeline import PipelineScreen
+    from forge.tui.screens.plan_approval import PlanApprovalScreen
+
+    task_graph_json = """
+    {
+      "tasks": [
+        {
+          "id": "task-1",
+          "title": "Keep planned work",
+          "description": "Resume without crashing.",
+          "files": ["forge/providers/base.py"],
+          "depends_on": [],
+          "complexity": "medium"
+        }
+      ]
+    }
+    """
+    pipeline = MagicMock(id="pipe-planned", task_graph_json=task_graph_json)
+    ctx = {
+        "status": "planned",
+        "quit_phase": None,
+        "task_graph_json": task_graph_json,
+        "contracts_json": None,
+        "pr_url": None,
+        "project_dir": "",
+        "base_branch": "main",
+        "branch_name": "forge/planned-branch",
+        "description": "Resume saved plan",
+        "executor_pid": None,
+        "total_tasks": 1,
+        "tasks_done": 0,
+        "tasks_error": 0,
+        "tasks_in_review": 0,
+        "tasks_blocked": 0,
+    }
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pipeline_resume_context = AsyncMock(return_value=ctx)
+    app._db.get_pipeline = AsyncMock(return_value=pipeline)
+    replay_state = MagicMock()
+
+    async def _replay(_pipeline):
+        app._state = replay_state
+        app._pipeline_id = _pipeline.id
+
+    app._replay_state_for_pipeline = AsyncMock(side_effect=_replay)
+    app._setup_daemon_for_resume = AsyncMock()
+    app._load_task_graph = MagicMock(return_value=True)
+    app.push_screen = MagicMock()
+    app.notify = MagicMock()
+
+    event = MagicMock()
+    event.pipeline_id = "pipe-planned"
+
+    await app.on_pipeline_list_resume_requested(event)
+
+    assert app.push_screen.call_count == 2
+    first_screen = app.push_screen.call_args_list[0].args[0]
+    second_screen = app.push_screen.call_args_list[1].args[0]
+    assert isinstance(first_screen, PipelineScreen)
+    assert isinstance(second_screen, PlanApprovalScreen)
+    assert second_screen._tasks[0]["id"] == "task-1"
+    assert second_screen._tasks[0]["title"] == "Keep planned work"
+    app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_history_resume_interrupted_planning_restarts_from_scratch():
     """Shift+R should restart planning from scratch after an interrupted planning session."""
     from forge.tui.app import ForgeApp
