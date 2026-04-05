@@ -111,6 +111,12 @@ class TaskRow(Base):
     prior_diff: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     implementation_summary: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     session_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    # Provider multi-model columns
+    provider_model: Mapped[str] = mapped_column(String, default="claude:sonnet")
+    backend: Mapped[str] = mapped_column(String, default="claude-code-sdk")
+    canonical_model_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    model_history: Mapped[str] = mapped_column(String, default="[]")
+    resume_state: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     questions_asked: Mapped[int] = mapped_column(default=0)
     questions_limit: Mapped[int] = mapped_column(default=3)
     review_diff: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
@@ -195,6 +201,8 @@ class PipelineRow(Base):
     ci_fix_log: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # Resume pipeline support
     quit_phase: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    # Provider multi-model columns
+    provider_config: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     def get_repos(self) -> list[dict]:
         """Return repo configurations. Single-repo returns synthetic default entry."""
@@ -362,6 +370,40 @@ class Database:
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(self._add_missing_columns)
+            await conn.execute(
+                text(
+                    "UPDATE tasks SET provider_model = 'claude:sonnet' "
+                    "WHERE provider_model IS NULL"
+                )
+            )
+            await conn.execute(
+                text(
+                    "UPDATE tasks SET backend = 'claude-code-sdk' "
+                    "WHERE backend IS NULL"
+                )
+            )
+            await conn.execute(
+                text(
+                    "UPDATE tasks SET model_history = '[]' "
+                    "WHERE model_history IS NULL"
+                )
+            )
+            # Backfill resume_state from legacy session_id column
+            await conn.execute(
+                text(
+                    "UPDATE tasks SET resume_state = "
+                    "json_object("
+                    "'provider', 'claude', "
+                    "'backend', 'claude-code-sdk', "
+                    "'session_token', session_id, "
+                    "'created_at', '', "
+                    "'last_active_at', '', "
+                    "'turn_count', 0, "
+                    "'is_resumable', json('true')"
+                    ") "
+                    "WHERE session_id IS NOT NULL AND resume_state IS NULL"
+                )
+            )
 
     @staticmethod
     def _validate_identifier(name: str) -> str:
@@ -405,6 +447,45 @@ class Database:
 
     async def close(self) -> None:
         await self._engine.dispose()
+
+    # ── Provider dual-read / dual-write helpers ──────────────────────
+
+    @staticmethod
+    def read_resume_state(
+        resume_state_json: str | None,
+        session_id: str | None,
+    ):
+        """Dual-read: prefer resume_state column, fall back to session_id.
+
+        Returns a ResumeState or None.
+        """
+        from forge.providers.base import ResumeState
+
+        if resume_state_json:
+            try:
+                return ResumeState.from_json(resume_state_json)
+            except (json.JSONDecodeError, KeyError):
+                pass
+        if session_id:
+            return ResumeState(
+                provider="claude",
+                backend="claude-code-sdk",
+                session_token=session_id,
+                created_at="",
+                last_active_at="",
+                turn_count=0,
+                is_resumable=True,
+            )
+        return None
+
+    @staticmethod
+    def write_resume_state(state) -> tuple[str, str]:
+        """Dual-write: returns (resume_state_json, session_id) for backward compat.
+
+        Accepts a ResumeState instance. Writes both columns so old code
+        reading session_id still works.
+        """
+        return state.to_json(), state.session_token
 
     # ── Auth: Users ───────────────────────────────────────────────────
 
@@ -515,6 +596,9 @@ class Database:
         complexity: str,
         pipeline_id: str | None = None,
         repo_id: str = "default",
+        provider_model: str = "claude:sonnet",
+        backend: str = "claude-code-sdk",
+        canonical_model_id: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = TaskRow(
@@ -526,6 +610,9 @@ class Database:
                 complexity=complexity,
                 pipeline_id=pipeline_id,
                 repo_id=repo_id,
+                provider_model=provider_model,
+                backend=backend,
+                canonical_model_id=canonical_model_id,
             )
             session.add(row)
             await session.commit()
@@ -577,6 +664,51 @@ class Database:
                     )
                 task.state = state
                 await session.commit()
+
+    async def update_task_provider_info(
+        self,
+        task_id: str,
+        *,
+        provider_model: str | None = None,
+        backend: str | None = None,
+        canonical_model_id: str | None = None,
+        resume_state_obj=None,
+    ) -> None:
+        """Update provider-related fields on a task.
+
+        If resume_state_obj is provided (a ResumeState), performs dual-write
+        to both resume_state and session_id columns.
+        """
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if not task:
+                return
+            if provider_model is not None:
+                task.provider_model = provider_model
+            if backend is not None:
+                task.backend = backend
+            if canonical_model_id is not None:
+                task.canonical_model_id = canonical_model_id
+            if resume_state_obj is not None:
+                rs_json, sid = self.write_resume_state(resume_state_obj)
+                task.resume_state = rs_json
+                task.session_id = sid
+            await session.commit()
+
+    async def append_task_model_history(
+        self,
+        task_id: str,
+        entry: dict,
+    ) -> None:
+        """Append a ModelHistoryEntry dict to the task's model_history JSON array."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if not task:
+                return
+            history = json.loads(task.model_history or "[]")
+            history.append(entry)
+            task.model_history = json.dumps(history)
+            await session.commit()
 
     async def list_tasks(self, state: str | None = None) -> list[TaskRow]:
         async with self._session_factory() as session:
@@ -778,6 +910,7 @@ class Database:
         project_path: str | None = None,
         project_name: str | None = None,
         repos_json: str | None = None,
+        provider_config: str | None = None,
     ) -> None:
         async with self._session_factory() as session:
             row = PipelineRow(
@@ -796,6 +929,7 @@ class Database:
                 project_path=project_path,
                 project_name=project_name,
                 repos_json=repos_json,
+                provider_config=provider_config,
                 created_at=datetime.now(UTC).isoformat(),
             )
             session.add(row)
@@ -899,6 +1033,15 @@ class Database:
         """Get the ContractSet JSON for a pipeline."""
         pipeline = await self.get_pipeline(pipeline_id)
         return getattr(pipeline, "contracts_json", None) if pipeline else None
+
+    async def set_pipeline_provider_config(self, pipeline_id: str, provider_config: str) -> None:
+        """Store the provider routing config JSON for a pipeline."""
+        async with self._session_factory() as session:
+            result = await session.execute(select(PipelineRow).where(PipelineRow.id == pipeline_id))
+            row = result.scalar_one_or_none()
+            if row:
+                row.provider_config = provider_config
+                await session.commit()
 
     async def set_pipeline_quit_phase(self, pipeline_id: str, phase: str) -> None:
         """Store the TUI phase when user quit, enabling resume to restore the correct screen."""

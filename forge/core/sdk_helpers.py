@@ -1,4 +1,10 @@
-"""Shared helpers for claude-code-sdk interaction."""
+"""Shared helpers for claude-code-sdk interaction.
+
+.. deprecated::
+    Direct SDK logic has moved to :mod:`forge.providers.claude`.
+    This module is a thin backward-compatibility shim. New code should use
+    :class:`forge.providers.claude.ClaudeProvider` via the ProviderRegistry.
+"""
 
 import logging
 import os
@@ -7,15 +13,22 @@ from dataclasses import dataclass
 from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage, query
-from claude_code_sdk._internal import client as _sdk_client
-from claude_code_sdk._internal import message_parser as _sdk_parser
+
+# Import the monkey-patch from claude provider so it's applied regardless
+# of which module is imported first.
+from forge.providers.claude import _SkipMessage  # noqa: F401
 
 logger = logging.getLogger("forge.sdk")
 
 
 @dataclass
 class SdkResult:
-    """Structured result from an SDK query with cost and token tracking."""
+    """Structured result from an SDK query with cost and token tracking.
+
+    .. deprecated::
+        Use :class:`forge.providers.base.ProviderResult` instead.
+        This class is kept for backward compatibility during the migration.
+    """
 
     result_text: str
     is_error: bool
@@ -47,33 +60,6 @@ class SdkResult:
         )
 
 
-# Patch the SDK's message parser to gracefully skip unknown message types
-# (e.g. rate_limit_event) instead of crashing the entire query.
-# We patch BOTH the module AND the client's local reference.
-_original_parse = _sdk_parser.parse_message
-
-
-class _SkipMessage:
-    """Sentinel for messages the SDK doesn't know about."""
-
-    pass
-
-
-def _patched_parse(data):
-    try:
-        return _original_parse(data)
-    except Exception as e:
-        if "Unknown message type" in str(e):
-            logger.debug("Skipping unknown SDK message type: %s", data.get("type", "?"))
-            return _SkipMessage()
-        raise
-
-
-# Patch both references so the fix takes effect everywhere
-_sdk_parser.parse_message = _patched_parse
-_sdk_client.parse_message = _patched_parse
-
-
 async def sdk_query(
     prompt: str,
     options: ClaudeCodeOptions,
@@ -81,11 +67,16 @@ async def sdk_query(
 ) -> SdkResult | None:
     """Run a claude-code-sdk query with clean environment. Returns an SdkResult or None.
 
-    Removes CLAUDECODE from os.environ (also removed at CLI entry, but belt-and-suspenders)
-    so the SDK subprocess doesn't reject our call as a 'nested session'.
+    .. deprecated::
+        Use :class:`forge.providers.claude.ClaudeProvider` via the
+        ProviderRegistry instead. This function is kept for backward
+        compatibility during the migration.
 
-    If *on_message* is provided it is ``await``-ed for every message yielded by the
-    SDK stream (including non-result messages), enabling real-time streaming to callers.
+    Removes CLAUDECODE from os.environ so the SDK subprocess doesn't reject
+    our call as a 'nested session'.
+
+    If *on_message* is provided it is ``await``-ed for every message yielded
+    by the SDK stream, enabling real-time streaming to callers.
     """
     os.environ.pop("CLAUDECODE", None)
     last_result: ResultMessage | None = None

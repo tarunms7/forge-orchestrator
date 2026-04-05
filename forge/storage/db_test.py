@@ -1563,3 +1563,249 @@ async def test_get_pipeline_list_with_counts_empty(db: Database):
     """get_pipeline_list_with_counts returns empty list when no pipelines."""
     results = await db.get_pipeline_list_with_counts()
     assert results == []
+
+
+# ── Provider multi-model columns tests ──────────────────────────────
+
+
+async def test_task_provider_columns_exist(db: Database):
+    """New provider columns are present with defaults after init."""
+    await db.create_task(
+        id="prov-1",
+        title="Provider test",
+        description="Test provider columns",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+    )
+    task = await db.get_task("prov-1")
+    assert task is not None
+    assert task.provider_model == "claude:sonnet"
+    assert task.backend == "claude-code-sdk"
+    assert task.canonical_model_id is None
+    assert task.model_history == "[]"
+    assert task.resume_state is None
+
+
+async def test_task_create_with_provider_fields(db: Database):
+    """create_task accepts provider fields."""
+    await db.create_task(
+        id="prov-2",
+        title="Custom provider",
+        description="Test",
+        files=[],
+        depends_on=[],
+        complexity="high",
+        provider_model="openai:gpt-5.4",
+        backend="codex-sdk",
+        canonical_model_id="gpt-5.4-0414",
+    )
+    task = await db.get_task("prov-2")
+    assert task.provider_model == "openai:gpt-5.4"
+    assert task.backend == "codex-sdk"
+    assert task.canonical_model_id == "gpt-5.4-0414"
+
+
+async def test_update_task_provider_info(db: Database):
+    """update_task_provider_info updates provider fields."""
+    await db.create_task(
+        id="prov-3",
+        title="Update test",
+        description="Test",
+        files=[],
+        depends_on=[],
+        complexity="low",
+    )
+    await db.update_task_provider_info(
+        "prov-3",
+        provider_model="claude:opus",
+        backend="claude-code-sdk",
+        canonical_model_id="claude-opus-4-test",
+    )
+    task = await db.get_task("prov-3")
+    assert task.provider_model == "claude:opus"
+    assert task.canonical_model_id == "claude-opus-4-test"
+
+
+async def test_update_task_provider_info_with_resume_state(db: Database):
+    """update_task_provider_info dual-writes resume_state and session_id."""
+    from forge.providers.base import ResumeState
+
+    await db.create_task(
+        id="prov-4",
+        title="Resume test",
+        description="Test",
+        files=[],
+        depends_on=[],
+        complexity="low",
+    )
+    state = ResumeState(
+        provider="claude",
+        backend="claude-code-sdk",
+        session_token="sess-abc-123",
+        created_at="2026-01-01T00:00:00",
+        last_active_at="2026-01-01T00:00:00",
+        turn_count=5,
+        is_resumable=True,
+    )
+    await db.update_task_provider_info("prov-4", resume_state_obj=state)
+    task = await db.get_task("prov-4")
+
+    # Both columns written
+    assert task.session_id == "sess-abc-123"
+    assert task.resume_state is not None
+    assert "sess-abc-123" in task.resume_state
+
+
+async def test_append_task_model_history(db: Database):
+    """append_task_model_history appends to JSON array."""
+    await db.create_task(
+        id="hist-1",
+        title="History test",
+        description="Test",
+        files=[],
+        depends_on=[],
+        complexity="low",
+    )
+    entry = {"attempt": 0, "model": "claude:sonnet", "backend": "claude-code-sdk", "result": "success", "cost_usd": 0.05}
+    await db.append_task_model_history("hist-1", entry)
+
+    task = await db.get_task("hist-1")
+    import json
+    history = json.loads(task.model_history)
+    assert len(history) == 1
+    assert history[0]["model"] == "claude:sonnet"
+
+    # Append another
+    entry2 = {"attempt": 1, "model": "claude:opus", "backend": "claude-code-sdk", "result": "error", "cost_usd": 0.10}
+    await db.append_task_model_history("hist-1", entry2)
+    task = await db.get_task("hist-1")
+    history = json.loads(task.model_history)
+    assert len(history) == 2
+
+
+async def test_dual_read_resume_state_from_resume_state(db: Database):
+    """read_resume_state prefers resume_state column."""
+    import json
+    from forge.providers.base import ResumeState
+
+    state = ResumeState(
+        provider="claude",
+        backend="claude-code-sdk",
+        session_token="primary-sess",
+        created_at="2026-01-01",
+        last_active_at="2026-01-01",
+        turn_count=3,
+        is_resumable=True,
+    )
+    result = Database.read_resume_state(state.to_json(), "fallback-sess")
+    assert result is not None
+    assert result.session_token == "primary-sess"
+
+
+async def test_dual_read_resume_state_fallback_to_session_id(db: Database):
+    """read_resume_state falls back to session_id when resume_state is None."""
+    result = Database.read_resume_state(None, "legacy-sess")
+    assert result is not None
+    assert result.session_token == "legacy-sess"
+    assert result.provider == "claude"
+
+
+async def test_dual_read_resume_state_both_none(db: Database):
+    """read_resume_state returns None when both columns are None."""
+    result = Database.read_resume_state(None, None)
+    assert result is None
+
+
+async def test_dual_write_resume_state():
+    """write_resume_state returns both JSON and session_token."""
+    from forge.providers.base import ResumeState
+
+    state = ResumeState(
+        provider="claude",
+        backend="claude-code-sdk",
+        session_token="write-test-sess",
+        created_at="2026-01-01",
+        last_active_at="2026-01-01",
+        turn_count=1,
+        is_resumable=True,
+    )
+    rs_json, sid = Database.write_resume_state(state)
+    assert sid == "write-test-sess"
+    import json
+    parsed = json.loads(rs_json)
+    assert parsed["session_token"] == "write-test-sess"
+    assert parsed["provider"] == "claude"
+
+
+async def test_backfill_session_id_to_resume_state(db: Database):
+    """Backfill migration creates resume_state from legacy session_id."""
+    # Create task with session_id but no resume_state via ORM, then clear resume_state
+    await db.create_task(
+        id="bf-1",
+        title="Backfill test",
+        description="test",
+        files=[],
+        depends_on=[],
+        complexity="low",
+    )
+    # Set session_id and clear resume_state to simulate legacy data
+    from sqlalchemy import text
+    async with db._session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE tasks SET session_id = 'legacy-sess-id', resume_state = NULL "
+                "WHERE id = 'bf-1'"
+            )
+        )
+        await session.commit()
+
+    # Re-run initialize which triggers backfill
+    await db.initialize()
+
+    task = await db.get_task("bf-1")
+    assert task.resume_state is not None
+    import json
+    parsed = json.loads(task.resume_state)
+    assert parsed["session_token"] == "legacy-sess-id"
+    assert parsed["provider"] == "claude"
+
+
+async def test_pipeline_provider_config(db: Database):
+    """Pipeline provider_config column persists and retrieves."""
+    import json
+    config = json.dumps({
+        "planner": "claude:opus",
+        "contract_builder": "claude:sonnet",
+        "agent_low": "claude:haiku",
+        "agent_medium": "claude:sonnet",
+        "agent_high": "claude:opus",
+        "reviewer": "claude:sonnet",
+        "ci_fix": "claude:haiku",
+    })
+    await db.create_pipeline(
+        id="pipe-prov-1",
+        description="Provider config test",
+        project_dir="/tmp",
+        provider_config=config,
+    )
+    pipeline = await db.get_pipeline("pipe-prov-1")
+    assert pipeline.provider_config is not None
+    parsed = json.loads(pipeline.provider_config)
+    assert parsed["planner"] == "claude:opus"
+    assert parsed["agent_high"] == "claude:opus"
+
+
+async def test_set_pipeline_provider_config(db: Database):
+    """set_pipeline_provider_config updates the column."""
+    import json
+    await db.create_pipeline(
+        id="pipe-prov-2",
+        description="Set config test",
+        project_dir="/tmp",
+    )
+    config = json.dumps({"planner": "claude:sonnet"})
+    await db.set_pipeline_provider_config("pipe-prov-2", config)
+    pipeline = await db.get_pipeline("pipe-prov-2")
+    assert pipeline.provider_config is not None
+    assert "claude:sonnet" in pipeline.provider_config
