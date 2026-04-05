@@ -2119,6 +2119,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         _all_paused_since: float | None = None
         # Throttle question-timeout checks: only run every 30 seconds
         _last_timeout_check: float = 0.0
+        # Throttle answered-question recovery to the scheduler poll cadence
+        _last_answer_recovery_check: float = 0.0
         self._active_tasks.clear()
         # _effective_max_agents is set in __init__ (default) and recalculated
         # in execute() based on DAG width — do NOT overwrite here on loop re-entry.
@@ -2227,6 +2229,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             state_counts: dict[str, int] = {}
             for t in tasks:
                 state_counts[t.state] = state_counts.get(t.state, 0) + 1
+
+            if pipeline_id and state_counts.get(TaskState.AWAITING_INPUT.value, 0) > 0:
+                now = asyncio.get_running_loop().time()
+                if now - _last_answer_recovery_check >= self._settings.scheduler_poll_interval:
+                    _last_answer_recovery_check = now
+                    await self._recover_answered_questions(db, pipeline_id)
+
             all_parked = all(t.state in parked_states for t in tasks)
             if all_parked:
                 # If any tasks are still awaiting approval or input, sleep and poll

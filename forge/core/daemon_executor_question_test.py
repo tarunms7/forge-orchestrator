@@ -260,8 +260,9 @@ class TestOnTaskAnswered:
         mock_task.id = "t1"
         mock_db.get_task = AsyncMock(return_value=mock_task)
         mock_db.assign_task = AsyncMock()
-        mock_db.list_agents = AsyncMock(return_value=[MagicMock(id="agent-1")])
-        mock_db.list_tasks_by_pipeline = AsyncMock(return_value=[mock_task])
+        idle_agent = MagicMock(id="agent-1")
+        idle_agent.state = "idle"
+        mock_db.list_agents = AsyncMock(return_value=[idle_agent])
         mock_db._session_factory = MagicMock()
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -271,20 +272,61 @@ class TestOnTaskAnswered:
         mock_session.__aexit__ = AsyncMock(return_value=False)
         mock_db._session_factory.return_value = mock_session
 
-        with patch("forge.core.scheduler.Scheduler") as MockSched:
-            MockSched.dispatch_plan.return_value = [("t1", "agent-1")]
+        # Mock _safe_execute_resume to avoid actual execution
+        executor._safe_execute_resume = AsyncMock()
 
-            with patch("forge.core.models.row_to_agent", side_effect=lambda a: a):
-                with patch("forge.core.models.row_to_record", side_effect=lambda t: t):
-                    # Mock _safe_execute_resume to avoid actual execution
-                    executor._safe_execute_resume = AsyncMock()
-
-                    await executor._on_task_answered(
-                        data={"task_id": "t1", "answer": "Use JWT", "pipeline_id": "pipe1"},
-                        db=mock_db,
-                    )
+        await executor._on_task_answered(
+            data={"task_id": "t1", "answer": "Use JWT", "pipeline_id": "pipe1"},
+            db=mock_db,
+        )
 
         mock_db.assign_task.assert_called_once_with("t1", "agent-1")
+        assert "t1" in executor._active_tasks
+        await executor._active_tasks["t1"]
+
+    @pytest.mark.asyncio
+    async def test_resumes_with_preferred_idle_agent_when_scheduler_would_skip_task(self):
+        """Answered awaiting_input tasks should bypass ready-queue scheduling."""
+        from forge.core.daemon_executor import ExecutorMixin
+
+        executor = ExecutorMixin.__new__(ExecutorMixin)
+        executor._project_dir = "/tmp/test"
+        executor._active_tasks = {}
+        executor._active_tasks_lock = asyncio.Lock()
+        executor._effective_max_agents = 4
+        executor._runtime = MagicMock()
+        executor._worktree_mgr = MagicMock()
+        executor._merge_worker = MagicMock()
+
+        mock_db = AsyncMock()
+        mock_task = MagicMock()
+        mock_task.state = "awaiting_input"
+        mock_task.id = "t1"
+        mock_task.assigned_agent = "agent-7"
+        mock_db.get_task = AsyncMock(return_value=mock_task)
+        mock_db.assign_task = AsyncMock()
+        preferred_agent = MagicMock(id="agent-7")
+        preferred_agent.state = "idle"
+        other_agent = MagicMock(id="agent-8")
+        other_agent.state = "idle"
+        mock_db.list_agents = AsyncMock(return_value=[other_agent, preferred_agent])
+        mock_db._session_factory = MagicMock()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_db._session_factory.return_value = mock_session
+
+        executor._safe_execute_resume = AsyncMock()
+
+        await executor._on_task_answered(
+            data={"task_id": "t1", "answer": "Approve", "pipeline_id": "pipe1"},
+            db=mock_db,
+        )
+
+        mock_db.assign_task.assert_called_once_with("t1", "agent-7")
         assert "t1" in executor._active_tasks
         await executor._active_tasks["t1"]
 
