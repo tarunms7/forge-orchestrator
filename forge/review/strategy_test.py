@@ -5,12 +5,15 @@ from __future__ import annotations
 import pytest
 
 from forge.review.strategy import (
+    DiffChunk,
+    FileRiskScore,
     FileScore,
     ReviewStrategy,
     _is_test_file,
     _stem,
     build_chunks,
     count_diff_lines,
+    extract_interface_context,
     parse_diff_files,
     select_strategy,
 )
@@ -360,3 +363,83 @@ def test_build_chunks_file_not_in_diff():
     assert len(chunks) == 1
     assert "missing.py" in chunks[0].paths
     assert chunks[0].diff_text == ""
+
+
+def test_extract_interface_context_includes_imported_sibling_structure():
+    full_diff = """\
+diff --git a/forge/providers/base.py b/forge/providers/base.py
+--- a/forge/providers/base.py
++++ b/forge/providers/base.py
+@@ -1,2 +1,7 @@
++from dataclasses import dataclass
++
++@dataclass
++class ProviderResult:
++    model_canonical_id: str = ""
++    raw: object | None = None
+diff --git a/forge/providers/registry_test.py b/forge/providers/registry_test.py
+--- a/forge/providers/registry_test.py
++++ b/forge/providers/registry_test.py
+@@ -1,2 +1,4 @@
++from forge.providers.base import ProviderResult
++
++def test_uses_provider_result():
++    assert ProviderResult().model_canonical_id == ""
+"""
+    chunk = DiffChunk(
+        index=1,
+        total=2,
+        files=["forge/providers/registry_test.py"],
+        diff_text=parse_diff_files(full_diff)["forge/providers/registry_test.py"],
+        line_count=4,
+        risk_label="MEDIUM",
+        risk_scores={"forge/providers/registry_test.py": 10.0},
+    )
+    all_scores = [
+        FileRiskScore(path="forge/providers/registry_test.py", score=10.0, line_count=4),
+        FileRiskScore(path="forge/providers/base.py", score=9.0, line_count=5),
+    ]
+
+    context = extract_interface_context(chunk, all_scores, full_diff)
+
+    assert "forge/providers/base.py" in context
+    assert "class ProviderResult:" in context
+    assert 'model_canonical_id: str = ""' in context
+
+
+def test_extract_interface_context_skips_unrelated_siblings():
+    full_diff = """\
+diff --git a/forge/review/strategy.py b/forge/review/strategy.py
+--- a/forge/review/strategy.py
++++ b/forge/review/strategy.py
+@@ -1,2 +1,3 @@
++def helper():
++    return "ok"
+diff --git a/forge/providers/registry_test.py b/forge/providers/registry_test.py
+--- a/forge/providers/registry_test.py
++++ b/forge/providers/registry_test.py
+@@ -1,2 +1,4 @@
++from forge.providers.base import ProviderResult
++
++def test_uses_provider_result():
++    assert ProviderResult().model_canonical_id == ""
+"""
+    chunk = DiffChunk(
+        index=1,
+        total=2,
+        files=["forge/providers/registry_test.py"],
+        diff_text=parse_diff_files(full_diff)["forge/providers/registry_test.py"],
+        line_count=4,
+        risk_label="MEDIUM",
+        risk_scores={"forge/providers/registry_test.py": 10.0},
+    )
+    all_scores = [
+        FileRiskScore(path="forge/providers/registry_test.py", score=10.0, line_count=4),
+        FileRiskScore(path="forge/review/strategy.py", score=6.0, line_count=2),
+    ]
+
+    context = extract_interface_context(chunk, all_scores, full_diff)
+
+    assert "  - forge/review/strategy.py" in context
+    assert "# forge/review/strategy.py" not in context
+    assert "def helper():" not in context

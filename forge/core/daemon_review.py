@@ -400,6 +400,12 @@ class ReviewMixin:
             "custom_review_focus": review_raw.get("custom_review_focus", "") or "",
         }
 
+    def _record_health_activity(self, task_id: str) -> None:
+        """Notify the pipeline health monitor that review work is still active."""
+        health = getattr(self, "_health_monitor", None)
+        if health:
+            health.record_task_activity(task_id)
+
     # -- command resolution ------------------------------------------------
 
     def _resolve_build_cmd(self, *, repo_id: str | None = None) -> str | None:
@@ -663,6 +669,7 @@ class ReviewMixin:
             text = _extract_text(msg)
             if not text:
                 return
+            self._record_health_activity(task_id)
             _batch.append(text)
             now = time.monotonic()
             if now - _last_flush[0] >= 0.1 or len(_batch) >= _MAX_BATCH_SIZE:
@@ -697,6 +704,7 @@ class ReviewMixin:
 
         async def _on_review_event(event_name: str, payload: dict) -> None:
             # Inject task_id into every event payload
+            self._record_health_activity(task_id)
             full_payload = {"task_id": task_id, **payload}
             await self._emit(event_name, full_payload, db=db, pipeline_id=pipeline_id)
 
