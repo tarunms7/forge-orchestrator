@@ -10,7 +10,6 @@ from enum import Enum
 
 from forge.providers.base import AuditVerdict, CatalogEntry
 
-
 # ---------------------------------------------------------------------------
 # CoreTool enum — normalized tool identifiers
 # ---------------------------------------------------------------------------

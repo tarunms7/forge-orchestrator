@@ -16,7 +16,6 @@ from forge.core.cost_registry import (
 )
 from forge.providers.base import ModelSpec, ProviderResult
 
-
 # ---------------------------------------------------------------------------
 # Rate lookup
 # ---------------------------------------------------------------------------

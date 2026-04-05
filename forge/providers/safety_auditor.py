@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import field as dataclass_field
 
 from forge.providers.base import (
     AuditVerdict,
