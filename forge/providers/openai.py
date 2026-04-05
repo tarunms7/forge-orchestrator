@@ -16,7 +16,7 @@ import os
 import time
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from forge.providers.base import (
@@ -595,7 +595,7 @@ class OpenAIProvider:
         # Build resume state if we got a session token
         resume = None
         if session_token:
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = datetime.now(UTC).isoformat()
             resume = ResumeState(
                 provider="openai",
                 backend="codex-sdk",
