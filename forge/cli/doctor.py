@@ -211,6 +211,84 @@ def _check_central_db() -> tuple[str, str, str]:
         return "fail", "Central DB", f"cannot connect: {exc}"
 
 
+def _check_provider_health() -> list[tuple[str, str, str]]:
+    """Run provider health checks via ProviderRegistry.preflight_all().
+
+    Returns a list of (status, label, detail) tuples — one per provider.
+    """
+    results: list[tuple[str, str, str]] = []
+    try:
+        from forge.config.settings import ForgeSettings
+        from forge.providers.claude import ClaudeProvider
+        from forge.providers.registry import ProviderRegistry
+
+        settings = ForgeSettings()
+        registry = ProviderRegistry(settings)
+        registry.register(ClaudeProvider())
+
+        health = registry.preflight_all()
+        for name, status in health.items():
+            if status.healthy:
+                results.append(("ok", f"Provider: {name}", status.details))
+            else:
+                detail = "; ".join(status.errors) if status.errors else "unhealthy"
+                results.append(("fail", f"Provider: {name}", detail))
+    except Exception as exc:
+        results.append(("warn", "Provider health", f"could not check: {exc}"))
+    return results
+
+
+def _check_observed_health() -> list[tuple[str, str, str]]:
+    """Surface warnings from observed health_state.json."""
+    import json
+
+    results: list[tuple[str, str, str]] = []
+    health_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "providers",
+        "health_state.json",
+    )
+    if not os.path.isfile(health_path):
+        return results
+    try:
+        with open(health_path, encoding="utf-8") as f:
+            data = json.load(f)
+        for item in data if isinstance(data, list) else []:
+            failing = item.get("stages_failing", [])
+            if failing:
+                spec = item.get("spec", "unknown")
+                results.append(
+                    ("warn", f"Observed health: {spec}", f"failing stages: {', '.join(failing)}")
+                )
+    except Exception:
+        pass
+    return results
+
+
+def _check_experimental_models() -> list[tuple[str, str, str]]:
+    """Warn about experimental models in the routing config."""
+    results: list[tuple[str, str, str]] = []
+    try:
+        from forge.config.settings import ForgeSettings
+
+        settings = ForgeSettings()
+        overrides = settings.build_routing_overrides()
+        from forge.providers.base import ModelSpec
+        from forge.providers.catalog import FORGE_MODEL_CATALOG
+
+        experimental = {f"{e.provider}:{e.alias}" for e in FORGE_MODEL_CATALOG if e.tier == "experimental"}
+        for stage, value in overrides.items():
+            spec = ModelSpec.parse(value)
+            spec_str = str(spec)
+            if spec_str in experimental:
+                results.append(
+                    ("warn", f"Experimental model: {spec_str}", f"configured for {stage}")
+                )
+    except Exception:
+        pass
+    return results
+
+
 def _web_extras_installed() -> bool:
     """Check if web extras (fastapi, uvicorn, etc.) are installed."""
     try:
@@ -254,6 +332,11 @@ def doctor() -> None:
         checks.insert(4, _check_node_version())
         checks.insert(5, _check_node_npm())
         checks.insert(6, _check_jwt_secret())
+
+    # Provider health checks
+    checks.extend(_check_provider_health())
+    checks.extend(_check_observed_health())
+    checks.extend(_check_experimental_models())
 
     table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
     table.add_column("Status", width=3, justify="center")

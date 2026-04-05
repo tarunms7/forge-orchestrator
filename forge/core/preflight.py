@@ -70,24 +70,36 @@ async def run_preflight(
     project_dir: str,
     base_branch: str = "main",
     repos: dict | None = None,
+    registry: object | None = None,
+    resolved_models: dict | None = None,
 ) -> PreflightReport:
     """Run all pre-flight checks. Returns a PreflightReport.
 
     Checks run concurrently where possible for speed.
+
+    Args:
+        registry: Optional ProviderRegistry for provider-aware health checks.
+        resolved_models: Optional dict of stage -> ModelSpec for pipeline-specific checks.
     """
     report = PreflightReport()
 
     # Run fast sync checks first
     git_check = _check_git_installed()
-    claude_check = _check_claude_cli()
     report.checks.append(git_check)
-    report.checks.append(claude_check)
     report.checks.append(_check_gh_cli())
     report.checks.append(_check_disk_space(project_dir))
 
+    # Provider-aware health checks replace Claude-specific auth check
+    provider_checks = _check_provider_health(registry, resolved_models)
+    report.checks.extend(provider_checks)
+
+    # Validate all models in resolved routing are in catalog
+    if registry is not None and resolved_models is not None:
+        catalog_checks = _check_models_in_catalog(registry, resolved_models)
+        report.checks.extend(catalog_checks)
+
     # Early exit: skip git-dependent checks if git is missing
     git_available = git_check.passed
-    claude_available = claude_check.passed
 
     # Build async check list, skipping checks whose prerequisite is missing
     async_tasks: list[asyncio.Task] = []
@@ -102,19 +114,6 @@ async def run_preflight(
                 passed=False,
                 message="Skipped git repo/branch/tree checks — git not installed",
                 fix_hint="Install git first, then re-run preflight",
-            )
-        )
-
-    if claude_available:
-        async_tasks.append(_check_claude_auth())
-    else:
-        report.checks.append(
-            CheckResult(
-                name="claude_auth_skipped",
-                passed=False,
-                message="Skipped Claude auth check — CLI not installed",
-                severity="warning",
-                fix_hint="Install Claude CLI first",
             )
         )
 
@@ -391,3 +390,94 @@ async def _check_claude_auth() -> CheckResult:
             message="Claude CLI check timed out (likely fine)",
             severity="warning",
         )
+
+
+# ── Provider-aware checks ──────────────────────────────────────────────
+
+
+def _check_provider_health(
+    registry: object | None = None,
+    resolved_models: dict | None = None,
+) -> list[CheckResult]:
+    """Run provider health checks using the registry.
+
+    Uses preflight_for_pipeline() when resolved_models is provided (pipeline-specific),
+    otherwise uses preflight_all() for broad checks.
+    Falls back to a basic Claude CLI check when no registry is available.
+    """
+    results: list[CheckResult] = []
+
+    if registry is None:
+        # Fallback: basic Claude CLI check (backward compat)
+        claude_check = _check_claude_cli()
+        results.append(claude_check)
+        return results
+
+    try:
+        if resolved_models is not None:
+            health = registry.preflight_for_pipeline(resolved_models)
+        else:
+            health = registry.preflight_all()
+
+        if not health:
+            results.append(
+                CheckResult(
+                    name="provider_health",
+                    passed=True,
+                    message="No providers registered",
+                    severity="warning",
+                )
+            )
+            return results
+
+        for name, status in health.items():
+            if status.healthy:
+                results.append(
+                    CheckResult(
+                        name=f"provider_{name}",
+                        passed=True,
+                        message=f"{name}: {status.details}",
+                    )
+                )
+            else:
+                error_detail = "; ".join(status.errors) if status.errors else "unhealthy"
+                results.append(
+                    CheckResult(
+                        name=f"provider_{name}",
+                        passed=False,
+                        message=f"{name}: {error_detail}",
+                        fix_hint=f"Check {name} provider configuration and credentials",
+                    )
+                )
+    except Exception as e:
+        results.append(
+            CheckResult(
+                name="provider_health",
+                passed=False,
+                message=f"Provider health check failed: {e}",
+                severity="warning",
+            )
+        )
+
+    return results
+
+
+def _check_models_in_catalog(
+    registry: object,
+    resolved_models: dict,
+) -> list[CheckResult]:
+    """Validate all models in resolved routing are in the catalog."""
+    results: list[CheckResult] = []
+
+    for stage, spec in resolved_models.items():
+        if not registry.validate_model(spec):
+            results.append(
+                CheckResult(
+                    name=f"model_catalog_{stage}",
+                    passed=False,
+                    message=f"Model '{spec}' for stage '{stage}' not found in catalog",
+                    fix_hint="Check model name or use 'forge providers list' to see available models",
+                )
+            )
+
+    return results

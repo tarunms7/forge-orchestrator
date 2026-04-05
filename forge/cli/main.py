@@ -113,6 +113,12 @@ def init(project_dir: str) -> None:
     multiple=True,
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
 )
+@click.option("--provider", default=None, help="Default provider for all stages (e.g. claude, openai)")
+@click.option("--planner", default=None, help="Model for planner stage (e.g. claude:opus)")
+@click.option("--agent", default=None, help="Model for all agent complexity tiers")
+@click.option("--reviewer", default=None, help="Model for reviewer stage")
+@click.option("--contract-builder", default=None, help="Model for contract builder stage")
+@click.option("--ci-fix", default=None, help="Model for CI fix stage")
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -123,6 +129,12 @@ def run(
     deep_plan: bool,
     dry_run: bool,
     repo: tuple[str, ...],
+    provider: str | None,
+    planner: str | None,
+    agent: str | None,
+    reviewer: str | None,
+    contract_builder: str | None,
+    ci_fix: str | None,
 ) -> None:
     """Run Forge to execute a task.
 
@@ -155,6 +167,42 @@ def run(
     apply_project_config(settings, project_config)
     if strategy:
         settings.model_strategy = strategy
+
+    # Apply CLI model override flags
+    if provider:
+        # --provider sets all stages via provider tier mapping
+        from forge.core.model_router import translate_to_provider
+
+        translated = translate_to_provider(provider)
+        # Extract representative models from translated table for settings overrides
+        auto_table = translated.get("auto", {})
+        if "planner" in auto_table:
+            settings.planner_model = auto_table["planner"].get("medium", settings.planner_model)
+        if "agent" in auto_table:
+            settings.agent_model_low = auto_table["agent"].get("low", settings.agent_model_low)
+            settings.agent_model_medium = auto_table["agent"].get("medium", settings.agent_model_medium)
+            settings.agent_model_high = auto_table["agent"].get("high", settings.agent_model_high)
+        if "reviewer" in auto_table:
+            settings.reviewer_model = auto_table["reviewer"].get("medium", settings.reviewer_model)
+        if "contract_builder" in auto_table:
+            settings.contract_builder_model = auto_table["contract_builder"].get(
+                "medium", settings.contract_builder_model
+            )
+        if "ci_fix" in auto_table:
+            settings.ci_fix_model = auto_table["ci_fix"].get("medium", settings.ci_fix_model)
+
+    if planner:
+        settings.planner_model = planner
+    if agent:
+        settings.agent_model_low = agent
+        settings.agent_model_medium = agent
+        settings.agent_model_high = agent
+    if reviewer:
+        settings.reviewer_model = reviewer
+    if contract_builder:
+        settings.contract_builder_model = contract_builder
+    if ci_fix:
+        settings.ci_fix_model = ci_fix
 
     # Pre-flight checks before starting the pipeline
     from forge.core.preflight import run_preflight
@@ -383,6 +431,87 @@ cli.add_command(export)
 from forge.cli.gauntlet import gauntlet  # noqa: E402
 
 cli.add_command(gauntlet)
+
+
+@cli.group()
+def providers() -> None:
+    """Manage and inspect model providers."""
+    pass
+
+
+@providers.command("list")
+def providers_list() -> None:
+    """Show catalog entries with tier badges, validated stages, and health warnings."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from forge.providers.catalog import FORGE_MODEL_CATALOG
+
+    console = Console()
+    console.print("\n[bold]Provider Catalog[/bold]\n")
+
+    # Load observed health
+    import json
+
+    health_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "providers",
+        "health_state.json",
+    )
+    observed: dict[str, dict] = {}
+    if os.path.isfile(health_path):
+        try:
+            with open(health_path, encoding="utf-8") as f:
+                for item in json.load(f):
+                    observed[item.get("spec", "")] = item
+        except Exception:
+            pass
+
+    _TIER_BADGES = {
+        "primary": "[green]primary[/green]",
+        "supported": "[yellow]supported[/yellow]",
+        "experimental": "[red]experimental[/red]",
+    }
+
+    table = Table(show_header=True, header_style="bold", pad_edge=False)
+    table.add_column("Provider")
+    table.add_column("Model")
+    table.add_column("Tier")
+    table.add_column("Backend")
+    table.add_column("Validated Stages")
+    table.add_column("Health")
+
+    for entry in FORGE_MODEL_CATALOG:
+        spec_str = f"{entry.provider}:{entry.alias}"
+        tier_badge = _TIER_BADGES.get(entry.tier, entry.tier)
+        stages = ", ".join(sorted(entry.validated_stages))
+
+        health_info = ""
+        obs = observed.get(spec_str)
+        if obs:
+            failing = obs.get("stages_failing", [])
+            if failing:
+                health_info = f"[red]failing: {', '.join(failing)}[/red]"
+            else:
+                health_info = "[green]OK[/green]"
+        elif entry.tier == "experimental":
+            health_info = "[yellow]experimental[/yellow]"
+
+        table.add_row(entry.provider, entry.alias, tier_badge, entry.backend, stages, health_info)
+
+    console.print(table)
+    console.print()
+
+
+@providers.command("test")
+@click.argument("model_spec")
+def providers_test(model_spec: str) -> None:
+    """Run conformance tests against a provider:model (e.g. claude:sonnet)."""
+    click.echo(f"Conformance suite for '{model_spec}' not yet implemented.")
+    click.echo("This will run provider-specific validation tests in a future release.")
+
+
+cli.add_command(providers)
 
 
 @cli.command()

@@ -11,6 +11,8 @@ from forge.core.preflight import (
     _check_disk_space,
     _check_gh_cli,
     _check_git_installed,
+    _check_models_in_catalog,
+    _check_provider_health,
     run_preflight,
 )
 
@@ -305,3 +307,100 @@ async def test_super_repo_single_repo_no_regression(tmp_path):
         repos = {"default": RepoConfig(id="default", path=str(tmp_path), base_branch="main")}
         report = await run_preflight(str(tmp_path), repos=repos)
         assert report.passed, f"Single default repo preflight should pass: {report.summary()}"
+
+
+# ── Provider-aware preflight checks ────────────────────────────────
+
+
+class TestProviderHealthChecks:
+    def test_no_registry_falls_back_to_claude_cli(self):
+        """Without registry, falls back to Claude CLI check."""
+        results = _check_provider_health(registry=None)
+        assert len(results) >= 1
+        assert results[0].name == "claude_cli"
+
+    def test_registry_preflight_all(self):
+        """With registry but no resolved_models, uses preflight_all()."""
+        from unittest.mock import MagicMock
+
+        mock_status = MagicMock()
+        mock_status.healthy = True
+        mock_status.details = "claude-code-sdk OK"
+        mock_status.errors = []
+
+        mock_registry = MagicMock()
+        mock_registry.preflight_all.return_value = {"claude": mock_status}
+
+        results = _check_provider_health(registry=mock_registry)
+        mock_registry.preflight_all.assert_called_once()
+        assert len(results) == 1
+        assert results[0].passed
+        assert "claude" in results[0].message
+
+    def test_registry_preflight_for_pipeline(self):
+        """With registry and resolved_models, uses preflight_for_pipeline()."""
+        from unittest.mock import MagicMock
+
+        from forge.providers.base import ModelSpec
+
+        mock_status = MagicMock()
+        mock_status.healthy = True
+        mock_status.details = "OK"
+        mock_status.errors = []
+
+        mock_registry = MagicMock()
+        mock_registry.preflight_for_pipeline.return_value = {"claude": mock_status}
+
+        resolved = {"planner": ModelSpec("claude", "opus")}
+        results = _check_provider_health(registry=mock_registry, resolved_models=resolved)
+        mock_registry.preflight_for_pipeline.assert_called_once_with(resolved)
+        assert len(results) == 1
+        assert results[0].passed
+
+    def test_unhealthy_provider_fails(self):
+        """Unhealthy provider produces a failing check."""
+        from unittest.mock import MagicMock
+
+        mock_status = MagicMock()
+        mock_status.healthy = False
+        mock_status.details = ""
+        mock_status.errors = ["API key not set"]
+
+        mock_registry = MagicMock()
+        mock_registry.preflight_all.return_value = {"openai": mock_status}
+
+        results = _check_provider_health(registry=mock_registry)
+        assert len(results) == 1
+        assert not results[0].passed
+        assert "API key not set" in results[0].message
+
+
+class TestModelsInCatalog:
+    def test_valid_model_no_errors(self):
+        """Known model should produce no errors."""
+        from unittest.mock import MagicMock
+
+        from forge.providers.base import ModelSpec
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model.return_value = True
+
+        resolved = {"planner": ModelSpec("claude", "opus")}
+        results = _check_models_in_catalog(mock_registry, resolved)
+        assert results == []
+
+    def test_unknown_model_produces_error(self):
+        """Unknown model should produce a failing CheckResult."""
+        from unittest.mock import MagicMock
+
+        from forge.providers.base import ModelSpec
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model.return_value = False
+
+        resolved = {"agent": ModelSpec("openai", "gpt-99")}
+        results = _check_models_in_catalog(mock_registry, resolved)
+        assert len(results) == 1
+        assert not results[0].passed
+        assert "gpt-99" in results[0].message
+        assert "agent" in results[0].message

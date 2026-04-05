@@ -389,6 +389,88 @@ def test_run_dry_run_output_shows_cost(tmp_path):
     assert "Run without --dry-run to execute" in result.output
 
 
+def test_run_help_shows_provider_flags():
+    """Provider override flags must appear in run --help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--provider" in result.output
+    assert "--planner" in result.output
+    assert "--agent" in result.output
+    assert "--reviewer" in result.output
+    assert "--contract-builder" in result.output
+    assert "--ci-fix" in result.output
+
+
+def test_providers_list_registered():
+    """providers command must be registered in the CLI group."""
+    assert "providers" in cli.commands
+
+
+def test_providers_list_help():
+    """providers list --help should work."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["providers", "list", "--help"])
+    assert result.exit_code == 0
+    assert "catalog" in result.output.lower() or "tier" in result.output.lower()
+
+
+def test_providers_test_stub():
+    """providers test should print 'not yet implemented'."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["providers", "test", "claude:sonnet"])
+    assert result.exit_code == 0
+    assert "not yet implemented" in result.output
+
+
+def test_run_agent_flag_sets_all_tiers(tmp_path):
+    """--agent flag should set all agent complexity tiers."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_daemon = MagicMock()
+    mock_daemon.run = AsyncMock(return_value=None)
+
+    mock_preflight_report = MagicMock()
+    mock_preflight_report.passed = True
+    mock_preflight_report.warnings = []
+
+    captured_settings = {}
+
+    def _capture_daemon(project_path, settings=None, **kwargs):
+        if settings:
+            captured_settings["agent_model_low"] = settings.agent_model_low
+            captured_settings["agent_model_medium"] = settings.agent_model_medium
+            captured_settings["agent_model_high"] = settings.agent_model_high
+        return mock_daemon
+
+    with (
+        patch("forge.core.daemon.ForgeDaemon", side_effect=_capture_daemon),
+        patch(
+            "forge.core.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=mock_preflight_report,
+        ),
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+    ):
+        runner = CliRunner()
+        runner.invoke(
+            cli,
+            [
+                "run",
+                "Build it",
+                "--agent",
+                "claude:haiku",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+
+    assert captured_settings.get("agent_model_low") == "claude:haiku"
+    assert captured_settings.get("agent_model_medium") == "claude:haiku"
+    assert captured_settings.get("agent_model_high") == "claude:haiku"
+
+
 def test_serve_uses_central_db_url_by_default():
     """serve() should use forge_db_url() when no --db-url is provided."""
     from unittest.mock import MagicMock

@@ -168,6 +168,24 @@ def create_app(
 
     app.state.ws_manager = ConnectionManager()
 
+    # ── Provider registry + cost registry ─────────────────────────────
+    from forge.config.settings import ForgeSettings as _RegistrySettings
+    from forge.core.cost_registry import CostRegistry
+    from forge.providers.registry import ProviderRegistry
+
+    _reg_settings = _RegistrySettings()
+    registry = ProviderRegistry(_reg_settings)
+
+    # Register built-in providers
+    from forge.providers.claude import ClaudeProvider
+
+    registry.register(ClaudeProvider())
+
+    app.state.registry = registry
+    app.state.cost_registry = CostRegistry(
+        overrides=_reg_settings.build_cost_registry_overrides(),
+    )
+
     def daemon_factory(project_path: str, model_strategy: str):
         """Create a ForgeDaemon + EventEmitter pair for a pipeline."""
         from forge.config.settings import ForgeSettings
@@ -177,6 +195,12 @@ def create_app(
         emitter = EventEmitter()
         settings = ForgeSettings()
         settings.model_strategy = model_strategy
+
+        # Apply saved web settings for new pipelines
+        if db is not None:
+            # Settings will be applied when the pipeline is created via API routes
+            pass
+
         daemon = ForgeDaemon(project_path, settings=settings, event_emitter=emitter)
         return daemon, emitter
 
@@ -233,6 +257,7 @@ def create_app(
     from forge.api.routes.followup import router as followup_router
     from forge.api.routes.github import router as github_router
     from forge.api.routes.history import router as history_router
+    from forge.api.routes.providers import router as providers_router
     from forge.api.routes.settings import router as settings_router
     from forge.api.routes.tasks import router as tasks_router
     from forge.api.routes.templates import router as templates_router
@@ -247,6 +272,7 @@ def create_app(
     app.include_router(settings_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
     app.include_router(webhooks_router, prefix="/api")
+    app.include_router(providers_router, prefix="/api")
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint
