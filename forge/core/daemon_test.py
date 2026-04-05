@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.config.settings import ForgeSettings
-from forge.core.daemon import ForgeDaemon, _classify_pipeline_result, _detect_excluded_repos
+from forge.core.daemon import (
+    ForgeDaemon,
+    _classify_pipeline_result,
+    _detect_excluded_repos,
+    _max_dependency_wave_width,
+)
 from forge.core.errors import ForgeError
 from forge.core.models import RepoConfig, TaskState
 
@@ -1701,6 +1706,25 @@ def _make_task_def(task_id="task-1"):
     }
 
 
+def _make_task_graph(*tasks):
+    from forge.core.models import TaskGraph
+
+    return TaskGraph(tasks=list(tasks))
+
+
+class TestAgentPoolSizingHelpers:
+    def test_max_dependency_wave_width_uses_fanout_not_root_count(self):
+        graph = _make_task_graph(
+            _make_task_def("task-1"),
+            {**_make_task_def("task-2"), "depends_on": ["task-1"]},
+            {**_make_task_def("task-3"), "depends_on": ["task-1"]},
+            {**_make_task_def("task-4"), "depends_on": ["task-1"]},
+            {**_make_task_def("task-5"), "depends_on": ["task-2", "task-3"]},
+        )
+
+        assert _max_dependency_wave_width(graph.tasks) == 3
+
+
 @pytest.mark.asyncio
 class TestGenerateContractsPersistsStatus:
     """generate_contracts() persists 'contracts' status to DB."""
@@ -1723,6 +1747,71 @@ class TestGenerateContractsPersistsStatus:
         # No hints → early return, no status change
         await daemon.generate_contracts(graph, db, "pipe-1")
         db.update_pipeline_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestExecuteAgentPoolSizing:
+    async def test_fresh_execute_scales_agents_to_dependency_frontier(self, tmp_path):
+        daemon = _make_daemon(tmp_path, max_agents=5)
+        daemon._emit = AsyncMock()
+        daemon._init_repos = AsyncMock()
+        daemon._preflight_checks = AsyncMock(return_value=True)
+
+        db = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+        db.create_task = AsyncMock()
+        db.list_agents = AsyncMock(return_value=[])
+        db.create_agent = AsyncMock()
+        db.get_pipeline = AsyncMock(side_effect=RuntimeError("stop after setup"))
+
+        graph = _make_task_graph(
+            _make_task_def("task-1"),
+            {**_make_task_def("task-2"), "depends_on": ["task-1"]},
+            {**_make_task_def("task-3"), "depends_on": ["task-1"]},
+            {**_make_task_def("task-4"), "depends_on": ["task-1"]},
+            {**_make_task_def("task-5"), "depends_on": ["task-2", "task-3"]},
+        )
+
+        with pytest.raises(RuntimeError, match="stop after setup"):
+            await daemon.execute(graph, db, "frontier", resume=False)
+
+        assert daemon._effective_max_agents == 3
+        created_ids = [call.args[0] for call in db.create_agent.await_args_list]
+        assert created_ids == [
+            "frontier-agent-0",
+            "frontier-agent-1",
+            "frontier-agent-2",
+        ]
+
+    async def test_resume_execute_tops_up_missing_agents(self, tmp_path):
+        daemon = _make_daemon(tmp_path, max_agents=5)
+        daemon._emit = AsyncMock()
+        daemon._init_repos = AsyncMock()
+        daemon._preflight_checks = AsyncMock(return_value=True)
+
+        db = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+        db.get_pipeline_contracts = AsyncMock(return_value=None)
+        db.list_tasks_by_pipeline = AsyncMock(
+            return_value=[
+                _make_task("todo", "task-1"),
+                _make_task("in_review", "task-2"),
+                _make_task("blocked", "task-3"),
+                _make_task("done", "task-4"),
+            ]
+        )
+        db.list_agents = AsyncMock(return_value=[MagicMock(id="resume01-agent-0")])
+        db.create_agent = AsyncMock()
+        db.get_pipeline = AsyncMock(side_effect=RuntimeError("stop after resume"))
+
+        graph = _make_task_graph(_make_task_def())
+
+        with pytest.raises(RuntimeError, match="stop after resume"):
+            await daemon.execute(graph, db, "resume01", resume=True)
+
+        assert daemon._effective_max_agents == 3
+        created_ids = [call.args[0] for call in db.create_agent.await_args_list]
+        assert created_ids == ["resume01-agent-1", "resume01-agent-2"]
 
     async def test_contracts_status_persisted_with_hints(self, tmp_path):
         daemon = _make_daemon(tmp_path)
