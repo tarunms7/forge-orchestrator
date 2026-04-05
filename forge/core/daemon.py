@@ -53,6 +53,8 @@ from forge.core.state import TaskStateMachine
 from forge.learning.store import format_lessons_block, row_to_lesson
 from forge.merge.worker import MergeWorker
 from forge.merge.worktree import WorktreeManager
+from forge.providers import EventKind, ExecutionMode, ModelSpec, OutputContract, ProviderEvent, ToolPolicy, WorkspaceRoots
+from forge.providers.registry import ProviderRegistry
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge")
@@ -128,30 +130,42 @@ def _sanitize_branch_name(raw: str) -> str:
     return f"forge/{name}"
 
 
-async def _generate_branch_name(description: str) -> str:
-    """Generate a short, meaningful branch name from a task description using an LLM.
+async def _generate_branch_name(
+    description: str,
+    registry: ProviderRegistry | None = None,
+) -> str:
+    """Generate a short, meaningful branch name from a task description using a provider.
 
-    Falls back to the dumb slugify approach if the LLM call fails.
+    Falls back to the dumb slugify approach if the provider call fails.
 
     Examples:
       "Fix duplicating progress log lines in mining CLI" → "forge/fix-mining-progress-duplicates"
       "We haven't updated anything in the README, can we update it?" → "forge/update-readme"
     """
-    from claude_code_sdk import ClaudeCodeOptions
-
-    from forge.core.sdk_helpers import sdk_query
+    if registry is None:
+        return _sanitize_branch_name(description)
 
     try:
-        result = await sdk_query(
+        model_spec = ModelSpec.parse("haiku")
+        provider = registry.get_for_model(model_spec)
+        catalog_entry = registry.get_catalog_entry(model_spec)
+        handle = provider.start(
             prompt=(
                 "Generate a short git branch name (3-5 words, kebab-case) for this task. "
                 "Reply with ONLY the branch name, nothing else. No 'forge/' prefix.\n\n"
                 f"Task: {description}"
             ),
-            options=ClaudeCodeOptions(max_turns=1),
+            system_prompt="",
+            catalog_entry=catalog_entry,
+            execution_mode=ExecutionMode.INTELLIGENCE,
+            tool_policy=ToolPolicy(mode="allowlist", allowed_tools=[]),
+            output_contract=OutputContract(format="freeform"),
+            workspace=WorkspaceRoots(primary_cwd="."),
+            max_turns=1,
         )
-        if result and result.result_text:
-            candidate = result.result_text.strip().strip("`\"'").strip()
+        result = await handle.result()
+        if result and result.text:
+            candidate = result.text.strip().strip("`\"'").strip()
             # Remove any prefix the LLM might add
             for prefix in ("forge/", "feature/", "fix/", "feat/"):
                 if candidate.lower().startswith(prefix):
@@ -159,10 +173,10 @@ async def _generate_branch_name(description: str) -> str:
             # Sanitize what the LLM gave us
             sanitized = _sanitize_branch_name(candidate)
             if sanitized != "forge/pipeline-task":
-                logger.debug("LLM generated branch name: %s", sanitized)
+                logger.debug("Provider generated branch name: %s", sanitized)
                 return sanitized
     except Exception:
-        logger.debug("LLM branch name generation failed, falling back to slugify", exc_info=True)
+        logger.debug("Provider branch name generation failed, falling back to slugify", exc_info=True)
 
     return _sanitize_branch_name(description)
 
@@ -246,6 +260,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 "default": RepoConfig(id="default", path=project_dir, base_branch=""),
             }
 
+        # Initialize provider registry
+        self._registry = self._init_providers()
+
         # Lessons use the central DB — no separate initialization needed
 
     def _get_merge_lock(self, repo_id: str = "default") -> asyncio.Lock:
@@ -253,6 +270,29 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if repo_id not in self._merge_locks:
             self._merge_locks[repo_id] = asyncio.Lock()
         return self._merge_locks[repo_id]
+
+    def _init_providers(self) -> ProviderRegistry:
+        """Initialize provider registry. Always registers Claude, conditionally OpenAI."""
+        from forge.providers.claude import ClaudeProvider
+
+        registry = ProviderRegistry(self._settings)
+        registry.register(ClaudeProvider())
+
+        if self._settings.openai_enabled:
+            try:
+                from forge.providers.openai import OpenAIProvider
+
+                registry.register(OpenAIProvider())
+                logger.info("OpenAI provider registered")
+            except ImportError:
+                logger.warning(
+                    "openai_enabled=True but OpenAI provider not available — "
+                    "install the openai SDK to enable OpenAI models"
+                )
+            except Exception as exc:
+                logger.warning("Failed to register OpenAI provider: %s", exc)
+
+        return registry
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB.
@@ -679,44 +719,76 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             model=planner_model,
             cwd=self._project_dir,
             system_prompt_modifier=planner_prompt_modifier,
+            registry=self._registry,
         )
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
         _planner_token_count = [0]
         _last_token_update = [0.0]
 
-        async def _on_planner_msg(msg):
-            text = _extract_activity(msg)
+        async def _on_planner_msg(event):
+            # Handle ProviderEvent from provider protocol
+            if isinstance(event, ProviderEvent):
+                if event.kind == EventKind.TEXT and event.text:
+                    text = event.text.strip()
+                    # Skip JSON output from planner
+                    if text.startswith("{") or text.startswith("["):
+                        pass
+                    elif text:
+                        _last_token_update[0] = time.monotonic()
+                        if pipeline_id:
+                            await self._emit(
+                                "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
+                            )
+                        else:
+                            await self._events.emit("planner:output", {"line": text})
 
-            # Count tokens from ALL messages (including filtered JSON output)
-            # so we can show generation progress even when text is hidden.
-            _msg_tokens = 0
-            try:
-                from claude_code_sdk import AssistantMessage
+                    # Count tokens for progress display
+                    _msg_tokens = event.token_count or (max(1, len(event.text) // 4) if event.text else 0)
+                    if _msg_tokens > 0:
+                        _planner_token_count[0] += _msg_tokens
+                        now = time.monotonic()
+                        if now - _last_token_update[0] >= 2.0:
+                            _last_token_update[0] = now
+                            token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                            if pipeline_id:
+                                await self._emit(
+                                    "planner:output", {"line": token_line}, db=db, pipeline_id=pipeline_id
+                                )
+                            else:
+                                await self._events.emit("planner:output", {"line": token_line})
 
-                if isinstance(msg, AssistantMessage):
-                    for block in msg.content or []:
-                        if hasattr(block, "text") and block.text:
-                            # Rough token estimate: chars / 4
-                            _msg_tokens += max(1, len(block.text) // 4)
-            except ImportError:
-                pass
-            if _msg_tokens > 0:
-                _planner_token_count[0] += _msg_tokens
-                now = time.monotonic()
-                # Emit token count update every 2 seconds (not every message)
-                if now - _last_token_update[0] >= 2.0:
-                    _last_token_update[0] = now
-                    token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                elif event.kind == EventKind.TOOL_USE and event.tool_name:
+                    # Show tool activity (e.g. "Reading src/models.py")
+                    tool_line = f"🔧 {event.tool_name}"
+                    if event.tool_input:
+                        # Try to extract a short summary from tool input
+                        try:
+                            inp = json.loads(event.tool_input) if isinstance(event.tool_input, str) else event.tool_input
+                            if isinstance(inp, dict):
+                                path = inp.get("file_path") or inp.get("path") or inp.get("pattern") or inp.get("command", "")
+                                if path:
+                                    tool_line = f"🔧 {event.tool_name}: {str(path)[:80]}"
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    _last_token_update[0] = time.monotonic()
                     if pipeline_id:
                         await self._emit(
-                            "planner:output", {"line": token_line}, db=db, pipeline_id=pipeline_id
+                            "planner:output", {"line": tool_line}, db=db, pipeline_id=pipeline_id
                         )
                     else:
-                        await self._events.emit("planner:output", {"line": token_line})
+                        await self._events.emit("planner:output", {"line": tool_line})
 
+                elif event.kind == EventKind.USAGE:
+                    if event.input_tokens:
+                        _planner_token_count[0] += event.input_tokens
+                    if event.output_tokens:
+                        _planner_token_count[0] += event.output_tokens
+                return
+
+            # Backward compatibility: handle raw SDK messages
+            text = _extract_activity(event)
             if text:
-                # Reset token update timer so activity lines don't get buried
                 _last_token_update[0] = time.monotonic()
                 if pipeline_id:
                     await self._emit(
@@ -801,48 +873,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 autonomy=self._settings.autonomy,
                 question_limit=self._settings.question_limit,
                 repo_ids=repo_ids,
+                registry=self._registry,
             )
 
-            async def _on_unified_msg(msg):
-                """Forward SDK streaming messages as planner:output events."""
-                # Count tokens for progress display (reuses outer counters)
-                _msg_tokens = 0
-                if not isinstance(msg, str):
-                    try:
-                        from claude_code_sdk import AssistantMessage
-
-                        if isinstance(msg, AssistantMessage):
-                            for block in msg.content or []:
-                                if hasattr(block, "text") and block.text:
-                                    _msg_tokens += max(1, len(block.text) // 4)
-                    except ImportError:
-                        pass
-                if _msg_tokens > 0:
-                    _planner_token_count[0] += _msg_tokens
-                    now = time.monotonic()
-                    if now - _last_token_update[0] >= 2.0:
-                        _last_token_update[0] = now
-                        token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
-                        if pipeline_id:
-                            await self._emit(
-                                "planner:output",
-                                {"line": token_line},
-                                db=db,
-                                pipeline_id=pipeline_id,
-                            )
-                        else:
-                            await self._events.emit("planner:output", {"line": token_line})
-
-                text = _extract_activity(msg) if not isinstance(msg, str) else msg
-                if not text:
-                    return
-                _last_token_update[0] = time.monotonic()
-                if pipeline_id:
-                    await self._emit(
-                        "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
-                    )
-                else:
-                    await self._events.emit("planner:output", {"line": text})
+            async def _on_unified_msg(event):
+                """Forward ProviderEvent streaming events as planner:output events."""
+                # Delegate to the shared planner message handler
+                await _on_planner_msg(event)
 
             # Planning question support via asyncio.Event synchronization
             pending_planning_answer: dict[str, asyncio.Event] = {}
@@ -1080,7 +1117,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         await db.update_pipeline_status(pipeline_id, "contracts")
 
         contract_model = select_model(self._strategy, "contract_builder", "high")
-        builder_llm = ContractBuilderLLM(model=contract_model, cwd=self._project_dir)
+        builder_llm = ContractBuilderLLM(
+            model=contract_model, cwd=self._project_dir, registry=self._registry
+        )
         builder = ContractBuilder(builder_llm)
 
         async def _on_contract_msg(msg):
@@ -1287,7 +1326,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         else:
             description = pipeline_record.description if pipeline_record else ""
             pipeline_branch = (
-                (await _generate_branch_name(description))
+                (await _generate_branch_name(description, registry=self._registry))
                 if description
                 else f"forge/pipeline-{pid[:8]}"
             )

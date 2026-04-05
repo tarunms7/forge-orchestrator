@@ -19,9 +19,17 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from forge.core.daemon_helpers import async_subprocess
+from forge.providers import (
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderResult,
+    WorkspaceRoots,
+)
+from forge.providers.restrictions import AGENT_TOOL_POLICY
 
 if TYPE_CHECKING:
-    from forge.core.sdk_helpers import SdkResult
+    from forge.providers.registry import ProviderRegistry
     from forge.storage.db import Database
 
 logger = logging.getLogger("forge.ci_watcher")
@@ -355,19 +363,16 @@ async def dispatch_fix_agent(
     branch: str,
     failure_logs: dict[str, str],
     *,
-    model: str = "sonnet",
+    model: str | ModelSpec = "sonnet",
     max_turns: int = 50,
     base_branch: str = "main",
-) -> SdkResult | None:
-    """Dispatch a Claude agent to fix CI failures.
+    registry: ProviderRegistry | None = None,
+) -> ProviderResult | None:
+    """Dispatch an agent to fix CI failures.
 
     The agent works in project_dir on the given branch, reads failure logs,
     and commits + pushes a fix.
     """
-    from claude_code_sdk import ClaudeCodeOptions
-
-    from forge.core.sdk_helpers import sdk_query
-
     # Build failure details section
     failure_parts = []
     for name, log in failure_logs.items():
@@ -383,13 +388,27 @@ async def dispatch_fix_agent(
     await async_subprocess(["git", "checkout", branch], cwd=project_dir)
     await async_subprocess(["git", "pull", "--rebase", "origin", branch], cwd=project_dir)
 
-    options = ClaudeCodeOptions(
-        max_turns=max_turns,
-        model=model,
-        cwd=project_dir,
-    )
+    if registry is None:
+        logger.error("ProviderRegistry not set for dispatch_fix_agent")
+        await async_subprocess(["git", "checkout", base_branch], cwd=project_dir)
+        return None
 
-    result = await sdk_query(prompt, options)
+    model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
+    provider = registry.get_for_model(model_spec)
+    catalog_entry = registry.get_catalog_entry(model_spec)
+    workspace = WorkspaceRoots(primary_cwd=project_dir)
+
+    handle = provider.start(
+        prompt=prompt,
+        system_prompt="",
+        catalog_entry=catalog_entry,
+        execution_mode=ExecutionMode.CODING,
+        tool_policy=AGENT_TOOL_POLICY,
+        output_contract=OutputContract(format="freeform"),
+        workspace=workspace,
+        max_turns=max_turns,
+    )
+    result = await handle.result()
 
     # Checkout back to main to avoid leaving the repo on the feature branch
     await async_subprocess(["git", "checkout", base_branch], cwd=project_dir)
@@ -411,6 +430,7 @@ async def run_ci_fix_loop(
     pipeline_id: str = "",
     emit_fn: Callable | None = None,
     cancel_event: asyncio.Event | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> CIFixResult:
     """Main CI fix orchestrator: poll -> diagnose -> fix -> push -> repeat.
 
@@ -567,13 +587,14 @@ async def run_ci_fix_loop(
         )
 
         try:
-            sdk_result = await dispatch_fix_agent(
+            fix_result = await dispatch_fix_agent(
                 project_dir,
                 branch,
                 failure_logs,
                 model=config.model,
                 max_turns=config.max_turns,
                 base_branch=base_branch,
+                registry=registry,
             )
         except Exception as exc:
             logger.error("Fix agent failed: %s", exc, exc_info=True)
@@ -589,12 +610,14 @@ async def run_ci_fix_loop(
             continue
 
         # Record attempt
-        cost = sdk_result.cost_usd if sdk_result else 0.0
+        cost = 0.0
+        if fix_result and fix_result.provider_reported_cost_usd is not None:
+            cost = fix_result.provider_reported_cost_usd
         total_cost += cost
         summary = ""
-        if sdk_result and sdk_result.result_text:
+        if fix_result and fix_result.text:
             # Take first 500 chars of result as summary
-            summary = sdk_result.result_text[:500]
+            summary = fix_result.text[:500]
 
         attempt = CIFixAttempt(
             attempt=attempt_num,

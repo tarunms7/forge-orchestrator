@@ -15,13 +15,14 @@ runs locally in Python after the agent finishes — no LLM call, milliseconds.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from claude_code_sdk import ClaudeCodeOptions
 from pydantic import ValidationError as PydanticValidationError
 
 from forge.agents.adapter import _build_question_protocol
@@ -29,7 +30,21 @@ from forge.core.models import TaskGraph
 from forge.core.planning.models import ValidationResult
 from forge.core.planning.validator import validate_plan
 from forge.core.sanitize import extract_json_block
-from forge.core.sdk_helpers import sdk_query
+from forge.providers import (
+    EventKind,
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    ProviderResult,
+    ResumeState,
+    WorkspaceRoots,
+)
+from forge.providers.restrictions import PLANNER_TOOL_POLICY
+
+if TYPE_CHECKING:
+    from forge.core.cost_registry import CostRegistry
+    from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.planning.unified")
 
@@ -63,21 +78,25 @@ class UnifiedPlanner:
 
     def __init__(
         self,
-        model: str = "opus",
+        model: str | ModelSpec = "opus",
         cwd: str | None = None,
         max_retries: int = 3,
         max_turns: int = 30,
         autonomy: str = "balanced",
         question_limit: int = 5,
         repo_ids: set[str] | None = None,
+        registry: ProviderRegistry | None = None,
+        cost_registry: CostRegistry | None = None,
     ) -> None:
-        self._model = model
+        self._model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
         self._cwd = cwd
         self._max_retries = max_retries
         self._max_turns = max_turns
         self._autonomy = autonomy
         self._question_limit = question_limit
         self._repo_ids = repo_ids
+        self._registry = registry
+        self._cost_registry = cost_registry
 
     async def run(
         self,
@@ -107,13 +126,25 @@ class UnifiedPlanner:
         total_input = 0
         total_output = 0
         questions_asked = 0
-        resume_session: str | None = None
+        resume_state: ResumeState | None = None
         feedback: str | None = None
+
+        if self._registry is None:
+            raise RuntimeError("ProviderRegistry not set on UnifiedPlanner")
+
+        provider = self._registry.get_for_model(self._model_spec)
+        catalog_entry = self._registry.get_catalog_entry(self._model_spec)
+        workspace = WorkspaceRoots(primary_cwd=self._cwd or ".")
+
+        # Bridge async on_message callback from sync on_event
+        def _on_event(event: ProviderEvent) -> None:
+            if on_message is not None:
+                asyncio.ensure_future(on_message(event))
 
         for attempt in range(self._max_retries):
             logger.info("UnifiedPlanner attempt %d/%d", attempt + 1, self._max_retries)
 
-            if resume_session:
+            if resume_state:
                 prompt = f"User answered: {feedback}\n\nNow produce the TaskGraph JSON."
             else:
                 prompt = self._build_prompt(
@@ -124,51 +155,44 @@ class UnifiedPlanner:
                 autonomy=self._autonomy,
                 remaining=self._question_limit - questions_asked,
             )
-            # CLAUDE.md is loaded automatically by the Claude Code CLI harness
-            # when we use append_system_prompt (not system_prompt). No need to
-            # manually load it here — the CLI handles it.
             system_prompt = _build_unified_system_prompt(
                 question_protocol,
                 lessons_block=lessons_block,
                 repo_ids=self._repo_ids,
             )
 
-            options = ClaudeCodeOptions(
-                # Use append_system_prompt instead of system_prompt so the Claude
-                # Code CLI loads its full harness first (skills, CLAUDE.md, memory,
-                # MCP servers, hooks) and we ADD our planning instructions on top.
-                # This gives the planner the same power as interactive Claude Code.
-                append_system_prompt=system_prompt,
-                max_turns=self._max_turns,
-                model=self._model,
-                # Planner runs in the MAIN REPO (not a worktree) — must NOT write files.
-                # Edit/Write are blocked to prevent polluting the user's working tree.
-                # Use bypassPermissions so read-only Bash/Read/Glob/Grep calls do not
-                # stall on interactive approval prompts during unattended Forge runs.
-                disallowed_tools=["Edit", "Write", "NotebookEdit"],
-                permission_mode="bypassPermissions",
-            )
-            if self._cwd:
-                options.cwd = self._cwd
-            if resume_session:
-                options.resume = resume_session
-
             try:
-                result = await sdk_query(prompt=prompt, options=options, on_message=on_message)
+                handle = provider.start(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    catalog_entry=catalog_entry,
+                    execution_mode=ExecutionMode.INTELLIGENCE,
+                    tool_policy=PLANNER_TOOL_POLICY,
+                    output_contract=OutputContract(format="forge_question_capable"),
+                    workspace=workspace,
+                    max_turns=self._max_turns,
+                    resume_state=resume_state,
+                    on_event=_on_event,
+                )
+                result = await handle.result()
             except Exception as e:
-                logger.warning("UnifiedPlanner SDK error on attempt %d: %s", attempt + 1, e)
-                feedback = f"SDK error: {e}"
-                resume_session = None
+                logger.warning("UnifiedPlanner provider error on attempt %d: %s", attempt + 1, e)
+                feedback = f"Provider error: {e}"
+                resume_state = None
                 continue
 
-            if not result:
+            if result.is_error and not result.text:
                 continue
 
-            total_cost += result.cost_usd
+            # Calculate cost from provider result
+            attempt_cost = 0.0
+            if result.provider_reported_cost_usd is not None:
+                attempt_cost = result.provider_reported_cost_usd
+            total_cost += attempt_cost
             total_input += result.input_tokens
             total_output += result.output_tokens
 
-            raw = result.result or ""
+            raw = result.text or ""
 
             # Check for FORGE_QUESTION — agent wants human input
             q_match = _QUESTION_PATTERN.search(raw)
@@ -181,12 +205,12 @@ class UnifiedPlanner:
                     questions_asked += 1
                     answer = await on_question(q_data)
                     if answer:
-                        resume_session = result.session_id
+                        resume_state = result.resume_state
                         feedback = answer
                         continue
 
             # Try to parse TaskGraph
-            resume_session = None
+            resume_state = None
             graph, error = self._parse(raw)
             if graph is not None:
                 logger.info(
@@ -196,8 +220,6 @@ class UnifiedPlanner:
                 )
 
                 # Run deterministic validation (no LLM, milliseconds)
-                # We pass a minimal CodebaseMap since validator only uses it for
-                # future semantic checks (not current structural ones)
                 from forge.core.planning.models import CodebaseMap
 
                 minimal_map = CodebaseMap(
@@ -212,7 +234,6 @@ class UnifiedPlanner:
                 if validation_result.status == "pass" or not any(
                     i.severity in ("major", "fatal") for i in validation_result.issues
                 ):
-                    # Plan is good or only has minor issues
                     return UnifiedPlannerResult(
                         task_graph=graph,
                         cost_usd=total_cost,
@@ -232,7 +253,7 @@ class UnifiedPlanner:
                     f"Your TaskGraph has structural issues:\n{issue_text}\n\n"
                     "Fix these and produce a corrected TaskGraph JSON."
                 )
-                resume_session = result.session_id
+                resume_state = result.resume_state
                 logger.warning(
                     "UnifiedPlanner attempt %d has %d validation issues, retrying",
                     attempt + 1,

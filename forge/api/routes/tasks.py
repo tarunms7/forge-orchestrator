@@ -12,6 +12,10 @@ import subprocess
 import time
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from forge.providers.registry import ProviderRegistry
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -195,18 +199,26 @@ def _sanitize_pr_title(description: str) -> str:
     return first_sentence or description[:50]
 
 
-async def _generate_pr_title(description: str, task_summaries: str) -> str:
-    """Generate a concise PR title using an LLM call, with heuristic fallback.
+async def _generate_pr_title(
+    description: str,
+    task_summaries: str,
+    registry: "ProviderRegistry | None" = None,
+) -> str:
+    """Generate a concise PR title using a provider call, with heuristic fallback.
 
-    Uses ``sdk_query()`` with haiku model for fast, cheap title generation.
-    Falls back to ``_sanitize_pr_title()`` if the LLM call fails.
+    Uses haiku model for fast, cheap title generation.
+    Falls back to ``_sanitize_pr_title()`` if the provider call fails.
 
     Returns:
         A short title string (without the ``forge: `` prefix).
     """
-    from claude_code_sdk import ClaudeCodeOptions
-
-    from forge.core.sdk_helpers import sdk_query
+    from forge.providers import (
+        ExecutionMode,
+        ModelSpec,
+        OutputContract,
+        ToolPolicy,
+        WorkspaceRoots,
+    )
 
     prompt = (
         "Generate a short, concise PR title for the following changes. "
@@ -219,16 +231,26 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
     if task_summaries.strip():
         prompt += f"Tasks completed:\n{task_summaries}\n"
 
+    if registry is None:
+        return _sanitize_pr_title(description)
+
     try:
-        result = await sdk_query(
+        model_spec = ModelSpec.parse("haiku")
+        provider = registry.get_for_model(model_spec)
+        catalog_entry = registry.get_catalog_entry(model_spec)
+        handle = provider.start(
             prompt=prompt,
-            options=ClaudeCodeOptions(
-                max_turns=1,
-                model="haiku",
-            ),
+            system_prompt="",
+            catalog_entry=catalog_entry,
+            execution_mode=ExecutionMode.INTELLIGENCE,
+            tool_policy=ToolPolicy(mode="allowlist", allowed_tools=[]),
+            output_contract=OutputContract(format="freeform"),
+            workspace=WorkspaceRoots(primary_cwd="."),
+            max_turns=1,
         )
-        if result and result.result:
-            title = result.result.strip().strip("\"'").strip()
+        result = await handle.result()
+        if result and result.text:
+            title = result.text.strip().strip("\"'").strip()
             # Remove any "forge: " prefix the LLM might add (we add it ourselves)
             if title.lower().startswith("forge:"):
                 title = title[6:].strip()
@@ -236,7 +258,7 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
             if title and len(title) <= 80:
                 return title
     except Exception as e:
-        logger.warning("LLM PR title generation failed, using fallback: %s", e)
+        logger.warning("Provider PR title generation failed, using fallback: %s", e)
 
     return _sanitize_pr_title(description)
 

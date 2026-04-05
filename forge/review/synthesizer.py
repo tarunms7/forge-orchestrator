@@ -1,6 +1,6 @@
 """Tier 3 review: per-chunk LLM review and synthesis aggregation.
 
-Each chunk is reviewed independently by a Claude agent producing structured
+Each chunk is reviewed independently by a provider agent producing structured
 JSON. A final synthesis call aggregates findings into PASS/FAIL/UNCERTAIN.
 """
 
@@ -13,13 +13,23 @@ import random
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from claude_code_sdk import ClaudeCodeOptions
-
-from forge.core.sdk_helpers import sdk_query
+from forge.providers import (
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    ProviderResult,
+    ToolPolicy,
+    WorkspaceRoots,
+)
+from forge.providers.restrictions import REVIEWER_TOOL_POLICY
 from forge.review.pipeline import GateResult, ReviewCostInfo
 from forge.review.strategy import DiffChunk, FileRiskScore, extract_interface_context
+
+if TYPE_CHECKING:
+    from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.review")
 
@@ -281,16 +291,17 @@ async def review_chunk(
     all_file_scores: list[FileRiskScore],
     full_diff: str,
     *,
-    model: str = "sonnet",
+    model: str | ModelSpec = "sonnet",
     worktree_path: str | None = None,
     sibling_context: str | None = None,
     prior_feedback: str | None = None,
     on_message: Callable[[Any], Awaitable[None]] | None = None,
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> ChunkReviewResult:
-    """Run one LLM review call for a single DiffChunk.
+    """Run one provider review call for a single DiffChunk.
 
-    Returns a ChunkReviewResult. On SDK error or timeout, retries once
+    Returns a ChunkReviewResult. On provider error or timeout, retries once
     before returning a timed_out=True result.
     """
     if on_review_event:
@@ -332,25 +343,53 @@ async def review_chunk(
 
     prompt = "".join(parts)
 
-    options = ClaudeCodeOptions(
-        system_prompt=CHUNK_REVIEW_SYSTEM_PROMPT,
-        max_turns=40,
-        model=model,
-        allowed_tools=["Read", "Glob", "Grep"],
-        permission_mode="bypassPermissions",
-    )
-    if worktree_path:
-        options.cwd = worktree_path
+    model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
+
+    if registry is None:
+        # Fallback: construct a temporary registry with ClaudeProvider
+        try:
+            from forge.config.settings import ForgeSettings
+            from forge.providers.claude import ClaudeProvider
+            from forge.providers.registry import ProviderRegistry as _PR
+
+            registry = _PR(ForgeSettings())
+            registry.register(ClaudeProvider())
+        except Exception:
+            return ChunkReviewResult(
+                chunk_index=chunk.index,
+                verdict="UNCERTAIN",
+                confidence=1,
+                issues=[],
+                cross_chunk_concerns=[],
+                summary="ProviderRegistry not available",
+                timed_out=True,
+            )
+
+    provider = registry.get_for_model(model_spec)
+    catalog_entry = registry.get_catalog_entry(model_spec)
+    workspace = WorkspaceRoots(primary_cwd=worktree_path or ".")
+
+    def _on_event(event: ProviderEvent) -> None:
+        if on_message is not None:
+            asyncio.ensure_future(on_message(event))
 
     cost_info = ReviewCostInfo()
     max_attempts = 2
 
     for attempt in range(1, max_attempts + 1):
         try:
-            result = await asyncio.wait_for(
-                sdk_query(prompt=prompt, options=options, on_message=on_message),
-                timeout=600,
+            handle = provider.start(
+                prompt=prompt,
+                system_prompt=CHUNK_REVIEW_SYSTEM_PROMPT,
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=REVIEWER_TOOL_POLICY,
+                output_contract=OutputContract(format="json"),
+                workspace=workspace,
+                max_turns=40,
+                on_event=_on_event,
             )
+            result = await asyncio.wait_for(handle.result(), timeout=600)
         except (TimeoutError, Exception) as exc:
             logger.warning(
                 "Chunk %d/%d review failed on attempt %d/%d: %s",
@@ -387,17 +426,17 @@ async def review_chunk(
             await asyncio.sleep(2**attempt + random.uniform(0, 1))
             continue
 
-        # Always accumulate cost, even if result text is empty
-        if result is not None:
+        # Always accumulate cost
+        if result.provider_reported_cost_usd is not None:
             cost_info.add(
                 ReviewCostInfo(
-                    cost_usd=result.cost_usd,
+                    cost_usd=result.provider_reported_cost_usd,
                     input_tokens=result.input_tokens,
                     output_tokens=result.output_tokens,
                 )
             )
 
-        raw_text = result.result if result and result.result else ""
+        raw_text = result.text or ""
         if not raw_text:
             if attempt == max_attempts:
                 chunk_result = ChunkReviewResult(
@@ -465,11 +504,12 @@ async def synthesize_results(
     task_title: str,
     task_description: str,
     *,
-    model: str = "sonnet",
+    model: str | ModelSpec = "sonnet",
     worktree_path: str | None = None,
     prior_feedback: str | None = None,
     delta_diff: str | None = None,
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Aggregate chunk review results into a final GateResult.
 
@@ -537,15 +577,6 @@ async def synthesize_results(
     )
 
     prompt = "".join(parts)
-    options = ClaudeCodeOptions(
-        system_prompt=SYNTHESIS_SYSTEM_PROMPT,
-        max_turns=5,
-        model=model,
-        allowed_tools=[],
-        permission_mode="bypassPermissions",
-    )
-    if worktree_path:
-        options.cwd = worktree_path
 
     total_cost = ReviewCostInfo()
     for r in chunk_results:
@@ -554,13 +585,40 @@ async def synthesize_results(
     # Import here (not at module level) to avoid circular imports
     from forge.review.llm_review import _parse_review_result
 
+    if registry is None:
+        # Fallback: construct a temporary registry with ClaudeProvider
+        try:
+            from forge.config.settings import ForgeSettings
+            from forge.providers.claude import ClaudeProvider
+            from forge.providers.registry import ProviderRegistry as _PR
+
+            registry = _PR(ForgeSettings())
+            registry.register(ClaudeProvider())
+        except Exception:
+            return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
+
+    model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
+    provider = registry.get_for_model(model_spec)
+    catalog_entry = registry.get_catalog_entry(model_spec)
+    workspace = WorkspaceRoots(primary_cwd=worktree_path or ".")
+
+    # Synthesis uses no tools — empty allowlist
+    synthesis_tool_policy = ToolPolicy(mode="allowlist", allowed_tools=[])
+
     max_attempts = 2
     for attempt in range(1, max_attempts + 1):
         try:
-            result = await asyncio.wait_for(
-                sdk_query(prompt=prompt, options=options, on_message=None),
-                timeout=120,
+            handle = provider.start(
+                prompt=prompt,
+                system_prompt=SYNTHESIS_SYSTEM_PROMPT,
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=synthesis_tool_policy,
+                output_contract=OutputContract(format="freeform"),
+                workspace=workspace,
+                max_turns=5,
             )
+            result = await asyncio.wait_for(handle.result(), timeout=120)
         except (TimeoutError, Exception) as exc:
             logger.warning("Synthesis attempt %d/%d failed: %s", attempt, max_attempts, exc)
             if attempt == max_attempts:
@@ -568,16 +626,16 @@ async def synthesize_results(
             await asyncio.sleep(2**attempt)
             continue
 
-        # Always accumulate cost, even if result text is empty
-        if result is not None:
+        # Always accumulate cost
+        if result.provider_reported_cost_usd is not None:
             total_cost.add(
                 ReviewCostInfo(
-                    cost_usd=result.cost_usd,
+                    cost_usd=result.provider_reported_cost_usd,
                     input_tokens=result.input_tokens,
                     output_tokens=result.output_tokens,
                 )
             )
-        raw = result.result if result and result.result else ""
+        raw = result.text or ""
         if not raw:
             if attempt == max_attempts:
                 return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
@@ -637,13 +695,14 @@ async def run_chunked_review(
     task_title: str,
     task_description: str,
     *,
-    model: str = "sonnet",
+    model: str | ModelSpec = "sonnet",
     worktree_path: str | None = None,
     sibling_context: str | None = None,
     prior_feedback: str | None = None,
     delta_diff: str | None = None,
     on_message: Callable[[Any], Awaitable[None]] | None = None,
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run all chunk reviews sequentially then synthesize.
 
@@ -664,6 +723,7 @@ async def run_chunked_review(
             prior_feedback=prior_feedback,
             on_message=on_message,
             on_review_event=on_review_event,
+            registry=registry,
         )
         chunk_results.append(result)
 
@@ -694,4 +754,5 @@ async def run_chunked_review(
         prior_feedback=prior_feedback,
         delta_diff=delta_diff,
         on_review_event=on_review_event,
+        registry=registry,
     )
