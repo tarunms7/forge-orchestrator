@@ -73,6 +73,16 @@ fi
 FORGE_VERSION="$(forge --version 2>/dev/null || echo 'unknown')"
 success "forge-orchestrator installed (${FORGE_VERSION})"
 
+# ── Optional: OpenAI SDKs ────────────────────────────────────────────
+if [ "${FORGE_OPENAI_ENABLED:-}" = "1" ] || [ "${FORGE_OPENAI_ENABLED:-}" = "true" ]; then
+    info "FORGE_OPENAI_ENABLED set — installing OpenAI SDKs..."
+    uv pip install "forge-orchestrator[openai]" 2>/dev/null && \
+        success "OpenAI SDKs installed (codex-sdk + agents-sdk)" || \
+        warn "OpenAI SDK install failed — OpenAI models won't be available"
+else
+    info "Skipping OpenAI SDKs (set FORGE_OPENAI_ENABLED=1 to install)"
+fi
+
 # ══════════════════════════════════════════════════════════════════════
 #  Step 3 — Clone/update repo (needed for web frontend)
 # ══════════════════════════════════════════════════════════════════════

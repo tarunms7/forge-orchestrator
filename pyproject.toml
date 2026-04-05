@@ -53,6 +53,10 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-timeout>=2.3",
 ]
+openai = [
+    "openai-codex-sdk>=0.1",
+    "openai-agents>=0.1",
+]
 postgres = [
     "asyncpg>=0.29",
 ]
