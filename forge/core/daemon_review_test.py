@@ -594,6 +594,7 @@ class TestMakeReviewOnMessage:
         mixin._snapshot = None
         mixin._settings = MagicMock()
         mixin._emit = AsyncMock()
+        mixin._health_monitor = MagicMock()
         return mixin
 
     @pytest.mark.asyncio
@@ -613,6 +614,7 @@ class TestMakeReviewOnMessage:
         assert emit_calls[0][0] == "review:llm_output"
         assert emit_calls[0][1]["task_id"] == "task-1"
         assert emit_calls[0][1]["line"] == "Review text here"
+        mixin._health_monitor.record_task_activity.assert_called_once_with("task-1")
 
     @pytest.mark.asyncio
     async def test_batches_messages_within_interval(self):
@@ -670,6 +672,30 @@ class TestMakeReviewOnMessage:
 
         await flush()
         assert mixin._emit.call_count == 0
+
+
+class TestMakeReviewEventCallback:
+    """Review progress callbacks should emit UI events and refresh health state."""
+
+    def _make_mixin(self):
+        mixin = ReviewMixin()
+        mixin._emit = AsyncMock()
+        mixin._health_monitor = MagicMock()
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_emits_progress_event_and_records_activity(self):
+        mixin = self._make_mixin()
+
+        callback = mixin._make_review_event_callback("task-7", MagicMock(), "pipe-1")
+        await callback("review:chunk_started", {"chunk_index": 1})
+
+        mixin._health_monitor.record_task_activity.assert_called_once_with("task-7")
+        mixin._emit.assert_awaited_once()
+        event_name, payload = mixin._emit.await_args.args[:2]
+        assert event_name == "review:chunk_started"
+        assert payload["task_id"] == "task-7"
+        assert payload["chunk_index"] == 1
 
 
 class TestRunReviewPassesOnMessage:

@@ -502,6 +502,57 @@ class TestWorktreePathThreading:
 
 
 @pytest.mark.asyncio
+class TestHandleReviewAnswer:
+    """Review escalation answers should resume the correct post-review path."""
+
+    def _make_mixin(self):
+        mixin = ExecutorMixin()
+        mixin._strategy = "auto"
+        mixin._merge_worker = MagicMock()
+        mixin._worktree_mgr = MagicMock()
+        mixin._handle_merge_fast_path = AsyncMock()
+        mixin._handle_retry = AsyncMock()
+        return mixin
+
+    async def test_approve_routes_to_merge_fast_path(self):
+        mixin = self._make_mixin()
+        db = AsyncMock()
+        task = MagicMock()
+        task.repo_id = "backend"
+        db.get_task = AsyncMock(return_value=task)
+
+        await mixin._handle_review_answer(
+            db,
+            "task-1",
+            "agent-1",
+            "Approve - the reviewer is overthinking it",
+            "pipe-1",
+        )
+
+        mixin._handle_merge_fast_path.assert_awaited_once_with(
+            db,
+            mixin._merge_worker,
+            mixin._worktree_mgr,
+            task,
+            "task-1",
+            "agent-1",
+            "pipe-1",
+            repo_id="backend",
+        )
+
+    async def test_approve_releases_agent_when_task_missing(self):
+        mixin = self._make_mixin()
+        db = AsyncMock()
+        db.get_task = AsyncMock(return_value=None)
+        db.release_agent = AsyncMock()
+
+        await mixin._handle_review_answer(db, "task-1", "agent-1", "approve", "pipe-1")
+
+        db.release_agent.assert_awaited_once_with("agent-1")
+        mixin._handle_merge_fast_path.assert_not_called()
+
+
+@pytest.mark.asyncio
 class TestAttemptMergeLockBehavior:
     """_attempt_merge holds _merge_lock for the full first-attempt + retry sequence."""
 
@@ -711,6 +762,52 @@ class TestAttemptMergeLockBehavior:
         # Tier 2 resolution was triggered
         mixin._attempt_tier2_resolution.assert_called_once()
         mixin._emit_merge_success.assert_not_called()
+
+    async def test_merge_progress_records_health_activity(self):
+        """Merge progress should count as activity so the health monitor doesn't false-alarm."""
+        mixin = self._make_mixin()
+        mixin._emit = AsyncMock()
+        mixin._run_review = AsyncMock(return_value=(True, None, False))
+        mixin._ensure_clean_for_rebase = AsyncMock()
+        mixin._emit_merge_success = AsyncMock()
+        mixin._emit_merge_failure = AsyncMock()
+        mixin._health_monitor = MagicMock()
+
+        task = MagicMock()
+        task.retry_count = 0
+        task.complexity = "medium"
+
+        db = AsyncMock()
+        db.update_task_state = AsyncMock()
+        db.set_task_review_diff = AsyncMock()
+        db.get_pipeline = AsyncMock(
+            return_value=MagicMock(require_approval=False, build_cmd=None, test_cmd=None)
+        )
+        db.set_task_timing = AsyncMock()
+
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+        merge_worker.merge = AsyncMock(return_value=MergeResult(success=True))
+        merge_worker.retry_merge = AsyncMock()
+
+        with patch(
+            "forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")
+        ), patch(
+            "forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")
+        ):
+            await mixin._attempt_merge(
+                db,
+                merge_worker,
+                MagicMock(),
+                task,
+                "task-1",
+                "agent-1",
+                "/wt/task-1",
+                "claude-3-5-sonnet-20241022",
+                "pipe-1",
+            )
+
+        mixin._health_monitor.record_task_activity.assert_called_with("task-1")
 
 
 # ---------------------------------------------------------------------------

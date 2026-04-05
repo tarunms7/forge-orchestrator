@@ -101,6 +101,12 @@ class TestAwaitingApprovalTransitions:
 
 
 class TestAwaitingInputTransitions:
+    def test_in_review_to_awaiting_input(self):
+        assert (
+            TaskStateMachine.transition(TaskState.IN_REVIEW, TaskState.AWAITING_INPUT)
+            == TaskState.AWAITING_INPUT
+        )
+
     def test_in_progress_to_awaiting_input(self):
         assert (
             TaskStateMachine.transition(TaskState.IN_PROGRESS, TaskState.AWAITING_INPUT)
@@ -111,6 +117,12 @@ class TestAwaitingInputTransitions:
         assert (
             TaskStateMachine.transition(TaskState.AWAITING_INPUT, TaskState.IN_PROGRESS)
             == TaskState.IN_PROGRESS
+        )
+
+    def test_awaiting_input_to_merging(self):
+        assert (
+            TaskStateMachine.transition(TaskState.AWAITING_INPUT, TaskState.MERGING)
+            == TaskState.MERGING
         )
 
     def test_awaiting_input_to_cancelled(self):
@@ -189,6 +201,14 @@ class TestCanTransition:
         assert (
             TaskStateMachine.can_transition(TaskState.AWAITING_INPUT, TaskState.IN_PROGRESS) is True
         )
+
+    def test_in_review_to_awaiting_input_returns_true(self):
+        assert (
+            TaskStateMachine.can_transition(TaskState.IN_REVIEW, TaskState.AWAITING_INPUT) is True
+        )
+
+    def test_awaiting_input_to_merging_returns_true(self):
+        assert TaskStateMachine.can_transition(TaskState.AWAITING_INPUT, TaskState.MERGING) is True
 
     def test_blocked_to_todo_returns_true(self):
         assert TaskStateMachine.can_transition(TaskState.BLOCKED, TaskState.TODO) is True

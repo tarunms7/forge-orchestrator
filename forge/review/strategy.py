@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import PurePosixPath
 
 
 class ReviewStrategy(Enum):
@@ -155,24 +156,121 @@ def extract_interface_context(
     all_file_scores: list[FileRiskScore],
     full_diff: str,
 ) -> str:
-    """Return a brief interface context string for a chunk.
+    """Return cross-chunk context for files referenced by this chunk.
 
-    Lists sibling chunks' files so the reviewer knows what exists outside
-    their chunk.  Keeps the output short (names only, no diff text) to
-    avoid bloating the prompt.
+    Tier 3 reviewers often need lightweight type and structure information
+    from sibling files to judge tests, registries, and shared base modules
+    without escalating to UNCERTAIN. We therefore provide:
+    - a compact sibling-file list
+    - structural snippets from imported sibling files that also changed
     """
-    sibling_files = [fs.path for fs in all_file_scores if fs.path not in chunk.files]
+    per_file_sections = parse_diff_files(full_diff)
+    chunk_file_set = set(chunk.files)
+    sibling_files = [fs.path for fs in all_file_scores if fs.path not in chunk_file_set]
     if not sibling_files:
         return ""
-    # Cap at 30 sibling paths to avoid prompt bloat
+
+    import_tokens = _collect_import_tokens(chunk.files, per_file_sections)
+    relevant_paths = _find_relevant_sibling_paths(sibling_files, import_tokens)
+
+    lines = ["## Sibling Files (reviewed in other chunks — do not flag missing integration here)"]
     shown = sibling_files[:30]
     extra = len(sibling_files) - len(shown)
-    lines = ["## Sibling Files (reviewed in other chunks — do not flag missing integration here)"]
     for path in shown:
         lines.append(f"  - {path}")
     if extra > 0:
         lines.append(f"  … and {extra} more")
+
+    if relevant_paths:
+        lines.append("")
+        lines.append("## Interface Context (structural lines from referenced sibling files)")
+        max_lines = 120
+        emitted = 0
+        for path in relevant_paths:
+            structural = _extract_structural_lines(per_file_sections.get(path, ""))
+            if not structural:
+                continue
+            lines.append(f"# {path}")
+            for entry in structural:
+                lines.append(f"  {entry}")
+                emitted += 1
+                if emitted >= max_lines:
+                    lines.append("  … truncated")
+                    return "\n".join(lines)
+
     return "\n".join(lines)
+
+
+_IMPORT_RE = re.compile(r"^(?:from\s+([.\w]+)\s+import|import\s+([.\w]+))")
+_STRUCTURAL_RE = re.compile(
+    r"^(?:@dataclass(?:\([^)]*\))?|class |def |async def |[A-Za-z_][A-Za-z0-9_]*\s*:|[A-Z][A-Z0-9_]*\s*=)"
+)
+
+
+def _strip_diff_prefix(line: str) -> str | None:
+    """Strip unified-diff prefixes while skipping headers and hunk markers."""
+    if not line:
+        return None
+    if line.startswith(("diff --git ", "index ", "--- ", "+++ ", "@@")):
+        return None
+    if line[0] in "+- ":
+        return line[1:]
+    return line
+
+
+def _collect_import_tokens(
+    chunk_files: list[str],
+    per_file_sections: dict[str, str],
+) -> set[str]:
+    """Collect module tokens imported by files in this chunk."""
+    tokens: set[str] = set()
+    for path in chunk_files:
+        section = per_file_sections.get(path, "")
+        for raw_line in section.splitlines():
+            line = _strip_diff_prefix(raw_line)
+            if line is None:
+                continue
+            match = _IMPORT_RE.match(line.strip())
+            if not match:
+                continue
+            module = (match.group(1) or match.group(2) or "").strip(".")
+            if not module:
+                continue
+            for token in module.split("."):
+                lowered = token.lower()
+                if lowered and lowered not in {"forge", "tests", "test"}:
+                    tokens.add(lowered)
+    return tokens
+
+
+def _find_relevant_sibling_paths(sibling_files: list[str], import_tokens: set[str]) -> list[str]:
+    """Find changed sibling files whose path components match imported modules."""
+    if not import_tokens:
+        return []
+
+    relevant: list[str] = []
+    for path in sibling_files:
+        pure = PurePosixPath(path)
+        path_tokens = {part.lower() for part in pure.parts}
+        path_tokens.add(pure.stem.lower())
+        if path_tokens & import_tokens:
+            relevant.append(path)
+    return relevant
+
+
+def _extract_structural_lines(section: str) -> list[str]:
+    """Extract structural lines that help reviewers reason across chunks."""
+    structural: list[str] = []
+    for raw_line in section.splitlines():
+        line = _strip_diff_prefix(raw_line)
+        if line is None:
+            continue
+        stripped = line.rstrip()
+        if not stripped.strip():
+            continue
+        if _STRUCTURAL_RE.match(stripped.lstrip()):
+            structural.append(stripped)
+    return structural
 
 
 def _is_test_file(path: str) -> bool:

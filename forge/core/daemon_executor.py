@@ -83,6 +83,12 @@ class ExecutorMixin:
             parts.append(f"## User Instructions (from forge.toml)\n\n{instructions}")
         return "\n\n".join(parts)
 
+    def _record_health_activity(self, task_id: str) -> None:
+        """Notify the pipeline health monitor that a task made progress."""
+        health = getattr(self, "_health_monitor", None)
+        if health:
+            health.record_task_activity(task_id)
+
     # -- orchestrator ----------------------------------------------------
 
     async def _execute_task(
@@ -310,6 +316,13 @@ class ExecutorMixin:
         await self._ensure_clean_for_rebase(worktree_path, task_id)
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
+        self._record_health_activity(task_id)
+        await self._emit(
+            "task:merge_progress",
+            {"task_id": task_id, "step": "rebasing"},
+            db=db,
+            pipeline_id=pid,
+        )
         async with self._get_merge_lock(repo_id):
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if merge_result.success:
@@ -1275,8 +1288,6 @@ class ExecutorMixin:
         self, db, task_id: str, agent_id: str, answer: str, pipeline_id: str
     ) -> None:
         """Route human's answer to a review-escalation question."""
-        from forge.core.model_router import select_model
-
         answer_lower = answer.lower()
         pid = pipeline_id
 
@@ -1287,30 +1298,19 @@ class ExecutorMixin:
         elif "approve" in answer_lower:
             logger.info("Review answer for %s: human approved", task_id)
             task = await db.get_task(task_id)
-            agent_model = select_model(
-                self._strategy,
-                "agent",
-                task.complexity or "medium",
-                retry_count=task.retry_count,
-            )
-            await db.update_task_state(task_id, TaskState.MERGING.value)
-            await self._emit(
-                "task:state_changed",
-                {"task_id": task_id, "state": "merging"},
-                db=db,
-                pipeline_id=pid,
-            )
-            worktree_path = getattr(task, "worktree_path", "") or ""
-            await self._attempt_merge(
+            if not task:
+                await db.release_agent(agent_id)
+                return
+            repo_id = getattr(task, "repo_id", "default") or "default"
+            await self._handle_merge_fast_path(
                 db,
                 self._merge_worker,
                 self._worktree_mgr,
                 task,
                 task_id,
                 agent_id,
-                worktree_path,
-                agent_model,
                 pid,
+                repo_id=repo_id,
             )
         elif "reject" in answer_lower:
             logger.info("Review answer for %s: human rejected, retrying task", task_id)
@@ -1830,6 +1830,7 @@ class ExecutorMixin:
         # Snapshot pipeline branch BEFORE merge so diff stats reflect only this task's changes
         pre_merge_ref = await _resolve_ref(worktree_path, merge_worker._main)
         # Emit progress so TUI shows what's happening during MERGING state
+        self._record_health_activity(task_id)
         await self._emit(
             "task:merge_progress",
             {"task_id": task_id, "step": "rebasing"},
@@ -2241,6 +2242,7 @@ class ExecutorMixin:
         pre_merge_ref: str | None = None,
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
+        self._record_health_activity(task_id)
         async with self._get_merge_lock():
             ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
@@ -2288,6 +2290,7 @@ class ExecutorMixin:
             from forge.core.integration import effective_enabled, run_post_merge_check
 
             if effective_enabled(integration_config.post_merge):
+                self._record_health_activity(task_id)
                 await self._emit(
                     "task:merge_progress",
                     {"task_id": task_id, "step": "integration_check"},
@@ -2386,6 +2389,7 @@ class ExecutorMixin:
                     )
 
         # ── Mark task DONE (existing logic) ─────────────────────────
+        self._record_health_activity(task_id)
         await self._emit(
             "task:merge_progress",
             {"task_id": task_id, "step": "finalizing"},
@@ -2418,6 +2422,7 @@ class ExecutorMixin:
     async def _emit_merge_failure(self, db, task_id: str, error: str | None, pid: str) -> None:
         """Emit merge-failure event (does not change task state)."""
         console.print(f"[red]{task_id} merge failed: {error}[/red]")
+        self._record_health_activity(task_id)
         await self._emit(
             "task:merge_result",
             {"task_id": task_id, "success": False, "error": error},
