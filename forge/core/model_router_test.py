@@ -84,15 +84,11 @@ class TestSelectModelOverrides:
         assert result == ModelSpec("claude", "opus")
 
     def test_override_agent_model_medium(self):
-        result = select_model(
-            "auto", "agent", "medium", overrides={"agent_model_medium": "haiku"}
-        )
+        result = select_model("auto", "agent", "medium", overrides={"agent_model_medium": "haiku"})
         assert result == ModelSpec("claude", "haiku")
 
     def test_override_agent_model_high(self):
-        result = select_model(
-            "auto", "agent", "high", overrides={"agent_model_high": "sonnet"}
-        )
+        result = select_model("auto", "agent", "high", overrides={"agent_model_high": "sonnet"})
         assert result == ModelSpec("claude", "sonnet")
 
     def test_override_contract_builder(self):
@@ -105,9 +101,7 @@ class TestSelectModelOverrides:
         assert result == ModelSpec("claude", "sonnet")
 
     def test_override_ci_fix(self):
-        result = select_model(
-            "auto", "ci_fix", "medium", overrides={"ci_fix_model": "opus"}
-        )
+        result = select_model("auto", "ci_fix", "medium", overrides={"ci_fix_model": "opus"})
         assert result == ModelSpec("claude", "opus")
 
     def test_override_with_provider_prefix(self):
@@ -133,29 +127,19 @@ class TestModelEscalation:
     """Model escalation on retry 2+ for agent stage."""
 
     def test_no_escalation_retry_0(self):
-        assert select_model("auto", "agent", "low", retry_count=0) == ModelSpec(
-            "claude", "sonnet"
-        )
+        assert select_model("auto", "agent", "low", retry_count=0) == ModelSpec("claude", "sonnet")
 
     def test_no_escalation_retry_1(self):
-        assert select_model("auto", "agent", "low", retry_count=1) == ModelSpec(
-            "claude", "sonnet"
-        )
+        assert select_model("auto", "agent", "low", retry_count=1) == ModelSpec("claude", "sonnet")
 
     def test_escalation_retry_2_sonnet_to_opus(self):
-        assert select_model("auto", "agent", "low", retry_count=2) == ModelSpec(
-            "claude", "opus"
-        )
+        assert select_model("auto", "agent", "low", retry_count=2) == ModelSpec("claude", "opus")
 
     def test_escalation_retry_2_haiku_to_sonnet(self):
-        assert select_model("fast", "agent", "high", retry_count=2) == ModelSpec(
-            "claude", "sonnet"
-        )
+        assert select_model("fast", "agent", "high", retry_count=2) == ModelSpec("claude", "sonnet")
 
     def test_no_escalation_already_opus(self):
-        assert select_model("quality", "agent", "low", retry_count=2) == ModelSpec(
-            "claude", "opus"
-        )
+        assert select_model("quality", "agent", "low", retry_count=2) == ModelSpec("claude", "opus")
 
     def test_no_escalation_for_reviewer(self):
         assert select_model("auto", "reviewer", "low", retry_count=5) == ModelSpec(
@@ -163,9 +147,7 @@ class TestModelEscalation:
         )
 
     def test_no_escalation_for_planner(self):
-        assert select_model("auto", "planner", "low", retry_count=5) == ModelSpec(
-            "claude", "opus"
-        )
+        assert select_model("auto", "planner", "low", retry_count=5) == ModelSpec("claude", "opus")
 
     def test_escalation_applies_to_overrides(self):
         result = select_model(
@@ -178,9 +160,7 @@ class TestModelEscalation:
         assert result == ModelSpec("claude", "sonnet")
 
     def test_escalation_retry_3_same_as_2(self):
-        assert select_model("auto", "agent", "low", retry_count=3) == ModelSpec(
-            "claude", "opus"
-        )
+        assert select_model("auto", "agent", "low", retry_count=3) == ModelSpec("claude", "opus")
 
     def test_escalation_stays_intra_provider_claude(self):
         """Escalation from claude:sonnet stays within claude provider."""
@@ -267,7 +247,11 @@ class TestOverridePrecedence:
         """Custom routing_table parameter overrides default table."""
         custom_table = {
             "auto": {
-                "planner": {"low": "claude:haiku", "medium": "claude:haiku", "high": "claude:haiku"},
+                "planner": {
+                    "low": "claude:haiku",
+                    "medium": "claude:haiku",
+                    "high": "claude:haiku",
+                },
                 "agent": {"low": "claude:haiku", "medium": "claude:haiku", "high": "claude:haiku"},
             }
         }
@@ -278,7 +262,11 @@ class TestOverridePrecedence:
         """Overrides still win even with a custom routing table."""
         custom_table = {
             "auto": {
-                "planner": {"low": "claude:haiku", "medium": "claude:haiku", "high": "claude:haiku"},
+                "planner": {
+                    "low": "claude:haiku",
+                    "medium": "claude:haiku",
+                    "high": "claude:haiku",
+                },
                 "agent": {"low": "claude:haiku", "medium": "claude:haiku", "high": "claude:haiku"},
             }
         }

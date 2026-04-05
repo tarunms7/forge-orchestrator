@@ -150,11 +150,13 @@ def _convert_assistant_message(msg: Any) -> list[ProviderEvent]:
     for block in content:
         block_type = getattr(block, "type", None)
         if block_type == "text":
-            events.append(ProviderEvent(
-                kind=EventKind.TEXT,
-                text=getattr(block, "text", ""),
-                raw=block,
-            ))
+            events.append(
+                ProviderEvent(
+                    kind=EventKind.TEXT,
+                    text=getattr(block, "text", ""),
+                    raw=block,
+                )
+            )
         elif block_type == "tool_use":
             tool_name = getattr(block, "name", "")
             tool_input_raw = getattr(block, "input", "")
@@ -162,26 +164,28 @@ def _convert_assistant_message(msg: Any) -> list[ProviderEvent]:
                 tool_input_str = json.dumps(tool_input_raw)
             else:
                 tool_input_str = str(tool_input_raw) if tool_input_raw else ""
-            events.append(ProviderEvent(
-                kind=EventKind.TOOL_USE,
-                tool_name=_normalize_tool_name(tool_name),
-                tool_call_id=getattr(block, "id", None),
-                tool_input=tool_input_str,
-                raw=block,
-            ))
+            events.append(
+                ProviderEvent(
+                    kind=EventKind.TOOL_USE,
+                    tool_name=_normalize_tool_name(tool_name),
+                    tool_call_id=getattr(block, "id", None),
+                    tool_input=tool_input_str,
+                    raw=block,
+                )
+            )
         elif block_type == "tool_result":
             content_text = getattr(block, "content", "")
             if isinstance(content_text, list):
-                content_text = "\n".join(
-                    getattr(b, "text", str(b)) for b in content_text
+                content_text = "\n".join(getattr(b, "text", str(b)) for b in content_text)
+            events.append(
+                ProviderEvent(
+                    kind=EventKind.TOOL_RESULT,
+                    tool_call_id=getattr(block, "tool_use_id", None),
+                    tool_output=str(content_text),
+                    is_tool_error=getattr(block, "is_error", False),
+                    raw=block,
                 )
-            events.append(ProviderEvent(
-                kind=EventKind.TOOL_RESULT,
-                tool_call_id=getattr(block, "tool_use_id", None),
-                tool_output=str(content_text),
-                is_tool_error=getattr(block, "is_error", False),
-                raw=block,
-            ))
+            )
     return events
 
 
@@ -192,30 +196,36 @@ def _convert_result_message(msg: ResultMessage) -> tuple[list[ProviderEvent], Pr
     # Text event for the result content
     result_text = msg.result or ""
     if result_text:
-        events.append(ProviderEvent(
-            kind=EventKind.TEXT,
-            text=result_text,
-            raw=msg,
-        ))
+        events.append(
+            ProviderEvent(
+                kind=EventKind.TEXT,
+                text=result_text,
+                raw=msg,
+            )
+        )
 
     # Usage event
     usage = msg.usage or {}
     input_tokens = int(usage.get("input_tokens", 0))
     output_tokens = int(usage.get("output_tokens", 0))
     if input_tokens or output_tokens:
-        events.append(ProviderEvent(
-            kind=EventKind.USAGE,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            raw=msg,
-        ))
+        events.append(
+            ProviderEvent(
+                kind=EventKind.USAGE,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                raw=msg,
+            )
+        )
 
     # Status completed
-    events.append(ProviderEvent(
-        kind=EventKind.STATUS,
-        status="completed",
-        raw=msg,
-    ))
+    events.append(
+        ProviderEvent(
+            kind=EventKind.STATUS,
+            status="completed",
+            raw=msg,
+        )
+    )
 
     # Build ResumeState from session_id
     resume_state = None
@@ -306,7 +316,9 @@ class ClaudeProvider:
         try:
             import claude_code_sdk
 
-            details_parts.append(f"claude-code-sdk v{getattr(claude_code_sdk, '__version__', 'unknown')}")
+            details_parts.append(
+                f"claude-code-sdk v{getattr(claude_code_sdk, '__version__', 'unknown')}"
+            )
         except ImportError:
             errors.append("claude-code-sdk not installed")
 
@@ -356,18 +368,12 @@ class ClaudeProvider:
         )
 
         # Launch the async query task
-        task = asyncio.ensure_future(
-            self._run_query(prompt, options, catalog_entry, on_event)
-        )
+        task = asyncio.ensure_future(self._run_query(prompt, options, catalog_entry, on_event))
         return _ClaudeExecutionHandle(task, catalog_entry)
 
     def can_resume(self, state: ResumeState) -> bool:
         """Return True if session_token is present and provider matches."""
-        return (
-            state.provider == "claude"
-            and bool(state.session_token)
-            and state.is_resumable
-        )
+        return state.provider == "claude" and bool(state.session_token) and state.is_resumable
 
     def cleanup_session(self, state: ResumeState) -> None:
         """No-op for Claude — sessions are managed by the CLI."""
@@ -401,9 +407,7 @@ class ClaudeProvider:
         if tool_policy.mode == "allowlist":
             kwargs["allowed_tools"] = list(tool_policy.allowed_tools)
         elif tool_policy.mode == "denylist":
-            kwargs["disallowed_tools"] = _translate_denied_operations(
-                tool_policy.denied_operations
-            )
+            kwargs["disallowed_tools"] = _translate_denied_operations(tool_policy.denied_operations)
 
         return ClaudeCodeOptions(**kwargs)
 
@@ -442,14 +446,18 @@ class ClaudeProvider:
             else:
                 elapsed_ms = int((time.monotonic() - start_time) * 1000)
                 if on_event:
-                    on_event(ProviderEvent(
-                        kind=EventKind.ERROR,
-                        text=str(e),
-                    ))
-                    on_event(ProviderEvent(
-                        kind=EventKind.STATUS,
-                        status="failed",
-                    ))
+                    on_event(
+                        ProviderEvent(
+                            kind=EventKind.ERROR,
+                            text=str(e),
+                        )
+                    )
+                    on_event(
+                        ProviderEvent(
+                            kind=EventKind.STATUS,
+                            status="failed",
+                        )
+                    )
                 raise
 
         # Build final result

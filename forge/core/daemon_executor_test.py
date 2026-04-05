@@ -790,10 +790,11 @@ class TestAttemptMergeLockBehavior:
         merge_worker.merge = AsyncMock(return_value=MergeResult(success=True))
         merge_worker.retry_merge = AsyncMock()
 
-        with patch(
-            "forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")
-        ), patch(
-            "forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")
+        with (
+            patch(
+                "forge.core.daemon_executor._get_diff_vs_main", new=AsyncMock(return_value="diff")
+            ),
+            patch("forge.core.daemon_executor._resolve_ref", new=AsyncMock(return_value="abc123")),
         ):
             await mixin._attempt_merge(
                 db,

@@ -184,7 +184,9 @@ async def _generate_branch_name(
                 logger.debug("Provider generated branch name: %s", sanitized)
                 return sanitized
     except Exception:
-        logger.debug("Provider branch name generation failed, falling back to slugify", exc_info=True)
+        logger.debug(
+            "Provider branch name generation failed, falling back to slugify", exc_info=True
+        )
 
     return _sanitize_branch_name(description)
 
@@ -752,16 +754,23 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                             await self._events.emit("planner:output", {"line": text})
 
                     # Count tokens for progress display
-                    _msg_tokens = event.token_count or (max(1, len(event.text) // 4) if event.text else 0)
+                    _msg_tokens = event.token_count or (
+                        max(1, len(event.text) // 4) if event.text else 0
+                    )
                     if _msg_tokens > 0:
                         _planner_token_count[0] += _msg_tokens
                         now = time.monotonic()
                         if now - _last_token_update[0] >= 2.0:
                             _last_token_update[0] = now
-                            token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                            token_line = (
+                                f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                            )
                             if pipeline_id:
                                 await self._emit(
-                                    "planner:output", {"line": token_line}, db=db, pipeline_id=pipeline_id
+                                    "planner:output",
+                                    {"line": token_line},
+                                    db=db,
+                                    pipeline_id=pipeline_id,
                                 )
                             else:
                                 await self._events.emit("planner:output", {"line": token_line})
@@ -772,9 +781,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     if event.tool_input:
                         # Try to extract a short summary from tool input
                         try:
-                            inp = json.loads(event.tool_input) if isinstance(event.tool_input, str) else event.tool_input
+                            inp = (
+                                json.loads(event.tool_input)
+                                if isinstance(event.tool_input, str)
+                                else event.tool_input
+                            )
                             if isinstance(inp, dict):
-                                path = inp.get("file_path") or inp.get("path") or inp.get("pattern") or inp.get("command", "")
+                                path = (
+                                    inp.get("file_path")
+                                    or inp.get("path")
+                                    or inp.get("pattern")
+                                    or inp.get("command", "")
+                                )
                                 if path:
                                     tool_line = f"🔧 {event.tool_name}: {str(path)[:80]}"
                         except (json.JSONDecodeError, TypeError):

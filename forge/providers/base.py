@@ -156,15 +156,17 @@ class ResumeState:
     is_resumable: bool
 
     def to_json(self) -> str:
-        return json.dumps({
-            "provider": self.provider,
-            "backend": self.backend,
-            "session_token": self.session_token,
-            "created_at": self.created_at,
-            "last_active_at": self.last_active_at,
-            "turn_count": self.turn_count,
-            "is_resumable": self.is_resumable,
-        })
+        return json.dumps(
+            {
+                "provider": self.provider,
+                "backend": self.backend,
+                "session_token": self.session_token,
+                "created_at": self.created_at,
+                "last_active_at": self.last_active_at,
+                "turn_count": self.turn_count,
+                "is_resumable": self.is_resumable,
+            }
+        )
 
     @classmethod
     def from_json(cls, raw: str) -> ResumeState:

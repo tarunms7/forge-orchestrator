@@ -16,9 +16,7 @@ class TestPlannerPolicy:
         assert PLANNER_TOOL_POLICY.mode == "allowlist"
 
     def test_allowed_tools(self) -> None:
-        assert set(PLANNER_TOOL_POLICY.allowed_tools) == {
-            "Read", "Glob", "Grep", "Bash"
-        }
+        assert set(PLANNER_TOOL_POLICY.allowed_tools) == {"Read", "Glob", "Grep", "Bash"}
 
     def test_no_denied_operations(self) -> None:
         assert PLANNER_TOOL_POLICY.denied_operations == []
@@ -66,9 +64,7 @@ class TestReviewerPolicy:
         assert REVIEWER_TOOL_POLICY.mode == "allowlist"
 
     def test_allowed_tools(self) -> None:
-        assert set(REVIEWER_TOOL_POLICY.allowed_tools) == {
-            "Read", "Glob", "Grep", "Bash"
-        }
+        assert set(REVIEWER_TOOL_POLICY.allowed_tools) == {"Read", "Glob", "Grep", "Bash"}
 
     def test_no_denied_operations(self) -> None:
         assert REVIEWER_TOOL_POLICY.denied_operations == []

@@ -91,17 +91,13 @@ class TestAllowlistMode:
     def test_listed_tool_allowed(self) -> None:
         policy = ToolPolicy(mode="allowlist", allowed_tools=["Read", "Grep"])
         auditor = SafetyAuditor(policy, _WORKSPACE)
-        event = ProviderEvent(
-            kind=EventKind.TOOL_USE, tool_name="Read", tool_call_id="c1"
-        )
+        event = ProviderEvent(kind=EventKind.TOOL_USE, tool_name="Read", tool_call_id="c1")
         assert auditor.check(event) == AuditVerdict.ALLOW
 
     def test_unlisted_tool_blocked(self) -> None:
         policy = ToolPolicy(mode="allowlist", allowed_tools=["Read", "Grep"])
         auditor = SafetyAuditor(policy, _WORKSPACE)
-        event = ProviderEvent(
-            kind=EventKind.TOOL_USE, tool_name="Write", tool_call_id="c1"
-        )
+        event = ProviderEvent(kind=EventKind.TOOL_USE, tool_name="Write", tool_call_id="c1")
         assert auditor.check(event) == AuditVerdict.ABORT
 
     def test_bash_blocked_when_not_in_allowlist(self) -> None:
@@ -117,9 +113,7 @@ class TestDenylistMode:
     def test_unlisted_tool_allowed(self) -> None:
         policy = ToolPolicy(mode="denylist", denied_operations=["git:push"])
         auditor = SafetyAuditor(policy, _WORKSPACE)
-        event = ProviderEvent(
-            kind=EventKind.TOOL_USE, tool_name="Read", tool_call_id="c1"
-        )
+        event = ProviderEvent(kind=EventKind.TOOL_USE, tool_name="Read", tool_call_id="c1")
         assert auditor.check(event) == AuditVerdict.ALLOW
 
     def test_denied_operation_blocked(self) -> None:
@@ -150,9 +144,7 @@ class TestUnrestrictedMode:
     def test_allows_any_tool(self) -> None:
         policy = ToolPolicy(mode="unrestricted")
         auditor = SafetyAuditor(policy, _WORKSPACE)
-        event = ProviderEvent(
-            kind=EventKind.TOOL_USE, tool_name="DangerousTool", tool_call_id="c1"
-        )
+        event = ProviderEvent(kind=EventKind.TOOL_USE, tool_name="DangerousTool", tool_call_id="c1")
         assert auditor.check(event) == AuditVerdict.ALLOW
 
 

@@ -1451,7 +1451,9 @@ class ForgeApp(App):
             from forge.core.models import TaskDefinition, TaskGraph
 
             conventions = getattr(self._graph, "conventions", None) if self._graph else None
-            integration_hints = getattr(self._graph, "integration_hints", None) if self._graph else None
+            integration_hints = (
+                getattr(self._graph, "integration_hints", None) if self._graph else None
+            )
             self._graph = TaskGraph(
                 tasks=[TaskDefinition.model_validate(task) for task in tasks],
                 conventions=conventions,

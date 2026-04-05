@@ -200,9 +200,7 @@ class TestProviderEvent:
         assert evt.tool_input == '{"command": "ls"}'
 
     def test_usage_event(self) -> None:
-        evt = ProviderEvent(
-            kind=EventKind.USAGE, input_tokens=100, output_tokens=50
-        )
+        evt = ProviderEvent(kind=EventKind.USAGE, input_tokens=100, output_tokens=50)
         assert evt.input_tokens == 100
         assert evt.output_tokens == 50
 
@@ -316,9 +314,7 @@ class TestMiscTypes:
         assert v.verdict == AuditVerdict.ABORT
 
     def test_provider_health_status(self) -> None:
-        s = ProviderHealthStatus(
-            healthy=True, provider="claude", details="ok", errors=[]
-        )
+        s = ProviderHealthStatus(healthy=True, provider="claude", details="ok", errors=[])
         assert s.healthy is True
 
     def test_mcp_server_config(self) -> None:

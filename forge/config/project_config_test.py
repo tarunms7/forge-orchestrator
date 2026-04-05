@@ -757,7 +757,7 @@ class TestCustomModelConfig:
     def test_from_toml(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
         toml_path.write_text(
-            '[[custom_models]]\n'
+            "[[custom_models]]\n"
             'alias = "my-model"\n'
             'provider = "custom"\n'
             'canonical_id = "my-model-v1"\n'
@@ -771,11 +771,11 @@ class TestCustomModelConfig:
     def test_from_toml_multiple(self, tmp_path):
         toml_path = tmp_path / "forge.toml"
         toml_path.write_text(
-            '[[custom_models]]\n'
+            "[[custom_models]]\n"
             'alias = "model-a"\n'
             'provider = "prov-a"\n'
-            '\n'
-            '[[custom_models]]\n'
+            "\n"
+            "[[custom_models]]\n"
             'alias = "model-b"\n'
             'provider = "prov-b"\n'
         )
@@ -822,9 +822,7 @@ class TestProjectConfigValidate:
         registry = self._mock_registry(
             valid_models={"claude:sonnet", "claude:opus", "openai:gpt-5.4"}
         )
-        config = ProjectConfig(
-            routing=RoutingConfig(planner="opus", reviewer="openai:gpt-5.4")
-        )
+        config = ProjectConfig(routing=RoutingConfig(planner="opus", reviewer="openai:gpt-5.4"))
         issues = config.validate(registry)
         assert issues == []
 

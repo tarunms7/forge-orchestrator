@@ -152,7 +152,9 @@ class TestModelLookup:
 class TestStageValidation:
     def test_validate_model_for_stage_valid(self):
         reg = ProviderRegistry(_make_settings())
-        reg.register(FakeProvider("test", [_make_entry("test", "m", validated_stages=frozenset(["agent"]))]))
+        reg.register(
+            FakeProvider("test", [_make_entry("test", "m", validated_stages=frozenset(["agent"]))])
+        )
 
         issues = reg.validate_model_for_stage(ModelSpec("test", "m"), "agent")
         assert issues == []

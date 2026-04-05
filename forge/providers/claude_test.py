@@ -94,6 +94,7 @@ class TestHealthCheck:
     def test_healthy_when_sdk_available(self):
         p = ClaudeProvider()
         import os
+
         os.environ.pop("CLAUDECODE", None)  # Ensure clean env
         status = p.health_check()
         assert status.healthy is True
@@ -103,6 +104,7 @@ class TestHealthCheck:
     def test_unhealthy_when_claudecode_env_set(self):
         p = ClaudeProvider()
         import os
+
         os.environ["CLAUDECODE"] = "1"
         try:
             status = p.health_check()

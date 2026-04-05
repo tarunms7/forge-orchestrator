@@ -372,21 +372,14 @@ class Database:
             await conn.run_sync(self._add_missing_columns)
             await conn.execute(
                 text(
-                    "UPDATE tasks SET provider_model = 'claude:sonnet' "
-                    "WHERE provider_model IS NULL"
+                    "UPDATE tasks SET provider_model = 'claude:sonnet' WHERE provider_model IS NULL"
                 )
             )
             await conn.execute(
-                text(
-                    "UPDATE tasks SET backend = 'claude-code-sdk' "
-                    "WHERE backend IS NULL"
-                )
+                text("UPDATE tasks SET backend = 'claude-code-sdk' WHERE backend IS NULL")
             )
             await conn.execute(
-                text(
-                    "UPDATE tasks SET model_history = '[]' "
-                    "WHERE model_history IS NULL"
-                )
+                text("UPDATE tasks SET model_history = '[]' WHERE model_history IS NULL")
             )
             # Backfill resume_state from legacy session_id column
             await conn.execute(

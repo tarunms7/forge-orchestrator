@@ -140,9 +140,7 @@ class CostRegistry:
         # ESTIMATE_HIGH — use highest known rates
         return self._highest_rates()
 
-    def calculate_cost(
-        self, spec: ModelSpec, input_tokens: int, output_tokens: int
-    ) -> float:
+    def calculate_cost(self, spec: ModelSpec, input_tokens: int, output_tokens: int) -> float:
         """Calculate cost in USD."""
         rates = self.get_rates(spec)
         return (input_tokens / 1000) * rates.input_per_1k + (
@@ -174,9 +172,7 @@ def resolve_cost(
     if result.provider_reported_cost_usd is not None:
         return result.provider_reported_cost_usd
 
-    return cost_registry.calculate_cost(
-        spec, result.input_tokens, result.output_tokens
-    )
+    return cost_registry.calculate_cost(spec, result.input_tokens, result.output_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +194,7 @@ def migrate_legacy_cost_settings(
     to the new provider:model keyed rate format.
     """
     return {
-        "claude:sonnet": ModelRates(
-            input_per_1k=sonnet_input, output_per_1k=sonnet_output
-        ),
-        "claude:haiku": ModelRates(
-            input_per_1k=haiku_input, output_per_1k=haiku_output
-        ),
-        "claude:opus": ModelRates(
-            input_per_1k=opus_input, output_per_1k=opus_output
-        ),
+        "claude:sonnet": ModelRates(input_per_1k=sonnet_input, output_per_1k=sonnet_output),
+        "claude:haiku": ModelRates(input_per_1k=haiku_input, output_per_1k=haiku_output),
+        "claude:opus": ModelRates(input_per_1k=opus_input, output_per_1k=opus_output),
     }

@@ -73,9 +73,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_structured_output=False,
         supports_reasoning=True,
         cost_key="claude:sonnet",
-        validated_stages=frozenset(
-            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
-        ),
+        validated_stages=frozenset(["planner", "contract_builder", "agent", "reviewer", "ci_fix"]),
     ),
     CatalogEntry(
         provider="claude",
@@ -93,9 +91,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_structured_output=False,
         supports_reasoning=True,
         cost_key="claude:opus",
-        validated_stages=frozenset(
-            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
-        ),
+        validated_stages=frozenset(["planner", "contract_builder", "agent", "reviewer", "ci_fix"]),
     ),
     CatalogEntry(
         provider="claude",
@@ -219,15 +215,11 @@ def validate_model_for_stage(entry: CatalogEntry, stage: str) -> list[str]:
     for attr, required_val in requirements.items():
         actual = getattr(entry, attr, None)
         if actual != required_val:
-            issues.append(
-                f"BLOCKED: {entry.alias} lacks {attr} required for {stage}"
-            )
+            issues.append(f"BLOCKED: {entry.alias} lacks {attr} required for {stage}")
 
     # Check validated stages (soft warning)
     if stage not in entry.validated_stages:
-        issues.append(
-            f"WARNING: {entry.alias} is not validated for {stage} stage"
-        )
+        issues.append(f"WARNING: {entry.alias} is not validated for {stage} stage")
 
     return issues
 

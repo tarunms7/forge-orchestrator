@@ -1667,17 +1667,30 @@ async def test_append_task_model_history(db: Database):
         depends_on=[],
         complexity="low",
     )
-    entry = {"attempt": 0, "model": "claude:sonnet", "backend": "claude-code-sdk", "result": "success", "cost_usd": 0.05}
+    entry = {
+        "attempt": 0,
+        "model": "claude:sonnet",
+        "backend": "claude-code-sdk",
+        "result": "success",
+        "cost_usd": 0.05,
+    }
     await db.append_task_model_history("hist-1", entry)
 
     task = await db.get_task("hist-1")
     import json
+
     history = json.loads(task.model_history)
     assert len(history) == 1
     assert history[0]["model"] == "claude:sonnet"
 
     # Append another
-    entry2 = {"attempt": 1, "model": "claude:opus", "backend": "claude-code-sdk", "result": "error", "cost_usd": 0.10}
+    entry2 = {
+        "attempt": 1,
+        "model": "claude:opus",
+        "backend": "claude-code-sdk",
+        "result": "error",
+        "cost_usd": 0.10,
+    }
     await db.append_task_model_history("hist-1", entry2)
     task = await db.get_task("hist-1")
     history = json.loads(task.model_history)
@@ -1732,6 +1745,7 @@ async def test_dual_write_resume_state():
     rs_json, sid = Database.write_resume_state(state)
     assert sid == "write-test-sess"
     import json
+
     parsed = json.loads(rs_json)
     assert parsed["session_token"] == "write-test-sess"
     assert parsed["provider"] == "claude"
@@ -1750,6 +1764,7 @@ async def test_backfill_session_id_to_resume_state(db: Database):
     )
     # Set session_id and clear resume_state to simulate legacy data
     from sqlalchemy import text
+
     async with db._session_factory() as session:
         await session.execute(
             text(
@@ -1765,6 +1780,7 @@ async def test_backfill_session_id_to_resume_state(db: Database):
     task = await db.get_task("bf-1")
     assert task.resume_state is not None
     import json
+
     parsed = json.loads(task.resume_state)
     assert parsed["session_token"] == "legacy-sess-id"
     assert parsed["provider"] == "claude"
@@ -1773,15 +1789,18 @@ async def test_backfill_session_id_to_resume_state(db: Database):
 async def test_pipeline_provider_config(db: Database):
     """Pipeline provider_config column persists and retrieves."""
     import json
-    config = json.dumps({
-        "planner": "claude:opus",
-        "contract_builder": "claude:sonnet",
-        "agent_low": "claude:haiku",
-        "agent_medium": "claude:sonnet",
-        "agent_high": "claude:opus",
-        "reviewer": "claude:sonnet",
-        "ci_fix": "claude:haiku",
-    })
+
+    config = json.dumps(
+        {
+            "planner": "claude:opus",
+            "contract_builder": "claude:sonnet",
+            "agent_low": "claude:haiku",
+            "agent_medium": "claude:sonnet",
+            "agent_high": "claude:opus",
+            "reviewer": "claude:sonnet",
+            "ci_fix": "claude:haiku",
+        }
+    )
     await db.create_pipeline(
         id="pipe-prov-1",
         description="Provider config test",
@@ -1798,6 +1817,7 @@ async def test_pipeline_provider_config(db: Database):
 async def test_set_pipeline_provider_config(db: Database):
     """set_pipeline_provider_config updates the column."""
     import json
+
     await db.create_pipeline(
         id="pipe-prov-2",
         description="Set config test",
