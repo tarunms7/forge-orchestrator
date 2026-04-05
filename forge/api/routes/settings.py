@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
+from forge.api.models.schemas import CatalogEntrySummary
+from forge.api.routes.providers import _catalog_entry_to_summary
 from forge.api.security.dependencies import get_current_user
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -20,6 +22,8 @@ DEFAULT_SETTINGS: dict = {
     "agent_model_medium": "opus",
     "agent_model_high": "opus",
     "reviewer_model": "sonnet",
+    "contract_builder_model": "opus",
+    "ci_fix_model": "sonnet",
     "autonomy": "balanced",
     "question_limit": 3,
     "question_timeout": 1800,
@@ -39,6 +43,8 @@ class UpdateSettingsRequest(BaseModel):
     agent_model_medium: str | None = None
     agent_model_high: str | None = None
     reviewer_model: str | None = None
+    contract_builder_model: str | None = None
+    ci_fix_model: str | None = None
     autonomy: str | None = None
     question_limit: int | None = Field(None, ge=1, le=10)
     question_timeout: int | None = Field(None, ge=60, le=7200)
@@ -50,6 +56,38 @@ def _get_db(request: Request):
     return getattr(request.app.state, "db", None)
 
 
+def _get_provider_extras(request: Request) -> dict:
+    """Build provider-aware fields for the settings response."""
+    from forge.config.settings import ForgeSettings
+
+    settings = ForgeSettings()
+    openai_enabled = settings.openai_enabled
+
+    registry = getattr(request.app.state, "registry", None)
+    available_providers: list[str] = []
+    catalog: list[CatalogEntrySummary] = []
+
+    if registry is not None:
+        available_providers = [p.name for p in registry.all_providers()]
+        catalog = [_catalog_entry_to_summary(e) for e in registry.all_catalog_entries()]
+    else:
+        # Fallback: build from static catalog
+        from forge.providers.catalog import FORGE_MODEL_CATALOG
+
+        seen_providers: set[str] = set()
+        for entry in FORGE_MODEL_CATALOG:
+            if entry.provider not in seen_providers:
+                available_providers.append(entry.provider)
+                seen_providers.add(entry.provider)
+            catalog.append(_catalog_entry_to_summary(entry))
+
+    return {
+        "openai_enabled": openai_enabled,
+        "available_providers": available_providers,
+        "catalog": [c.model_dump() for c in catalog],
+    }
+
+
 @router.get("")
 async def get_settings(
     request: Request,
@@ -57,15 +95,16 @@ async def get_settings(
 ) -> dict:
     """Return user settings, creating defaults if needed."""
     db = _get_db(request)
+    result = dict(DEFAULT_SETTINGS)
     if db is not None:
         stored = await db.get_user_settings(user_id)
         if stored is not None:
             # Merge with defaults so new keys are always present
-            merged = dict(DEFAULT_SETTINGS)
-            merged.update(stored)
-            return merged
+            result.update(stored)
 
-    return dict(DEFAULT_SETTINGS)
+    # Append provider-aware fields
+    result.update(_get_provider_extras(request))
+    return result
 
 
 @router.put("")
@@ -92,4 +131,6 @@ async def update_settings(
     if db is not None:
         await db.save_user_settings(user_id, current)
 
+    # Append provider-aware fields
+    current.update(_get_provider_extras(request))
     return current

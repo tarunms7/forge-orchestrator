@@ -243,3 +243,64 @@ class ContractSetResponse(BaseModel):
 
     api_contracts: list[ApiContractResponse]
     type_contracts: list[TypeContractResponse]
+
+
+# ── Provider / catalog schemas ──────────────────────────────────────
+
+
+class CatalogCapabilities(BaseModel):
+    """Model capability flags for API responses."""
+
+    can_use_tools: bool
+    can_stream: bool
+    can_resume_session: bool
+    can_run_shell: bool
+    can_edit_files: bool
+    supports_mcp_servers: bool
+    max_context_tokens: int
+    supports_structured_output: bool
+    supports_reasoning: bool
+
+
+class CatalogEntrySummary(BaseModel):
+    """Public-facing summary of a catalog entry."""
+
+    alias: str
+    canonical_id: str
+    backend: str
+    tier: str
+    capabilities: CatalogCapabilities
+    validated_stages: list[str]
+
+
+class ProviderSummary(BaseModel):
+    """A registered provider and its models."""
+
+    name: str
+    models: list[CatalogEntrySummary]
+
+
+class ObservedHealthEntry(BaseModel):
+    """Observed health data for a specific model from health_state.json."""
+
+    spec: str
+    last_checked: str
+    stages_passing: list[str] = Field(default_factory=list)
+    stages_failing: list[str] = Field(default_factory=list)
+
+
+class ProviderListResponse(BaseModel):
+    """Response for GET /api/providers."""
+
+    providers: list[ProviderSummary]
+    observed_health: list[ObservedHealthEntry] = Field(default_factory=list)
+
+
+class ModelHistoryEntry(BaseModel):
+    """Schema for entries in the model_history JSON array."""
+
+    attempt: int
+    model: str
+    backend: str
+    result: str
+    cost_usd: float
