@@ -59,6 +59,12 @@ def test_format_output_with_lines():
     assert "Done." in result
 
 
+def test_format_output_multiline_code_block_shows_content_without_fence_rule():
+    result = format_output(["```python\nprint('hi')\n```"])
+    assert "print('hi')" in result
+    assert "[#484f58]────────────────────────────────────────[/]" not in result
+
+
 def test_format_output_no_typing_indicator_by_default():
     lines = ["line1", "line2"]
     result = format_output(lines)
@@ -393,6 +399,19 @@ def test_format_unified_output_valid_rich_markup():
     console.print(result)  # Raises MarkupError if broken
 
 
+def test_format_unified_output_review_code_fences_are_hidden():
+    entries = [
+        ("review", "```json"),
+        ("review", "{"),
+        ("review", '  "x": 1'),
+        ("review", "}"),
+        ("review", "```"),
+    ]
+    result = format_unified_output(entries)
+    assert '"x": 1' in result
+    assert "[#484f58]────────────────────────────────────────[/]" not in result
+
+
 # ── AgentOutput unified methods ────────────────────────────────────
 
 
@@ -534,6 +553,28 @@ def test_format_unified_incremental_gate_merges_into_review():
     )
     assert section == "review"
     assert "REVIEW 1" in text
+
+
+def test_format_unified_incremental_review_code_fences_are_hidden():
+    import forge.tui.widgets.agent_output as ao
+    from forge.tui.widgets.agent_output import format_unified_incremental
+
+    ao._IN_CODE_BLOCK = False
+
+    text1, section1, count1 = format_unified_incremental(
+        "review", "```json", current_section=None, review_count=0, is_first=True
+    )
+    text2, section2, count2 = format_unified_incremental(
+        "review", '  "x": 1', current_section=section1, review_count=count1, is_first=False
+    )
+    text3, _, _ = format_unified_incremental(
+        "review", "```", current_section=section2, review_count=count2, is_first=False
+    )
+
+    assert "REVIEW 1" in text1
+    assert "[#484f58]────────────────────────────────────────[/]" not in text1
+    assert '"x": 1' in text2
+    assert text3 == ""
 
 
 def test_scroll_debounce_flag_exists():

@@ -83,7 +83,12 @@ def _format_state_chip(state: str | None) -> str:
     return f"[bold #0d1117 on {color}] {label} [/]"
 
 
-def _render_markdown(line: str) -> str:
+def _iter_logical_lines(chunk: str) -> list[str]:
+    """Split streamed chunks into logical lines for incremental markdown rendering."""
+    return chunk.splitlines() or [chunk]
+
+
+def _render_markdown(line: str) -> str | None:
     """Convert common markdown patterns to Rich markup for TUI display.
 
     Handles headers, bold, inline code, code fences, and bullets.
@@ -96,7 +101,7 @@ def _render_markdown(line: str) -> str:
     # Code fence toggle
     if stripped.startswith("```"):
         _IN_CODE_BLOCK = not _IN_CODE_BLOCK
-        return f"[#484f58]{'─' * 40}[/]"
+        return None
 
     # Inside code block — render as dim monospace, escape markup
     if _IN_CODE_BLOCK:
@@ -126,6 +131,24 @@ def _render_markdown(line: str) -> str:
     line = re.sub(r"`([^`]+)`", r"[#79c0ff]\1[/]", line)
 
     return line
+
+
+def _render_unified_chunk(source_type: str, chunk: str) -> list[str]:
+    """Render a streamed chunk, preserving markdown state across logical lines."""
+    rendered_lines: list[str] = []
+    for line in _iter_logical_lines(chunk):
+        if source_type == "gate":
+            rendered_lines.append(f"  [#79c0ff]{_escape(line)}[/]" if line else "")
+            continue
+
+        rendered = _render_markdown(line)
+        if rendered is None:
+            continue
+        if source_type == "review":
+            rendered_lines.append(f"[#a371f7]{rendered}[/]" if rendered else "")
+        else:
+            rendered_lines.append(rendered)
+    return rendered_lines
 
 
 def format_header(task_id: str | None, title: str | None, state: str | None) -> str:
@@ -194,7 +217,13 @@ def format_output(
         )
     global _IN_CODE_BLOCK
     _IN_CODE_BLOCK = False  # Reset at start of full render
-    parts = [_render_markdown(line) for line in lines]
+    parts: list[str] = []
+    for chunk in lines:
+        for line in _iter_logical_lines(chunk):
+            rendered = _render_markdown(line)
+            if rendered is None:
+                continue
+            parts.append(rendered)
     if streaming:
         cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
         parts.append(f"[#58a6ff]● Typing{cursor}[/]")
@@ -243,12 +272,7 @@ def format_unified_output(
                 parts.append("")  # blank line before new section
             parts.append(header)
 
-        if source_type == "gate":
-            parts.append(f"  [#79c0ff]{_escape(line)}[/]")
-        elif source_type == "review":
-            parts.append(f"[#a371f7]{_render_markdown(line)}[/]")
-        else:
-            parts.append(_render_markdown(line))
+        parts.extend(_render_unified_chunk(source_type, line))
 
     if streaming:
         cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
@@ -287,12 +311,7 @@ def format_unified_incremental(
             parts.append("")
         parts.append(header)
 
-    if source_type == "gate":
-        parts.append(f"  [#79c0ff]{_escape(line)}[/]")
-    elif source_type == "review":
-        parts.append(f"[#a371f7]{_render_markdown(line)}[/]")
-    else:
-        parts.append(_render_markdown(line))
+    parts.extend(_render_unified_chunk(source_type, line))
 
     return "\n".join(parts), current_section, review_count
 
