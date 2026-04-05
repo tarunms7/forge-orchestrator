@@ -54,6 +54,7 @@ export default function CompletionSummary({
   const githubIssueNumber = useTaskStore((s) => s.githubIssueNumber);
   const followUpStatus = useTaskStore((s) => s.followUpStatus);
   const ciFixStatus = useTaskStore((s) => s.ciFixStatus);
+  const providerConfig = useTaskStore((s) => s.providerConfig);
 
   // Local fallback for manual PR creation (if auto-PR fails)
   const [manualPrLoading, setManualPrLoading] = useState(false);
@@ -321,6 +322,35 @@ export default function CompletionSummary({
                 Review ${totalReviewCost.toFixed(2)}
               </span>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Provider Config Snapshot */}
+      {providerConfig && Object.keys(providerConfig).length > 0 && (
+        <div className="results-section" style={{ marginBottom: "16px" }}>
+          <h3 className="results-title">Model Routing</h3>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", fontSize: "13px" }}>
+            {Object.entries(providerConfig).map(([stage, model]) => (
+              <span
+                key={stage}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "4px 10px",
+                  borderRadius: "var(--radius-sm)",
+                  background: "var(--bg-surface-2)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <span style={{ fontWeight: 600, color: "var(--text-primary)", textTransform: "capitalize" }}>
+                  {stage.replace(/_/g, " ")}:
+                </span>{" "}
+                <span style={{ fontFamily: "var(--font-mono, monospace)" }}>{model}</span>
+              </span>
+            ))}
           </div>
         </div>
       )}

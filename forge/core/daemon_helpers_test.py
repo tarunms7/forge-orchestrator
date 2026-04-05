@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from forge.core.daemon_helpers import (
+    _extract_activity,
     _extract_implementation_summary,
+    _extract_text,
     _filter_review_diff,
     _find_related_test_files,
     _get_changed_files_vs_main,
@@ -23,6 +25,7 @@ from forge.core.daemon_helpers import (
     async_subprocess,
     compute_worktree_path,
 )
+from forge.providers.base import EventKind, ProviderEvent
 
 
 def _make_proc(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
@@ -1171,3 +1174,79 @@ class TestParseForgeLearning:
         result = _parse_forge_learning(text)
         assert result is not None
         assert result["trigger"] == "bad import"
+
+
+# ── ProviderEvent-based helper tests ──────────────────────────────────
+
+
+class TestExtractTextProviderEvent:
+    """Test _extract_text with ProviderEvent input."""
+
+    def test_text_event_returns_text(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text="Hello world")
+        assert _extract_text(event) == "Hello world"
+
+    def test_text_event_skips_json(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text='{"key": "value"}')
+        assert _extract_text(event) is None
+
+    def test_text_event_skips_empty(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text="   ")
+        assert _extract_text(event) is None
+
+    def test_tool_use_event_returns_none(self):
+        event = ProviderEvent(kind=EventKind.TOOL_USE, tool_name="Read")
+        assert _extract_text(event) is None
+
+    def test_error_event_returns_none(self):
+        event = ProviderEvent(kind=EventKind.ERROR, text="something broke")
+        assert _extract_text(event) is None
+
+
+class TestExtractActivityProviderEvent:
+    """Test _extract_activity with ProviderEvent input."""
+
+    def test_text_event_returns_text(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text="Analyzing code")
+        assert _extract_activity(event) == "Analyzing code"
+
+    def test_text_event_skips_json(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text='[{"items": []}]')
+        assert _extract_activity(event) is None
+
+    def test_tool_use_returns_formatted_activity(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="Read",
+            tool_input=json.dumps({"file_path": "/src/models/user.py"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "Reading" in result
+        assert "user.py" in result
+
+    def test_tool_use_bash_returns_activity(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="Bash",
+            tool_input=json.dumps({"command": "pytest tests/ -x"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "pytest" in result
+
+    def test_tool_use_grep_returns_activity(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="Grep",
+            tool_input=json.dumps({"pattern": "def main"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "def main" in result
