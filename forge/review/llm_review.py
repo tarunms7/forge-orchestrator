@@ -34,6 +34,9 @@ PASS: <explanation covering what you verified>
 FAIL: <specific issues with file paths and line references>
 UNCERTAIN: <specific concerns you cannot resolve from the diff alone>
 
+The first non-empty line MUST start with PASS:, FAIL:, or UNCERTAIN:.
+Do NOT wrap the verdict in markdown, bullets, headings, or code fences.
+
 ## When to use UNCERTAIN
 - You see code that MIGHT be correct but depends on context you don't have
 - The task spec is ambiguous and the code matches ONE valid interpretation
@@ -415,35 +418,12 @@ def _parse_review_result(text: str) -> GateResult:
     if not text:
         return GateResult(passed=False, gate="gate2_llm_review", details="Empty review response")
 
-    upper = text.upper()
-
-    # 1. Ideal: response starts with verdict
-    if upper.startswith("PASS"):
+    verdict = _extract_review_verdict(text)
+    if verdict == "PASS":
         return GateResult(passed=True, gate="gate2_llm_review", details=text)
-    if upper.startswith("FAIL"):
+    if verdict == "FAIL":
         return GateResult(passed=False, gate="gate2_llm_review", details=text)
-    if upper.startswith("UNCERTAIN"):
-        return GateResult(passed=False, gate="gate2_llm_review", details=text, needs_human=True)
-
-    # 2. A line starts with the verdict (opus often writes analysis first)
-    for line in text.splitlines():
-        line_upper = line.strip().upper()
-        if line_upper.startswith("PASS"):
-            return GateResult(passed=True, gate="gate2_llm_review", details=text)
-        if line_upper.startswith("FAIL"):
-            return GateResult(passed=False, gate="gate2_llm_review", details=text)
-        if line_upper.startswith("UNCERTAIN"):
-            return GateResult(passed=False, gate="gate2_llm_review", details=text, needs_human=True)
-
-    # 3. Fallback: PASS/FAIL/UNCERTAIN at the start of any line (stricter than "anywhere")
-    pass_match = re.search(r"^PASS\b", upper, re.MULTILINE)
-    fail_match = re.search(r"^FAIL\b", upper, re.MULTILINE)
-    uncertain_match = re.search(r"^UNCERTAIN\b", upper, re.MULTILINE)
-    if pass_match and not fail_match:
-        return GateResult(passed=True, gate="gate2_llm_review", details=text)
-    if fail_match and not pass_match:
-        return GateResult(passed=False, gate="gate2_llm_review", details=text)
-    if uncertain_match and not pass_match and not fail_match:
+    if verdict == "UNCERTAIN":
         return GateResult(passed=False, gate="gate2_llm_review", details=text, needs_human=True)
 
     return GateResult(
@@ -451,3 +431,42 @@ def _parse_review_result(text: str) -> GateResult:
         gate="gate2_llm_review",
         details=f"Unclear review response (treating as fail): {text[:200]}",
     )
+
+
+def _extract_review_verdict(text: str) -> str | None:
+    """Extract PASS/FAIL/UNCERTAIN from reviewer text.
+
+    Models sometimes wrap the verdict in markdown such as `**PASS:**`,
+    `- FAIL:`, or `### UNCERTAIN:` even when explicitly told not to.
+    We accept common leading markdown wrappers while still requiring the
+    verdict to appear at the start of the text or start of a line.
+    """
+    verdict = _leading_verdict(text)
+    if verdict is not None:
+        return verdict
+
+    for line in text.splitlines():
+        verdict = _leading_verdict(line)
+        if verdict is not None:
+            return verdict
+
+    return None
+
+
+def _leading_verdict(text: str) -> str | None:
+    """Return PASS/FAIL/UNCERTAIN if *text* starts with one after markdown trim."""
+    candidate = text.strip()
+    if not candidate:
+        return None
+
+    previous = None
+    while candidate and candidate != previous:
+        previous = candidate
+        candidate = re.sub(r"^(?:[-*+>]+|\d+[.)]|#+)\s*", "", candidate)
+        candidate = re.sub(r"^(?:\*\*|__|`{1,3}|[*_~]+)+", "", candidate)
+        candidate = candidate.lstrip()
+
+    match = re.match(r"^(PASS|FAIL|UNCERTAIN)\b", candidate, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None

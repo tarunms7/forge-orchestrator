@@ -166,6 +166,14 @@ class TestParseReviewResult:
         result = _parse_review_result("Let me review...\nFAIL: bugs found")
         assert result.passed is False
 
+    def test_markdown_wrapped_pass_detected(self):
+        result = _parse_review_result("**PASS: looks good**")
+        assert result.passed is True
+
+    def test_bulleted_markdown_fail_detected(self):
+        result = _parse_review_result("Review summary:\n- **FAIL:** missing error handling")
+        assert result.passed is False
+
     def test_pass_mid_sentence_no_longer_matches(self):
         """PASS mid-sentence no longer matches with stricter regex (must be at line start)."""
         result = _parse_review_result("The verdict is PASS for this code")
@@ -395,6 +403,12 @@ class TestUncertainVerdict:
 
     def test_uncertain_on_line(self):
         text = "Analysis:\nThe code looks reasonable but...\nUNCERTAIN: Missing context about the caller's intent"
+        result = _parse_review_result(text)
+        assert result.passed is False
+        assert result.needs_human is True
+
+    def test_heading_wrapped_uncertain_detected(self):
+        text = "Analysis complete\n### UNCERTAIN: Missing context about the caller"
         result = _parse_review_result(text)
         assert result.passed is False
         assert result.needs_human is True
