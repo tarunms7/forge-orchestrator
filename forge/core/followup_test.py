@@ -51,7 +51,7 @@ class TestClassifyQuestions:
 
         assert result == {0: "task-abc", 1: "task-abc", 2: "task-abc"}
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_classification_parses_response(self, mock_sdk):
         """LLM returns valid JSON -> parsed correctly."""
         mock_result = MagicMock()
@@ -72,7 +72,7 @@ class TestClassifyQuestions:
         assert result == {0: "task-1", 1: "task-2"}
         mock_sdk.assert_called_once()
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_classification_handles_code_block(self, mock_sdk):
         """LLM wraps JSON in markdown code block -> still parsed."""
         mock_result = MagicMock()
@@ -88,7 +88,7 @@ class TestClassifyQuestions:
         result = await classify_questions(questions, tasks)
         assert result == {0: "task-1", 1: "task-1"}
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_classification_invalid_task_id_falls_back(self, mock_sdk):
         """LLM returns invalid task ID -> falls back to first task."""
         mock_result = MagicMock()
@@ -105,7 +105,7 @@ class TestClassifyQuestions:
         assert result[0] == "task-1"
         assert result[1] == "task-1"
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_failure_falls_back_to_first_task(self, mock_sdk):
         """When LLM call fails, all questions fall back to first task."""
         mock_sdk.side_effect = Exception("LLM unavailable")
@@ -119,7 +119,7 @@ class TestClassifyQuestions:
         result = await classify_questions(questions, tasks)
         assert result == {0: "task-1", 1: "task-1"}
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_returns_none_falls_back(self, mock_sdk):
         """When LLM returns None, fall back to first task."""
         mock_sdk.return_value = None

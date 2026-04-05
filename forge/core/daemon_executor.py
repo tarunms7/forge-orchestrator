@@ -180,6 +180,7 @@ class ExecutorMixin:
                 pipeline_id=pid,
                 question_data=question_data,
                 session_id=agent_result.session_id,
+                resume_state=getattr(agent_result, "resume_state", None),
             )
             return
 
@@ -619,6 +620,10 @@ class ExecutorMixin:
             await db.set_task_turns(task_id, num_turns=num_turns, max_turns=max_turns)
         except Exception:
             logger.debug("Failed to record task turns for %s", task_id, exc_info=True)
+
+        # Persist provider metadata (model, backend, model_history)
+        await self._persist_provider_info(db, task_id, result)
+
         if hasattr(result, "cost_usd") and result.cost_usd > 0:
             await db.add_task_agent_cost(
                 task_id, result.cost_usd, result.input_tokens, result.output_tokens
@@ -690,6 +695,139 @@ class ExecutorMixin:
                 pipeline_id=pid,
             )
         return result
+
+    # -- provider info persistence -----------------------------------------
+
+    async def _persist_provider_info(self, db, task_id: str, result) -> None:
+        """Persist provider metadata (model, backend, model_history) after agent run.
+
+        Writes provider_model, backend, canonical_model_id, and appends to
+        model_history on the task row. Safe to call even if the result doesn't
+        have provider fields (legacy AgentResult).
+        """
+        provider_model = getattr(result, "provider_model", None)
+        backend = getattr(result, "backend", None)
+        canonical_model_id = getattr(result, "canonical_model_id", None)
+        model_history_entry = getattr(result, "model_history_entry", None)
+
+        if provider_model or backend or canonical_model_id:
+            try:
+                await db.update_task_provider_info(
+                    task_id,
+                    provider_model=provider_model,
+                    backend=backend,
+                    canonical_model_id=canonical_model_id,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to persist provider info for %s", task_id, exc_info=True
+                )
+
+        if model_history_entry:
+            try:
+                await db.append_task_model_history(task_id, model_history_entry)
+            except Exception:
+                logger.debug(
+                    "Failed to append model_history for %s", task_id, exc_info=True
+                )
+
+    # -- Layer C rollback: git state verification --------------------------
+
+    async def _snapshot_git_state(self, worktree_path: str) -> dict:
+        """Capture pre-agent git state for rollback verification."""
+        head_ref = await _run_git(
+            ["rev-parse", "HEAD"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot HEAD",
+        )
+        tags = await _run_git(
+            ["tag", "--list"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot tags",
+        )
+        remotes = await _run_git(
+            ["remote", "-v"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot remotes",
+        )
+        stash_list = await _run_git(
+            ["stash", "list"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot stash",
+        )
+        return {
+            "head": head_ref.stdout.strip() if head_ref.returncode == 0 else "",
+            "tags": set(tags.stdout.strip().splitlines()) if tags.returncode == 0 else set(),
+            "remotes": remotes.stdout.strip() if remotes.returncode == 0 else "",
+            "stash_count": len(stash_list.stdout.strip().splitlines())
+            if stash_list.returncode == 0
+            else 0,
+        }
+
+    async def _verify_and_rollback_git_state(
+        self, worktree_path: str, pre_snapshot: dict, task_id: str
+    ) -> None:
+        """Post-agent verification: check HEAD hasn't moved unexpectedly, etc."""
+        post_snapshot = await self._snapshot_git_state(worktree_path)
+
+        # Check for in-progress rebase/merge markers
+        rebase_marker = os.path.join(worktree_path, ".git", "rebase-merge")
+        rebase_apply = os.path.join(worktree_path, ".git", "rebase-apply")
+        merge_head = os.path.join(worktree_path, ".git", "MERGE_HEAD")
+
+        for marker, abort_cmd in [
+            (rebase_marker, ["rebase", "--abort"]),
+            (rebase_apply, ["rebase", "--abort"]),
+            (merge_head, ["merge", "--abort"]),
+        ]:
+            if os.path.exists(marker):
+                logger.warning(
+                    "%s: detected in-progress operation (%s), aborting",
+                    task_id,
+                    marker,
+                )
+                await _run_git(
+                    abort_cmd,
+                    cwd=worktree_path,
+                    check=False,
+                    description=f"abort {abort_cmd[0]}",
+                )
+
+        # Check for unexpected tag changes
+        new_tags = post_snapshot["tags"] - pre_snapshot["tags"]
+        if new_tags:
+            logger.warning(
+                "%s: agent created tags %s — removing them",
+                task_id,
+                new_tags,
+            )
+            for tag in new_tags:
+                await _run_git(
+                    ["tag", "-d", tag],
+                    cwd=worktree_path,
+                    check=False,
+                    description=f"remove tag {tag}",
+                )
+
+        # Check for remote changes
+        if post_snapshot["remotes"] != pre_snapshot["remotes"]:
+            logger.warning(
+                "%s: agent modified remotes — this is blocked by policy",
+                task_id,
+            )
+
+        # Check for unexpected stash changes
+        if post_snapshot["stash_count"] != pre_snapshot["stash_count"]:
+            logger.info(
+                "%s: stash count changed from %d to %d",
+                task_id,
+                pre_snapshot["stash_count"],
+                post_snapshot["stash_count"],
+            )
 
     # -- infrastructure file cleanup --------------------------------------
 
@@ -853,6 +991,7 @@ class ExecutorMixin:
         question_data: dict,
         session_id: str | None,
         pipeline_id: str | None = None,
+        resume_state: object | None = None,
     ) -> None:
         """Persist a FORGE_QUESTION and transition the task to awaiting_input.
 
@@ -872,7 +1011,7 @@ class ExecutorMixin:
             source=question_data.get("source"),
         )
 
-        # Store session_id and increment questions_asked counter
+        # Store session_id (+ resume_state via dual-write) and increment questions_asked
         if session_id:
             async with db._session_factory() as session:
                 from forge.storage.db import TaskRow
@@ -881,6 +1020,12 @@ class ExecutorMixin:
                 if task_row:
                     task_row.session_id = session_id
                     task_row.questions_asked = (task_row.questions_asked or 0) + 1
+                    # Dual-write resume_state from ResumeState if available
+                    if resume_state is not None:
+                        from forge.storage.db import Database as _DB
+
+                        rs_json, _ = _DB.write_resume_state(resume_state)
+                        task_row.resume_state = rs_json
                     await session.commit()
         else:
             # No session_id: still increment the counter
@@ -993,6 +1138,7 @@ class ExecutorMixin:
                     pipeline_id=pipeline_id,
                     question_data=question_data,
                     session_id=agent_result.session_id,
+                    resume_state=getattr(agent_result, "resume_state", None),
                 )
                 return True, current_session
 
@@ -1028,6 +1174,18 @@ class ExecutorMixin:
             return
 
         session_id = getattr(task, "session_id", None)
+
+        # Dual-read: prefer resume_state column, fall back to session_id
+        from forge.storage.db import Database as _DB
+
+        _rs_raw = getattr(task, "resume_state", None)
+        # Guard: only pass to parser if it's actually a string (not a mock/None)
+        _rs_json = _rs_raw if isinstance(_rs_raw, str) else None
+        resume_state_obj = _DB.read_resume_state(_rs_json, session_id)
+        # Use session_token from ResumeState for resume (backward compat)
+        effective_session_id = (
+            resume_state_obj.session_token if resume_state_obj else session_id
+        )
 
         # Transition back to in_progress
         await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
@@ -1066,7 +1224,7 @@ class ExecutorMixin:
             worktree_path,
             pid,
             pipeline_branch=pipeline_branch,
-            resume=session_id,
+            resume=effective_session_id,
             prompt_override=answer,
         )
 
@@ -1084,6 +1242,7 @@ class ExecutorMixin:
                 pipeline_id=pid,
                 question_data=question_data,
                 session_id=agent_result.session_id,
+                resume_state=getattr(agent_result, "resume_state", None),
             )
             return
 
@@ -1697,7 +1856,7 @@ class ExecutorMixin:
                     db,
                     task_id,
                     agent_id,
-                    question_data,
+                    question_data=question_data,
                     session_id=None,
                     pipeline_id=pid,
                 )

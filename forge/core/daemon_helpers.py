@@ -209,7 +209,26 @@ def _parse_forge_learning(text: str | None) -> dict | None:
 
 
 def _extract_text(message) -> str | None:
-    """Extract human-readable text from a claude-code-sdk message."""
+    """Extract human-readable text from a claude-code-sdk message or ProviderEvent.
+
+    Accepts both legacy SDK messages (AssistantMessage/ResultMessage) and
+    normalized ProviderEvent objects from the provider protocol.
+    """
+    # ── Provider protocol path: ProviderEvent ──
+    from forge.providers.base import EventKind, ProviderEvent
+
+    if isinstance(message, ProviderEvent):
+        if message.kind == EventKind.TEXT and message.text:
+            text = message.text.strip()
+            if not text:
+                return None
+            # Skip JSON blobs (planner output, etc.)
+            if text.startswith("{") or text.startswith("["):
+                return None
+            return text
+        return None
+
+    # ── Legacy SDK path ──
     try:
         from claude_code_sdk import AssistantMessage, ResultMessage
     except ImportError:
@@ -227,21 +246,41 @@ def _extract_text(message) -> str | None:
                 parts.append(text)
         return "\n".join(parts) if parts else None
     if isinstance(message, ResultMessage):
-        # ResultMessage.result is the final plan JSON — not human-readable.
-        # Don't stream it to the TUI; the plan is consumed by the planner's parser.
         return None
     return None
 
 
 def _extract_activity(message) -> str | None:
-    """Extract human-readable activity from a claude-code-sdk message.
+    """Extract human-readable activity from a claude-code-sdk message or ProviderEvent.
 
     Unlike ``_extract_text`` which only returns TextBlock content, this
     also formats ToolUseBlock messages as short activity descriptions
-    (e.g. "📖 Reading src/models/user.py").  This makes planner and agent
-    progress visible in the TUI even during tool-heavy exploration phases
-    where no text is produced.
+    (e.g. "📖 Reading src/models/user.py").
+
+    Accepts both legacy SDK messages and normalized ProviderEvent objects.
     """
+    # ── Provider protocol path: ProviderEvent ──
+    from forge.providers.base import EventKind, ProviderEvent
+
+    if isinstance(message, ProviderEvent):
+        if message.kind == EventKind.TEXT and message.text:
+            text = message.text.strip()
+            if not text or text.startswith("{") or text.startswith("["):
+                return None
+            return text
+        if message.kind == EventKind.TOOL_USE and message.tool_name:
+            # Parse tool_input JSON for activity formatting
+            inp = {}
+            if message.tool_input:
+                try:
+                    inp = _json.loads(message.tool_input)
+                except (ValueError, TypeError):
+                    pass
+            label = _format_tool_activity(message.tool_name, inp)
+            return label
+        return None
+
+    # ── Legacy SDK path ──
     try:
         from claude_code_sdk import AssistantMessage, ResultMessage
     except ImportError:
@@ -268,7 +307,6 @@ def _extract_activity(message) -> str | None:
         return "\n".join(parts) if parts else None
 
     if isinstance(message, ResultMessage):
-        # ResultMessage.result is the final plan JSON — not human-readable.
         return None
     return None
 
