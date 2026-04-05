@@ -474,6 +474,16 @@ class ForgeApp(App):
             logger.warning("Cannot record answer: DB or pipeline_id not set")
             return
 
+        emitter = getattr(self._daemon, "_events", None) if self._daemon else None
+
+        def _has_live_handler(event_type: str) -> bool:
+            if emitter is None:
+                return False
+            handlers = getattr(emitter, "_handlers", None)
+            if isinstance(handlers, dict):
+                return bool(handlers.get(event_type))
+            return hasattr(emitter, "emit")
+
         # Planning questions use __planning__ sentinel
         is_planning = task_id == "__planning__"
         question_id: str | None = None
@@ -511,9 +521,9 @@ class ForgeApp(App):
 
         if is_planning:
             signaled_live_planner = False
-            if self._daemon and hasattr(self._daemon, "_events"):
+            if _has_live_handler("planning:answer"):
                 try:
-                    await self._daemon._events.emit(
+                    await emitter.emit(
                         "planning:answer",
                         {
                             "question_id": question_id,
@@ -533,9 +543,9 @@ class ForgeApp(App):
         else:
             # Notify daemon to resume the task
             signaled_live_agent = False
-            if self._daemon and hasattr(self._daemon, "_events"):
+            if _has_live_handler("task:answer"):
                 try:
-                    await self._daemon._events.emit(
+                    await emitter.emit(
                         "task:answer",
                         {
                             "task_id": task_id,

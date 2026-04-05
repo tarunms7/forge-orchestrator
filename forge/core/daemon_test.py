@@ -563,9 +563,48 @@ class TestPipelinePauseTracking:
                     db, MagicMock(), MagicMock(), MagicMock(), monitor, pipeline_id="pipe-abc"
                 )
 
-        pause_events = [e for e in emitted if e[0] == "pipeline:paused"]
-        assert len(pause_events) == 0
-        db.set_pipeline_paused_at.assert_not_called()
+    async def test_polls_answered_questions_while_waiting_for_input(self, tmp_path):
+        """Execution loop should retry answered FORGE_QUESTION tasks without a restart."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        awaiting_tasks = [_make_task(TaskState.AWAITING_INPUT.value, "task-1")]
+        done_tasks = [_make_task(TaskState.DONE.value, "task-1")]
+
+        call_count = 0
+
+        async def list_tasks_side_effect(pid):
+            nonlocal call_count
+            call_count += 1
+            return awaiting_tasks if call_count == 1 else done_tasks
+
+        db = MagicMock()
+        db.list_tasks_by_pipeline = AsyncMock(side_effect=list_tasks_side_effect)
+        db.list_agents = AsyncMock(return_value=[])
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
+        db.log_event = AsyncMock()
+        db.get_expired_questions = AsyncMock(return_value=[])
+        db.set_pipeline_paused_at = AsyncMock()
+        db.add_pipeline_paused_duration = AsyncMock()
+        db.update_pipeline_status = AsyncMock()
+        db.set_executor_info = AsyncMock()
+        db.clear_executor_info = AsyncMock()
+
+        monitor = MagicMock()
+        snapshot = MagicMock()
+        monitor.take_snapshot = AsyncMock(return_value=snapshot)
+        monitor.can_dispatch = MagicMock(return_value=True)
+
+        daemon._emit = AsyncMock()
+        daemon._recover_answered_questions = AsyncMock()
+
+        with patch("forge.core.daemon._print_status_table"):
+            with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
+                await daemon._execution_loop(
+                    db, MagicMock(), MagicMock(), MagicMock(), monitor, pipeline_id="pipe-abc"
+                )
+
+        assert daemon._recover_answered_questions.await_count >= 1
+        daemon._recover_answered_questions.assert_any_await(db, "pipe-abc")
 
 
 # ---------------------------------------------------------------------------

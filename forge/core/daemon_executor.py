@@ -26,7 +26,7 @@ from forge.core.daemon_helpers import (
 )
 from forge.core.logging_config import make_console
 from forge.core.model_router import select_model
-from forge.core.models import TaskState
+from forge.core.models import AgentState, TaskState
 from forge.core.sanitize import validate_task_id
 from forge.learning.guard import GuardTriggered, RuntimeGuard
 from forge.learning.store import format_lessons_block, row_to_lesson
@@ -1191,30 +1191,11 @@ class ExecutorMixin:
                 logger.debug("_on_task_answered: task %s already active, skipping", task_id)
                 return
 
-        # Acquire an agent slot via Scheduler
-        from forge.core.models import row_to_agent, row_to_record
-        from forge.core.scheduler import Scheduler
-
-        prefix = pipeline_id[:8] if pipeline_id else None
-        agents = await db.list_agents(prefix=prefix)
-        agent_records = [row_to_agent(a) for a in agents]
-        tasks = await (db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks())
-        task_records = [row_to_record(t) for t in tasks]
-        dispatch_plan = Scheduler.dispatch_plan(
-            task_records,
-            agent_records,
-            self._effective_max_agents,
-        )
-
-        agent_id = None
-        for tid, aid in dispatch_plan:
-            if tid == task_id:
-                agent_id = aid
-                break
+        agent_id = await self._select_resume_agent(db, task, pipeline_id)
 
         if not agent_id:
             logger.info(
-                "_on_task_answered: no slot available for %s, will retry on next cycle",
+                "_on_task_answered: no idle agent available for %s, will retry on next cycle",
                 task_id,
             )
             return
@@ -1261,6 +1242,34 @@ class ExecutorMixin:
         )
         async with self._active_tasks_lock:
             self._active_tasks[task_id] = atask
+
+    async def _select_resume_agent(self, db, task, pipeline_id: str) -> str | None:
+        """Pick an idle agent for resuming an answered FORGE_QUESTION.
+
+        Resume paths should bypass the normal ready-task scheduler because
+        ``awaiting_input`` tasks are intentionally excluded from the ready queue.
+        Prefer the task's previously assigned agent when it is idle so the
+        continuation stays on the same logical worker.
+        """
+        prefix = pipeline_id[:8] if pipeline_id else None
+        agents = await db.list_agents(prefix=prefix)
+
+        idle_agent_ids: list[str] = []
+        for agent in agents:
+            state = getattr(agent, "state", AgentState.IDLE.value)
+            if state in (AgentState.IDLE, AgentState.IDLE.value, None, ""):
+                agent_id = getattr(agent, "id", None)
+                if agent_id:
+                    idle_agent_ids.append(agent_id)
+
+        if not idle_agent_ids:
+            return None
+
+        preferred_agent = getattr(task, "assigned_agent", None)
+        if preferred_agent and preferred_agent in idle_agent_ids:
+            return preferred_agent
+
+        return idle_agent_ids[0]
 
     async def _handle_review_answer(
         self, db, task_id: str, agent_id: str, answer: str, pipeline_id: str

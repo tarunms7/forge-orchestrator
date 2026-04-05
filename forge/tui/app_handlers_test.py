@@ -732,6 +732,45 @@ async def test_task_answer_without_live_agent_keeps_task_waiting():
 
 
 @pytest.mark.asyncio
+async def test_task_answer_with_daemon_but_no_live_answer_handler_keeps_task_waiting():
+    """Saving an answer without a live task:answer listener should not fake a resume."""
+    from forge.core.events import EventEmitter
+    from forge.tui.app import ForgeApp
+    from forge.tui.state import TuiState
+
+    class FakeDaemon:
+        _events = EventEmitter()
+
+    event = MagicMock()
+    event.task_id = "t1"
+    event.answer = "Option A"
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pending_questions = AsyncMock(
+        return_value=[MagicMock(task_id="t1", answer=None, id="q1")]
+    )
+    app._db.answer_question = AsyncMock()
+    app._pipeline_id = "pipe1"
+    app._daemon = FakeDaemon()
+    app.notify = MagicMock()
+    app._state = TuiState()
+    app._state.tasks = {"t1": {"id": "t1", "state": "awaiting_input", "title": "Review task"}}
+    app._state.pending_questions["t1"] = {"question": "Approve?"}
+
+    await app.on_chat_thread_answer_submitted(event)
+
+    app._db.answer_question.assert_awaited_once_with("q1", "Option A", "human")
+    assert app._state.tasks["t1"]["state"] == "awaiting_input"
+    assert "t1" not in app._state.pending_questions
+    assert app._state.question_history["t1"] == [
+        {"question": {"question": "Approve?"}, "answer": "Option A"}
+    ]
+    app.notify.assert_called_once()
+    assert "live agent is not attached" in app.notify.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
 async def test_final_approval_follow_up_queues_local_task_and_resumes():
     """Follow-up should create the task, sync local state, and resume execution."""
     from forge.tui.app import ForgeApp
