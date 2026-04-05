@@ -156,6 +156,8 @@ class TuiState:
         if not tid:
             return
         new_state = data.get("state", "")
+        if new_state != "awaiting_input":
+            self.pending_questions.pop(tid, None)
         if new_state in ("done", "error"):
             self.streaming_task_ids.discard(tid)
         # Clear merge substatus when task leaves MERGING

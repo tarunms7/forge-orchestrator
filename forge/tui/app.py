@@ -1715,6 +1715,16 @@ class ForgeApp(App):
         events = await self._db.list_events(pipeline.id)
         for evt in events:
             state.apply_event(evt.event_type, evt.payload or {})
+        try:
+            pending = await self._db.get_pending_questions(pipeline.id)
+            pending_ids = {q.task_id for q in pending if getattr(q, "task_id", None)}
+            state.pending_questions = {
+                task_id: question
+                for task_id, question in state.pending_questions.items()
+                if task_id in pending_ids
+            }
+        except Exception:
+            logger.debug("Failed to reconcile pending questions for pipeline %s", pipeline.id)
         self._replace_state(state)
         self._pipeline_id = pipeline.id
         self._pipeline_start_time = time.time()

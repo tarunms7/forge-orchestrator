@@ -384,6 +384,36 @@ async def test_history_resume_planned_pipeline_with_list_task_graph_reopens_plan
 
 
 @pytest.mark.asyncio
+async def test_replay_state_filters_answered_questions_from_history():
+    """Replay should not resurrect questions that are already answered in the DB."""
+    from forge.tui.app import ForgeApp
+
+    pipeline = MagicMock(id="pipe-answered", base_branch="main", branch_name="forge/answered")
+    answered_question_event = MagicMock(
+        event_type="task:question",
+        payload={
+            "task_id": "t1",
+            "question": {"id": "q1", "question": "Approve?", "suggestions": ["1", "2"]},
+        },
+    )
+    state_event = MagicMock(
+        event_type="pipeline:plan_ready",
+        payload={"tasks": [{"id": "t1", "title": "Task", "description": "", "files": []}]},
+    )
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.list_events = AsyncMock(return_value=[state_event, answered_question_event])
+    app._db.get_pending_questions = AsyncMock(return_value=[])
+    app._replace_state = MagicMock()
+
+    await app._replay_state_for_pipeline(pipeline)
+
+    replayed_state = app._replace_state.call_args[0][0]
+    assert replayed_state.pending_questions == {}
+
+
+@pytest.mark.asyncio
 async def test_history_resume_interrupted_planning_restarts_from_scratch():
     """Shift+R should restart planning from scratch after an interrupted planning session."""
     from forge.tui.app import ForgeApp
