@@ -1320,10 +1320,12 @@ class ForgeApp(App):
                 )
                 cost_estimate = {"estimated_cost": cost_float}
                 model_assignments = {
-                    t.id: select_model(
-                        settings.model_strategy,
-                        "agent",
-                        t.complexity.value if hasattr(t.complexity, "value") else t.complexity,
+                    t.id: str(
+                        select_model(
+                            settings.model_strategy,
+                            "agent",
+                            t.complexity.value if hasattr(t.complexity, "value") else t.complexity,
+                        )
                     )
                     for t in self._graph.tasks
                 }
