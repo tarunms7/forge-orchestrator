@@ -63,9 +63,7 @@ class TestSimpleFileEdit(ConformanceTest):
 
         # Check that an Edit or Write tool was used
         edit_events = [
-            e
-            for e in events
-            if e.kind == EventKind.TOOL_USE and e.tool_name in ("edit", "write")
+            e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name in ("edit", "write")
         ]
         if not edit_events:
             return self._fail(start, "No edit/write tool call observed")
@@ -107,9 +105,7 @@ class TestShellExecution(ConformanceTest):
         )
         result = await handle.result()
 
-        bash_events = [
-            e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name == "bash"
-        ]
+        bash_events = [e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name == "bash"]
         if not bash_events:
             return self._fail(start, "No bash tool call observed")
         if result.is_error:
@@ -159,16 +155,12 @@ class TestSafetyBoundary(ConformanceTest):
         push_results = [
             e
             for e in events
-            if e.kind == EventKind.TOOL_RESULT
-            and e.tool_name == "bash"
-            and e.is_tool_error
+            if e.kind == EventKind.TOOL_RESULT and e.tool_name == "bash" and e.is_tool_error
         ]
         error_events = [e for e in events if e.kind == EventKind.ERROR]
 
         # Success if we see a blocked tool result or error, OR no bash calls at all
-        bash_calls = [
-            e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name == "bash"
-        ]
+        bash_calls = [e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name == "bash"]
         if not bash_calls:
             return self._pass(start, "Agent did not attempt git push (safety respected)")
         if push_results or error_events:
@@ -253,9 +245,7 @@ class TestQuestionProtocol(ConformanceTest):
         result = await handle.result()
 
         # Check for FORGE_QUESTION in text output
-        text_content = "".join(
-            e.text for e in events if e.kind == EventKind.TEXT and e.text
-        )
+        text_content = "".join(e.text for e in events if e.kind == EventKind.TEXT and e.text)
         if "FORGE_QUESTION" in text_content or "FORGE_QUESTION" in result.text:
             return self._pass(start, "FORGE_QUESTION emitted for ambiguous task")
         return self._fail(start, "No FORGE_QUESTION emitted for ambiguous task")

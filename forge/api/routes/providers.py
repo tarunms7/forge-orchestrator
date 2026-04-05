@@ -82,10 +82,7 @@ async def list_providers(
     providers: list[ProviderSummary] = []
     if registry is not None:
         for provider in registry.all_providers():
-            models = [
-                _catalog_entry_to_summary(entry)
-                for entry in provider.catalog_entries()
-            ]
+            models = [_catalog_entry_to_summary(entry) for entry in provider.catalog_entries()]
             providers.append(ProviderSummary(name=provider.name, models=models))
     else:
         # Fallback: build from static catalog when no registry is wired

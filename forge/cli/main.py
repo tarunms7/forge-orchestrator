@@ -113,7 +113,9 @@ def init(project_dir: str) -> None:
     multiple=True,
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
 )
-@click.option("--provider", default=None, help="Default provider for all stages (e.g. claude, openai)")
+@click.option(
+    "--provider", default=None, help="Default provider for all stages (e.g. claude, openai)"
+)
 @click.option("--planner", default=None, help="Model for planner stage (e.g. claude:opus)")
 @click.option("--agent", default=None, help="Model for all agent complexity tiers")
 @click.option("--reviewer", default=None, help="Model for reviewer stage")
@@ -180,7 +182,9 @@ def run(
             settings.planner_model = auto_table["planner"].get("medium", settings.planner_model)
         if "agent" in auto_table:
             settings.agent_model_low = auto_table["agent"].get("low", settings.agent_model_low)
-            settings.agent_model_medium = auto_table["agent"].get("medium", settings.agent_model_medium)
+            settings.agent_model_medium = auto_table["agent"].get(
+                "medium", settings.agent_model_medium
+            )
             settings.agent_model_high = auto_table["agent"].get("high", settings.agent_model_high)
         if "reviewer" in auto_table:
             settings.reviewer_model = auto_table["reviewer"].get("medium", settings.reviewer_model)

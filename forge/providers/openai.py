@@ -363,9 +363,7 @@ class OpenAIProvider:
         if backend is None or backend == "codex-sdk":
             codex = _try_import_codex()
             if codex is not None:
-                details_parts.append(
-                    f"codex-sdk v{getattr(codex, '__version__', 'unknown')}"
-                )
+                details_parts.append(f"codex-sdk v{getattr(codex, '__version__', 'unknown')}")
             else:
                 errors.append("openai-codex-sdk not installed")
 
@@ -373,9 +371,7 @@ class OpenAIProvider:
         if backend is None or backend == "openai-agents-sdk":
             agents = _try_import_agents()
             if agents is not None:
-                details_parts.append(
-                    f"agents-sdk v{getattr(agents, '__version__', 'unknown')}"
-                )
+                details_parts.append(f"agents-sdk v{getattr(agents, '__version__', 'unknown')}")
             else:
                 errors.append("openai-agents not installed")
 

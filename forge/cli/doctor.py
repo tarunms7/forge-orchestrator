@@ -276,7 +276,9 @@ def _check_experimental_models() -> list[tuple[str, str, str]]:
         from forge.providers.base import ModelSpec
         from forge.providers.catalog import FORGE_MODEL_CATALOG
 
-        experimental = {f"{e.provider}:{e.alias}" for e in FORGE_MODEL_CATALOG if e.tier == "experimental"}
+        experimental = {
+            f"{e.provider}:{e.alias}" for e in FORGE_MODEL_CATALOG if e.tier == "experimental"
+        }
         for stage, value in overrides.items():
             spec = ModelSpec.parse(value)
             spec_str = str(spec)

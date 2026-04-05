@@ -35,6 +35,7 @@ from forge.providers.openai import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def provider() -> OpenAIProvider:
     return OpenAIProvider()
@@ -401,9 +402,13 @@ class TestCodexStart:
     @pytest.fixture()
     def _mock_codex_sdk(self) -> Any:
         """Create a mock Codex SDK module."""
+
         async def _fake_stream(**kwargs: Any) -> Any:
             events = [
-                {"type": "item.completed", "item": {"type": "agent_message", "content": "Done", "id": "1"}},
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "content": "Done", "id": "1"},
+                },
                 {"type": "turn.completed", "usage": {"input_tokens": 50, "output_tokens": 25}},
             ]
             for e in events:
@@ -789,6 +794,7 @@ class TestAbortFlow:
         output_contract: OutputContract,
     ) -> None:
         """Test that abort cancels a running Agents execution."""
+
         async def _slow_stream(*args: Any, **kwargs: Any) -> Any:
             await asyncio.sleep(10)
             yield {"type": "response.completed"}  # pragma: no cover

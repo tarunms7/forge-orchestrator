@@ -171,9 +171,7 @@ class TestReadesCodebase(ConformanceTest):
 
         read_tools = {"read", "glob", "grep"}
         tool_calls = [
-            e
-            for e in events
-            if e.kind == EventKind.TOOL_USE and e.tool_name in read_tools
+            e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name in read_tools
         ]
         if not tool_calls:
             return self._fail(start, "Planner did not use any Read/Glob/Grep tools")
@@ -217,9 +215,7 @@ class TestRespectsToolAllowlist(ConformanceTest):
         # Check for forbidden tool calls
         forbidden_tools = {"edit", "write", "bash"}
         violations = [
-            e
-            for e in events
-            if e.kind == EventKind.TOOL_USE and e.tool_name in forbidden_tools
+            e for e in events if e.kind == EventKind.TOOL_USE and e.tool_name in forbidden_tools
         ]
         if violations:
             tool_names = [e.tool_name for e in violations]
