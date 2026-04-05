@@ -233,3 +233,108 @@ def test_question_timeout_too_low_raises():
 def test_question_timeout_too_high_raises():
     with pytest.raises(ValidationError, match="question_timeout must be between 60 and 7200"):
         ForgeSettings(question_timeout=7201)
+
+
+# --- Multi-provider fields ---
+
+
+class TestMultiProviderFields:
+    def test_openai_enabled_default(self):
+        s = ForgeSettings()
+        assert s.openai_enabled is False
+
+    def test_openai_enabled_from_env(self, monkeypatch):
+        monkeypatch.setenv("FORGE_OPENAI_ENABLED", "true")
+        s = ForgeSettings()
+        assert s.openai_enabled is True
+
+    def test_per_stage_model_defaults_none(self):
+        s = ForgeSettings()
+        assert s.planner_model is None
+        assert s.agent_model_low is None
+        assert s.agent_model_medium is None
+        assert s.agent_model_high is None
+        assert s.reviewer_model is None
+        assert s.contract_builder_model is None
+        assert s.ci_fix_model is None
+
+    def test_per_stage_model_from_env(self, monkeypatch):
+        monkeypatch.setenv("FORGE_PLANNER_MODEL", "opus")
+        monkeypatch.setenv("FORGE_REVIEWER_MODEL", "openai:gpt-5.4")
+        s = ForgeSettings()
+        assert s.planner_model == "opus"
+        assert s.reviewer_model == "openai:gpt-5.4"
+
+    def test_cost_rates_default_none(self):
+        s = ForgeSettings()
+        assert s.cost_rates is None
+
+
+class TestBuildRoutingOverrides:
+    def test_empty_when_no_models_set(self):
+        s = ForgeSettings()
+        assert s.build_routing_overrides() == {}
+
+    def test_includes_set_fields(self):
+        s = ForgeSettings(
+            planner_model="opus",
+            agent_model_low="haiku",
+            ci_fix_model="sonnet",
+        )
+        overrides = s.build_routing_overrides()
+        assert overrides == {
+            "planner_model": "opus",
+            "agent_model_low": "haiku",
+            "ci_fix_model": "sonnet",
+        }
+
+    def test_all_fields(self):
+        s = ForgeSettings(
+            planner_model="opus",
+            agent_model_low="haiku",
+            agent_model_medium="sonnet",
+            agent_model_high="opus",
+            reviewer_model="sonnet",
+            contract_builder_model="opus",
+            ci_fix_model="sonnet",
+        )
+        overrides = s.build_routing_overrides()
+        assert len(overrides) == 7
+
+    def test_accepts_provider_prefix(self):
+        s = ForgeSettings(planner_model="openai:gpt-5.4")
+        overrides = s.build_routing_overrides()
+        assert overrides["planner_model"] == "openai:gpt-5.4"
+
+
+class TestBuildCostRegistryOverrides:
+    def test_legacy_fields_migrated(self):
+        s = ForgeSettings()
+        overrides = s.build_cost_registry_overrides()
+        assert "claude:sonnet" in overrides
+        assert "claude:opus" in overrides
+        assert "claude:haiku" in overrides
+        assert overrides["claude:sonnet"].input_per_1k == 0.003
+
+    def test_new_cost_rates_overlay(self):
+        s = ForgeSettings(
+            cost_rates={
+                "openai:gpt-5.4": {"input_per_1k": 0.01, "output_per_1k": 0.03},
+            }
+        )
+        overrides = s.build_cost_registry_overrides()
+        assert "openai:gpt-5.4" in overrides
+        assert overrides["openai:gpt-5.4"].input_per_1k == 0.01
+        # Legacy still present
+        assert "claude:sonnet" in overrides
+
+    def test_new_rates_override_legacy(self):
+        """New cost_rates should override legacy rates for the same key."""
+        s = ForgeSettings(
+            cost_rates={
+                "claude:sonnet": {"input_per_1k": 0.005, "output_per_1k": 0.025},
+            }
+        )
+        overrides = s.build_cost_registry_overrides()
+        assert overrides["claude:sonnet"].input_per_1k == 0.005
+        assert overrides["claude:sonnet"].output_per_1k == 0.025

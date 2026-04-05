@@ -8,14 +8,18 @@ import subprocess
 import click
 import pytest
 
+from unittest.mock import MagicMock
+
 from forge.config.project_config import (
     CMD_DISABLED,
     DEFAULT_FORGE_TOML,
     AgentConfig,
     CheckConfig,
+    CustomModelConfig,
     IntegrationCheckConfig,
     ProjectConfig,
     ReviewConfig,
+    RoutingConfig,
     apply_project_config,
     auto_detect_base_branch,
     load_repo_configs,
@@ -37,9 +41,11 @@ class TestProjectConfigDefaults:
         assert config.review.max_retries == 3
         assert config.agents.max_parallel == 5
         assert config.agents.max_turns == 75
-        assert config.agents.model == "sonnet"
+        assert config.agents.model == "claude:sonnet"
         assert config.agents.autonomy == "balanced"
         assert config.instructions == ""
+        assert config.routing.planner is None
+        assert config.custom_models == []
 
     def test_default_toml_is_parseable(self, tmp_path):
         """The DEFAULT_FORGE_TOML template must be valid TOML."""
@@ -70,7 +76,7 @@ class TestProjectConfigFromToml:
         toml_path.write_text("[agents]\nmax_turns = 40\n")
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.agents.max_turns == 40
-        assert config.agents.model == "sonnet"  # default
+        assert config.agents.model == "claude:sonnet"  # default
         assert config.lint.enabled is True  # default
 
     def test_disable_tests(self, tmp_path):
@@ -285,11 +291,20 @@ class TestAgentConfigValidation:
     def test_valid_model_values(self):
         for model in ("sonnet", "opus", "haiku"):
             a = AgentConfig(model=model)
-            assert a.model == model
+            # Bare aliases are now parsed to provider:model format
+            assert ":" in a.model
 
-    def test_invalid_model_raises(self):
+    def test_bare_alias_parsed_to_provider_model(self):
+        a = AgentConfig(model="sonnet")
+        assert a.model == "claude:sonnet"
+
+    def test_provider_prefix_accepted(self):
+        a = AgentConfig(model="openai:gpt-5.4")
+        assert a.model == "openai:gpt-5.4"
+
+    def test_empty_model_raises(self):
         with pytest.raises(ValueError, match="model must be"):
-            AgentConfig(model="gpt-4")
+            AgentConfig(model="")
 
     def test_valid_autonomy_values(self):
         for autonomy in ("full", "balanced", "supervised"):
@@ -665,3 +680,179 @@ class TestLoadRepoConfigs:
         assert config.agents.max_turns == 75
         # Warning was logged
         assert any("broken" in r.message or "forge.toml" in r.message for r in caplog.records)
+
+
+# ── Routing config tests ──────────────────────────────────────────────
+
+
+class TestRoutingConfig:
+    def test_defaults_all_none(self):
+        r = RoutingConfig()
+        assert r.planner is None
+        assert r.agent_low is None
+        assert r.reviewer is None
+        assert r.ci_fix is None
+
+    def test_to_overrides_empty(self):
+        r = RoutingConfig()
+        assert r.to_overrides() == {}
+
+    def test_to_overrides_partial(self):
+        r = RoutingConfig(planner="opus", ci_fix="haiku")
+        overrides = r.to_overrides()
+        assert overrides == {"planner_model": "opus", "ci_fix_model": "haiku"}
+
+    def test_to_overrides_all(self):
+        r = RoutingConfig(
+            planner="opus",
+            agent_low="haiku",
+            agent_medium="sonnet",
+            agent_high="opus",
+            reviewer="sonnet",
+            contract_builder="opus",
+            ci_fix="haiku",
+        )
+        assert len(r.to_overrides()) == 7
+
+    def test_from_toml(self, tmp_path):
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            "[routing]\n"
+            'planner = "opus"\n'
+            'agent_low = "haiku"\n'
+            'reviewer = "openai:gpt-5.4"\n'
+            'ci_fix = "sonnet"\n'
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.routing.planner == "opus"
+        assert config.routing.agent_low == "haiku"
+        assert config.routing.reviewer == "openai:gpt-5.4"
+        assert config.routing.ci_fix == "sonnet"
+        assert config.routing.agent_medium is None
+
+    def test_from_toml_no_routing_section(self, tmp_path):
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text("[agents]\nmax_turns = 25\n")
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.routing.planner is None
+
+
+# ── Custom models tests ───────────────────────────────────────────────
+
+
+class TestCustomModelConfig:
+    def test_valid_custom_model(self):
+        cm = CustomModelConfig(
+            alias="my-model", provider="custom", canonical_id="my-model-v1", backend="custom-sdk"
+        )
+        assert cm.alias == "my-model"
+
+    def test_missing_alias_raises(self):
+        with pytest.raises(ValueError, match="alias"):
+            CustomModelConfig(provider="custom")
+
+    def test_missing_provider_raises(self):
+        with pytest.raises(ValueError, match="provider"):
+            CustomModelConfig(alias="my-model")
+
+    def test_from_toml(self, tmp_path):
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            '[[custom_models]]\n'
+            'alias = "my-model"\n'
+            'provider = "custom"\n'
+            'canonical_id = "my-model-v1"\n'
+            'backend = "custom-sdk"\n'
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert len(config.custom_models) == 1
+        assert config.custom_models[0].alias == "my-model"
+        assert config.custom_models[0].provider == "custom"
+
+    def test_from_toml_multiple(self, tmp_path):
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text(
+            '[[custom_models]]\n'
+            'alias = "model-a"\n'
+            'provider = "prov-a"\n'
+            '\n'
+            '[[custom_models]]\n'
+            'alias = "model-b"\n'
+            'provider = "prov-b"\n'
+        )
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert len(config.custom_models) == 2
+
+    def test_from_toml_no_custom_models(self, tmp_path):
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text("[agents]\nmax_turns = 25\n")
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.custom_models == []
+
+
+# ── Validate method tests ─────────────────────────────────────────────
+
+
+class TestProjectConfigValidate:
+    def _mock_registry(self, valid_models=None):
+        """Create a mock registry that validates specific model specs."""
+        if valid_models is None:
+            valid_models = {"claude:sonnet", "claude:opus", "claude:haiku"}
+        registry = MagicMock()
+        registry.validate_model.side_effect = lambda spec: str(spec) in valid_models
+        return registry
+
+    def test_default_config_valid(self):
+        registry = self._mock_registry()
+        issues = ProjectConfig().validate(registry)
+        assert issues == []
+
+    def test_invalid_agent_model(self):
+        registry = self._mock_registry(valid_models={"claude:sonnet"})
+        config = ProjectConfig(agents=AgentConfig(model="opus"))
+        issues = config.validate(registry)
+        assert any("agents.model" in i for i in issues)
+
+    def test_invalid_routing_model(self):
+        registry = self._mock_registry(valid_models={"claude:sonnet"})
+        config = ProjectConfig(routing=RoutingConfig(planner="openai:gpt-5.4"))
+        issues = config.validate(registry)
+        assert any("routing.planner" in i for i in issues)
+
+    def test_valid_routing_models(self):
+        registry = self._mock_registry(
+            valid_models={"claude:sonnet", "claude:opus", "openai:gpt-5.4"}
+        )
+        config = ProjectConfig(
+            routing=RoutingConfig(planner="opus", reviewer="openai:gpt-5.4")
+        )
+        issues = config.validate(registry)
+        assert issues == []
+
+    def test_none_routing_fields_skipped(self):
+        registry = self._mock_registry()
+        config = ProjectConfig(routing=RoutingConfig())
+        issues = config.validate(registry)
+        assert issues == []
+
+
+# ── Backward compatibility tests ──────────────────────────────────────
+
+
+class TestBackwardCompat:
+    def test_bare_model_name_in_agents(self):
+        """Bare model names like 'sonnet' are accepted and parsed."""
+        a = AgentConfig(model="sonnet")
+        assert a.model == "claude:sonnet"
+
+    def test_provider_prefix_in_agents(self):
+        """'provider:model' format is accepted."""
+        a = AgentConfig(model="openai:gpt-5.4")
+        assert a.model == "openai:gpt-5.4"
+
+    def test_toml_bare_model_parsed(self, tmp_path):
+        """Bare model name in forge.toml [agents] section is parsed correctly."""
+        toml_path = tmp_path / "forge.toml"
+        toml_path.write_text('[agents]\nmodel = "opus"\n')
+        config = ProjectConfig.from_toml(str(toml_path))
+        assert config.agents.model == "claude:opus"

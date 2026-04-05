@@ -9,6 +9,8 @@ from forge.core.errors import ForgeError
 
 if TYPE_CHECKING:
     from forge.config.settings import ForgeSettings
+    from forge.core.cost_registry import CostRegistry
+    from forge.providers.base import ModelSpec, ProviderResult
     from forge.storage.db import Database
 
 
@@ -25,11 +27,18 @@ async def check_budget(
     db: Database,
     pipeline_id: str,
     settings: ForgeSettings,
+    cost_registry: CostRegistry | None = None,
 ) -> None:
     """Check whether a pipeline has exceeded its budget.
 
     Uses the pipeline-level budget if set, otherwise falls back to the
     global ``settings.budget_limit_usd``.  A limit of 0 means unlimited.
+
+    Args:
+        db: Database for cost/budget lookups.
+        pipeline_id: Pipeline identifier.
+        settings: ForgeSettings with global budget_limit_usd.
+        cost_registry: Optional CostRegistry for cost resolution.
 
     Raises:
         BudgetExceededError: If the budget is exceeded.
@@ -47,3 +56,21 @@ async def check_budget(
 
     if spent >= limit:
         raise BudgetExceededError(spent=spent, limit=limit)
+
+
+def resolve_cost(
+    result: ProviderResult,
+    spec: ModelSpec,
+    cost_registry: CostRegistry,
+) -> float:
+    """Resolve the cost of a provider execution.
+
+    Uses provider_reported_cost first if available, else calculates
+    from token counts using the cost registry.
+
+    This is a convenience re-export; the canonical implementation
+    is in ``forge.core.cost_registry.resolve_cost``.
+    """
+    from forge.core.cost_registry import resolve_cost as _resolve_cost
+
+    return _resolve_cost(result, spec, cost_registry)
