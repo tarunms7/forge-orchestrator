@@ -6,83 +6,27 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from claude_code_sdk import ClaudeCodeOptions
-
-from forge.core.sdk_helpers import sdk_query
+from forge.providers.restrictions import AGENT_DENIED_OPERATIONS
 
 logger = logging.getLogger("forge.agents")
 
 
-# ── Agent permission rules ──────────────────────────────────────────
-# Passed directly to ClaudeCodeOptions as disallowed_tools (denylist).
-# No file is written to the worktree — permissions flow through the SDK,
-# keeping the git working tree clean for rebase.
-#
-# Design: denylist only. Agents use append_system_prompt so they get the
-# full Claude Code harness (skills, MCP servers, memory, hooks) plus ALL
-# tools. We only BLOCK dangerous operations: branch management (orchestrator
-# handles that), network access, privilege escalation, system modification.
+# Re-export for backward compatibility — callers that imported
+# AGENT_DISALLOWED_TOOLS from here can now use AGENT_DENIED_OPERATIONS
+# from forge.providers.restrictions instead.
+AGENT_DISALLOWED_TOOLS = AGENT_DENIED_OPERATIONS
 
-AGENT_DISALLOWED_TOOLS = [
-    # Git operations that only the orchestrator should perform.
-    # Both bare commands and with-args variants are blocked.
-    "Bash(git push)",
-    "Bash(git push *)",
-    "Bash(git rebase)",
-    "Bash(git rebase *)",
-    "Bash(git checkout)",
-    "Bash(git checkout *)",
-    "Bash(git reset --hard)",
-    "Bash(git reset --hard *)",
-    "Bash(git branch -D *)",
-    "Bash(git branch -d *)",
-    "Bash(git merge)",
-    "Bash(git merge *)",
-    "Bash(git clean *)",
-    "Bash(git stash)",
-    "Bash(git stash *)",
-    "Bash(git cherry-pick *)",
-    "Bash(git tag *)",
-    "Bash(git remote *)",
-    # Network — no exfiltration or downloads
-    "Bash(curl *)",
-    "Bash(wget *)",
-    "Bash(ssh *)",
-    "Bash(scp *)",
-    "Bash(rsync *)",
-    "Bash(nc *)",
-    "Bash(ncat *)",
-    "Bash(telnet *)",
-    "Bash(ftp *)",
-    # Privilege escalation
-    "Bash(sudo *)",
-    "Bash(su *)",
-    "Bash(doas *)",
-    # Permission changes
-    "Bash(chmod *)",
-    "Bash(chown *)",
-    "Bash(chgrp *)",
-    # Process management
-    "Bash(kill *)",
-    "Bash(pkill *)",
-    "Bash(killall *)",
-    # Container/VM escape
-    "Bash(docker *)",
-    "Bash(podman *)",
-    # System modification
-    "Bash(systemctl *)",
-    "Bash(service *)",
-    "Bash(mount *)",
-    "Bash(umount *)",
-    # Environment pollution (could affect other agents)
-    "Bash(export *)",
-    "Bash(unset *)",
-    # Sensitive file reads
-    "Read(.env)",
-    "Read(.env.*)",
-]
+
+def _translate_denied_to_sdk(denied_ops: list[str]) -> list[str]:
+    """Translate Forge denied_operations to Claude SDK disallowed_tools format.
+
+    Uses the ClaudeProvider's translator for consistency.
+    """
+    from forge.providers.claude import _translate_denied_operations
+
+    return _translate_denied_operations(denied_ops)
 
 
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
@@ -312,6 +256,12 @@ class AgentResult:
     output_tokens: int = 0
     error: str | None = None
     session_id: str | None = None
+    # Provider protocol fields
+    resume_state: object | None = None  # ResumeState from provider result
+    provider_model: str | None = None  # 'provider:model' string
+    backend: str | None = None  # SDK backend used
+    canonical_model_id: str | None = None  # Full model identifier
+    model_history_entry: dict | None = field(default=None, repr=False)  # ModelHistoryEntry dict
 
 
 class AgentAdapter(ABC):
@@ -342,7 +292,11 @@ class AgentAdapter(ABC):
 
 
 class ClaudeAdapter(AgentAdapter):
-    """Claude Code agent via claude-code-sdk."""
+    """Claude Code agent via claude-code-sdk.
+
+    Legacy adapter that wraps sdk_query() directly. New code should use
+    ProviderProtocol via ProviderRegistry instead — see ClaudeProvider.
+    """
 
     def _build_options(
         self,
@@ -362,8 +316,9 @@ class ClaudeAdapter(AgentAdapter):
         agent_max_turns: int = 75,
         lessons_block: str = "",
         project_commands: dict[str, str] | None = None,
-    ) -> ClaudeCodeOptions:
+    ):
         """Build ClaudeCodeOptions with directory boundary enforcement."""
+        from claude_code_sdk import ClaudeCodeOptions
         if allowed_dirs:
             extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
         else:
@@ -434,7 +389,7 @@ class ClaudeAdapter(AgentAdapter):
             # bypassPermissions auto-approves all tools (Edit, Write, Bash,
             # Glob, Grep, Read, plus skills/MCP). Dangerous operations are
             # blocked via disallowed_tools below (git push, curl, sudo, etc.).
-            disallowed_tools=list(AGENT_DISALLOWED_TOOLS),
+            disallowed_tools=_translate_denied_to_sdk(AGENT_DISALLOWED_TOOLS),
             cwd=worktree_path,
             model=model,
             max_turns=max_turns,
@@ -487,6 +442,8 @@ class ClaudeAdapter(AgentAdapter):
         )
 
         try:
+            from forge.core.sdk_helpers import sdk_query
+
             result = await asyncio.wait_for(
                 sdk_query(prompt=task_prompt, options=options, on_message=on_message),
                 timeout=timeout_seconds,

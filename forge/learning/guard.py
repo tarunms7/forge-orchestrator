@@ -132,9 +132,11 @@ class RuntimeGuard:
         self.failures: list[FailureRecord] = []
 
     def inspect(self, message) -> str | None:
-        """Inspect an SDK message for Bash failures.
+        """Inspect an SDK message or ProviderEvent for Bash failures.
 
-        Call this for every AssistantMessage received from the SDK.
+        Call this for every message received from the SDK or provider.
+        Accepts both legacy AssistantMessage objects and normalized
+        ProviderEvent objects from the provider protocol.
 
         Returns:
             - None: no action needed
@@ -143,7 +145,13 @@ class RuntimeGuard:
         Raises:
             GuardTriggered: on 3rd failure of same approach
         """
-        # Only process AssistantMessage
+        # ── Provider protocol path: ProviderEvent ──
+        from forge.providers.base import ProviderEvent
+
+        if isinstance(message, ProviderEvent):
+            return self._inspect_provider_event(message)
+
+        # ── Legacy SDK path ──
         content = getattr(message, "content", None)
         if content is None:
             return None
@@ -171,37 +179,89 @@ class RuntimeGuard:
                         )[:500]
                     else:
                         error_text = str(raw_content)[:500]
-                    err_class = classify_error(error_text)
-                    sig = approach_signature(norm, err_class)
-
-                    record = FailureRecord(
-                        command=cmd,
-                        normalized_command=norm,
-                        error_class=err_class,
-                        stderr_snippet=error_text,
-                        attempt_number=len(self._approach_attempts.get(sig, [])) + 1,
-                    )
-                    self._approach_attempts.setdefault(sig, []).append(record)
-                    self._approach_attempts.move_to_end(sig)
-                    if len(self._approach_attempts) > self._MAX_PENDING:
-                        self._approach_attempts.popitem(last=False)
-                    self.failures.append(record)
-
-                    attempts = self._approach_attempts[sig]
-                    if len(attempts) >= self._max_attempts:
-                        self.triggered = True
-                        raise GuardTriggered(
-                            f"Agent stuck: command '{cmd}' failed {len(attempts)} times "
-                            f"with error type '{err_class}'. Stopping agent.",
-                            failures=attempts,
-                        )
-                    if len(attempts) == self._max_attempts - 1:
-                        self.warning_issued = True
-                        return "warning"
+                    return self._record_failure(cmd, norm, error_text)
                 elif tool_id in self._pending_bash and block.is_error is False:
                     # Success -- remove from pending, don't track
                     self._pending_bash.pop(tool_id, None)
 
+        return None
+
+    def _inspect_provider_event(self, event) -> str | None:
+        """Inspect a ProviderEvent for Bash failures.
+
+        Uses event.tool_name (CoreTool) and event.tool_call_id for
+        correlation instead of raw SDK block introspection.
+        """
+        from forge.providers.base import EventKind
+        from forge.providers.catalog import CoreTool
+
+        if event.kind == EventKind.TOOL_USE and event.tool_name in (
+            CoreTool.BASH,
+            CoreTool.BASH.value,
+            "Bash",
+            "bash",
+        ):
+            tool_id = event.tool_call_id
+            # Extract command from tool_input JSON
+            cmd = ""
+            if event.tool_input:
+                try:
+                    import json
+
+                    inp = json.loads(event.tool_input)
+                    cmd = inp.get("command", "")
+                except (ValueError, TypeError):
+                    cmd = event.tool_input
+            if tool_id and cmd:
+                norm = normalize_command(cmd)
+                self._pending_bash[tool_id] = (cmd, norm)
+                if len(self._pending_bash) > self._MAX_PENDING:
+                    self._pending_bash.popitem(last=False)
+
+        elif event.kind == EventKind.TOOL_RESULT and event.tool_call_id:
+            tool_id = event.tool_call_id
+            if tool_id in self._pending_bash:
+                if event.is_tool_error:
+                    cmd, norm = self._pending_bash.pop(tool_id)
+                    error_text = (event.tool_output or "")[:500]
+                    return self._record_failure(cmd, norm, error_text)
+                else:
+                    self._pending_bash.pop(tool_id, None)
+
+        return None
+
+    def _record_failure(self, cmd: str, norm: str, error_text: str) -> str | None:
+        """Record a command failure and check for retry loops.
+
+        Returns "warning" on 2nd failure, raises GuardTriggered on 3rd.
+        """
+        err_class = classify_error(error_text)
+        sig = approach_signature(norm, err_class)
+
+        record = FailureRecord(
+            command=cmd,
+            normalized_command=norm,
+            error_class=err_class,
+            stderr_snippet=error_text,
+            attempt_number=len(self._approach_attempts.get(sig, [])) + 1,
+        )
+        self._approach_attempts.setdefault(sig, []).append(record)
+        self._approach_attempts.move_to_end(sig)
+        if len(self._approach_attempts) > self._MAX_PENDING:
+            self._approach_attempts.popitem(last=False)
+        self.failures.append(record)
+
+        attempts = self._approach_attempts[sig]
+        if len(attempts) >= self._max_attempts:
+            self.triggered = True
+            raise GuardTriggered(
+                f"Agent stuck: command '{cmd}' failed {len(attempts)} times "
+                f"with error type '{err_class}'. Stopping agent.",
+                failures=attempts,
+            )
+        if len(attempts) == self._max_attempts - 1:
+            self.warning_issued = True
+            return "warning"
         return None
 
     def get_warning_message(self) -> str:

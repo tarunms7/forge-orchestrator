@@ -1,5 +1,6 @@
 """Tests for RuntimeGuard — retry loop detection."""
 
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -10,6 +11,8 @@ from forge.learning.guard import (
     classify_error,
     normalize_command,
 )
+from forge.providers.base import EventKind, ProviderEvent
+from forge.providers.catalog import CoreTool
 
 # ---------------------------------------------------------------------------
 # Mock SDK message types
@@ -213,3 +216,106 @@ class TestRuntimeGuard:
         assert "2 command failures" in summary
         assert "pytest tests/" in summary
         assert "pip install bar" in summary
+
+
+# ---------------------------------------------------------------------------
+# ProviderEvent-based guard tests
+# ---------------------------------------------------------------------------
+
+
+def _pe_bash_call(tool_call_id: str, command: str) -> ProviderEvent:
+    """Create a ProviderEvent for a Bash TOOL_USE."""
+    return ProviderEvent(
+        kind=EventKind.TOOL_USE,
+        tool_name=CoreTool.BASH,
+        tool_call_id=tool_call_id,
+        tool_input=json.dumps({"command": command}),
+    )
+
+
+def _pe_tool_result(tool_call_id: str, output: str, is_error: bool) -> ProviderEvent:
+    """Create a ProviderEvent for a TOOL_RESULT."""
+    return ProviderEvent(
+        kind=EventKind.TOOL_RESULT,
+        tool_call_id=tool_call_id,
+        tool_output=output,
+        is_tool_error=is_error,
+    )
+
+
+class TestRuntimeGuardProviderEvent:
+    """Test RuntimeGuard with normalized ProviderEvent messages."""
+
+    def test_no_trigger_on_success(self):
+        guard = RuntimeGuard()
+        for i in range(5):
+            tid = f"pe-{i}"
+            guard.inspect(_pe_bash_call(tid, "pytest tests/"))
+            result = guard.inspect(_pe_tool_result(tid, "All tests passed", is_error=False))
+            assert result is None
+        assert not guard.triggered
+        assert guard.failures == []
+
+    def test_warning_on_second_failure(self):
+        guard = RuntimeGuard()
+
+        guard.inspect(_pe_bash_call("pe-1", "pytest tests/"))
+        guard.inspect(
+            _pe_tool_result("pe-1", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
+
+        guard.inspect(_pe_bash_call("pe-2", "pytest tests/"))
+        result = guard.inspect(
+            _pe_tool_result("pe-2", "ModuleNotFoundError: No module named 'foo'", is_error=True)
+        )
+
+        assert result == "warning"
+        assert guard.warning_issued
+
+    def test_trigger_on_third_failure(self):
+        guard = RuntimeGuard()
+
+        guard.inspect(_pe_bash_call("pe-1", "pytest tests/"))
+        guard.inspect(
+            _pe_tool_result("pe-1", "ModuleNotFoundError: foo", is_error=True)
+        )
+
+        guard.inspect(_pe_bash_call("pe-2", "pytest tests/"))
+        guard.inspect(
+            _pe_tool_result("pe-2", "ModuleNotFoundError: bar", is_error=True)
+        )
+
+        guard.inspect(_pe_bash_call("pe-3", "pytest tests/"))
+        with pytest.raises(GuardTriggered) as exc_info:
+            guard.inspect(
+                _pe_tool_result("pe-3", "ModuleNotFoundError: baz", is_error=True)
+            )
+
+        assert guard.triggered
+        assert len(exc_info.value.failures) == 3
+
+    def test_mixed_legacy_and_provider_events(self):
+        """Guard should track both legacy SDK messages and ProviderEvents."""
+        guard = RuntimeGuard()
+
+        # Legacy SDK message
+        guard.inspect(_bash_call_msg("t1", "pytest tests/"))
+        guard.inspect(_result_msg("t1", "ModuleNotFoundError: x", is_error=True))
+
+        # ProviderEvent
+        guard.inspect(_pe_bash_call("pe-1", "pytest tests/"))
+        result = guard.inspect(
+            _pe_tool_result("pe-1", "ModuleNotFoundError: x", is_error=True)
+        )
+
+        assert result == "warning"
+        assert guard.warning_issued
+
+    def test_text_event_ignored(self):
+        """TEXT events should not affect guard state."""
+        guard = RuntimeGuard()
+        text_event = ProviderEvent(kind=EventKind.TEXT, text="Hello world")
+        result = guard.inspect(text_event)
+        assert result is None
+        assert not guard.triggered
+        assert guard.failures == []

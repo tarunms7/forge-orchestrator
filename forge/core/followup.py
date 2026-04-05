@@ -14,13 +14,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
-from claude_code_sdk import ClaudeCodeOptions
-
 from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.core.events import EventEmitter
 from forge.core.sanitize import validate_repo_id, validate_task_id
-from forge.core.sdk_helpers import sdk_query
+from forge.providers.base import (
+    EventKind,
+    ProviderEvent,
+)
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge.followup")
@@ -131,12 +132,17 @@ async def classify_questions(
         'Example response: {"0": "task-1", "1": "task-2", "2": "task-1"}'
     )
 
-    options = ClaudeCodeOptions(
-        system_prompt="You are a JSON classifier. Respond only with valid JSON.",
-        max_turns=1,
-    )
-
+    # Use sdk_query for classification (backward compat — will be replaced by
+    # provider protocol when a registry is injected).
     try:
+        from claude_code_sdk import ClaudeCodeOptions
+
+        from forge.core.sdk_helpers import sdk_query
+
+        options = ClaudeCodeOptions(
+            system_prompt="You are a JSON classifier. Respond only with valid JSON.",
+            max_turns=1,
+        )
         result = await sdk_query(prompt=prompt, options=options)
         if result and result.result:
             # Parse the JSON response
@@ -384,11 +390,14 @@ async def _execute_task_followup(
         )
 
     try:
-        # Set up message streaming callback
+        # Set up message streaming callback — handles both ProviderEvent and legacy SDK messages
         async def on_message(msg):
             if emitter:
                 text = ""
-                if hasattr(msg, "content"):
+                if isinstance(msg, ProviderEvent):
+                    if msg.kind == EventKind.TEXT and msg.text:
+                        text = msg.text
+                elif hasattr(msg, "content"):
                     text = msg.content if isinstance(msg.content, str) else str(msg.content)
                 elif hasattr(msg, "result"):
                     text = msg.result or ""

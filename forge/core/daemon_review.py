@@ -660,12 +660,16 @@ class ReviewMixin:
         Returns (callback, flush) where *flush* drains any remaining
         buffered lines.  The pattern mirrors ``_stream_agent`` in
         daemon_executor.
+
+        Accepts both legacy SDK messages and ProviderEvent objects
+        (via _extract_text which handles both).
         """
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
         _MAX_BATCH_SIZE = 50
 
         async def _on_msg(msg):
+            # _extract_text handles both ProviderEvent and legacy SDK messages
             text = _extract_text(msg)
             if not text:
                 return
