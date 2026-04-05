@@ -6,6 +6,23 @@ import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 
+interface ProviderHealthModel {
+  alias: string;
+  tier: string;
+}
+
+interface ProviderHealthEntry {
+  name: string;
+  models: ProviderHealthModel[];
+}
+
+interface ObservedHealth {
+  spec: string;
+  last_checked: string;
+  stages_passing: string[];
+  stages_failing: string[];
+}
+
 interface DashboardStats {
   total_runs: number;
   active: number;
@@ -58,6 +75,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
+  const [providerHealth, setProviderHealth] = useState<ProviderHealthEntry[]>([]);
+  const [observedHealth, setObservedHealth] = useState<ObservedHealth[]>([]);
 
   useEffect(() => {
     if (!token) return;
@@ -70,10 +89,15 @@ export default function DashboardPage() {
         setError("Failed to load history");
         return null;
       }),
+      apiGet("/providers", token).catch(() => null),
     ])
-      .then(([statsData, historyData]) => {
+      .then(([statsData, historyData, providersData]) => {
         if (statsData) setStats(statsData);
         if (historyData) setRecent(historyData.slice(0, 5));
+        if (providersData) {
+          setProviderHealth(providersData.providers || []);
+          setObservedHealth(providersData.observed_health || []);
+        }
       })
       .finally(() => setLoading(false));
   }, [token]);
@@ -196,6 +220,60 @@ export default function DashboardPage() {
           <div className="overview-label">Avg Duration</div>
         </div>
       </div>
+
+      {/* Provider Health */}
+      {providerHealth.length > 0 && (
+        <div className="recent-section" style={{ marginBottom: "16px" }}>
+          <h2 className="section-title" style={{ marginBottom: "12px" }}>Provider Health</h2>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            {providerHealth.map((provider) => {
+              // Determine provider-level health from observed data
+              const providerSpecs = observedHealth.filter((h) => h.spec.startsWith(`${provider.name}:`));
+              const hasFailures = providerSpecs.some((h) => h.stages_failing.length > 0);
+              const hasData = providerSpecs.length > 0;
+              const allPassing = hasData && !hasFailures;
+
+              const dotColor = !hasData ? "var(--text-dim)" : allPassing ? "#22c55e" : hasFailures ? "#f59e0b" : "#22c55e";
+              const statusLabel = !hasData ? "No data" : allPassing ? "Healthy" : "Degraded";
+
+              return (
+                <div
+                  key={provider.name}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "8px 14px",
+                    borderRadius: "var(--radius-md)",
+                    background: "var(--bg-surface-2)",
+                    border: "1px solid var(--border)",
+                    fontSize: "13px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: dotColor,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ fontWeight: 600, color: "var(--text-primary)", textTransform: "capitalize" }}>
+                    {provider.name}
+                  </span>
+                  <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>
+                    {statusLabel}
+                  </span>
+                  <span style={{ color: "var(--text-dim)", fontSize: "11px" }}>
+                    ({provider.models.length} model{provider.models.length !== 1 ? "s" : ""})
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Recent Pipelines */}
       <div className="recent-section">
