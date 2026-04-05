@@ -20,7 +20,6 @@ from forge.providers import (
     ModelSpec,
     OutputContract,
     ProviderEvent,
-    ProviderResult,
     ToolPolicy,
     WorkspaceRoots,
 )

@@ -202,7 +202,7 @@ def _sanitize_pr_title(description: str) -> str:
 async def _generate_pr_title(
     description: str,
     task_summaries: str,
-    registry: "ProviderRegistry | None" = None,
+    registry: ProviderRegistry | None = None,
 ) -> str:
     """Generate a concise PR title using a provider call, with heuristic fallback.
 

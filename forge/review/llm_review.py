@@ -14,7 +14,6 @@ from forge.providers import (
     ModelSpec,
     OutputContract,
     ProviderEvent,
-    ProviderResult,
     WorkspaceRoots,
 )
 from forge.providers.restrictions import REVIEWER_TOOL_POLICY

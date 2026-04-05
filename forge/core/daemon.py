@@ -53,7 +53,15 @@ from forge.core.state import TaskStateMachine
 from forge.learning.store import format_lessons_block, row_to_lesson
 from forge.merge.worker import MergeWorker
 from forge.merge.worktree import WorktreeManager
-from forge.providers import EventKind, ExecutionMode, ModelSpec, OutputContract, ProviderEvent, ToolPolicy, WorkspaceRoots
+from forge.providers import (
+    EventKind,
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    ToolPolicy,
+    WorkspaceRoots,
+)
 from forge.providers.registry import ProviderRegistry
 from forge.storage.db import Database
 
