@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+from unittest.mock import MagicMock
 
 import click
 import pytest
-
-from unittest.mock import MagicMock
 
 from forge.config.project_config import (
     CMD_DISABLED,

@@ -9,7 +9,6 @@ from forge.core.cost_registry import (
     PipelineCostEstimate,
     StageCostEstimate,
 )
-from forge.providers.base import ModelSpec
 
 if TYPE_CHECKING:
     from forge.providers.registry import ProviderRegistry
