@@ -138,6 +138,69 @@ def _sanitize_branch_name(raw: str) -> str:
     return f"forge/{name}"
 
 
+def _max_dependency_wave_width(tasks: list[object]) -> int:
+    """Estimate the widest dependency frontier for a task graph.
+
+    We provision the initial agent pool from this "wave" width rather than
+    only counting root tasks. A graph can have a single root task that later
+    fans out into multiple ready tasks; sizing by roots would serialize that
+    valid parallel work.
+    """
+    if not tasks:
+        return 0
+
+    task_ids = {str(getattr(task, "id")) for task in tasks}
+    dependents: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
+    remaining_deps: dict[str, int] = {}
+
+    for task in tasks:
+        task_id = str(getattr(task, "id"))
+        deps = [
+            str(dep)
+            for dep in (getattr(task, "depends_on", None) or [])
+            if str(dep) in task_ids
+        ]
+        remaining_deps[task_id] = len(deps)
+        for dep in deps:
+            dependents.setdefault(dep, []).append(task_id)
+
+    ready = [task_id for task_id, dep_count in remaining_deps.items() if dep_count == 0]
+    if not ready:
+        return 1
+
+    max_width = len(ready)
+    processed = 0
+
+    while ready:
+        current_wave = ready
+        processed += len(current_wave)
+        next_wave: list[str] = []
+        for task_id in current_wave:
+            for child_id in dependents.get(task_id, []):
+                remaining_deps[child_id] -= 1
+                if remaining_deps[child_id] == 0:
+                    next_wave.append(child_id)
+        ready = next_wave
+        max_width = max(max_width, len(ready))
+
+    if processed != len(task_ids):
+        return max(max_width, 1)
+    return max_width
+
+
+async def _ensure_agent_pool_size(db: Database, prefix: str, target_size: int) -> None:
+    """Create any missing agent rows up to ``target_size`` for this pipeline."""
+    if target_size <= 0:
+        return
+
+    existing_agents = await db.list_agents(prefix=prefix)
+    existing_ids = {agent.id for agent in existing_agents}
+    for i in range(target_size):
+        agent_id = f"{prefix}-agent-{i}"
+        if agent_id not in existing_ids:
+            await db.create_agent(agent_id)
+
+
 async def _generate_branch_name(
     description: str,
     registry: ProviderRegistry | None = None,
@@ -1297,18 +1360,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     pipeline_id=pid,
                     repo_id=task_repo,
                 )
-            # Auto-scale agent pool: use the minimum of independent tasks,
-            # configured max_agents, and total tasks.  This ensures we
-            # never exceed the user's resource budget (max_agents) and
-            # never create idle agents (more agents than tasks that can run).
-            independent_count = sum(1 for t in graph.tasks if not t.depends_on)
+            # Auto-scale agent pool from the widest dependency frontier, not
+            # just root-task count. A one-root DAG can legitimately fan out
+            # into multiple ready tasks after the first task completes.
+            max_wave_width = _max_dependency_wave_width(graph.tasks)
             self._effective_max_agents = min(
-                independent_count,
+                max_wave_width,
                 self._settings.max_agents,
                 len(graph.tasks),
             )
-            for i in range(self._effective_max_agents):
-                await db.create_agent(f"{prefix}-agent-{i}")
         else:
             # Resume path: restore contracts and recalculate agent scaling
             contracts_json = await db.get_pipeline_contracts(pid)
@@ -1325,6 +1385,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             tasks = await db.list_tasks_by_pipeline(pid)
             remaining = sum(1 for t in tasks if t.state in ("todo", "in_review", "blocked"))
             self._effective_max_agents = min(max(remaining, 1), self._settings.max_agents)
+        await _ensure_agent_pool_size(db, prefix, self._effective_max_agents)
 
         monitor = ResourceMonitor(
             cpu_threshold=self._settings.cpu_threshold,
