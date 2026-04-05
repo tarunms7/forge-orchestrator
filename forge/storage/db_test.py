@@ -1686,7 +1686,6 @@ async def test_append_task_model_history(db: Database):
 
 async def test_dual_read_resume_state_from_resume_state(db: Database):
     """read_resume_state prefers resume_state column."""
-    import json
     from forge.providers.base import ResumeState
 
     state = ResumeState(
