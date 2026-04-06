@@ -105,27 +105,32 @@ class TestGetDiffVsMainBaseRef:
 
     @pytest.mark.asyncio
     async def test_uses_base_ref_when_provided(self):
-        """Should diff base_ref..HEAD directly, no rev-list call."""
+        """Should diff merge-base(base_ref, HEAD)..HEAD, no rev-list call."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         diff_proc = _make_proc("diff --git a/foo.py b/foo.py\n+new line\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, diff_proc],
+            side_effect=[verify_ok, merge_base, diff_proc],
         ) as mock_sub:
             result = await _get_diff_vs_main(
                 "/repo/worktrees/task-1", base_ref="forge/pipeline-abc"
             )
 
         assert "new line" in result
-        assert mock_sub.call_count == 2
+        assert mock_sub.call_count == 3
         assert mock_sub.call_args_list[0] == call(
             ["git", "rev-parse", "--verify", "forge/pipeline-abc"],
             cwd="/repo/worktrees/task-1",
         )
         assert mock_sub.call_args_list[1] == call(
-            ["git", "diff", "forge/pipeline-abc", "HEAD"],
+            ["git", "merge-base", "forge/pipeline-abc", "HEAD"],
+            cwd="/repo/worktrees/task-1",
+        )
+        assert mock_sub.call_args_list[2] == call(
+            ["git", "diff", "mergebase123", "HEAD"],
             cwd="/repo/worktrees/task-1",
         )
 
@@ -221,20 +226,21 @@ class TestGetChangedFilesVsMainBaseRef:
 
     @pytest.mark.asyncio
     async def test_uses_base_ref_when_provided(self):
-        """Should use git diff --name-only base_ref HEAD."""
+        """Should use git diff --name-only merge-base(base_ref, HEAD) HEAD."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         name_only_proc = _make_proc("foo.py\nbar.py\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, name_only_proc],
+            side_effect=[verify_ok, merge_base, name_only_proc],
         ) as mock_sub:
             result = await _get_changed_files_vs_main("/repo/wt", base_ref="forge/pipeline-abc")
 
         assert result == ["foo.py", "bar.py"]
-        assert mock_sub.call_args_list[1] == call(
-            ["git", "diff", "--name-only", "forge/pipeline-abc", "HEAD"],
+        assert mock_sub.call_args_list[2] == call(
+            ["git", "diff", "--name-only", "mergebase123", "HEAD"],
             cwd="/repo/wt",
         )
 
@@ -277,24 +283,25 @@ class TestGetDiffStatsPipelineBranch:
 
     @pytest.mark.asyncio
     async def test_uses_pipeline_branch_when_ref_resolves(self):
-        """Should return per-task stats from `git diff --shortstat <branch> HEAD`."""
+        """Should return per-task stats from `git diff --shortstat <merge-base> HEAD`."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc(" 3 files changed, 42 insertions(+), 7 deletions(-)\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ) as mock_sub:
             result = await _get_diff_stats(
                 "/repo/worktrees/task-1", pipeline_branch="forge/pipeline-abc"
             )
 
         assert result == {"linesAdded": 42, "linesRemoved": 7, "filesChanged": 3}
-        assert mock_sub.call_count == 2
-        shortstat_call = mock_sub.call_args_list[1]
+        assert mock_sub.call_count == 3
+        shortstat_call = mock_sub.call_args_list[2]
         assert shortstat_call == call(
-            ["git", "diff", "--shortstat", "forge/pipeline-abc", "HEAD"],
+            ["git", "diff", "--shortstat", "mergebase123", "HEAD"],
             cwd="/repo/worktrees/task-1",
         )
 
@@ -302,12 +309,13 @@ class TestGetDiffStatsPipelineBranch:
     async def test_insertions_only(self):
         """Handles a diff with insertions but no deletions."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 10 insertions(+)\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
@@ -317,12 +325,13 @@ class TestGetDiffStatsPipelineBranch:
     async def test_deletions_only(self):
         """Handles a diff with deletions but no insertions."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc(" 2 files changed, 5 deletions(-)\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
@@ -332,12 +341,13 @@ class TestGetDiffStatsPipelineBranch:
     async def test_empty_shortstat_returns_zeros(self):
         """When the diff is empty (no changes), returns zeros."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc("")  # empty = no diff
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 

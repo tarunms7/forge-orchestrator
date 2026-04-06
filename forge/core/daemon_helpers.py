@@ -744,11 +744,22 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
             cwd=worktree_path,
         )
         if verify.returncode == 0:
-            result = await async_subprocess(
-                ["git", "diff", base_ref, "HEAD"],
+            merge_base = await async_subprocess(
+                ["git", "merge-base", base_ref, "HEAD"],
                 cwd=worktree_path,
             )
-            return _filter_review_diff(result.stdout)
+            if merge_base.returncode == 0 and merge_base.stdout.strip():
+                result = await async_subprocess(
+                    ["git", "diff", merge_base.stdout.strip(), "HEAD"],
+                    cwd=worktree_path,
+                )
+                return _filter_review_diff(result.stdout)
+            logger.warning(
+                "_get_diff_vs_main: merge-base for %r in %s could not be resolved "
+                "— falling back to commit-count heuristic",
+                base_ref,
+                worktree_path,
+            )
         logger.warning(
             "_get_diff_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",
@@ -813,11 +824,10 @@ async def _resolve_ref(repo_path: str, ref: str) -> str | None:
 async def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> dict[str, int]:
     """Get lines added/removed for this task's commits in its worktree.
 
-    When ``pipeline_branch`` is provided the diff is computed as
-    ``git diff --shortstat <pipeline_branch> HEAD``, which returns only the
-    delta between the pipeline branch tip and this task's HEAD — i.e. only
-    this task's own changes, not the cumulative total of all previously merged
-    tasks.
+    When ``pipeline_branch`` is provided the diff is computed from the
+    merge-base of ``pipeline_branch`` and ``HEAD``. This isolates only the
+    task branch's unique commits even after earlier sibling tasks have already
+    advanced the pipeline branch.
 
     Falls back to the commit-count heuristic (``HEAD~N``) when the pipeline
     branch ref cannot be resolved, logging a warning so the degradation is
@@ -830,22 +840,33 @@ async def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None
             cwd=worktree_path,
         )
         if verify.returncode == 0:
-            result = await async_subprocess(
-                ["git", "diff", "--shortstat", pipeline_branch, "HEAD"],
+            merge_base = await async_subprocess(
+                ["git", "merge-base", pipeline_branch, "HEAD"],
                 cwd=worktree_path,
             )
-            added, removed, files = 0, 0, 0
-            if result.returncode == 0 and result.stdout.strip():
-                m_files = re.search(r"(\d+) file", result.stdout)
-                m_add = re.search(r"(\d+) insertion", result.stdout)
-                m_del = re.search(r"(\d+) deletion", result.stdout)
-                if m_files:
-                    files = int(m_files.group(1))
-                if m_add:
-                    added = int(m_add.group(1))
-                if m_del:
-                    removed = int(m_del.group(1))
-            return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
+            if merge_base.returncode == 0 and merge_base.stdout.strip():
+                result = await async_subprocess(
+                    ["git", "diff", "--shortstat", merge_base.stdout.strip(), "HEAD"],
+                    cwd=worktree_path,
+                )
+                added, removed, files = 0, 0, 0
+                if result.returncode == 0 and result.stdout.strip():
+                    m_files = re.search(r"(\d+) file", result.stdout)
+                    m_add = re.search(r"(\d+) insertion", result.stdout)
+                    m_del = re.search(r"(\d+) deletion", result.stdout)
+                    if m_files:
+                        files = int(m_files.group(1))
+                    if m_add:
+                        added = int(m_add.group(1))
+                    if m_del:
+                        removed = int(m_del.group(1))
+                return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
+            logger.warning(
+                "_get_diff_stats: merge-base for %r not found in %s — "
+                "falling back to commit-count heuristic",
+                pipeline_branch,
+                worktree_path,
+            )
         else:
             logger.warning(
                 "_get_diff_stats: pipeline branch %r not found in %s — "
@@ -921,11 +942,22 @@ async def _get_changed_files_vs_main(
             cwd=worktree_path,
         )
         if verify.returncode == 0:
-            result = await async_subprocess(
-                ["git", "diff", "--name-only", base_ref, "HEAD"],
+            merge_base = await async_subprocess(
+                ["git", "merge-base", base_ref, "HEAD"],
                 cwd=worktree_path,
             )
-            return [f for f in result.stdout.strip().split("\n") if f.strip()]
+            if merge_base.returncode == 0 and merge_base.stdout.strip():
+                result = await async_subprocess(
+                    ["git", "diff", "--name-only", merge_base.stdout.strip(), "HEAD"],
+                    cwd=worktree_path,
+                )
+                return [f for f in result.stdout.strip().split("\n") if f.strip()]
+            logger.warning(
+                "_get_changed_files_vs_main: merge-base for %r not found in %s — "
+                "falling back to commit-count heuristic",
+                base_ref,
+                worktree_path,
+            )
         logger.warning(
             "_get_changed_files_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",

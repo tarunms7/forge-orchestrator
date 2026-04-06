@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     case,
+    event,
     func,
     or_,
     select,
@@ -356,8 +357,27 @@ class Database:
     """Unified async database interface. One DB for everything."""
 
     def __init__(self, url: str) -> None:
-        self._engine = create_async_engine(url)
+        engine_kwargs: dict[str, object] = {}
+        self._is_sqlite = url.startswith("sqlite")
+        self._is_sqlite_memory = self._is_sqlite and ":memory:" in url
+        if self._is_sqlite:
+            engine_kwargs["connect_args"] = {"timeout": 30}
+        self._engine = create_async_engine(url, **engine_kwargs)
+        if self._is_sqlite:
+            self._configure_sqlite_pragmas()
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+
+    def _configure_sqlite_pragmas(self) -> None:
+        @event.listens_for(self._engine.sync_engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA busy_timeout = 30000")
+                if not self._is_sqlite_memory:
+                    cursor.execute("PRAGMA journal_mode = WAL")
+                cursor.execute("PRAGMA synchronous = NORMAL")
+            finally:
+                cursor.close()
 
     async def __aenter__(self) -> Database:
         await self.initialize()

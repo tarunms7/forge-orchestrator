@@ -201,6 +201,17 @@ def test_pr_failed_returns_to_partial_success_when_failures_remain():
     assert state.phase == "partial_success"
 
 
+def test_pr_created_clears_previous_pr_error():
+    state = _make_state_with_task()
+    state.error = "gh pr create failed"
+
+    state.apply_event("pipeline:pr_created", {"pr_url": "https://github.com/org/repo/pull/42"})
+
+    assert state.pr_url == "https://github.com/org/repo/pull/42"
+    assert state.error is None
+    assert state.phase == "pr_created"
+
+
 def test_on_change_callback():
     state = TuiState()
     changes = []

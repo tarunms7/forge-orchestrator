@@ -677,6 +677,7 @@ class TuiState:
 
     def _on_pr_created(self, data: dict) -> None:
         self.pr_url = data.get("pr_url")
+        self.error = None
         repo_id = data.get("repo_id")
         if repo_id and self.pr_url:
             self.per_repo_pr_urls[repo_id] = self.pr_url
