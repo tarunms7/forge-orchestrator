@@ -133,6 +133,13 @@ def _normalize_codex_tool(raw_name: str) -> str:
     return raw_name
 
 
+def _build_codex_input(system_prompt: str, prompt: str) -> str:
+    """Compose system instructions + user task for SDKs without a separate instructions field."""
+    if not system_prompt:
+        return prompt
+    return f"{system_prompt}\n\nUSER TASK:\n{prompt}"
+
+
 # ---------------------------------------------------------------------------
 # _CodexExecutionHandle
 # ---------------------------------------------------------------------------
@@ -234,32 +241,80 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
     item = _get("item", {})
     if isinstance(item, dict):
         item_type = item.get("type", "")
-        item_content = item.get("content", "")
+        item_text = item.get("text", "")
+        item_content = item.get("content", item_text)
         item_id = item.get("id", "")
+        item_command = item.get("command", "")
+        item_output = item.get("aggregated_output", "")
+        item_changes = item.get("changes", [])
     else:
         item_type = getattr(item, "type", "")
-        item_content = getattr(item, "content", "")
+        item_text = getattr(item, "text", "")
+        item_content = getattr(item, "content", item_text)
         item_id = getattr(item, "id", "")
+        item_command = getattr(item, "command", "")
+        item_output = getattr(item, "aggregated_output", "")
+        item_changes = getattr(item, "changes", [])
 
     if event_type == "item.completed" and item_type == "agent_message":
         text = item_content if isinstance(item_content, str) else str(item_content)
         return ProviderEvent(kind=EventKind.TEXT, text=text, raw=event)
 
     if event_type == "item.started" and item_type in CODEX_TOOL_MAP:
+        tool_input: str | None
+        if item_type == "command_execution":
+            tool_input = item_command or (str(item_content) if item_content else None)
+        elif item_content:
+            tool_input = json.dumps(item_content) if isinstance(item_content, dict) else str(item_content)
+        elif item_changes:
+            tool_input = json.dumps(
+                [
+                    {
+                        "path": getattr(change, "path", None)
+                        if not isinstance(change, dict)
+                        else change.get("path"),
+                        "kind": getattr(change, "kind", None)
+                        if not isinstance(change, dict)
+                        else change.get("kind"),
+                    }
+                    for change in item_changes
+                ]
+            )
+        else:
+            tool_input = None
         return ProviderEvent(
             kind=EventKind.TOOL_USE,
             tool_name=_normalize_codex_tool(item_type),
             tool_call_id=str(item_id) if item_id else str(uuid.uuid4()),
-            tool_input=json.dumps(item_content) if item_content else None,
+            tool_input=tool_input,
             raw=event,
         )
 
     if event_type == "item.completed" and item_type in CODEX_TOOL_MAP:
         output = ""
-        if isinstance(item_content, dict):
+        if item_type == "command_execution":
+            if item_output:
+                output = item_output
+            elif isinstance(item_content, dict):
+                output = item_content.get("output", "")
+        elif isinstance(item_content, dict):
             output = item_content.get("output", "")
         elif isinstance(item_content, str):
             output = item_content
+        elif item_changes:
+            output = json.dumps(
+                [
+                    {
+                        "path": getattr(change, "path", None)
+                        if not isinstance(change, dict)
+                        else change.get("path"),
+                        "kind": getattr(change, "kind", None)
+                        if not isinstance(change, dict)
+                        else change.get("kind"),
+                    }
+                    for change in item_changes
+                ]
+            )
         return ProviderEvent(
             kind=EventKind.TOOL_RESULT,
             tool_name=_normalize_codex_tool(item_type),
@@ -278,10 +333,18 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
                 output_tokens=usage.get("output_tokens", 0),
                 raw=event,
             )
+        if usage:
+            return ProviderEvent(
+                kind=EventKind.USAGE,
+                input_tokens=getattr(usage, "input_tokens", 0),
+                output_tokens=getattr(usage, "output_tokens", 0),
+                raw=event,
+            )
         return ProviderEvent(kind=EventKind.STATUS, status="completed", raw=event)
 
     if event_type in ("turn.failed", "error"):
-        error_msg = _get("message", "") or _get("error", "") or str(event)
+        error = _get("error", "")
+        error_msg = _get("message", "") or getattr(error, "message", "") or error or str(event)
         return ProviderEvent(kind=EventKind.ERROR, text=str(error_msg), raw=event)
 
     return None
@@ -452,6 +515,21 @@ class OpenAIProvider:
 
     # ── Codex backend ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _build_codex_thread_options(
+        catalog_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+    ) -> dict[str, Any]:
+        options: dict[str, Any] = {
+            "model": catalog_entry.canonical_id,
+            "sandboxMode": "workspace-write",
+            "workingDirectory": workspace.primary_cwd,
+            "approvalPolicy": "never",
+        }
+        if workspace.read_only_dirs:
+            options["additionalDirectories"] = list(workspace.read_only_dirs)
+        return options
+
     def _start_codex(
         self,
         prompt: str,
@@ -495,6 +573,7 @@ class OpenAIProvider:
         total_output_tokens = 0
         final_text = ""
         session_token: str | None = None
+        thread: Any | None = None
 
         if on_event:
             on_event(ProviderEvent(kind=EventKind.STATUS, status="started"))
@@ -526,22 +605,60 @@ class OpenAIProvider:
             }
 
             # Resume vs new thread
-            if resume_state and resume_state.session_token:
-                start_fn = getattr(codex, "resumeThread", None) or getattr(
-                    codex, "resume_thread", None
-                )
-                if start_fn:
-                    stream = start_fn(resume_state.session_token, **codex_config)
+            start_fn = getattr(codex, "startThread", None) or getattr(codex, "start_thread", None)
+            resume_fn = getattr(codex, "resumeThread", None) or getattr(
+                codex, "resume_thread", None
+            )
+
+            # Legacy SDK path: module-level start_thread/resume_thread
+            if start_fn or resume_fn:
+                if resume_state and resume_state.session_token:
+                    if resume_fn:
+                        stream = resume_fn(resume_state.session_token, **codex_config)
+                    else:
+                        raise RuntimeError("Codex SDK does not support thread resume")
                 else:
-                    raise RuntimeError("Codex SDK does not support thread resume")
+                    if start_fn:
+                        stream = start_fn(**codex_config)
+                    else:
+                        raise RuntimeError("Codex SDK start function not found")
             else:
-                start_fn = getattr(codex, "startThread", None) or getattr(
-                    codex, "start_thread", None
-                )
-                if start_fn:
-                    stream = start_fn(**codex_config)
-                else:
+                # Current SDK path: instantiate Codex client, create Thread, then run_streamed().
+                CodexClient = getattr(codex, "Codex", None)
+                if CodexClient is None:
                     raise RuntimeError("Codex SDK start function not found")
+
+                api_key = os.environ.get("OPENAI_API_KEY")
+                client_options: dict[str, Any] = {}
+                if api_key:
+                    client_options["apiKey"] = api_key
+
+                client = CodexClient(client_options or None)
+                thread_options = self._build_codex_thread_options(catalog_entry, workspace)
+
+                if resume_state and resume_state.session_token:
+                    thread_start = getattr(client, "resumeThread", None) or getattr(
+                        client, "resume_thread", None
+                    )
+                    if thread_start is None:
+                        raise RuntimeError("Codex SDK does not support thread resume")
+                    thread = thread_start(resume_state.session_token, thread_options)
+                else:
+                    thread_start = getattr(client, "startThread", None) or getattr(
+                        client, "start_thread", None
+                    )
+                    if thread_start is None:
+                        raise RuntimeError("Codex SDK start function not found")
+                    thread = thread_start(thread_options)
+
+                run_streamed = getattr(thread, "runStreamed", None) or getattr(
+                    thread, "run_streamed", None
+                )
+                if run_streamed is None:
+                    raise RuntimeError("Codex SDK thread.run_streamed not found")
+
+                streamed_turn = await run_streamed(_build_codex_input(full_system, prompt))
+                stream = streamed_turn.events
 
             # Consume the event stream
             async for event in stream:
@@ -569,6 +686,8 @@ class OpenAIProvider:
                     event_session = getattr(event, "thread_id", None)
                 if event_session:
                     session_token = event_session
+                elif thread is not None:
+                    session_token = getattr(thread, "id", None) or session_token
 
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - start_time) * 1000)

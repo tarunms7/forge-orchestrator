@@ -532,6 +532,85 @@ class TestCodexStart:
         error_events = [e for e in events if e.kind == EventKind.ERROR]
         assert len(error_events) >= 1
 
+    async def test_codex_client_start_path_produces_events(
+        self,
+        provider: OpenAIProvider,
+        codex_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+        tool_policy: ToolPolicy,
+        output_contract: OutputContract,
+    ) -> None:
+        events: list[ProviderEvent] = []
+        captured: dict[str, Any] = {}
+
+        async def _event_stream() -> Any:
+            yield SimpleNamespace(
+                type="thread.started",
+                thread_id="thread-123",
+            )
+            yield SimpleNamespace(
+                type="item.completed",
+                item=SimpleNamespace(
+                    type="agent_message",
+                    text="Done from client",
+                    id="msg-1",
+                ),
+            )
+            yield SimpleNamespace(
+                type="turn.completed",
+                usage=SimpleNamespace(input_tokens=60, output_tokens=30),
+            )
+
+        class _FakeThread:
+            def __init__(self) -> None:
+                self.id = None
+
+            async def run_streamed(self, input_: Any) -> Any:
+                captured["input"] = input_
+                self.id = "thread-123"
+                return SimpleNamespace(events=_event_stream())
+
+        class _FakeCodexClient:
+            def __init__(self, options: Any = None) -> None:
+                captured["client_options"] = options
+
+            def start_thread(self, options: Any = None) -> Any:
+                captured["thread_options"] = options
+                return _FakeThread()
+
+        mock_sdk = MagicMock()
+        mock_sdk.__version__ = "0.1.0"
+        mock_sdk.start_thread = None
+        mock_sdk.startThread = None
+        mock_sdk.resume_thread = None
+        mock_sdk.resumeThread = None
+        mock_sdk.Codex = _FakeCodexClient
+
+        with patch("forge.providers.openai._try_import_codex", return_value=mock_sdk):
+            handle = provider.start(
+                prompt="test prompt",
+                system_prompt="system rules",
+                catalog_entry=codex_entry,
+                execution_mode=ExecutionMode.CODING,
+                tool_policy=tool_policy,
+                output_contract=output_contract,
+                workspace=workspace,
+                max_turns=5,
+                on_event=events.append,
+            )
+            result = await handle.result()
+
+        assert result.is_error is False
+        assert result.text == "Done from client"
+        assert result.input_tokens == 60
+        assert result.output_tokens == 30
+        assert result.resume_state is not None
+        assert result.resume_state.session_token == "thread-123"
+        assert captured["thread_options"]["model"] == "gpt-5.4-0414"
+        assert captured["thread_options"]["workingDirectory"] == workspace.primary_cwd
+        assert "system rules" in captured["input"]
+        assert "test prompt" in captured["input"]
+
     async def test_codex_not_installed_raises(
         self,
         provider: OpenAIProvider,
