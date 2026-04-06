@@ -55,9 +55,9 @@ def _try_import_codex() -> Any | None:
 def _try_import_agents() -> Any | None:
     """Lazily import the OpenAI Agents SDK. Returns module or None."""
     try:
-        import openai_agents
+        import agents
 
-        return openai_agents
+        return agents
     except ImportError:
         return None
 
