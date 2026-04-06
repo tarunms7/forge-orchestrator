@@ -134,3 +134,32 @@ def test_resolve_registry_model_uses_registry_settings_overrides() -> None:
     result = resolve_registry_model(registry, "reviewer", "low")
 
     assert result == ModelSpec("openai", "gpt-5.4-mini")
+
+
+def test_build_provider_config_snapshot_mixed_provider_routing() -> None:
+    """Mixed-provider routing should record correct specs and providers in snapshot."""
+    settings = ForgeSettings(
+        planner_model="claude:opus",
+        agent_model_medium="claude:sonnet",
+        reviewer_model="openai:gpt-5.4",
+        reviewer_reasoning_effort="high",
+    )
+    registry = build_provider_registry(settings)
+
+    snapshot = build_provider_config_snapshot(settings, registry)
+
+    # Assert planner stage
+    planner = snapshot["stages"]["planner"]
+    assert planner["spec"] == "claude:opus"
+    assert planner["provider"] == "claude"
+
+    # Assert agent_medium stage
+    agent_medium = snapshot["stages"]["agent_medium"]
+    assert agent_medium["spec"] == "claude:sonnet"
+    assert agent_medium["provider"] == "claude"
+
+    # Assert reviewer stage
+    reviewer = snapshot["stages"]["reviewer"]
+    assert reviewer["spec"] == "openai:gpt-5.4"
+    assert reviewer["provider"] == "openai"
+    assert reviewer["reasoning_effort"] == "high"
