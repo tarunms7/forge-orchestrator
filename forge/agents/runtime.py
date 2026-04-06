@@ -61,7 +61,7 @@ class AgentRuntime:
         worktree_path: str,
         allowed_files: list[str],
         allowed_dirs: list[str] | None = None,
-        model: str = "sonnet",
+        model: str | ModelSpec = "sonnet",
         on_message=None,
         project_context: str = "",
         conventions_json: str | None = None,
@@ -109,6 +109,7 @@ class AgentRuntime:
                 error="No adapter or provider registry configured",
             )
 
+        normalized_model = str(model) if isinstance(model, ModelSpec) else model
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         max_retries = 2  # 3 total attempts
         for attempt in range(max_retries + 1):
@@ -119,7 +120,7 @@ class AgentRuntime:
                     allowed_files=allowed_files,
                     timeout_seconds=effective_timeout,
                     allowed_dirs=allowed_dirs,
-                    model=model,
+                    model=normalized_model,
                     on_message=on_message,
                     project_context=project_context,
                     conventions_json=conventions_json,
@@ -192,7 +193,7 @@ class AgentRuntime:
         worktree_path: str,
         allowed_files: list[str],
         allowed_dirs: list[str] | None = None,
-        model: str = "sonnet",
+        model: str | ModelSpec = "sonnet",
         on_message=None,
         project_context: str = "",
         conventions_json: str | None = None,
@@ -209,7 +210,7 @@ class AgentRuntime:
         project_commands: dict[str, str] | None = None,
     ) -> AgentResult:
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
-        spec = ModelSpec.parse(model)
+        spec = model if isinstance(model, ModelSpec) else ModelSpec.parse(model)
         provider = self._registry.get_for_model(spec)
         catalog_entry = self._registry.get_catalog_entry(spec)
         system_prompt = build_agent_system_prompt(

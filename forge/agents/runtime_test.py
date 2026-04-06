@@ -8,6 +8,7 @@ from forge.agents.runtime import AgentRuntime, run_with_retry
 from forge.providers.base import (
     CatalogEntry,
     ExecutionMode,
+    ModelSpec,
     OutputContract,
     ProviderResult,
     ResumeState,
@@ -237,6 +238,67 @@ async def test_runtime_passes_autonomy_settings_to_adapter():
     call_kwargs = mock_adapter.run.call_args[1]
     assert call_kwargs["autonomy"] == "full"
     assert call_kwargs["questions_remaining"] == 0
+
+
+async def test_run_task_stringifies_modelspec_for_adapter():
+    """Legacy adapter path should receive provider:model strings, not ModelSpec objects."""
+    mock_adapter = AsyncMock()
+    mock_adapter.run.return_value = AgentResult(
+        success=True,
+        files_changed=[],
+        summary="Done",
+    )
+
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="test",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        model=ModelSpec("openai", "gpt-5.4-mini"),
+    )
+
+    call_kwargs = mock_adapter.run.call_args[1]
+    assert call_kwargs["model"] == "openai:gpt-5.4-mini"
+
+
+async def test_run_task_accepts_modelspec_with_provider_registry(monkeypatch):
+    """Provider path should accept pre-resolved ModelSpec values without reparsing them."""
+    provider = MagicMock()
+    catalog = _make_catalog_entry(
+        provider="openai",
+        alias="gpt-5.4-mini",
+        canonical_id="gpt-5.4-mini-0414",
+        backend="codex-sdk",
+        tier="supported",
+        can_resume_session=False,
+        supports_mcp_servers=False,
+        supports_structured_output=True,
+        cost_key="openai:gpt-5.4-mini",
+    )
+    provider.start.return_value = MockExecutionHandle(
+        _make_provider_result(model_canonical_id="gpt-5.4-mini-0414")
+    )
+
+    registry = MagicMock()
+    registry.get_for_model.return_value = provider
+    registry.get_catalog_entry.return_value = catalog
+
+    monkeypatch.setattr("forge.agents.runtime._get_changed_files", AsyncMock(return_value=[]))
+
+    runtime = AgentRuntime(registry=registry)
+    result = await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="Build X",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        model=ModelSpec("openai", "gpt-5.4-mini"),
+    )
+
+    registry.get_for_model.assert_called_once_with(ModelSpec("openai", "gpt-5.4-mini"))
+    registry.get_catalog_entry.assert_called_once_with(ModelSpec("openai", "gpt-5.4-mini"))
+    assert result.success is True
+    assert result.provider_model == "openai:gpt-5.4-mini"
 
 
 # --- Provider protocol: run_with_retry tests ---
