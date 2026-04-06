@@ -399,5 +399,6 @@ def test_data_dir_defaults_to_repo_local_forge_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", fake_home)
     s3 = ForgeSettings()
     import os
+
     expected_fallback = os.path.join(fake_home, ".local", "share", "forge")
     assert s3.data_dir == expected_fallback

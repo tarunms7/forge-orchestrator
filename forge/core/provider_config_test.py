@@ -254,7 +254,7 @@ def test_apply_provider_config_snapshot_from_json_string() -> None:
                     "model": "gpt-5.4",
                     "reasoning_effort": "medium",
                 },
-            }
+            },
         }
     )
 
@@ -342,7 +342,9 @@ def test_build_provider_config_snapshot_all_stages_present() -> None:
 
     # Verify all 7 stages are present
     actual_stages = set(stages.keys())
-    assert actual_stages == expected_stages, f"Expected stages {expected_stages}, got {actual_stages}"
+    assert actual_stages == expected_stages, (
+        f"Expected stages {expected_stages}, got {actual_stages}"
+    )
 
     # Verify each stage has required fields
     for stage_name in expected_stages:

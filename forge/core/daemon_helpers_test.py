@@ -1286,9 +1286,7 @@ class TestExtractActivityProviderEvent:
         event = ProviderEvent(
             kind=EventKind.TOOL_USE,
             tool_name="edit",
-            tool_input=json.dumps(
-                [{"path": "/workspace/backend/src/app.py", "kind": "replace"}]
-            ),
+            tool_input=json.dumps([{"path": "/workspace/backend/src/app.py", "kind": "replace"}]),
         )
         result = _extract_activity(event)
         assert result == "✏️ Editing src/app.py"

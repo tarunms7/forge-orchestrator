@@ -134,7 +134,9 @@ async def test_plan_emits_events_in_correct_order():
     routing_lines = [line for line in planner_lines if line.startswith("Routing: ")]
     assert len(routing_lines) > 0, "Expected at least one routing line"
     routing_line = routing_lines[0]
-    assert "Agent (L/M/H)" in routing_line, f"Missing 'Agent (L/M/H)' segment in routing line: {routing_line}"
+    assert "Agent (L/M/H)" in routing_line, (
+        f"Missing 'Agent (L/M/H)' segment in routing line: {routing_line}"
+    )
     assert "Review" in routing_line, f"Missing 'Review' segment in routing line: {routing_line}"
 
     # plan_ready must appear before phase_changed:planned
@@ -544,5 +546,3 @@ async def test_plan_surfaces_provider_status_activity_in_planner_output():
 
     planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
     assert "Thinking…" not in planner_lines
-
-
