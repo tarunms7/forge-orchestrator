@@ -25,6 +25,7 @@ from forge.core.daemon_helpers import (
     _run_git,
     async_subprocess,
     compute_worktree_path,
+    format_routing_summary,
 )
 from forge.providers.base import EventKind, ProviderEvent
 
@@ -1310,3 +1311,73 @@ class TestHumanizeModelSpec:
 
     def test_openai_model_is_humanized(self):
         assert _humanize_model_spec("openai:gpt-5.4-mini") == "GPT-5.4 Mini"
+
+    def test_claude_opus(self):
+        assert _humanize_model_spec("claude:opus") == "Claude Opus"
+
+    def test_claude_haiku(self):
+        assert _humanize_model_spec("claude:haiku") == "Claude Haiku"
+
+    def test_openai_gpt54(self):
+        assert _humanize_model_spec("openai:gpt-5.4") == "GPT-5.4"
+
+    def test_openai_codex(self):
+        assert _humanize_model_spec("openai:gpt-5.3-codex") == "GPT-5.3 Codex"
+
+    def test_unknown_provider_passthrough(self):
+        assert _humanize_model_spec("custom:my-model") == "custom:my-model"
+
+    def test_empty_string(self):
+        assert _humanize_model_spec("") == ""
+
+
+class TestFormatRoutingSummary:
+    def test_format_routing_summary_all_claude(self):
+        """Test routing summary with all Claude models produces expected string."""
+        result = format_routing_summary(
+            planner_model="claude:opus",
+            agent_low_model="claude:sonnet",
+            agent_medium_model="claude:opus",
+            agent_high_model="claude:opus",
+            reviewer_model="claude:sonnet",
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Sonnet/Claude Opus/Claude Opus | Review Claude Sonnet"
+        assert result == expected
+
+    def test_format_routing_summary_mixed_providers(self):
+        """Test routing summary with Claude planner + OpenAI reviewer produces GPT-5.4 label."""
+        result = format_routing_summary(
+            planner_model="claude:opus",
+            agent_low_model="claude:sonnet",
+            agent_medium_model="claude:sonnet",
+            agent_high_model="claude:opus",
+            reviewer_model="openai:gpt-5.4",
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Sonnet/Claude Sonnet/Claude Opus | Review GPT-5.4"
+        assert result == expected
+
+    def test_format_routing_summary_with_reasoning_effort(self):
+        """Test routing summary with reviewer_effort='high' appends suffix."""
+        result = format_routing_summary(
+            planner_model="claude:opus",
+            agent_low_model="claude:sonnet",
+            agent_medium_model="claude:opus",
+            agent_high_model="claude:opus",
+            reviewer_model="claude:sonnet",
+            reviewer_effort="high",
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Sonnet/Claude Opus/Claude Opus | Review Claude Sonnet (high reasoning)"
+        assert result == expected
+
+    def test_format_routing_summary_without_reasoning_effort(self):
+        """Test routing summary with reviewer_effort=None produces no suffix."""
+        result = format_routing_summary(
+            planner_model="claude:opus",
+            agent_low_model="claude:sonnet",
+            agent_medium_model="claude:opus",
+            agent_high_model="claude:opus",
+            reviewer_model="claude:sonnet",
+            reviewer_effort=None,
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Sonnet/Claude Opus/Claude Opus | Review Claude Sonnet"
+        assert result == expected
