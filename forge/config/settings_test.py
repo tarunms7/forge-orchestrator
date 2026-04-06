@@ -395,7 +395,9 @@ def test_data_dir_defaults_to_repo_local_forge_data_dir(tmp_path, monkeypatch):
     # Test case 3: Both FORGE_DATA_DIR and XDG_DATA_HOME unset - should fall back to ~/.local/share/forge
     monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    import os
+    fake_home = str(tmp_path / "fakehome")
+    monkeypatch.setenv("HOME", fake_home)
     s3 = ForgeSettings()
-    expected_fallback = os.path.join(os.path.expanduser("~"), ".local", "share", "forge")
+    import os
+    expected_fallback = os.path.join(fake_home, ".local", "share", "forge")
     assert s3.data_dir == expected_fallback
