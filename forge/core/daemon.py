@@ -769,6 +769,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         strategy = self._settings.model_strategy
         planner_model = self._select_model("planner", "high")
+        agent_low_model = self._select_model("agent", "low")
+        agent_medium_model = self._select_model("agent", "medium")
+        agent_high_model = self._select_model("agent", "high")
+        reviewer_model = self._select_model("reviewer", "medium")
+        reviewer_effort = self._settings.resolve_reasoning_effort("reviewer", "medium")
         console.print(f"[dim]Strategy: {strategy} | Planner: {planner_model}[/dim]")
 
         async def _planner_progress(msg: str) -> None:
@@ -778,6 +783,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             else:
                 await self._events.emit("planner:output", {"line": msg})
 
+        routing_line = (
+            "Routing: "
+            f"planner={planner_model} | "
+            f"agent[L/M/H]={agent_low_model}/{agent_medium_model}/{agent_high_model} | "
+            f"reviewer={reviewer_model}"
+        )
+        if reviewer_effort:
+            routing_line += f" [{reviewer_effort}]"
+        await _planner_progress(routing_line)
         await _planner_progress("Analyzing codebase structure…")
 
         # Load template config from pipeline for prompt modifiers

@@ -125,6 +125,9 @@ async def test_plan_emits_events_in_correct_order():
     assert event_types[0] == "pipeline:phase_changed"
     assert emitted_events[0][1] == {"phase": "planning"}
 
+    planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
+    assert any(line.startswith("Routing: ") for line in planner_lines)
+
     # plan_ready must appear before phase_changed:planned
     plan_ready_idx = next(
         i for i, (evt, _) in enumerate(emitted_events) if evt == "pipeline:plan_ready"

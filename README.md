@@ -377,6 +377,17 @@ Routing precedence:
 2. `.forge/forge.toml` `[routing]`
 3. Strategy defaults
 
+If you previously exported smoke-test overrides like `FORGE_AGENT_MODEL_LOW`,
+`FORGE_AGENT_MODEL_MEDIUM`, `FORGE_AGENT_MODEL_HIGH`, or `FORGE_REVIEWER_MODEL`,
+they will continue to win until you unset them. A quick reset looks like:
+
+```bash
+unset FORGE_AGENT_MODEL_LOW FORGE_AGENT_MODEL_MEDIUM FORGE_AGENT_MODEL_HIGH
+unset FORGE_REVIEWER_MODEL FORGE_PLANNER_MODEL
+unset FORGE_AGENT_MODEL_LOW_REASONING_EFFORT FORGE_AGENT_MODEL_MEDIUM_REASONING_EFFORT
+unset FORGE_AGENT_MODEL_HIGH_REASONING_EFFORT FORGE_REVIEWER_REASONING_EFFORT
+```
+
 You can also override reasoning effort per stage in `.forge/forge.toml` using:
 
 - `planner_reasoning_effort`

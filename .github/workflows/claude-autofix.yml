@@ -5,7 +5,12 @@ on:
     workflows: ["CI"]
     types: [completed]
 
+concurrency:
+  group: claude-autofix-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
 permissions:
+  actions: read
   contents: write
   pull-requests: write
   issues: write
@@ -18,25 +23,35 @@ jobs:
       github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_branch }}
-          fetch-depth: 0
-
-      - name: Get PR number
+      - name: Resolve PR context
         id: pr
         run: |
-          PR_NUMBER=$(gh pr list --head "${{ github.event.workflow_run.head_branch }}" --json number --jq '.[0].number')
+          PR_NUMBER="$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")"
+          HEAD_REPO="$(jq -r '.workflow_run.head_repository.full_name // empty' "$GITHUB_EVENT_PATH")"
+          HEAD_BRANCH="$(jq -r '.workflow_run.head_branch // empty' "$GITHUB_EVENT_PATH")"
           echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "head_repo=${HEAD_REPO}" >> "$GITHUB_OUTPUT"
+          echo "head_branch=${HEAD_BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip unsupported fork PRs
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.head_repo != github.repository
+        run: |
+          echo "Claude auto-fix currently skips fork PRs because the repo token cannot push fixes back safely."
+
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.head_repo == github.repository
+        with:
+          ref: ${{ steps.pr.outputs.head_branch }}
+          fetch-depth: 0
 
       - name: Claude Code Auto-Fix
-        if: steps.pr.outputs.number != ''
+        if: steps.pr.outputs.number != '' && steps.pr.outputs.head_repo == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: anthropics/claude-code-action@v1
         with:
           prompt: |
-            CI has failed on this PR. Your job is to fix the failures so CI passes.
+            CI has failed on PR #${{ steps.pr.outputs.number }}. Your job is to fix the failures so CI passes.
 
             1. Run `gh run view ${{ github.event.workflow_run.id }} --log-failed` to get the failure logs
             2. Diagnose the root cause from the logs
