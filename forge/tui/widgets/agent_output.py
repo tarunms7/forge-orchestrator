@@ -76,6 +76,7 @@ def _render_forging_shimmer(frame: int, width: int = 72) -> str:
     padding = max(0, width - len(word))
     return " " * padding + shimmer_text
 
+
 # Dim→bright fade-in for new lines
 _FADE_STEPS = ["#30363d", "#484f58", "#6e7681", "#8b949e", "#c9d1d9"]
 _FADE_INTERVAL = 0.06  # 60ms per step, 300ms total
