@@ -268,8 +268,6 @@ def _extract_activity(message) -> str | None:
             if not text or text.startswith("{") or text.startswith("["):
                 return None
             return text
-        if message.kind == EventKind.STATUS and message.status:
-            return _STATUS_ACTIVITY_LABELS.get(message.status)
         if message.kind == EventKind.TOOL_USE and message.tool_name:
             inp = _coerce_tool_input(message.tool_name, message.tool_input)
             label = _format_tool_activity(message.tool_name, inp)
@@ -319,13 +317,6 @@ _TOOL_ICONS = {
     "edit": "✏️",
     "mcp_tool": "🧩",
 }
-
-_STATUS_ACTIVITY_LABELS = {
-    "started": "Initializing…",
-    "thinking": "Thinking…",
-    "typing": "Typing…",
-}
-
 
 def _normalize_tool_activity_name(tool: str) -> str:
     """Normalize legacy and provider tool names to Forge's lowercase form."""

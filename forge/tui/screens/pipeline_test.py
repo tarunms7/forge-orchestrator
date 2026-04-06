@@ -138,6 +138,24 @@ async def test_pipeline_shows_planner_output_during_planning():
         assert agent_output._task_id == "planner"
         assert len(agent_output._lines) == 2
         assert "Reading forge/core/daemon.py..." in agent_output._lines[0]
+        assert agent_output._streaming is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_hides_ephemeral_planner_status_lines():
+    """Thinking/typing pulses should stay transient instead of polluting planner logs."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Thinking…"})
+        state.apply_event("planner:output", {"line": "📖 Reading forge/core/daemon.py"})
+        await pilot.pause()
+
+        agent_output = app.screen.query_one("AgentOutput")
+        assert agent_output._task_id == "planner"
+        assert agent_output._streaming is True
+        assert state.planner_output == ["📖 Reading forge/core/daemon.py"]
 
 
 @pytest.mark.asyncio

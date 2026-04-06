@@ -768,6 +768,7 @@ class PipelineScreen(Screen):
         elif state.phase == "planning" and state.planner_output:
             agent_output.clear_error_detail()
             agent_output.update_output("planner", "Planning", "planning", state.planner_output)
+            agent_output.set_streaming(True)
             # Auto-switch to chat view when a planning question is pending
             planning_q = state.pending_questions.get("__planning__")
             if planning_q:
@@ -791,6 +792,7 @@ class PipelineScreen(Screen):
                     "planning",
                     state.planner_output or ["⚙ Initializing planner..."],
                 )
+                agent_output.set_streaming(state.phase == "planning")
             else:
                 agent_output.update_output(None, None, None, [])
 

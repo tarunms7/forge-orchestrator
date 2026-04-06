@@ -20,6 +20,8 @@ _GATE_LABELS = {
     "gate2_llm_review": "\U0001f916 LLM Review",
 }
 
+_EPHEMERAL_ACTIVITY_LINES = frozenset({"Initializing…", "Thinking…", "Typing…"})
+
 
 class TuiState:
     """Single source of truth for TUI data."""
@@ -189,6 +191,11 @@ class TuiState:
     def _on_agent_output(self, data: dict) -> None:
         tid = data.get("task_id", "")
         line = data.get("line", "")
+        if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+            if tid:
+                self.streaming_task_ids.add(tid)
+            self._notify("agent_output")
+            return
         lines = self.agent_output[tid]
         if len(lines) >= self._max_output_lines:
             del lines[: len(lines) - self._max_output_lines + 10]
@@ -203,9 +210,13 @@ class TuiState:
         self._notify("agent_output")
 
     def _on_planner_output(self, data: dict) -> None:
+        line = data.get("line", "")
+        if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+            self._notify("planner_output")
+            return
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
-        self.planner_output.append(data.get("line", ""))
+        self.planner_output.append(line)
         self._notify("planner_output")
 
     def _on_cost_update(self, data: dict) -> None:
@@ -344,6 +355,10 @@ class TuiState:
         task_id = data.get("task_id")
         line = data.get("line", "")
         if task_id:
+            if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+                self.streaming_task_ids.add(task_id)
+                self._notify("review_output")
+                return
             if task_id not in self.review_output:
                 if task_id not in self.tasks:
                     logger.warning("review_llm_output for unexpected task_id=%r", task_id)

@@ -1252,9 +1252,9 @@ class TestExtractActivityProviderEvent:
         assert result is not None
         assert "def main" in result
 
-    def test_status_event_returns_human_label(self):
+    def test_status_event_is_transient_not_persistent_activity(self):
         event = ProviderEvent(kind=EventKind.STATUS, status="thinking")
-        assert _extract_activity(event) == "Thinking…"
+        assert _extract_activity(event) is None
 
     def test_tool_use_accepts_normalized_lowercase_names(self):
         import json

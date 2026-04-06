@@ -497,4 +497,4 @@ async def test_plan_surfaces_provider_status_activity_in_planner_output():
         )
 
     planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
-    assert "Thinking…" in planner_lines
+    assert "Thinking…" not in planner_lines
