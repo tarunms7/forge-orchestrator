@@ -1109,14 +1109,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Track planner cost
             if pipeline_id and planner_llm._last_sdk_result:
                 sdk_result = planner_llm._last_sdk_result
-                if sdk_result.cost_usd > 0:
-                    await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
-                    await db.set_pipeline_planner_cost(pipeline_id, sdk_result.cost_usd)
+                cost_usd = sdk_result.provider_reported_cost_usd or 0.0
+                if cost_usd > 0:
+                    await db.add_pipeline_cost(pipeline_id, cost_usd)
+                    await db.set_pipeline_planner_cost(pipeline_id, cost_usd)
                     total_cost = await db.get_pipeline_cost(pipeline_id)
                     await self._emit(
                         "pipeline:cost_update",
                         {
-                            "planner_cost_usd": sdk_result.cost_usd,
+                            "planner_cost_usd": cost_usd,
                             "total_cost_usd": total_cost,
                         },
                         db=db,
@@ -1250,8 +1251,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Track cost
         if builder_llm._last_sdk_result:
             sdk_result = builder_llm._last_sdk_result
-            if sdk_result.cost_usd > 0:
-                await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
+            cost_usd = sdk_result.provider_reported_cost_usd or 0.0
+            if cost_usd > 0:
+                await db.add_pipeline_cost(pipeline_id, cost_usd)
 
         # Persist contracts
         if contract_set.has_contracts():

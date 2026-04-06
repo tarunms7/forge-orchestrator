@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from forge.providers.base import (
     CatalogEntry,
     EventKind,
+    ProviderEvent,
     ResumeState,
     ToolPolicy,
     WorkspaceRoots,
@@ -249,6 +250,26 @@ class TestEventConversion:
         assert events[0].tool_name == "read"
         assert events[0].tool_call_id == "tool-1"
         assert "file_path" in (events[0].tool_input or "")
+
+    def test_convert_stream_event_tool_use_without_input_is_deferred(self):
+        from claude_code_sdk.types import StreamEvent
+
+        event = StreamEvent(
+            uuid="evt-1b",
+            session_id="sess-1",
+            event={
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tool-1",
+                    "name": "Read",
+                    "input": {},
+                },
+            },
+        )
+
+        assert _convert_stream_event(event) == []
 
     def test_convert_stream_event_text_delta_emits_typing(self):
         from claude_code_sdk.types import StreamEvent
@@ -533,3 +554,72 @@ class TestRunQueryStreaming:
             "Now I have enough context.",
         ]
         assert result.text == "Now I have enough context."
+
+    async def test_run_query_emits_tool_details_from_input_json_delta(self):
+        from claude_code_sdk.types import StreamEvent
+
+        events: list[ProviderEvent] = []
+
+        async def _fake_query(*, prompt, options):
+            yield StreamEvent(
+                uuid="evt-tool-start",
+                session_id="sess-1",
+                event={
+                    "type": "content_block_start",
+                    "index": 1,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": "tool-1",
+                        "name": "Read",
+                        "input": {},
+                    },
+                },
+            )
+            yield StreamEvent(
+                uuid="evt-tool-delta-1",
+                session_id="sess-1",
+                event={
+                    "type": "content_block_delta",
+                    "index": 1,
+                    "delta": {"type": "input_json_delta", "partial_json": '{"file_path":"forge/'},
+                },
+            )
+            yield StreamEvent(
+                uuid="evt-tool-delta-2",
+                session_id="sess-1",
+                event={
+                    "type": "content_block_delta",
+                    "index": 1,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": 'core/daemon.py"}',
+                    },
+                },
+            )
+            yield StreamEvent(
+                uuid="evt-tool-stop",
+                session_id="sess-1",
+                event={"type": "content_block_stop", "index": 1},
+            )
+            yield _make_result_message(result="Done")
+
+        options = ClaudeProvider._build_options(
+            system_prompt="test",
+            catalog_entry=_make_catalog_entry(),
+            tool_policy=ToolPolicy(mode="unrestricted"),
+            workspace=WorkspaceRoots(primary_cwd="/tmp/test"),
+            max_turns=10,
+        )
+
+        with patch("forge.providers.claude.query", side_effect=_fake_query):
+            await ClaudeProvider._run_query(
+                prompt="test prompt",
+                options=options,
+                catalog_entry=_make_catalog_entry(),
+                on_event=events.append,
+            )
+
+        tool_events = [event for event in events if event.kind == EventKind.TOOL_USE]
+        assert len(tool_events) == 1
+        assert tool_events[0].tool_name == "read"
+        assert tool_events[0].tool_input == '{"file_path": "forge/core/daemon.py"}'

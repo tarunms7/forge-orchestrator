@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -157,6 +158,77 @@ def _normalize_tool_name(raw_name: str) -> str:
     return raw_name
 
 
+_STREAM_PATH_KEYS = (
+    "file_path",
+    "path",
+    "target_path",
+    "new_path",
+    "old_path",
+    "source_path",
+    "destination_path",
+)
+
+
+def _coerce_stream_tool_input(tool_name: str, partial_json: str) -> str | None:
+    """Best-effort extraction of streamed Claude tool input.
+
+    Claude often streams tool arguments through ``input_json_delta`` chunks.
+    Those chunks may not be valid JSON until the final delta, so we try a full
+    parse first and then fall back to extracting the most useful field for the
+    active tool.
+    """
+    raw = partial_json.strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return json.dumps(parsed)
+    if isinstance(parsed, list):
+        return json.dumps(parsed)
+
+    normalized = _normalize_tool_name(tool_name).lower()
+
+    def _extract_string_field(keys: tuple[str, ...]) -> str | None:
+        for key in keys:
+            match = re.search(rf'"{re.escape(key)}"\s*:\s*"([^"]*)"', raw)
+            if match:
+                return match.group(1)
+        return None
+
+    if normalized in {"read", "write", "edit"}:
+        path = _extract_string_field(_STREAM_PATH_KEYS)
+        if path:
+            return json.dumps({"file_path": path})
+
+    if normalized in {"glob", "grep"}:
+        pattern = _extract_string_field(("pattern", "query"))
+        if pattern:
+            return json.dumps({"pattern": pattern})
+
+    if normalized == "bash":
+        command = _extract_string_field(("command", "cmd"))
+        if command:
+            return json.dumps({"command": command})
+
+    if normalized == "mcp_tool":
+        tool = _extract_string_field(("tool", "name"))
+        server = _extract_string_field(("server",))
+        if tool or server:
+            payload: dict[str, str] = {}
+            if server:
+                payload["server"] = server
+            if tool:
+                payload["tool"] = tool
+            return json.dumps(payload)
+
+    return None
+
+
 def _convert_assistant_message(msg: Any) -> list[ProviderEvent]:
     """Convert an AssistantMessage to ProviderEvent(s)."""
     events: list[ProviderEvent] = []
@@ -242,7 +314,12 @@ def _convert_stream_event(msg: StreamEvent) -> list[ProviderEvent]:
         if block_type == "tool_use":
             tool_name = block.get("name", "")
             tool_input = block.get("input")
-            tool_input_str = json.dumps(tool_input) if isinstance(tool_input, dict) else None
+            if isinstance(tool_input, (dict, list)) and tool_input:
+                tool_input_str = json.dumps(tool_input)
+            else:
+                tool_input_str = None
+            if not tool_input_str:
+                return []
             return [
                 ProviderEvent(
                     kind=EventKind.TOOL_USE,
@@ -261,7 +338,7 @@ def _convert_stream_event(msg: StreamEvent) -> list[ProviderEvent]:
         delta_type = delta.get("type")
         if delta_type == "text_delta":
             return [ProviderEvent(kind=EventKind.STATUS, status="typing", raw=msg)]
-        if delta_type in {"thinking_delta", "input_json_delta"}:
+        if delta_type == "thinking_delta":
             return [ProviderEvent(kind=EventKind.STATUS, status="thinking", raw=msg)]
         return []
 
@@ -518,6 +595,9 @@ class ClaudeProvider:
         last_result: ResultMessage | None = None
         partial_text_buffer = ""
         saw_partial_text = False
+        streamed_tool_inputs: dict[int, str] = {}
+        streamed_tool_meta: dict[int, tuple[str, str | None]] = {}
+        last_emitted_tool_input: dict[int, str] = {}
 
         # Emit STATUS started
         if on_event:
@@ -541,6 +621,27 @@ class ClaudeProvider:
                     )
                 )
 
+        def _emit_streamed_tool_use(index: int, *, raw: Any | None = None) -> None:
+            if not on_event:
+                return
+            meta = streamed_tool_meta.get(index)
+            if not meta:
+                return
+            tool_name, tool_call_id = meta
+            tool_input = _coerce_stream_tool_input(tool_name, streamed_tool_inputs.get(index, ""))
+            if not tool_input or tool_input == last_emitted_tool_input.get(index):
+                return
+            last_emitted_tool_input[index] = tool_input
+            on_event(
+                ProviderEvent(
+                    kind=EventKind.TOOL_USE,
+                    tool_name=_normalize_tool_name(tool_name),
+                    tool_call_id=tool_call_id,
+                    tool_input=tool_input,
+                    raw=raw,
+                )
+            )
+
         try:
             async for message in query(prompt=prompt, options=options):
                 if isinstance(message, _SkipMessage):
@@ -556,20 +657,56 @@ class ClaudeProvider:
                         event_type = raw_event.get("type")
                         if event_type == "content_block_delta":
                             delta = raw_event.get("delta") or {}
+                            block_index = raw_event.get("index")
                             if isinstance(delta, dict) and delta.get("type") == "text_delta":
                                 text_delta = delta.get("text", "")
                                 if isinstance(text_delta, str) and text_delta:
                                     partial_text_buffer += text_delta
                                     _emit_partial_fragments(raw=message)
                                 continue
+                            if (
+                                isinstance(delta, dict)
+                                and delta.get("type") == "input_json_delta"
+                                and isinstance(block_index, int)
+                            ):
+                                partial_json = delta.get("partial_json", "")
+                                if isinstance(partial_json, str) and partial_json:
+                                    streamed_tool_inputs[block_index] = (
+                                        streamed_tool_inputs.get(block_index, "") + partial_json
+                                    )
+                                    _emit_streamed_tool_use(block_index, raw=message)
+                                continue
 
                         if event_type == "content_block_start":
                             block = raw_event.get("content_block") or {}
                             if isinstance(block, dict) and block.get("type") == "tool_use":
                                 _emit_partial_fragments(force=True, raw=message)
+                                block_index = raw_event.get("index")
+                                if isinstance(block_index, int):
+                                    streamed_tool_meta[block_index] = (
+                                        str(block.get("name", "")),
+                                        block.get("id"),
+                                    )
+                                    tool_input = block.get("input")
+                                    if isinstance(tool_input, (dict, list)) and tool_input:
+                                        streamed_tool_inputs[block_index] = json.dumps(tool_input)
+                                        _emit_streamed_tool_use(block_index, raw=message)
+
+                        if event_type == "content_block_stop":
+                            block_index = raw_event.get("index")
+                            if isinstance(block_index, int):
+                                _emit_streamed_tool_use(block_index, raw=message)
+                                streamed_tool_inputs.pop(block_index, None)
+                                streamed_tool_meta.pop(block_index, None)
+                                last_emitted_tool_input.pop(block_index, None)
 
                         if event_type == "message_stop":
                             _emit_partial_fragments(force=True, raw=message)
+                            for block_index in list(streamed_tool_meta):
+                                _emit_streamed_tool_use(block_index, raw=message)
+                                streamed_tool_inputs.pop(block_index, None)
+                                streamed_tool_meta.pop(block_index, None)
+                                last_emitted_tool_input.pop(block_index, None)
 
                     if on_event:
                         for event in _convert_stream_event(message):

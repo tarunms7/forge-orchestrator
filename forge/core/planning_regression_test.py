@@ -15,7 +15,7 @@ from forge.core.daemon import ForgeDaemon
 from forge.core.events import EventEmitter
 from forge.core.models import TaskGraph
 from forge.merge.worktree import WorktreeManager
-from forge.providers.base import EventKind, ProviderEvent
+from forge.providers.base import EventKind, ProviderEvent, ProviderResult
 from forge.storage.db import Database
 
 # -- Shared test data -------------------------------------------------------
@@ -148,6 +148,45 @@ async def test_plan_emits_events_in_correct_order():
         (i, data) for i, (evt, data) in enumerate(emitted_events) if evt == "pipeline:phase_changed"
     ]
     assert phase_events[-1][1] == {"phase": "planned"}
+
+
+async def test_plan_tracks_provider_reported_cost_for_simple_planner():
+    emitter = EventEmitter()
+    daemon = _make_daemon(event_emitter=emitter)
+    db = _make_mock_db()
+
+    mock_planner_instance = AsyncMock()
+    mock_planner_instance.plan = AsyncMock(return_value=VALID_GRAPH)
+
+    mock_planner_llm = MagicMock()
+    mock_planner_llm._last_sdk_result = ProviderResult(
+        text="",
+        is_error=False,
+        input_tokens=100,
+        output_tokens=50,
+        resume_state=None,
+        duration_ms=250,
+        provider_reported_cost_usd=1.25,
+        model_canonical_id="claude-opus",
+    )
+
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
+        mock_snapshot.return_value = MagicMock()
+        mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
+
+        await daemon.plan(
+            "Build a REST API",
+            db,
+            emit_plan_ready=True,
+            pipeline_id="pipe-123",
+        )
+
+    db.add_pipeline_cost.assert_any_call("pipe-123", 1.25)
+    db.set_pipeline_planner_cost.assert_any_call("pipe-123", 1.25)
 
 
 # -- Test: emit_plan_ready=False skips plan_ready but emits planned ----------

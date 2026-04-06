@@ -1875,6 +1875,52 @@ class TestExecuteAgentPoolSizing:
 
         db.update_pipeline_status.assert_called_once_with("pipe-1", "contracts")
 
+    async def test_contracts_track_provider_reported_cost(self, tmp_path):
+        from forge.core.contracts import ContractSet
+        from forge.providers.base import ProviderResult
+
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._snapshot = MagicMock()
+        daemon._snapshot.format_for_planner.return_value = ""
+        daemon._strategy = "balanced"
+        daemon._settings = ForgeSettings(contracts_required=False)
+
+        from forge.core.models import TaskGraph
+
+        hint = {
+            "producer_task_id": "task-1",
+            "consumer_task_ids": ["task-2"],
+            "interface_type": "api_endpoint",
+            "description": "test",
+        }
+        graph = TaskGraph(tasks=[_make_task_def()], integration_hints=[hint])
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.add_pipeline_cost = AsyncMock()
+        db.set_pipeline_contracts = AsyncMock()
+
+        with (
+            patch("forge.core.daemon.ContractBuilder") as MockBuilder,
+            patch("forge.core.daemon.ContractBuilderLLM") as MockBuilderLLM,
+        ):
+            MockBuilderLLM.return_value._last_sdk_result = ProviderResult(
+                text="",
+                is_error=False,
+                input_tokens=10,
+                output_tokens=20,
+                resume_state=None,
+                duration_ms=100,
+                provider_reported_cost_usd=2.5,
+                model_canonical_id="claude-opus",
+            )
+            mock_builder = MockBuilder.return_value
+            mock_builder.build = AsyncMock(return_value=ContractSet())
+            await daemon.generate_contracts(graph, db, "pipe-1")
+
+        db.add_pipeline_cost.assert_awaited_once_with("pipe-1", 2.5)
+
 
 @pytest.mark.asyncio
 class TestExecutePersistsStatus:
