@@ -259,6 +259,7 @@ class TestReviewGateEvents:
         mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
         mixin._template_config = None
+        mixin._registry = MagicMock(name="provider_registry")
         return mixin
 
     def _collect_events(self, mixin) -> list[tuple[str, dict]]:
@@ -784,6 +785,7 @@ class TestRunReviewPassesOnMessage:
         mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
         mixin._template_config = None
+        mixin._registry = MagicMock(name="provider_registry")
         return mixin
 
     @pytest.mark.asyncio
@@ -830,6 +832,59 @@ class TestRunReviewPassesOnMessage:
         # on_message should be a callable, not None
         assert call_kwargs.kwargs.get("on_message") is not None
         assert callable(call_kwargs.kwargs["on_message"])
+        assert call_kwargs.kwargs.get("registry") is mixin._registry
+
+    @pytest.mark.asyncio
+    async def test_extra_review_pass_receives_registry(self):
+        """Extra review pass should reuse the active daemon registry."""
+        mixin = self._make_mixin()
+        task = _make_task_for_review()
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._settings.build_cmd = None
+        mixin._pipeline_build_cmd = None
+        mixin._settings.test_cmd = None
+        mixin._pipeline_test_cmd = None
+        mixin._template_config = {"review_config": {"extra_review_pass": True}}
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                new_callable=AsyncMock,
+            ) as mock_gate2,
+            patch("forge.core.daemon_review.select_model", return_value="openai:gpt-5.4"),
+        ):
+            mock_gate2.side_effect = [
+                (
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+                (
+                    GateResult(passed=True, gate="gate2_llm_review", details="Still LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ]
+
+            passed, _, _ = await mixin._run_review(
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
+            )
+
+        assert passed is True
+        assert mock_gate2.await_count == 2
+        for call in mock_gate2.await_args_list:
+            assert call.kwargs.get("registry") is mixin._registry
 
 
 class TestLintGateAutoFix:
