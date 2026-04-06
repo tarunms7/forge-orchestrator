@@ -20,6 +20,7 @@ from forge.core.daemon_helpers import (
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
+    _humanize_model_spec,
     _load_conventions_md,
     _parse_forge_question,
     _resolve_ref,
@@ -633,7 +634,10 @@ class ExecutorMixin:
         # Emit startup message so TUI shows progress before first SDK output
         await self._emit(
             "task:agent_output",
-            {"task_id": task_id, "line": f"⚙ Starting agent ({agent_model})…"},
+            {
+                "task_id": task_id,
+                "line": f"⚙ Starting agent ({_humanize_model_spec(agent_model)})…",
+            },
             db=db,
             pipeline_id=pid,
         )

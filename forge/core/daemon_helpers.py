@@ -271,15 +271,12 @@ def _extract_activity(message) -> str | None:
         if message.kind == EventKind.STATUS and message.status:
             return _STATUS_ACTIVITY_LABELS.get(message.status)
         if message.kind == EventKind.TOOL_USE and message.tool_name:
-            # Parse tool_input JSON for activity formatting
-            inp = {}
-            if message.tool_input:
-                try:
-                    inp = _json.loads(message.tool_input)
-                except (ValueError, TypeError):
-                    pass
+            inp = _coerce_tool_input(message.tool_name, message.tool_input)
             label = _format_tool_activity(message.tool_name, inp)
             return label
+        if message.kind == EventKind.TOOL_RESULT and message.tool_name and message.is_tool_error:
+            tool_label = _humanize_tool_name(message.tool_name)
+            return f"⚠️ {tool_label} failed"
         return None
 
     # ── Legacy SDK path ──
@@ -314,12 +311,13 @@ def _extract_activity(message) -> str | None:
 
 
 _TOOL_ICONS = {
-    "Read": "📖",
-    "Glob": "🔍",
-    "Grep": "🔎",
-    "Bash": "⚡",
-    "Write": "✏️",
-    "Edit": "✏️",
+    "read": "📖",
+    "glob": "🔍",
+    "grep": "🔎",
+    "bash": "⚡",
+    "write": "✏️",
+    "edit": "✏️",
+    "mcp_tool": "🧩",
 }
 
 _STATUS_ACTIVITY_LABELS = {
@@ -329,33 +327,135 @@ _STATUS_ACTIVITY_LABELS = {
 }
 
 
+def _normalize_tool_activity_name(tool: str) -> str:
+    """Normalize legacy and provider tool names to Forge's lowercase form."""
+    normalized = (tool or "").strip()
+    if not normalized:
+        return ""
+    legacy_map = {
+        "Bash": "bash",
+        "Read": "read",
+        "Write": "write",
+        "Edit": "edit",
+        "Glob": "glob",
+        "Grep": "grep",
+        "McpTool": "mcp_tool",
+        "MCPTool": "mcp_tool",
+    }
+    if normalized in legacy_map:
+        return legacy_map[normalized]
+    return normalized.lower()
+
+
+def _humanize_tool_name(tool: str) -> str:
+    normalized = _normalize_tool_activity_name(tool)
+    labels = {
+        "bash": "command",
+        "read": "file read",
+        "write": "file write",
+        "edit": "file edit",
+        "glob": "file search",
+        "grep": "code search",
+        "mcp_tool": "MCP tool",
+    }
+    return labels.get(normalized, normalized.replace("_", " "))
+
+
+def _coerce_tool_input(tool: str, raw_input: str | dict | None) -> dict:
+    """Parse provider tool input, falling back to sensible raw-string adapters."""
+    normalized = _normalize_tool_activity_name(tool)
+    if isinstance(raw_input, dict):
+        return raw_input
+    if not raw_input:
+        return {}
+    if isinstance(raw_input, str):
+        try:
+            parsed = _json.loads(raw_input)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+        if normalized == "bash":
+            return {"command": raw_input}
+        if normalized in {"read", "write", "edit"}:
+            return {"file_path": raw_input}
+        if normalized in {"glob", "grep"}:
+            return {"pattern": raw_input}
+        if normalized == "mcp_tool":
+            return {"tool": raw_input}
+    return {}
+
+
 def _format_tool_activity(tool: str, inp: dict) -> str | None:
     """Format a tool use block as a short human-readable string."""
-    icon = _TOOL_ICONS.get(tool, "🔧")
-    if tool == "Read":
+    normalized = _normalize_tool_activity_name(tool)
+    icon = _TOOL_ICONS.get(normalized, "🔧")
+    if normalized == "read":
         path = inp.get("file_path") or inp.get("path", "")
         if path:
             # Show just filename and parent dir for brevity
             short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
             return f"{icon} Reading {short}"
         return f"{icon} Reading file"
-    if tool == "Glob":
+    if normalized == "glob":
         pattern = inp.get("pattern", "")
         return f"{icon} Searching: {pattern}" if pattern else f"{icon} Searching files"
-    if tool == "Grep":
+    if normalized == "grep":
         pattern = inp.get("pattern", "")
         return f"{icon} Grep: {pattern[:60]}" if pattern else f"{icon} Searching code"
-    if tool == "Bash":
+    if normalized == "bash":
         cmd = inp.get("command", "")
+        if isinstance(cmd, list):
+            cmd = " ".join(str(part) for part in cmd)
         if cmd:
             short = cmd[:80] + ("..." if len(cmd) > 80 else "")
             return f"{icon} {short}"
         return f"{icon} Running command"
-    if tool in ("Write", "Edit"):
-        path = inp.get("file_path", "")
+    if normalized in ("write", "edit"):
+        path = inp.get("file_path") or inp.get("path", "")
         short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
         return f"{icon} Editing {short}" if path else f"{icon} Editing file"
-    return f"🔧 {tool}"
+    if normalized == "mcp_tool":
+        server = inp.get("server", "")
+        tool_name = inp.get("tool", "")
+        if server and tool_name:
+            return f"{icon} Calling {server}.{tool_name}"
+        if tool_name:
+            return f"{icon} Calling {tool_name}"
+        return f"{icon} Calling MCP tool"
+    return f"🔧 {_humanize_tool_name(tool)}"
+
+
+def _humanize_model_spec(model: object) -> str:
+    """Render provider:model values as clean user-facing labels."""
+    from forge.providers.base import ModelSpec
+
+    raw = str(model).strip()
+    if not raw:
+        return raw
+    try:
+        spec = model if isinstance(model, ModelSpec) else ModelSpec.parse(raw)
+    except Exception:
+        return raw
+
+    if spec.provider == "claude":
+        labels = {
+            "opus": "Claude Opus",
+            "sonnet": "Claude Sonnet",
+            "haiku": "Claude Haiku",
+        }
+        return labels.get(spec.model, f"Claude {spec.model.replace('-', ' ').title()}")
+
+    if spec.provider == "openai":
+        labels = {
+            "gpt-5.4": "GPT-5.4",
+            "gpt-5.4-mini": "GPT-5.4 Mini",
+            "gpt-5.3-codex": "GPT-5.3 Codex",
+            "o3": "o3",
+        }
+        return labels.get(spec.model, spec.model)
+
+    return raw
 
 
 def _is_review_excluded_path(path: str) -> bool:

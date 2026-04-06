@@ -16,6 +16,7 @@ from forge.core.daemon_helpers import (
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
+    _humanize_model_spec,
     _is_pytest_cmd,
     _is_review_excluded_path,
     _load_conventions_md,
@@ -1254,3 +1255,34 @@ class TestExtractActivityProviderEvent:
     def test_status_event_returns_human_label(self):
         event = ProviderEvent(kind=EventKind.STATUS, status="thinking")
         assert _extract_activity(event) == "Thinking…"
+
+    def test_tool_use_accepts_normalized_lowercase_names(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="read",
+            tool_input=json.dumps({"file_path": "/src/models/user.py"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "Reading" in result
+        assert "user.py" in result
+
+    def test_tool_use_accepts_raw_command_strings(self):
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="bash",
+            tool_input="pytest forge/core/daemon_helpers_test.py -q",
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "pytest" in result
+
+
+class TestHumanizeModelSpec:
+    def test_claude_model_is_humanized(self):
+        assert _humanize_model_spec("claude:sonnet") == "Claude Sonnet"
+
+    def test_openai_model_is_humanized(self):
+        assert _humanize_model_spec("openai:gpt-5.4-mini") == "GPT-5.4 Mini"

@@ -35,6 +35,7 @@ from forge.core.daemon_helpers import (  # noqa: F401
     _get_current_branch,
     _get_diff_stats,
     _get_diff_vs_main,
+    _humanize_model_spec,
     _print_status_table,
     async_subprocess,
     update_repos_json_branches,
@@ -783,14 +784,17 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             else:
                 await self._events.emit("planner:output", {"line": msg})
 
+        await _planner_progress(f"Starting planner ({_humanize_model_spec(planner_model)})…")
         routing_line = (
             "Routing: "
-            f"planner={planner_model} | "
-            f"agent[L/M/H]={agent_low_model}/{agent_medium_model}/{agent_high_model} | "
-            f"reviewer={reviewer_model}"
+            f"Planner {_humanize_model_spec(planner_model)} | "
+            f"Agent (L/M/H) {_humanize_model_spec(agent_low_model)}/"
+            f"{_humanize_model_spec(agent_medium_model)}/"
+            f"{_humanize_model_spec(agent_high_model)} | "
+            f"Review {_humanize_model_spec(reviewer_model)}"
         )
         if reviewer_effort:
-            routing_line += f" [{reviewer_effort}]"
+            routing_line += f" ({reviewer_effort} reasoning)"
         await _planner_progress(routing_line)
         await _planner_progress("Analyzing codebase structure…")
 

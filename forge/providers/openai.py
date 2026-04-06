@@ -423,7 +423,8 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
     if event_type == "item.started" and item_type in CODEX_TOOL_MAP:
         tool_input: str | None
         if item_type == "command_execution":
-            tool_input = item_command or (str(item_content) if item_content else None)
+            command = item_command or (str(item_content) if item_content else None)
+            tool_input = json.dumps({"command": command}, default=str) if command else None
         elif item_type == "mcp_tool_call":
             tool_input = json.dumps(
                 {
@@ -434,11 +435,16 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
                 default=str,
             )
         elif item_content:
-            tool_input = (
-                json.dumps(item_content, default=str)
-                if isinstance(item_content, dict)
-                else str(item_content)
-            )
+            if item_type in {"file_read", "file_write", "file_change"} and isinstance(
+                item_content, str
+            ):
+                tool_input = json.dumps({"file_path": item_content}, default=str)
+            else:
+                tool_input = (
+                    json.dumps(item_content, default=str)
+                    if isinstance(item_content, dict)
+                    else str(item_content)
+                )
         elif item_changes:
             tool_input = json.dumps(
                 [

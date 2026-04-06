@@ -417,6 +417,52 @@ class TestReviewGateEvents:
         assert not any(e[1]["gate"] == "gate1_lint" for e in passed_events)
 
     @pytest.mark.asyncio
+    async def test_review_stream_announces_model(self):
+        """Review output should start with a readable reviewer model line."""
+        mixin = self._make_mixin()
+        task = _make_task_for_review()
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._settings.build_cmd = None
+        mixin._pipeline_build_cmd = None
+        mixin._settings.test_cmd = None
+        mixin._pipeline_test_cmd = None
+        mixin._settings.resolve_reasoning_effort = MagicMock(return_value="high")
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
+            patch("forge.core.daemon_review.select_model", return_value="openai:gpt-5.4"),
+        ):
+            await mixin._run_review(
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
+            )
+
+        emitted_events = self._collect_events(mixin)
+        llm_output_events = [e for e in emitted_events if e[0] == "review:llm_output"]
+        assert any(
+            "Starting review (GPT-5.4, high reasoning)" in data["line"]
+            for _, data in llm_output_events
+        )
+
+    @pytest.mark.asyncio
     async def test_llm_feedback_event_emitted(self):
         """Verify LLM reviewer feedback is emitted as review:llm_feedback."""
         mixin = self._make_mixin()

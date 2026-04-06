@@ -19,6 +19,7 @@ from forge.core.daemon_helpers import (
     _extract_text,
     _find_related_test_files,
     _get_changed_files_vs_main,
+    _humanize_model_spec,
     _is_pytest_cmd,
     _run_git,
     async_subprocess,
@@ -1157,6 +1158,10 @@ class ReviewMixin:
                 f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
             )
             reviewer_model = self._select_model("reviewer", task.complexity or "medium")
+            reviewer_effort = None
+            resolve_effort = getattr(self._settings, "resolve_reasoning_effort", None)
+            if callable(resolve_effort):
+                reviewer_effort = resolve_effort("reviewer", task.complexity or "medium")
             # Build sibling context so the reviewer knows about the DAG
             sibling_context = await self._build_sibling_context(task, db, pipeline_id)
             custom_review_focus = review_config["custom_review_focus"]
@@ -1194,6 +1199,16 @@ class ReviewMixin:
                     "task_id": task.id,
                     "gate": "gate2_llm_review",
                 },
+                db=db,
+                pipeline_id=pipeline_id,
+            )
+            review_start_line = f"Starting review ({_humanize_model_spec(reviewer_model)}"
+            if reviewer_effort:
+                review_start_line += f", {reviewer_effort} reasoning"
+            review_start_line += ")…"
+            await self._emit(
+                "review:llm_output",
+                {"task_id": task.id, "line": review_start_line},
                 db=db,
                 pipeline_id=pipeline_id,
             )
@@ -1314,6 +1329,16 @@ class ReviewMixin:
                 extra_focus += (
                     "This is a SECOND REVIEW PASS. A previous reviewer already "
                     "approved. Catch anything they missed."
+                )
+                extra_start_line = f"Starting extra review ({_humanize_model_spec(reviewer_model)}"
+                if reviewer_effort:
+                    extra_start_line += f", {reviewer_effort} reasoning"
+                extra_start_line += ")…"
+                await self._emit(
+                    "review:llm_output",
+                    {"task_id": task.id, "line": extra_start_line},
+                    db=db,
+                    pipeline_id=pipeline_id,
                 )
                 gate2_extra, extra_cost_info = await gate2_llm_review(
                     task.title,

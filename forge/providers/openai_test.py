@@ -351,6 +351,7 @@ class TestCodexEventConversion:
         assert result.kind == EventKind.TOOL_USE
         assert result.tool_name == "bash"
         assert result.tool_call_id == "cmd-1"
+        assert result.tool_input == '{"command": "ls -la"}'
 
     def test_tool_result_event(self) -> None:
         event = {
