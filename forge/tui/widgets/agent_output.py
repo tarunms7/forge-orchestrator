@@ -16,7 +16,6 @@ from forge.tui.theme import (
     ACCENT_PURPLE,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
-    TEXT_MUTED,
 )
 from forge.tui.widgets.search_overlay import apply_highlights
 

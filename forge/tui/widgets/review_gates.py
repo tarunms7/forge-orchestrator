@@ -5,7 +5,6 @@ from __future__ import annotations
 from textual.widget import Widget
 
 from forge.tui.theme import (
-    ACCENT_BLUE,
     ACCENT_GREEN,
     ACCENT_PURPLE,
     ACCENT_RED,
