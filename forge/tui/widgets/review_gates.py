@@ -12,6 +12,7 @@ from forge.tui.theme import (
     TEXT_MUTED,
     TEXT_SECONDARY,
 )
+from forge.tui.widgets.agent_output import _render_forging_shimmer
 
 _GATE_NAMES = {
     "gate0_build": ("Build", "🔨"),
@@ -44,19 +45,15 @@ def format_gates(gates: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-_TYPING_FRAMES = ["▍", "▌", "▍", " "]
-
-
 def format_streaming_output(
     lines: list[str], streaming: bool = False, typing_frame: int = 0
 ) -> str:
-    """Format streaming LLM review output lines with optional typing indicator."""
+    """Format streaming LLM review output lines with optional forging shimmer indicator."""
     if not lines:
         return ""
     parts = list(lines)
     if streaming:
-        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
-        parts.append(f"[{ACCENT_BLUE}]● Typing{cursor}[/]")
+        parts.append(_render_forging_shimmer(typing_frame))
     return "\n".join(parts)
 
 
@@ -88,7 +85,7 @@ class ReviewGates(Widget):
         if active:
             self._typing_frame = 0
             try:
-                self._typing_timer = self.set_interval(0.3, self._tick_typing)
+                self._typing_timer = self.set_interval(0.12, self._tick_typing)
             except Exception:
                 pass  # Not yet composed
         else:
