@@ -60,8 +60,15 @@ def _render_forging_shimmer(frame: int, width: int = 72) -> str:
     chars = []
     for i, char in enumerate(word):
         distance = abs(i - hotspot_pos)
-        color_index = min(distance, len(_SHIMMER_COLORS) - 1)
-        color = _SHIMMER_COLORS[-(color_index + 1)]  # Reverse to get peak at 0 distance
+        # 3-character glow: distance 0=peak, 1=bright, 2=mid, else=dim base
+        if distance == 0:
+            color = _SHIMMER_COLORS[4]  # Peak: #e8c48a
+        elif distance == 1:
+            color = _SHIMMER_COLORS[3]  # Bright: #d6a85f
+        elif distance == 2:
+            color = _SHIMMER_COLORS[2]  # Mid: #8b949e
+        else:
+            color = _SHIMMER_COLORS[0]  # Dim base: #484f58
         chars.append(f"[{color}]{char}[/]")
 
     shimmer_text = "".join(chars)
