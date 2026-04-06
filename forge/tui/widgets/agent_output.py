@@ -34,7 +34,15 @@ _SPINNER_FRAMES = [
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 # Shimmer forging animation
-_FORGING_WORD = "Forging"
+_FORGING_LETTERS = [
+    ("╔═╗", "╠╣ ", "╚  "),  # F
+    ("╔═╗", "║ ║", "╚═╝"),  # O
+    ("╦═╗", "╠╦╝", "╩╚═"),  # R
+    ("╔═╗", "║ ╦", "╚═╝"),  # G
+    ("╦", "║", "╩"),  # I
+    ("╔╗╔", "║║║", "╝╚╝"),  # N
+    ("╔═╗", "║ ╦", "╚═╝"),  # G
+]
 _SHIMMER_COLORS = [
     "#484f58",  # Dim base (TEXT_MUTED)
     "#6e7681",  # Mid step 1
@@ -51,27 +59,28 @@ def _render_forging_shimmer(frame: int) -> str:
         frame: Current animation frame number
 
     Returns:
-        Rich markup string with left-aligned shimmer text
+        Rich markup string with left-aligned shimmer block art
     """
-    word = _FORGING_WORD
-    hotspot_pos = frame % (len(word) + 3)  # +3 for pause between sweeps
+    hotspot_pos = frame % (len(_FORGING_LETTERS) + 3)  # +3 for pause between sweeps
 
-    chars = []
-    for i, char in enumerate(word):
-        distance = abs(i - hotspot_pos)
-        # 3-character glow: distance 0=peak, 1=bright, 2=mid, else=dim base
-        if distance == 0:
-            color = _SHIMMER_COLORS[4]  # Peak: #e8c48a
-        elif distance == 1:
-            color = _SHIMMER_COLORS[3]  # Bright: #d6a85f
-        elif distance == 2:
-            color = _SHIMMER_COLORS[2]  # Mid: #8b949e
-        else:
-            color = _SHIMMER_COLORS[0]  # Dim base: #484f58
-        chars.append(f"[bold {color}]{char}[/]")
+    rows: list[str] = []
+    for row_idx in range(3):
+        row_parts: list[str] = []
+        for i, letter in enumerate(_FORGING_LETTERS):
+            distance = abs(i - hotspot_pos)
+            # 3-character glow: distance 0=peak, 1=bright, 2=mid, else=dim base
+            if distance == 0:
+                color = _SHIMMER_COLORS[4]  # Peak: #e8c48a
+            elif distance == 1:
+                color = _SHIMMER_COLORS[3]  # Bright: #d6a85f
+            elif distance == 2:
+                color = _SHIMMER_COLORS[2]  # Mid: #8b949e
+            else:
+                color = _SHIMMER_COLORS[0]  # Dim base: #484f58
+            row_parts.append(f"[bold {color}]{letter[row_idx]}[/]")
+        rows.append(" ".join(row_parts))
 
-    shimmer_text = "".join(chars)
-    return "  " + shimmer_text
+    return "\n".join(rows)
 
 
 # Dim→bright fade-in for new lines
