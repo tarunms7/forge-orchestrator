@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from forge.tui.widgets.agent_output import (
-    AgentOutput,
     _FORGING_LETTERS,
+    AgentOutput,
     _render_forging_shimmer,
     format_error_detail,
     format_header,
