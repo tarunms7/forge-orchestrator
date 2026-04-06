@@ -129,7 +129,7 @@ def test_agent_system_prompt_explains_existing_diff_vs_true_noop():
     )
 
     assert "ALREADY PRESENT in the current worktree" in prompt
-    assert "Do NOT claim \"no changes needed\" if `git diff` still shows" in prompt
+    assert 'Do NOT claim "no changes needed" if `git diff` still shows' in prompt
 
 
 # --- _build_dependency_context tests ---

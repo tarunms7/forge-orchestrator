@@ -683,7 +683,9 @@ class TestMakeReviewOnMessage:
             on_msg, _flush = mixin._make_review_on_message("task-1", MagicMock(), "pipe-1")
 
             with (
-                patch("forge.core.daemon_review._extract_activity", return_value="📖 Reading foo.py"),
+                patch(
+                    "forge.core.daemon_review._extract_activity", return_value="📖 Reading foo.py"
+                ),
                 patch("forge.core.daemon_review._extract_text", return_value=None),
             ):
                 await on_msg(MagicMock())

@@ -1358,7 +1358,9 @@ def test_phase_banner_scramble_progression():
     with warnings.catch_warnings(record=True) as caught_warnings:
         warnings.simplefilter("always")
         banner.update_phase("executing")
-    timer_warnings = [warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)]
+    timer_warnings = [
+        warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)
+    ]
     assert timer_warnings == [], f"Unexpected timer warnings: {timer_warnings}"
 
     assert banner._target_text != ""
@@ -1394,7 +1396,9 @@ def test_phase_banner_scramble_interrupted_by_new_phase():
 
         # New phase should reset
         banner.update_phase("review")
-    timer_warnings = [warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)]
+    timer_warnings = [
+        warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)
+    ]
     assert timer_warnings == [], f"Unexpected timer warnings: {timer_warnings}"
     assert banner._resolved_count == 0
     assert banner._target_text != old_target

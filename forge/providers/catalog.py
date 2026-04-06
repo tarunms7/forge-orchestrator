@@ -129,9 +129,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_structured_output=True,
         supports_reasoning=True,
         cost_key="openai:gpt-5.4",
-        validated_stages=frozenset(
-            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
-        ),
+        validated_stages=frozenset(["planner", "contract_builder", "agent", "reviewer", "ci_fix"]),
     ),
     CatalogEntry(
         provider="openai",
@@ -149,9 +147,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_structured_output=True,
         supports_reasoning=True,
         cost_key="openai:gpt-5.4-mini",
-        validated_stages=frozenset(
-            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
-        ),
+        validated_stages=frozenset(["planner", "contract_builder", "agent", "reviewer", "ci_fix"]),
     ),
     CatalogEntry(
         provider="openai",
@@ -169,9 +165,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_structured_output=True,
         supports_reasoning=True,
         cost_key="openai:gpt-5.3-codex",
-        validated_stages=frozenset(
-            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
-        ),
+        validated_stages=frozenset(["planner", "contract_builder", "agent", "reviewer", "ci_fix"]),
     ),
     # ---- OpenAI reasoning model (openai-agents-sdk) ----
     CatalogEntry(

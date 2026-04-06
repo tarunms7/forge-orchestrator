@@ -216,7 +216,11 @@ class UnifiedPlanner:
                 resume_state = None
                 continue
 
-            if provider_result is not None and provider_result.is_error and not provider_result.text:
+            if (
+                provider_result is not None
+                and provider_result.is_error
+                and not provider_result.text
+            ):
                 continue
 
             # Check for FORGE_QUESTION — agent wants human input

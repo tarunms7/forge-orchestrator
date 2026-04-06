@@ -39,6 +39,7 @@ from forge.providers.catalog import CODEX_TOOL_MAP, FORGE_MODEL_CATALOG
 
 logger = logging.getLogger("forge.providers.openai")
 
+
 def _default_reasoning_effort(
     execution_mode: ExecutionMode,
 ) -> Literal["low", "medium", "high"]:
@@ -805,7 +806,11 @@ class OpenAIProvider:
 
             full_system = system_prompt
             if policy_instructions:
-                full_system = f"{system_prompt}\n\n{policy_instructions}" if system_prompt else policy_instructions
+                full_system = (
+                    f"{system_prompt}\n\n{policy_instructions}"
+                    if system_prompt
+                    else policy_instructions
+                )
 
             # Configure Codex options
             codex_config = {

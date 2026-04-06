@@ -59,9 +59,7 @@ def codex_entry() -> CatalogEntry:
         supports_structured_output=True,
         supports_reasoning=False,
         cost_key="openai:gpt-5.4",
-        validated_stages=frozenset(
-            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
-        ),
+        validated_stages=frozenset(["planner", "contract_builder", "agent", "reviewer", "ci_fix"]),
     )
 
 

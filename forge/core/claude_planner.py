@@ -181,9 +181,7 @@ class ClaudePlannerLLM(PlannerLLM):
                 raise SdkCallError(f"SDK call failed: {e}", original_error=e) from e
 
             result_text = (
-                getattr(result, "result", None)
-                or getattr(result, "result_text", None)
-                or ""
+                getattr(result, "result", None) or getattr(result, "result_text", None) or ""
             )
             extracted = extract_json_block(result_text) or result_text
             return extracted
