@@ -663,6 +663,35 @@ async def test_agent_output_fast_path_calls_append_unified():
 
 
 @pytest.mark.asyncio
+async def test_agent_output_fast_path_skips_adjacent_duplicate_tool_line():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        await pilot.pause()
+        agent_output = app.screen.query_one("AgentOutput")
+        with patch.object(agent_output, "append_unified") as mock_append:
+            state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading foo.py"})
+            state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading foo.py"})
+            await pilot.pause()
+            mock_append.assert_called_once_with("agent", "📖 Reading foo.py")
+
+
+@pytest.mark.asyncio
 async def test_agent_output_fast_path_enables_streaming():
     """First agent_output event sets streaming to True."""
     state = TuiState()

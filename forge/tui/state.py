@@ -21,7 +21,6 @@ _GATE_LABELS = {
 }
 
 _EPHEMERAL_ACTIVITY_LINES = frozenset({"Initializing…", "Thinking…", "Typing…"})
-_TOOL_ACTIVITY_PREFIXES = ("📖", "🔍", "🔎", "⚡", "✏️", "🧩", "🔧", "⚠️")
 
 
 def _is_adjacent_duplicate(existing: list[str], new_line: str) -> bool:
@@ -30,7 +29,7 @@ def _is_adjacent_duplicate(existing: list[str], new_line: str) -> bool:
         return False
     prev = existing[-1].strip()
     curr = new_line.strip()
-    if not curr or curr.startswith(_TOOL_ACTIVITY_PREFIXES):
+    if not curr:
         return False
     return bool(prev and curr and prev == curr)
 
