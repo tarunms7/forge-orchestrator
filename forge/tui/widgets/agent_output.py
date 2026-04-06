@@ -34,7 +34,7 @@ _SPINNER_FRAMES = [
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 # Shimmer forging animation
-_FORGING_WORD = "forging"
+_FORGING_WORD = "Forging"
 _SHIMMER_COLORS = [
     "#484f58",  # Dim base (TEXT_MUTED)
     "#6e7681",  # Mid step 1
@@ -44,15 +44,14 @@ _SHIMMER_COLORS = [
 ]
 
 
-def _render_forging_shimmer(frame: int, width: int = 72) -> str:
+def _render_forging_shimmer(frame: int) -> str:
     """Render the 'forging' shimmer animation with a brightness wave.
 
     Args:
         frame: Current animation frame number
-        width: Total visual width for right-alignment (default 72)
 
     Returns:
-        Rich markup string with right-aligned shimmer text
+        Rich markup string with left-aligned shimmer text
     """
     word = _FORGING_WORD
     hotspot_pos = frame % (len(word) + 3)  # +3 for pause between sweeps
@@ -69,12 +68,10 @@ def _render_forging_shimmer(frame: int, width: int = 72) -> str:
             color = _SHIMMER_COLORS[2]  # Mid: #8b949e
         else:
             color = _SHIMMER_COLORS[0]  # Dim base: #484f58
-        chars.append(f"[{color}]{char}[/]")
+        chars.append(f"[bold {color}]{char}[/]")
 
     shimmer_text = "".join(chars)
-    # Calculate padding for right alignment (account for visual chars only)
-    padding = max(0, width - len(word))
-    return " " * padding + shimmer_text
+    return "  " + shimmer_text
 
 
 # Dim→bright fade-in for new lines

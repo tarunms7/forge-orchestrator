@@ -5,6 +5,7 @@ from __future__ import annotations
 from forge.tui.widgets.agent_output import (
     _TYPING_FRAMES,
     AgentOutput,
+    _render_forging_shimmer,
     format_error_detail,
     format_header,
     format_output,
@@ -101,6 +102,13 @@ def test_format_output_empty_lines_no_streaming_indicator():
     """When lines is empty, streaming indicator should NOT appear (spinner shown instead)."""
     result = format_output([], streaming=True, typing_frame=0)
     assert "Waiting" in result
+
+
+def test_render_forging_shimmer_left_aligns_and_bolds():
+    result = _render_forging_shimmer(0)
+    assert result.startswith("  ")
+    assert "Forging" in result
+    assert "[bold " in result
 
 
 # ── AgentOutput widget unit tests ────────────────────────────────────────
