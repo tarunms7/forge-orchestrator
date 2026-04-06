@@ -194,8 +194,13 @@ def test_provider_config_snapshot_roundtrip_preserves_all_stages() -> None:
     # Assert snapshots are identical (all 7 stages preserved)
     assert snapshot1 == snapshot2
     expected_stages = {
-        "planner", "agent_low", "agent_medium", "agent_high",
-        "reviewer", "contract_builder", "ci_fix"
+        "planner",
+        "agent_low",
+        "agent_medium",
+        "agent_high",
+        "reviewer",
+        "contract_builder",
+        "ci_fix",
     }
     assert set(snapshot1["stages"].keys()) == expected_stages
     assert set(snapshot2["stages"].keys()) == expected_stages
@@ -216,7 +221,9 @@ def test_provider_config_snapshot_preserves_backend_and_canonical_id() -> None:
         assert "backend" in stage_data, f"Stage {stage_name} missing 'backend' key"
         assert "canonical_id" in stage_data, f"Stage {stage_name} missing 'canonical_id' key"
         assert isinstance(stage_data["backend"], str), f"Stage {stage_name} backend is not a string"
-        assert isinstance(stage_data["canonical_id"], str), f"Stage {stage_name} canonical_id is not a string"
+        assert isinstance(stage_data["canonical_id"], str), (
+            f"Stage {stage_name} canonical_id is not a string"
+        )
         assert stage_data["backend"].strip(), f"Stage {stage_name} backend is empty"
         assert stage_data["canonical_id"].strip(), f"Stage {stage_name} canonical_id is empty"
 
