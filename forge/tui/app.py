@@ -1341,10 +1341,13 @@ class ForgeApp(App):
                 from forge.core.cost_estimator import estimate_pipeline_cost
 
                 settings = self._settings or ForgeSettings()
-                cost_float = await estimate_pipeline_cost(
-                    len(self._graph.tasks), settings, settings.model_strategy
+                cost_estimate_result = await estimate_pipeline_cost(
+                    len(self._graph.tasks),
+                    strategy=settings.model_strategy,
+                    overrides=settings.build_routing_overrides(),
+                    registry=getattr(self._daemon, "_registry", None),
                 )
-                cost_estimate = {"estimated_cost": cost_float}
+                cost_estimate = {"estimated_cost": cost_estimate_result.total_cost_usd}
                 model_assignments = {
                     t.id: str(
                         self._daemon._select_model(

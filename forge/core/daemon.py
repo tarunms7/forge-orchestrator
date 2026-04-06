@@ -1138,13 +1138,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if pipeline_id and graph.tasks:
             estimated = await estimate_pipeline_cost(
                 len(graph.tasks),
-                self._settings,
-                strategy,
+                strategy=strategy,
+                cost_registry=self._cost_registry,
+                overrides=self._settings.build_routing_overrides(),
+                registry=self._registry,
             )
             await self._emit(
                 "pipeline:cost_estimate",
                 {
-                    "estimated_cost_usd": estimated,
+                    "estimated_cost": estimated.total_cost_usd,
+                    "estimated_cost_usd": estimated.total_cost_usd,
                     "task_count": len(graph.tasks),
                 },
                 db=db,
@@ -1909,14 +1912,20 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 spec_path=spec_path,
                 deep_plan=deep_plan,
             )
-            cost = await estimate_pipeline_cost(len(graph.tasks), self._settings, self._strategy)
+            cost = await estimate_pipeline_cost(
+                len(graph.tasks),
+                strategy=self._strategy,
+                cost_registry=self._cost_registry,
+                overrides=self._settings.build_routing_overrides(),
+                registry=self._registry,
+            )
             model_assignments = {
                 t.id: self._select_model("agent", t.complexity.value) for t in graph.tasks
             }
             await db.update_pipeline_status(self._pipeline_id, "dry_run")
             return {
                 "graph": graph,
-                "cost_estimate": cost,
+                "cost_estimate": cost.total_cost_usd,
                 "model_assignments": model_assignments,
             }
         finally:
