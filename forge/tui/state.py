@@ -35,6 +35,18 @@ def _is_adjacent_duplicate(existing: list[str], new_line: str) -> bool:
     return bool(prev and curr and prev == curr)
 
 
+def _task_has_entered_review(task: dict | None) -> bool:
+    if not task:
+        return False
+    return task.get("state") in {
+        "in_review",
+        "awaiting_approval",
+        "merging",
+        "done",
+        "error",
+    }
+
+
 class TuiState:
     """Single source of truth for TUI data."""
 
@@ -217,11 +229,14 @@ class TuiState:
         if len(lines) >= self._max_output_lines:
             del lines[: len(lines) - self._max_output_lines + 10]
         lines.append(line)
-        # Unified log
-        ulog = self.unified_log[tid]
-        if len(ulog) >= self._max_output_lines:
-            del ulog[: len(ulog) - self._max_output_lines + 10]
-        ulog.append(("agent", line))
+        # Unified log: once review has started, keep late-arriving agent lines out of
+        # the merged stream so delayed execution chatter cannot split review sections
+        # into confusing AGENT → REVIEW 2 oscillations.
+        if not (self.review_output.get(tid) and _task_has_entered_review(self.tasks.get(tid))):
+            ulog = self.unified_log[tid]
+            if len(ulog) >= self._max_output_lines:
+                del ulog[: len(ulog) - self._max_output_lines + 10]
+            ulog.append(("agent", line))
         if tid:
             self.streaming_task_ids.add(tid)
         self._notify("agent_output")

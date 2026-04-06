@@ -47,7 +47,34 @@ _GIT_ADD_EXCLUDES: list[str] = [
     ":(exclude).ruff_cache",
     ":(exclude).pytest_cache",
     ":(exclude).mypy_cache",
+    ":(exclude).codegraph",
+    ":(exclude)screenshots",
 ]
+
+_STAGE_EXCLUDED_PREFIXES: tuple[str, ...] = (
+    ".venv/",
+    "venv/",
+    ".env/",
+    "node_modules/",
+    "__pycache__/",
+    ".ruff_cache/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".codegraph/",
+    "screenshots/",
+)
+_STAGE_EXCLUDED_EXACT: tuple[str, ...] = (
+    ".venv",
+    "venv",
+    ".env",
+    "node_modules",
+    "__pycache__",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".codegraph",
+    "screenshots",
+)
 
 logger = logging.getLogger("forge")
 console = make_console()
@@ -67,6 +94,47 @@ def _complexity_timeout(base_seconds: int, complexity: str | None) -> int:
     """Scale agent timeout by task complexity."""
     multiplier = _COMPLEXITY_MULTIPLIERS.get(complexity or "medium", 1.5)
     return int(base_seconds * multiplier)
+
+
+def _is_stage_excluded_path(path: str) -> bool:
+    normalized = path.strip()
+    if not normalized:
+        return True
+    return normalized in _STAGE_EXCLUDED_EXACT or normalized.startswith(_STAGE_EXCLUDED_PREFIXES)
+
+
+def _extract_stageable_paths(status_output: str) -> list[str]:
+    paths: list[str] = []
+    for raw_line in status_output.splitlines():
+        line = raw_line.rstrip()
+        if len(line) < 4:
+            continue
+        candidate = line[3:]
+        if " -> " in candidate:
+            candidate = candidate.split(" -> ", 1)[1]
+        candidate = candidate.strip()
+        if not candidate or _is_stage_excluded_path(candidate):
+            continue
+        paths.append(candidate)
+    return paths
+
+
+async def _stage_paths_from_status(
+    worktree_path: str,
+    status_output: str,
+    *,
+    description: str,
+) -> bool:
+    paths = _extract_stageable_paths(status_output)
+    if not paths:
+        return False
+    add_result = await _run_git(
+        ["add", "-A", "--", *paths],
+        cwd=worktree_path,
+        check=False,
+        description=description,
+    )
+    return add_result.returncode == 0
 
 
 class ExecutorMixin:
@@ -927,23 +995,23 @@ class ExecutorMixin:
             description="check working tree",
         )
         if status.stdout.strip():
-            await _run_git(
-                ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
-                cwd=worktree_path,
-                check=False,
+            staged_any = await _stage_paths_from_status(
+                worktree_path,
+                status.stdout,
                 description="stage remaining changes before rebase",
             )
-            await _run_git(
-                [
-                    "commit",
-                    "--no-verify",
-                    "-m",
-                    f"chore({task_id}): preserve uncommitted changes before rebase",
-                ],
-                cwd=worktree_path,
-                check=False,
-                description="commit remaining changes before rebase",
-            )
+            if staged_any:
+                await _run_git(
+                    [
+                        "commit",
+                        "--no-verify",
+                        "-m",
+                        f"chore({task_id}): preserve uncommitted changes before rebase",
+                    ],
+                    cwd=worktree_path,
+                    check=False,
+                    description="commit remaining changes before rebase",
+                )
 
     # -- auto-commit safety net -------------------------------------------
 
@@ -985,18 +1053,13 @@ class ExecutorMixin:
 
         # Stage everything (including new files the agent created), but
         # exclude virtual environments and caches that agents may create.
-        add_result = await _run_git(
-            ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
-            cwd=worktree_path,
-            check=False,
+        staged_any = await _stage_paths_from_status(
+            worktree_path,
+            status.stdout,
             description="auto-stage agent changes",
         )
-        if add_result.returncode != 0:
-            logger.warning(
-                "%s: git add failed during auto-commit: %s",
-                task_id,
-                add_result.stderr.strip(),
-            )
+        if not staged_any:
+            logger.info("%s: no stageable changes remained after exclusions", task_id)
             return False
 
         # Build a descriptive commit message from the task title
@@ -1655,7 +1718,7 @@ class ExecutorMixin:
 
         # Stage and commit the reverts
         await _run_git(
-            ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
+            ["add", "-A", "--", *out_of_scope],
             cwd=worktree_path,
             check=False,
             description="stage scope reverts",

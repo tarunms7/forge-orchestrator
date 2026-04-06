@@ -6,6 +6,7 @@ pipelines, tasks, and agents.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -28,6 +29,7 @@ from sqlalchemy import (
 from sqlalchemy import (
     delete as sa_delete,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -1476,15 +1478,26 @@ class Database:
         event_type: str,
         payload: dict,
     ) -> None:
-        async with self._session_factory() as session:
-            event = PipelineEventRow(
-                pipeline_id=pipeline_id,
-                task_id=task_id,
-                event_type=event_type,
-                payload=payload,
-            )
-            session.add(event)
-            await session.commit()
+        for attempt in range(4):
+            try:
+                async with self._session_factory() as session:
+                    event = PipelineEventRow(
+                        pipeline_id=pipeline_id,
+                        task_id=task_id,
+                        event_type=event_type,
+                        payload=payload,
+                    )
+                    session.add(event)
+                    await session.commit()
+                return
+            except OperationalError as exc:
+                if (
+                    not self._is_sqlite
+                    or "database is locked" not in str(exc).lower()
+                    or attempt == 3
+                ):
+                    raise
+                await asyncio.sleep(0.05 * (2**attempt))
 
     async def list_events(
         self,

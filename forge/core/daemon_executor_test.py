@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.agents.adapter import AgentResult
-from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
+from forge.core.daemon_executor import (
+    ExecutorMixin,
+    _complexity_timeout,
+    _extract_stageable_paths,
+)
 from forge.merge.worker import MergeResult
 from forge.review.pipeline import GateResult
 
@@ -167,6 +171,29 @@ class TestComplexityTimeout:
 
     def test_complexity_timeout_respects_base(self):
         assert _complexity_timeout(300, "high") == 600
+
+
+class TestStageablePathFiltering:
+    def test_extract_stageable_paths_skips_ignored_dirs(self):
+        status = "\n".join(
+            [
+                " M forge/core/daemon.py",
+                "?? forge/tui/app.py",
+                "?? .venv/bin/python",
+                "?? .ruff_cache/cache",
+                "?? .codegraph/index.db",
+                "?? screenshots/run.png",
+            ]
+        )
+
+        assert _extract_stageable_paths(status) == [
+            "forge/core/daemon.py",
+            "forge/tui/app.py",
+        ]
+
+    def test_extract_stageable_paths_uses_rename_destination(self):
+        status = "R  old_name.py -> new_name.py"
+        assert _extract_stageable_paths(status) == ["new_name.py"]
 
 
 @pytest.mark.asyncio

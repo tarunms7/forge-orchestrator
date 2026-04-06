@@ -827,6 +827,16 @@ def test_unified_log_interleaves_agent_and_review():
     ]
 
 
+def test_late_agent_output_does_not_reopen_unified_log_after_review_starts():
+    state = _make_state_with_task("t1")
+    state.tasks["t1"]["state"] = "in_review"
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Starting review..."})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "late agent line"})
+
+    assert state.agent_output["t1"] == ["late agent line"]
+    assert state.unified_log["t1"] == [("review", "Starting review...")]
+
+
 def test_unified_log_ring_buffer():
     state = TuiState(max_output_lines=3)
     for i in range(5):

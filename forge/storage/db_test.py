@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from forge.storage.db import Database
 
@@ -363,6 +364,64 @@ async def test_log_event(db: Database):
     assert len(events) == 1
     assert events[0].event_type == "agent_output"
     assert events[0].task_id == "task-1"
+
+
+async def test_log_event_retries_transient_sqlite_lock(db: Database):
+    await db.create_pipeline(
+        id="pipe-lock",
+        description="Test",
+        project_dir="/tmp",
+        model_strategy="auto",
+    )
+
+    original_factory = db._session_factory
+    failing_session = None
+
+    class _FailOnceSession:
+        def __init__(self):
+            self._added = []
+            self._failed = False
+
+        async def __aenter__(self):
+            nonlocal failing_session
+            failing_session = self
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def add(self, obj):
+            self._added.append(obj)
+
+        async def commit(self):
+            if not self._failed:
+                self._failed = True
+                raise OperationalError("insert", {}, Exception("database is locked"))
+            return None
+
+    calls = {"count": 0}
+
+    def _factory():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return _FailOnceSession()
+        return original_factory()
+
+    db._session_factory = _factory
+    try:
+        await db.log_event(
+            pipeline_id="pipe-lock",
+            task_id="task-1",
+            event_type="agent_output",
+            payload={"line": "Hello world"},
+        )
+    finally:
+        db._session_factory = original_factory
+
+    events = await db.list_events("pipe-lock")
+    assert len(events) == 1
+    assert failing_session is not None
+    assert len(failing_session._added) == 1
 
 
 async def test_list_events_ordered_by_created_at(db: Database):
