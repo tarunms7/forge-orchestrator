@@ -431,6 +431,35 @@ If you need to point Forge at a specific Codex binary, set `FORGE_CODEX_PATH=/ab
 
 Manual task reruns also refund one consumed retry slot before rescheduling the task, so abrupt provider failures or exhausted review loops do not leave a human-triggered recovery with zero room for error.
 
+### Local testing & mixed-provider verification
+
+For local development and testing provider routing:
+
+**Run focused provider tests:**
+```bash
+python -m pytest forge/core/provider_config_test.py forge/core/model_router_test.py forge/config/settings_test.py -v
+```
+
+**Verify mixed-provider routing locally:**
+```bash
+FORGE_PLANNER_MODEL=claude:opus FORGE_REVIEWER_MODEL=openai:gpt-5.4 forge run --dry-run "test task"
+```
+
+This displays the routing summary during planning phase:
+```
+Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4
+```
+
+**Local development directories:**
+- `FORGE_DATA_DIR` defaults to `~/.forge/` for global state (lessons, analytics)
+- Project-local `.forge/` contains pipelines, logs, and `forge.toml` config
+- Each pipeline gets isolated git worktrees in `.forge/worktrees/`
+
+**Provider health check:**
+```bash
+forge providers list    # Shows available models and authentication status
+```
+
 ---
 
 ## CLI reference
