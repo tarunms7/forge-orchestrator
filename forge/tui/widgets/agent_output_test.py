@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from forge.tui.widgets.agent_output import (
+    _FORGING_LETTERS,
     AgentOutput,
     _render_forging_shimmer,
     format_error_detail,
@@ -75,10 +76,11 @@ def test_format_output_with_streaming_shows_typing_indicator():
     lines = ["line1", "line2"]
     result = format_output(lines, streaming=True, typing_frame=0)
     assert result.endswith(
-        "  [bold #e8c48a]F[/][bold #d6a85f]o[/][bold #8b949e]r[/][bold #484f58]g[/]"
-        "[bold #484f58]i[/][bold #484f58]n[/][bold #484f58]g[/]"
+        "[bold #e8c48a]╚  [/] [bold #d6a85f]╚═╝[/] [bold #8b949e]╩╚═[/] "
+        "[bold #484f58]╚═╝[/] [bold #484f58]╩[/] [bold #484f58]╝╚╝[/] "
+        "[bold #484f58]╚═╝[/]"
     )
-    assert result.count("[bold ") == len("Forging")
+    assert result.count("[bold ") == len(_FORGING_LETTERS) * 3
 
 
 def test_format_output_streaming_false_no_indicator():
@@ -95,8 +97,8 @@ def test_format_output_typing_frame_cycles():
     assert "Forging" not in result_0  # markup splits the word
     assert "Forging" not in result_1
     assert result_0 != result_1
-    assert result_0.startswith("line1\n  [bold ")
-    assert result_1.startswith("line1\n  [bold ")
+    assert result_0.startswith("line1\n[bold ")
+    assert result_1.startswith("line1\n[bold ")
 
 
 def test_format_output_empty_lines_no_streaming_indicator():
@@ -107,9 +109,10 @@ def test_format_output_empty_lines_no_streaming_indicator():
 
 def test_render_forging_shimmer_left_aligns_and_bolds():
     result = _render_forging_shimmer(0)
-    assert result.startswith("  ")
-    assert result.count("[bold ") == len("Forging")
-    assert "[bold #e8c48a]F[/]" in result
+    assert result.startswith("[bold ")
+    assert "\n" in result
+    assert result.count("[bold ") == len(_FORGING_LETTERS) * 3
+    assert "[bold #e8c48a]╔═╗[/]" in result
 
 
 # ── AgentOutput widget unit tests ────────────────────────────────────────
@@ -385,8 +388,9 @@ def test_format_unified_output_streaming_indicator():
     result = format_unified_output(entries, streaming=True, typing_frame=0)
     assert "Forging" not in result
     assert result.endswith(
-        "  [bold #e8c48a]F[/][bold #d6a85f]o[/][bold #8b949e]r[/][bold #484f58]g[/]"
-        "[bold #484f58]i[/][bold #484f58]n[/][bold #484f58]g[/]"
+        "[bold #e8c48a]╚  [/] [bold #d6a85f]╚═╝[/] [bold #8b949e]╩╚═[/] "
+        "[bold #484f58]╚═╝[/] [bold #484f58]╩[/] [bold #484f58]╝╚╝[/] "
+        "[bold #484f58]╚═╝[/]"
     )
 
 
@@ -635,7 +639,7 @@ def test_sync_streaming_rebuilds_rendered_parts():
         expected_parts.append(text)
 
     # Call sync_streaming (what _refresh_all does during streaming)
-    widget.sync_streaming("t1", "Task 1", "in_progress", entries)
+    widget.sync_streaming("t1", "Task 1", "completed", entries)
 
     # _rendered_parts must be rebuilt, NOT empty
     assert len(widget._rendered_parts) == 3
