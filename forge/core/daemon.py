@@ -817,21 +817,19 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         async def _on_planner_msg(event):
             # Handle ProviderEvent from provider protocol
             if isinstance(event, ProviderEvent):
-                if event.kind == EventKind.TEXT and event.text:
-                    text = event.text.strip()
-                    # Skip JSON output from planner
-                    if text.startswith("{") or text.startswith("["):
-                        pass
-                    elif text:
-                        _last_token_update[0] = time.monotonic()
-                        if pipeline_id:
-                            await self._emit(
-                                "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
-                            )
-                        else:
-                            await self._events.emit("planner:output", {"line": text})
+                activity = _extract_activity(event)
+                if activity:
+                    _last_token_update[0] = time.monotonic()
+                    if pipeline_id:
+                        await self._emit(
+                            "planner:output", {"line": activity}, db=db, pipeline_id=pipeline_id
+                        )
+                    else:
+                        await self._events.emit("planner:output", {"line": activity})
 
-                    # Count tokens for progress display
+                if event.kind == EventKind.TEXT and event.text:
+                    # Count text tokens for progress display even though planner JSON
+                    # is intentionally suppressed from the panel.
                     _msg_tokens = event.token_count or (
                         max(1, len(event.text) // 4) if event.text else 0
                     )
@@ -853,37 +851,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                             else:
                                 await self._events.emit("planner:output", {"line": token_line})
 
-                elif event.kind == EventKind.TOOL_USE and event.tool_name:
-                    # Show tool activity (e.g. "Reading src/models.py")
-                    tool_line = f"🔧 {event.tool_name}"
-                    if event.tool_input:
-                        # Try to extract a short summary from tool input
-                        try:
-                            inp = (
-                                json.loads(event.tool_input)
-                                if isinstance(event.tool_input, str)
-                                else event.tool_input
-                            )
-                            if isinstance(inp, dict):
-                                path = (
-                                    inp.get("file_path")
-                                    or inp.get("path")
-                                    or inp.get("pattern")
-                                    or inp.get("command", "")
-                                )
-                                if path:
-                                    tool_line = f"🔧 {event.tool_name}: {str(path)[:80]}"
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    _last_token_update[0] = time.monotonic()
-                    if pipeline_id:
-                        await self._emit(
-                            "planner:output", {"line": tool_line}, db=db, pipeline_id=pipeline_id
-                        )
-                    else:
-                        await self._events.emit("planner:output", {"line": tool_line})
-
-                elif event.kind == EventKind.USAGE:
+                if event.kind == EventKind.USAGE:
                     if event.input_tokens:
                         _planner_token_count[0] += event.input_tokens
                     if event.output_tokens:

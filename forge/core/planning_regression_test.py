@@ -15,6 +15,7 @@ from forge.core.daemon import ForgeDaemon
 from forge.core.events import EventEmitter
 from forge.core.models import TaskGraph
 from forge.merge.worktree import WorktreeManager
+from forge.providers.base import EventKind, ProviderEvent
 from forge.storage.db import Database
 
 # -- Shared test data -------------------------------------------------------
@@ -449,3 +450,46 @@ async def test_plan_without_pipeline_id_uses_events_emit():
 
     # db.log_event should NOT have been called (no pipeline_id means no DB logging)
     db.log_event.assert_not_called()
+
+
+async def test_plan_surfaces_provider_status_activity_in_planner_output():
+    """Planner status events should be visible in the planning panel."""
+    emitted_events: list[tuple[str, dict]] = []
+
+    emitter = EventEmitter()
+
+    for evt in ("pipeline:phase_changed", "planner:output", "pipeline:plan_ready"):
+        handler = AsyncMock(side_effect=lambda data, evt=evt: emitted_events.append((evt, data)))
+        emitter.on(evt, handler)
+
+    daemon = _make_daemon(event_emitter=emitter)
+    db = _make_mock_db()
+
+    async def _plan_side_effect(*args, **kwargs):
+        on_message = kwargs.get("on_message")
+        assert on_message is not None
+        await on_message(ProviderEvent(kind=EventKind.STATUS, status="thinking"))
+        return VALID_GRAPH
+
+    mock_planner_instance = AsyncMock()
+    mock_planner_instance.plan = AsyncMock(side_effect=_plan_side_effect)
+    mock_planner_llm = MagicMock()
+    mock_planner_llm._last_sdk_result = None
+
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
+        mock_snapshot.return_value = MagicMock()
+        mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
+
+        await daemon.plan(
+            "Build something",
+            db,
+            emit_plan_ready=True,
+            pipeline_id="pipe-status",
+        )
+
+    planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
+    assert "Thinking…" in planner_lines
