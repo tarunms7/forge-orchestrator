@@ -393,6 +393,7 @@ class ClaudeAdapter(AgentAdapter):
     ):
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         from claude_code_sdk import ClaudeCodeOptions
+
         system_prompt = build_agent_system_prompt(
             worktree_path=worktree_path,
             allowed_dirs=allowed_dirs,

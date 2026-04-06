@@ -146,9 +146,7 @@ class TestOpenAIProviderBasics:
             aliases = {e.alias for e in provider.catalog_entries()}
         assert "o3" not in aliases
 
-    def test_catalog_entries_filter_to_subscription_models(
-        self, provider: OpenAIProvider
-    ) -> None:
+    def test_catalog_entries_filter_to_subscription_models(self, provider: OpenAIProvider) -> None:
         with (
             patch.dict(os.environ, {}, clear=True),
             patch(
@@ -218,7 +216,9 @@ class TestHealthCheck:
         ):
             status = provider.health_check(backend="codex-sdk")
             assert status.healthy is False
-            assert any("codex login" in e.lower() or "codex_api_key" in e.lower() for e in status.errors)
+            assert any(
+                "codex login" in e.lower() or "codex_api_key" in e.lower() for e in status.errors
+            )
 
     def test_unhealthy_when_codex_not_installed(self, provider: OpenAIProvider) -> None:
         with (

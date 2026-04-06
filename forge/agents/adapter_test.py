@@ -614,7 +614,13 @@ def test_agent_result_has_provider_fields():
         provider_model="claude:sonnet",
         backend="claude-code-sdk",
         canonical_model_id="claude-sonnet-4-20250514",
-        model_history_entry={"attempt": 0, "model": "claude:sonnet", "backend": "claude-code-sdk", "result": "success", "cost_usd": 0.01},
+        model_history_entry={
+            "attempt": 0,
+            "model": "claude:sonnet",
+            "backend": "claude-code-sdk",
+            "result": "success",
+            "cost_usd": 0.01,
+        },
     )
     assert result.provider_model == "claude:sonnet"
     assert result.backend == "claude-code-sdk"

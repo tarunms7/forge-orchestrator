@@ -344,6 +344,7 @@ def _make_provider_result(**overrides):
 
 class MockExecutionHandle:
     """Mock ExecutionHandle for testing."""
+
     def __init__(self, result: ProviderResult):
         self._result = result
         self.is_running = False
@@ -390,9 +391,12 @@ async def test_run_with_retry_timeout():
 
     class HangingHandle:
         is_running = True
+
         async def result(self):
             import asyncio
+
             await asyncio.sleep(999)
+
         async def abort(self):
             self.is_running = False
 
@@ -447,11 +451,13 @@ async def test_run_with_retry_transient_retries():
 
     # First call raises transient error, second succeeds
     call_count = [0]
+
     def mock_start(**kwargs):
         call_count[0] += 1
         if call_count[0] == 1:
             raise RuntimeError("rate_limit exceeded")
         return handle
+
     provider.start.side_effect = mock_start
 
     result = await run_with_retry(

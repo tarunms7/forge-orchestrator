@@ -760,17 +760,13 @@ class ExecutorMixin:
                     canonical_model_id=canonical_model_id,
                 )
             except Exception:
-                logger.debug(
-                    "Failed to persist provider info for %s", task_id, exc_info=True
-                )
+                logger.debug("Failed to persist provider info for %s", task_id, exc_info=True)
 
         if model_history_entry:
             try:
                 await db.append_task_model_history(task_id, model_history_entry)
             except Exception:
-                logger.debug(
-                    "Failed to append model_history for %s", task_id, exc_info=True
-                )
+                logger.debug("Failed to append model_history for %s", task_id, exc_info=True)
 
     # -- Layer C rollback: git state verification --------------------------
 
@@ -1224,9 +1220,7 @@ class ExecutorMixin:
         _rs_json = _rs_raw if isinstance(_rs_raw, str) else None
         resume_state_obj = _DB.read_resume_state(_rs_json, session_id)
         # Use session_token from ResumeState for resume (backward compat)
-        effective_session_id = (
-            resume_state_obj.session_token if resume_state_obj else session_id
-        )
+        effective_session_id = resume_state_obj.session_token if resume_state_obj else session_id
 
         # Transition back to in_progress
         await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)

@@ -2128,7 +2128,9 @@ async def get_task_status(
                 enriched["backend"] = getattr(row, "backend", None)
                 enriched["canonical_model_id"] = getattr(row, "canonical_model_id", None)
                 try:
-                    enriched["model_history"] = json.loads(getattr(row, "model_history", "[]") or "[]")
+                    enriched["model_history"] = json.loads(
+                        getattr(row, "model_history", "[]") or "[]"
+                    )
                 except (json.JSONDecodeError, TypeError):
                     enriched["model_history"] = []
             # Add repo_id from TaskRow (defaults to "default" for single-repo)

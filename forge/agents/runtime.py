@@ -182,7 +182,7 @@ class AgentRuntime:
             success=False,
             files_changed=[],
             summary=f"Agent '{agent_id}' exhausted retries",
-                error="Exhausted retries",
+            error="Exhausted retries",
         )
 
     async def _run_provider_task(

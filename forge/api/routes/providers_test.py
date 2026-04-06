@@ -101,6 +101,42 @@ class TestListProviders:
         assert isinstance(data["observed_health"], list)
 
 
+class TestListProvidersWithOpenAIEnabled:
+    """Tests for GET /api/providers when OpenAI is enabled at app creation."""
+
+    async def test_openai_provider_listed_when_enabled(self, monkeypatch):
+        """GET /api/providers should include OpenAI models when enabled."""
+        monkeypatch.setenv("FORGE_OPENAI_ENABLED", "true")
+
+        from forge.api.app import create_app
+
+        app = create_app(
+            db_url="sqlite+aiosqlite:///:memory:",
+            jwt_secret="test-secret-for-providers",
+        )
+        await app.state.db.initialize()
+
+        transport = ASGITransport(app=app)
+        try:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                token = await _register_and_get_token(client)
+                resp = await client.get("/api/providers", headers=_auth_header(token))
+
+                assert resp.status_code == 200
+                data = resp.json()
+
+                provider_names = [provider["name"] for provider in data["providers"]]
+                assert "openai" in provider_names
+
+                openai = next(
+                    provider for provider in data["providers"] if provider["name"] == "openai"
+                )
+                aliases = [model["alias"] for model in openai["models"]]
+                assert "gpt-5.4-mini" in aliases
+        finally:
+            await app.state.db.close()
+
+
 class TestProvidersWithMockRegistry:
     """Tests for GET /api/providers with a mock registry on app.state."""
 

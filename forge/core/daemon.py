@@ -165,9 +165,7 @@ def _max_dependency_wave_width(tasks: list[object]) -> int:
     for task in tasks:
         task_id = str(task.id)
         deps = [
-            str(dep)
-            for dep in (getattr(task, "depends_on", None) or [])
-            if str(dep) in task_ids
+            str(dep) for dep in (getattr(task, "depends_on", None) or []) if str(dep) in task_ids
         ]
         remaining_deps[task_id] = len(deps)
         for dep in deps:
