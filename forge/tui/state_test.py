@@ -850,6 +850,7 @@ def test_review_gate_passed_appends_to_unified_log():
     state.apply_event(
         "review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "passed"}
     )
+    assert state.tasks["t1"]["review_gates"]["gate0_build"]["status"] == "passed"
     assert len(state.unified_log["t1"]) == 1
     assert state.unified_log["t1"][0][0] == "gate"
     assert "Build" in state.unified_log["t1"][0][1]
@@ -861,6 +862,7 @@ def test_review_gate_failed_appends_to_unified_log():
     state.apply_event(
         "review:gate_failed", {"task_id": "t1", "gate": "gate1_lint", "details": "3 errors"}
     )
+    assert state.tasks["t1"]["review_gates"]["gate1_lint"]["status"] == "failed"
     assert len(state.unified_log["t1"]) == 1
     assert state.unified_log["t1"][0][0] == "gate"
     assert "Lint" in state.unified_log["t1"][0][1]

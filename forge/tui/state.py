@@ -354,6 +354,8 @@ class TuiState:
         gate = data.get("gate")
         if task_id and gate:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "running"}
+            if task_id in self.tasks:
+                self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
             self._notify("tasks")
 
     def _on_review_gate_passed(self, data: dict) -> None:
@@ -364,6 +366,8 @@ class TuiState:
                 "status": "passed",
                 "details": data.get("details"),
             }
+            if task_id in self.tasks:
+                self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
             self.unified_log[task_id].append(
@@ -379,6 +383,8 @@ class TuiState:
                 "status": "failed",
                 "details": data.get("details"),
             }
+            if task_id in self.tasks:
+                self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
             self.unified_log[task_id].append(

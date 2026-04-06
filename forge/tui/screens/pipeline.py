@@ -753,7 +753,8 @@ class PipelineScreen(Screen):
             task = state.tasks[tid]
             unified = state.unified_log.get(tid, [])
             if task.get("state") == "error":
-                agent_output.render_error_detail(tid, task, state.agent_output.get(tid, []))
+                error_task, error_lines = self._build_error_detail_context(tid, task)
+                agent_output.render_error_detail(tid, error_task, error_lines)
             elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
                 # Streaming active — sync data WITHOUT toggling streaming off/on
                 # (update_unified calls set_streaming(False) which causes double render)
@@ -840,6 +841,36 @@ class PipelineScreen(Screen):
             split_pane.remove_class("full-width")
 
         decision_badge.update_count(len(state.pending_questions))
+
+    def _build_error_detail_context(self, task_id: str, task: dict) -> tuple[dict, list[str]]:
+        """Choose the most useful failure context for the selected errored task.
+
+        Review failures should show reviewer feedback and review-stream lines rather
+        than generic agent output, otherwise the UI says "review error" without
+        exposing the actual review error in the active pane.
+        """
+        state = self._state
+        review_data = task.get("review") or {}
+        review_gates = state.review_gates.get(task_id) or task.get("review_gates") or {}
+        review_failed = bool(
+            review_data.get("passed") is False
+            or review_gates.get("gate2_llm_review", {}).get("status") == "failed"
+        )
+
+        error_task = dict(task)
+        if review_failed:
+            review_details = (
+                review_data.get("details")
+                or review_gates.get("gate2_llm_review", {}).get("details")
+                or task.get("error")
+            )
+            if review_details:
+                error_task["error"] = review_details
+            review_lines = state.review_output.get(task_id, [])
+            if review_lines:
+                return error_task, review_lines
+
+        return error_task, state.agent_output.get(task_id, [])
 
     # ------------------------------------------------------------------
     # On-demand diff loading

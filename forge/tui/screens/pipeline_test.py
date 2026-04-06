@@ -125,6 +125,63 @@ async def test_pipeline_error_no_notification_when_none():
 
 
 @pytest.mark.asyncio
+async def test_review_failure_error_view_prefers_review_details_and_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Review task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("review:llm_output", {"task_id": "t1", "line": "Reviewing README..."})
+        state.apply_event(
+            "task:review_update",
+            {
+                "task_id": "t1",
+                "gate": "L2",
+                "passed": False,
+                "details": "FAIL: README documents the wrong FORGE_DATA_DIR default.",
+            },
+        )
+        state.apply_event(
+            "review:gate_failed",
+            {
+                "task_id": "t1",
+                "gate": "gate2_llm_review",
+                "details": "FAIL: README documents the wrong FORGE_DATA_DIR default.",
+            },
+        )
+        state.apply_event(
+            "task:state_changed",
+            {
+                "task_id": "t1",
+                "state": "error",
+                "error": "Max retries exceeded. Last feedback: truncated",
+            },
+        )
+        await pilot.pause()
+
+        agent_output = app.screen.query_one("AgentOutput")
+        content = agent_output.query_one("#agent-content")
+
+        assert agent_output.is_error_mode is True
+        assert agent_output._lines == ["Reviewing README..."]
+        rendered = str(content.render())
+        assert "FAIL: README documents the wrong FORGE_DATA_DIR default." in rendered
+
+
+@pytest.mark.asyncio
 async def test_pipeline_shows_planner_output_during_planning():
     """Planner output streams into AgentOutput during planning phase."""
     state = TuiState()
