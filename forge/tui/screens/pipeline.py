@@ -112,9 +112,10 @@ class PhaseBanner(Widget):
 
         if self._scramble_timer is not None:
             self._scramble_timer.stop()
-        try:
+            self._scramble_timer = None
+        if self.is_mounted:
             self._scramble_timer = self.set_interval(0.045, self._tick_scramble)
-        except Exception:
+        else:
             self._animating = False
         self.refresh()
 
@@ -131,8 +132,10 @@ class PhaseBanner(Widget):
     def on_unmount(self) -> None:
         if self._scramble_timer is not None:
             self._scramble_timer.stop()
+            self._scramble_timer = None
         if self._countdown_timer is not None:
             self._countdown_timer.stop()
+            self._countdown_timer = None
 
     def set_read_only_banner(self, text: str | None) -> None:
         self._read_only_banner = text
