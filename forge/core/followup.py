@@ -23,12 +23,12 @@ from forge.core.provider_config import (
     build_provider_registry,
     build_settings_for_project,
     resolve_model_for_stage,
+    resolve_registry_model,
 )
 from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.providers.base import (
     EventKind,
     ExecutionMode,
-    ModelSpec,
     OutputContract,
     ProviderEvent,
     ToolPolicy,
@@ -163,7 +163,7 @@ async def classify_questions(
             )
             text = (sdk_result.result if sdk_result else "").strip()
         else:
-            model_spec = ModelSpec.parse("haiku")
+            model_spec = resolve_registry_model(registry, "planner", "low")
             provider = registry.get_for_model(model_spec)
             catalog_entry = registry.get_catalog_entry(model_spec)
             handle = provider.start(

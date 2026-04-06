@@ -290,9 +290,13 @@ All settings use the `FORGE_` prefix. Build and test commands are **auto-detecte
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap |
 | `FORGE_MODEL_STRATEGY` | auto | `fast` / `auto` / `quality` |
 | `FORGE_OPENAI_ENABLED` | false | Enables the OpenAI provider and catalog |
+| `FORGE_CONTRACT_BUILDER_MODEL` | *(unset)* | Override contract-builder model |
 | `FORGE_PLANNER_MODEL` | *(unset)* | Override planner model with `provider:model` |
+| `FORGE_AGENT_MODEL_LOW` | *(unset)* | Override the low-complexity agent model |
 | `FORGE_AGENT_MODEL_MEDIUM` | *(unset)* | Override the medium-complexity agent model |
+| `FORGE_AGENT_MODEL_HIGH` | *(unset)* | Override the high-complexity agent model |
 | `FORGE_REVIEWER_MODEL` | *(unset)* | Override reviewer model |
+| `FORGE_CI_FIX_MODEL` | *(unset)* | Override CI fix model |
 | `FORGE_REQUIRE_APPROVAL` | false | Human approval before merge |
 | `FORGE_BUILD_CMD` | *(auto)* | Override build command |
 | `FORGE_TEST_CMD` | *(auto)* | Override test command |
@@ -313,6 +317,14 @@ OPENAI_API_KEY=sk-... \
 FORGE_PLANNER_MODEL=openai:o3 \
 FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4 \
 forge run "Add audit logging to billing flows"
+```
+
+```bash
+FORGE_OPENAI_ENABLED=true \
+FORGE_PLANNER_MODEL=claude:opus \
+FORGE_AGENT_MODEL_MEDIUM=claude:sonnet \
+FORGE_REVIEWER_MODEL=openai:gpt-5.4-mini \
+forge run "Audit provider routing regressions"
 ```
 
 ### Project config
@@ -366,9 +378,30 @@ Routing precedence:
 
 Forge persists the exact resolved provider snapshot in `pipelines.provider_config` when the pipeline is created. Restarts, retries, follow-up work, and webhook resumptions use that snapshot, not whatever your current settings happen to be later.
 
+Any stage can be routed independently as long as the selected model has the required hard capabilities for that stage. Common examples:
+
+- Claude planner + Claude agent + Codex reviewer
+- O3 planner + Codex agent + Claude reviewer
+- Claude planner + Codex CI fix + Claude merge/review flow
+
+Helper intelligence calls also follow the active stage routing instead of hardcoding Claude:
+
+- branch-name generation follows the planner model
+- PR-title generation follows the reviewer model
+- follow-up question classification follows the planner model
+
 `[[custom_models]]` entries are validated against the active provider registry and then injected as experimental catalog entries for that project. That means custom aliases are now executable, not just parsed.
 
-Codex-backed models use your existing `codex login` subscription session when available, and Forge only falls back to key auth for Codex if `CODEX_API_KEY` is explicitly set or no Codex login is present. `openai:o3` stays on the Responses API path and requires `OPENAI_API_KEY`.
+Codex-backed models use your existing `codex login` subscription session when available, and Forge only falls back to key auth for Codex if `CODEX_API_KEY` is explicitly set or no Codex login is present. Forge prefers your installed `codex` CLI when available so it shares the same subscription/auth state you already use manually. `openai:o3` stays on the Responses API path and requires `OPENAI_API_KEY`.
+
+Codex-backed executions now run with the same high-power posture Forge already uses for Claude coding agents:
+
+- full-access Codex sandbox mode
+- automatic execution with no per-command approval prompts
+- live network access and native web search enabled
+- Forge-level safety policy still enforced for explicitly denied operations
+
+If you need to point Forge at a specific Codex binary, set `FORGE_CODEX_PATH=/absolute/path/to/codex`.
 
 ---
 

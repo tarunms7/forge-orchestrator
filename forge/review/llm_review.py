@@ -9,6 +9,11 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from forge.config.settings import ForgeSettings
+from forge.core.provider_config import ensure_provider_registry
+from forge.core.sdk_helpers import (
+    sdk_query,  # noqa: F401 - backward-compatible export for tests/mocks.
+)
 from forge.providers import (
     ExecutionMode,
     ModelSpec,
@@ -232,27 +237,114 @@ async def gate2_llm_review(
     # Resolve provider and catalog entry
     model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
 
-    if registry is None:
-        # Fallback: construct a temporary registry with ClaudeProvider
-        # This supports callers that haven't been migrated to pass registry yet
-        try:
-            from forge.config.settings import ForgeSettings
-            from forge.providers.claude import ClaudeProvider
-            from forge.providers.registry import ProviderRegistry as _PR
+    review_timeout_seconds = 600  # 10 min — same as agent timeout
+    max_review_attempts = 2
 
-            registry = _PR(ForgeSettings())
-            registry.register(ClaudeProvider())
-        except Exception:
-            logger.error("Failed to create fallback ProviderRegistry for gate2_llm_review")
-            return (
-                GateResult(
-                    passed=False,
-                    gate="gate2_llm_review",
-                    details="Internal error: ProviderRegistry not available",
-                    review_strategy=strategy.value,
-                ),
-                cost_info,
+    if registry is None and model_spec.provider == "claude":
+        from claude_code_sdk import ClaudeCodeOptions
+
+        for attempt in range(1, max_review_attempts + 1):
+            try:
+                sdk_result = await asyncio.wait_for(
+                    sdk_query(
+                        prompt=prompt,
+                        options=ClaudeCodeOptions(
+                            system_prompt=system_prompt,
+                            max_turns=75,
+                            model=model_spec.model,
+                        ),
+                        on_message=on_message,
+                    ),
+                    timeout=review_timeout_seconds,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "L2 review timed out after %ds (attempt %d/%d)",
+                    review_timeout_seconds,
+                    attempt,
+                    max_review_attempts,
+                )
+                if attempt == max_review_attempts:
+                    return (
+                        GateResult(
+                            passed=False,
+                            gate="gate2_llm_review",
+                            details=f"Review timed out after {max_review_attempts} attempts",
+                            retriable=True,
+                            review_strategy=strategy.value,
+                        ),
+                        cost_info,
+                    )
+                continue
+            except Exception as exc:
+                logger.warning(
+                    "L2 review SDK call failed (attempt %d/%d): %s",
+                    attempt,
+                    max_review_attempts,
+                    exc,
+                )
+                if attempt == max_review_attempts:
+                    return (
+                        GateResult(
+                            passed=False,
+                            gate="gate2_llm_review",
+                            details=f"Provider error during review after {max_review_attempts} attempts: {exc}",
+                            retriable=True,
+                            review_strategy=strategy.value,
+                        ),
+                        cost_info,
+                    )
+                continue
+
+            if sdk_result is not None:
+                cost_info.cost_usd += sdk_result.cost_usd
+                cost_info.input_tokens += sdk_result.input_tokens
+                cost_info.output_tokens += sdk_result.output_tokens
+
+            result_text = (sdk_result.result if sdk_result else "").strip()
+            if result_text:
+                result_gate = _parse_review_result(result_text)
+                result_gate.review_strategy = strategy.value
+                return result_gate, cost_info
+
+            logger.warning(
+                "L2 review returned empty result (attempt %d/%d)",
+                attempt,
+                max_review_attempts,
             )
+            if attempt < max_review_attempts:
+                await asyncio.sleep(2**attempt + random.uniform(0, 1))
+
+        logger.warning(
+            "L2 review returned empty after %d attempts — escalating to human",
+            max_review_attempts,
+        )
+        return (
+            GateResult(
+                passed=False,
+                gate="gate2_llm_review",
+                details=(
+                    f"Review could not complete after {max_review_attempts} attempts "
+                    "(likely transient provider issue). Human review needed."
+                ),
+                needs_human=True,
+                review_strategy=strategy.value,
+            ),
+            cost_info,
+        )
+
+    registry = ensure_provider_registry(registry, settings=ForgeSettings())
+    if registry is None:
+        logger.error("Failed to create fallback ProviderRegistry for gate2_llm_review")
+        return (
+            GateResult(
+                passed=False,
+                gate="gate2_llm_review",
+                details="Internal error: ProviderRegistry not available",
+                review_strategy=strategy.value,
+            ),
+            cost_info,
+        )
 
     provider = registry.get_for_model(model_spec)
     catalog_entry = registry.get_catalog_entry(model_spec)
@@ -263,8 +355,6 @@ async def gate2_llm_review(
             asyncio.ensure_future(on_message(event))
 
     # Retry the provider call if the result is empty.
-    review_timeout_seconds = 600  # 10 min — same as agent timeout
-    max_review_attempts = 2
     for attempt in range(1, max_review_attempts + 1):
         try:
             handle = provider.start(

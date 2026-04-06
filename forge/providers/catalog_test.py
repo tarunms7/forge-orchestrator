@@ -95,9 +95,9 @@ class TestValidateModelForStage:
         blocked = [i for i in issues if "BLOCKED" in i]
         assert blocked == []
 
-    def test_gpt54_not_validated_for_planner(self) -> None:
+    def test_gpt54_validated_for_planner(self) -> None:
         issues = validate_model_for_stage(_find_entry("gpt-5.4"), "planner")
-        assert any("WARNING" in i for i in issues)
+        assert issues == []
 
     def test_empty_issues_for_valid_stage(self) -> None:
         issues = validate_model_for_stage(_find_entry("opus"), "planner")
@@ -122,6 +122,7 @@ class TestToolMappings:
             "file_change",
             "glob",
             "grep",
+            "mcp_tool_call",
         }
         assert set(CODEX_TOOL_MAP.keys()) == expected
 

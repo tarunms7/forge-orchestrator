@@ -215,6 +215,43 @@ def build_provider_registry(
     return registry
 
 
+def ensure_provider_registry(
+    registry: ProviderRegistry | None,
+    *,
+    settings: ForgeSettings | None = None,
+    project_config: ProjectConfig | None = None,
+) -> ProviderRegistry | None:
+    """Return an existing registry or build one from the current settings."""
+    if registry is not None:
+        return registry
+
+    try:
+        return build_provider_registry(settings or ForgeSettings(), project_config)
+    except Exception:
+        logger.warning("Failed to build fallback ProviderRegistry", exc_info=True)
+        return None
+
+
+def resolve_registry_model(
+    registry: ProviderRegistry,
+    stage: str,
+    complexity: str = "medium",
+    *,
+    retry_count: int = 0,
+    strategy: str | None = None,
+) -> ModelSpec:
+    """Resolve a stage model using the settings that produced ``registry``."""
+    settings = registry.settings
+    return resolve_model_for_stage(
+        settings,
+        registry,
+        stage,
+        complexity,
+        retry_count=retry_count,
+        strategy=strategy or settings.model_strategy,
+    )
+
+
 def resolve_model_for_stage(
     settings: ForgeSettings,
     registry: ProviderRegistry,

@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 from collections.abc import Callable
@@ -150,6 +151,14 @@ def _codex_execution_model(catalog_entry: CatalogEntry) -> str:
     return catalog_entry.alias
 
 
+def _codex_cli_path() -> str | None:
+    """Prefer the user's installed Codex CLI so Forge shares the same auth/session model."""
+    override = os.environ.get("FORGE_CODEX_PATH", "").strip()
+    if override:
+        return override
+    return shutil.which("codex")
+
+
 def _codex_api_key_override() -> str | None:
     """Only pass an API key to Codex when CLI auth is unavailable or explicitly set."""
     explicit = os.environ.get("CODEX_API_KEY")
@@ -217,6 +226,35 @@ def _translate_denied_to_instructions(denied_ops: list[str]) -> str:
     if not lines:
         return ""
     return "SAFETY RESTRICTIONS:\n" + "\n".join(lines)
+
+
+def _translate_allowlist_to_instructions(allowed_tools: list[str]) -> str:
+    """Convert an allowlist ToolPolicy into human-readable Codex instructions."""
+    if not allowed_tools:
+        return (
+            "TOOL ACCESS:\n"
+            "Do NOT use shell commands, file editing tools, MCP tools, or web search.\n"
+            "Answer directly from the prompt and any supplied context."
+        )
+    allowed = ", ".join(allowed_tools)
+    return (
+        "TOOL ACCESS:\n"
+        f"Only use these Forge-approved tools if needed: {allowed}.\n"
+        "Treat every other tool or external capability as unavailable unless the system "
+        "prompt explicitly says otherwise."
+    )
+
+
+def _build_codex_policy_instructions(tool_policy: ToolPolicy) -> str:
+    """Translate ToolPolicy into best-effort Codex instructions."""
+    sections: list[str] = []
+    if tool_policy.mode == "allowlist":
+        sections.append(_translate_allowlist_to_instructions(tool_policy.allowed_tools))
+    if tool_policy.denied_operations:
+        denied = _translate_denied_to_instructions(tool_policy.denied_operations)
+        if denied:
+            sections.append(denied)
+    return "\n\n".join(section for section in sections if section)
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +384,11 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
         item_command = item.get("command", "")
         item_output = item.get("aggregated_output", "")
         item_changes = item.get("changes", [])
+        item_tool = item.get("tool", "")
+        item_server = item.get("server", "")
+        item_args = item.get("arguments")
+        item_result = item.get("result")
+        item_error = item.get("error")
     else:
         item_type = getattr(item, "type", "")
         item_text = getattr(item, "text", "")
@@ -354,6 +397,11 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
         item_command = getattr(item, "command", "")
         item_output = getattr(item, "aggregated_output", "")
         item_changes = getattr(item, "changes", [])
+        item_tool = getattr(item, "tool", "")
+        item_server = getattr(item, "server", "")
+        item_args = getattr(item, "arguments", None)
+        item_result = getattr(item, "result", None)
+        item_error = getattr(item, "error", None)
 
     if event_type == "item.completed" and item_type == "agent_message":
         text = item_content if isinstance(item_content, str) else str(item_content)
@@ -363,9 +411,20 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
         tool_input: str | None
         if item_type == "command_execution":
             tool_input = item_command or (str(item_content) if item_content else None)
+        elif item_type == "mcp_tool_call":
+            tool_input = json.dumps(
+                {
+                    "server": item_server,
+                    "tool": item_tool,
+                    "arguments": item_args,
+                },
+                default=str,
+            )
         elif item_content:
             tool_input = (
-                json.dumps(item_content) if isinstance(item_content, dict) else str(item_content)
+                json.dumps(item_content, default=str)
+                if isinstance(item_content, dict)
+                else str(item_content)
             )
         elif item_changes:
             tool_input = json.dumps(
@@ -398,6 +457,15 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
                 output = item_output
             elif isinstance(item_content, dict):
                 output = item_content.get("output", "")
+        elif item_type == "mcp_tool_call":
+            if item_error:
+                output = (
+                    item_error.get("message", "")
+                    if isinstance(item_error, dict)
+                    else getattr(item_error, "message", "")
+                )
+            elif item_result:
+                output = json.dumps(item_result, default=str)
         elif isinstance(item_content, dict):
             output = item_content.get("output", "")
         elif isinstance(item_content, str):
@@ -586,6 +654,7 @@ class OpenAIProvider:
                 prompt=prompt,
                 system_prompt=system_prompt,
                 catalog_entry=catalog_entry,
+                execution_mode=execution_mode,
                 tool_policy=tool_policy,
                 workspace=workspace,
                 max_turns=max_turns,
@@ -640,15 +709,20 @@ class OpenAIProvider:
     def _build_codex_thread_options(
         catalog_entry: CatalogEntry,
         workspace: WorkspaceRoots,
+        execution_mode: ExecutionMode,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "model": _codex_execution_model(catalog_entry),
-            "sandboxMode": "workspace-write",
+            "sandboxMode": "danger-full-access",
             "workingDirectory": workspace.primary_cwd,
             "approvalPolicy": "never",
+            "skipGitRepoCheck": True,
+            "networkAccessEnabled": True,
+            "webSearchEnabled": True,
+            "modelReasoningEffort": "high"
+            if execution_mode == ExecutionMode.INTELLIGENCE
+            else "medium",
         }
-        if workspace.read_only_dirs:
-            options["additionalDirectories"] = list(workspace.read_only_dirs)
         return options
 
     def _start_codex(
@@ -656,6 +730,7 @@ class OpenAIProvider:
         prompt: str,
         system_prompt: str,
         catalog_entry: CatalogEntry,
+        execution_mode: ExecutionMode,
         tool_policy: ToolPolicy,
         workspace: WorkspaceRoots,
         max_turns: int,
@@ -668,6 +743,7 @@ class OpenAIProvider:
                 prompt=prompt,
                 system_prompt=system_prompt,
                 catalog_entry=catalog_entry,
+                execution_mode=execution_mode,
                 tool_policy=tool_policy,
                 workspace=workspace,
                 max_turns=max_turns,
@@ -682,6 +758,7 @@ class OpenAIProvider:
         prompt: str,
         system_prompt: str,
         catalog_entry: CatalogEntry,
+        execution_mode: ExecutionMode,
         tool_policy: ToolPolicy,
         workspace: WorkspaceRoots,
         max_turns: int,
@@ -703,26 +780,29 @@ class OpenAIProvider:
             codex = _try_import_codex()
             if codex is None:
                 raise ImportError("openai-codex-sdk is not installed")
-            # Build safety instructions from denied operations
-            safety_instructions = ""
-            if tool_policy.mode == "denylist" and tool_policy.denied_operations:
-                safety_instructions = _translate_denied_to_instructions(
-                    tool_policy.denied_operations
-                )
+            # Best-effort stage safety and tool guidance for Codex.
+            policy_instructions = _build_codex_policy_instructions(tool_policy)
 
             full_system = system_prompt
-            if safety_instructions:
-                full_system = f"{system_prompt}\n\n{safety_instructions}"
+            if policy_instructions:
+                full_system = f"{system_prompt}\n\n{policy_instructions}" if system_prompt else policy_instructions
 
             # Configure Codex options
             codex_config = {
                 "model": _codex_execution_model(catalog_entry),
                 "prompt": prompt,
                 "instructions": full_system,
-                "sandbox_mode": "workspace-write",
+                "sandbox_mode": "danger-full-access",
                 "cwd": workspace.primary_cwd,
                 "max_turns": max_turns,
                 "stream": True,
+                "approval_policy": "never",
+                "skip_git_repo_check": True,
+                "network_access_enabled": True,
+                "web_search_enabled": True,
+                "model_reasoning_effort": (
+                    "high" if execution_mode == ExecutionMode.INTELLIGENCE else "medium"
+                ),
             }
 
             # Resume vs new thread
@@ -753,9 +833,16 @@ class OpenAIProvider:
                 client_options: dict[str, Any] = {}
                 if api_key:
                     client_options["apiKey"] = api_key
+                codex_path = _codex_cli_path()
+                if codex_path:
+                    client_options["codexPathOverride"] = codex_path
 
                 client = CodexClient(client_options or None)
-                thread_options = self._build_codex_thread_options(catalog_entry, workspace)
+                thread_options = self._build_codex_thread_options(
+                    catalog_entry,
+                    workspace,
+                    execution_mode,
+                )
 
                 if resume_state and resume_state.session_token:
                     thread_start = getattr(client, "resumeThread", None) or getattr(

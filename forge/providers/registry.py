@@ -53,6 +53,11 @@ class ProviderRegistry:
         self._providers: dict[str, ProviderProtocol] = {}
         self._catalog: dict[str, CatalogEntry] = {}
 
+    @property
+    def settings(self) -> ForgeSettings:
+        """Return the settings used to build this registry."""
+        return self._settings
+
     def register(self, provider: ProviderProtocol) -> None:
         """Register a provider and index all its catalog entries by str(entry.spec)."""
         self._providers[provider.name] = provider

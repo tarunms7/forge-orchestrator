@@ -13,6 +13,7 @@ from forge.core.daemon import (
     ForgeDaemon,
     _classify_pipeline_result,
     _detect_excluded_repos,
+    _generate_branch_name,
     _max_dependency_wave_width,
 )
 from forge.core.errors import ForgeError
@@ -50,6 +51,30 @@ def _make_question(q_id: str, task_id: str, pipeline_id: str) -> MagicMock:
     q.task_id = task_id
     q.pipeline_id = pipeline_id
     return q
+
+
+@pytest.mark.asyncio
+async def test_generate_branch_name_uses_planner_model_selection() -> None:
+    """Branch-name generation should honor the configured planner model."""
+    from forge.providers.base import ModelSpec
+
+    registry = MagicMock()
+    provider = MagicMock()
+    handle = MagicMock()
+    handle.result = AsyncMock(return_value=MagicMock(text="fix-provider-routing"))
+    provider.start.return_value = handle
+    registry.get_for_model.return_value = provider
+    registry.get_catalog_entry.return_value = MagicMock()
+
+    with patch(
+        "forge.core.daemon.resolve_registry_model",
+        return_value=ModelSpec("openai", "gpt-5.4-mini"),
+    ) as mock_resolve:
+        branch = await _generate_branch_name("Route review through OpenAI", registry=registry)
+
+    assert branch == "forge/fix-provider-routing"
+    mock_resolve.assert_called_once_with(registry, "planner", "low")
+    provider.start.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

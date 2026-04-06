@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from forge.config.settings import ForgeSettings
+from forge.core.provider_config import ensure_provider_registry
 from forge.providers import (
     ExecutionMode,
     ModelSpec,
@@ -344,25 +346,17 @@ async def review_chunk(
 
     model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
 
+    registry = ensure_provider_registry(registry, settings=ForgeSettings())
     if registry is None:
-        # Fallback: construct a temporary registry with ClaudeProvider
-        try:
-            from forge.config.settings import ForgeSettings
-            from forge.providers.claude import ClaudeProvider
-            from forge.providers.registry import ProviderRegistry as _PR
-
-            registry = _PR(ForgeSettings())
-            registry.register(ClaudeProvider())
-        except Exception:
-            return ChunkReviewResult(
-                chunk_index=chunk.index,
-                verdict="UNCERTAIN",
-                confidence=1,
-                issues=[],
-                cross_chunk_concerns=[],
-                summary="ProviderRegistry not available",
-                timed_out=True,
-            )
+        return ChunkReviewResult(
+            chunk_index=chunk.index,
+            verdict="UNCERTAIN",
+            confidence=1,
+            issues=[],
+            cross_chunk_concerns=[],
+            summary="ProviderRegistry not available",
+            timed_out=True,
+        )
 
     provider = registry.get_for_model(model_spec)
     catalog_entry = registry.get_catalog_entry(model_spec)
@@ -584,17 +578,9 @@ async def synthesize_results(
     # Import here (not at module level) to avoid circular imports
     from forge.review.llm_review import _parse_review_result
 
+    registry = ensure_provider_registry(registry, settings=ForgeSettings())
     if registry is None:
-        # Fallback: construct a temporary registry with ClaudeProvider
-        try:
-            from forge.config.settings import ForgeSettings
-            from forge.providers.claude import ClaudeProvider
-            from forge.providers.registry import ProviderRegistry as _PR
-
-            registry = _PR(ForgeSettings())
-            registry.register(ClaudeProvider())
-        except Exception:
-            return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
+        return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
 
     model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
     provider = registry.get_for_model(model_spec)

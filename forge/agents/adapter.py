@@ -155,7 +155,8 @@ You have {max_turns} turns for this task. Manage them wisely:
    Max 72 chars. Describe WHAT changed, don't copy the task title.
    ALWAYS use --no-verify to skip pre-commit hooks (the orchestrator runs its own review).
    If the commit fails, STOP TRYING. Do NOT retry with different flags. The orchestrator auto-commits your changes after you finish. Move on.
-4. If nothing meaningful to do (files don't exist, task already done), make no changes and commit with message "chore: no changes needed — <reason>". The reviewer will see the empty diff and your reasoning. This is a valid outcome."""
+4. If the requested work is ALREADY PRESENT in the current worktree, say that explicitly. Do NOT claim "no changes needed" if `git diff` still shows the task branch already contains the requested change.
+5. Use the commit message "chore: no changes needed — <reason>" ONLY when there is truly no relevant diff left in the current worktree and nothing meaningful to merge. The reviewer will see the empty diff and your reasoning. This is a valid outcome."""
 
 
 def build_agent_system_prompt(

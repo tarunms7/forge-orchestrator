@@ -988,6 +988,29 @@ class TestGeneratePrTitle:
             title = await _generate_pr_title("Fix the login button", "")
         assert title == "fix the login button"
 
+    async def test_registry_path_uses_reviewer_model_selection(self):
+        """Provider-backed PR title generation should honor the configured reviewer model."""
+        from forge.api.routes.tasks import _generate_pr_title
+        from forge.providers.base import ModelSpec
+
+        registry = MagicMock()
+        provider = MagicMock()
+        handle = MagicMock()
+        handle.result = AsyncMock(return_value=MagicMock(text="fix: provider routing"))
+        provider.start.return_value = handle
+        registry.get_for_model.return_value = provider
+        registry.get_catalog_entry.return_value = MagicMock()
+
+        with patch(
+            "forge.api.routes.tasks.resolve_registry_model",
+            return_value=ModelSpec("openai", "gpt-5.4-mini"),
+        ) as mock_resolve:
+            title = await _generate_pr_title("Route review through OpenAI", "", registry=registry)
+
+        assert title == "fix: provider routing"
+        mock_resolve.assert_called_once_with(registry, "reviewer", "low")
+        provider.start.assert_called_once()
+
 
 # ── Execute with edited task graph tests ─────────────────────────────
 

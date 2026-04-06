@@ -18,6 +18,7 @@ from forge.core.followup import (
     classify_questions,
     execute_followups,
 )
+from forge.providers.base import ModelSpec
 
 # ── classify_questions tests ──────────────────────────────────────────
 
@@ -132,6 +133,32 @@ class TestClassifyQuestions:
 
         result = await classify_questions(questions, tasks)
         assert result == {0: "task-1"}
+
+    async def test_registry_path_uses_planner_model_selection(self):
+        """Provider-backed classification should resolve the planner stage model, not hardcode Claude."""
+        registry = MagicMock()
+        provider = MagicMock()
+        handle = MagicMock()
+        handle.result = AsyncMock(return_value=MagicMock(text='{"0": "task-2"}'))
+        provider.start.return_value = handle
+        registry.get_for_model.return_value = provider
+        registry.get_catalog_entry.return_value = MagicMock()
+
+        questions = [FollowUpQuestion(text="Which task owns providers?")]
+        tasks = [
+            {"id": "task-1", "title": "T1", "description": "D1", "files": ["a.py"]},
+            {"id": "task-2", "title": "T2", "description": "D2", "files": ["b.py"]},
+        ]
+
+        with patch(
+            "forge.core.followup.resolve_registry_model",
+            return_value=ModelSpec("openai", "gpt-5.4-mini"),
+        ) as mock_resolve:
+            result = await classify_questions(questions, tasks, registry=registry)
+
+        assert result == {0: "task-2"}
+        mock_resolve.assert_called_once_with(registry, "planner", "low")
+        provider.start.assert_called_once()
 
 
 # ── _build_followup_prompt tests ─────────────────────────────────────

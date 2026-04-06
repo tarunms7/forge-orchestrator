@@ -249,7 +249,9 @@ class ExecutorMixin:
                 # the task legitimately required no modifications.
                 # Mark done directly (skip review and merge).
                 console.print(
-                    f"[bold green]{task_id}: no changes needed — marking done[/bold green]"
+                    "[bold green]"
+                    f"{task_id}: no additional in-scope changes and no diff vs base "
+                    "— marking done[/bold green]"
                 )
                 await db.update_task_state(task_id, TaskState.DONE.value)
                 await self._emit(
@@ -1310,7 +1312,9 @@ class ExecutorMixin:
                 # Agent made zero changes and nothing was reverted —
                 # the task legitimately required no modifications.
                 console.print(
-                    f"[bold green]{task_id}: no changes needed — marking done (after resume)[/bold green]"
+                    "[bold green]"
+                    f"{task_id}: no additional in-scope changes and no diff vs base "
+                    "— marking done (after resume)[/bold green]"
                 )
                 await db.update_task_state(task_id, TaskState.DONE.value)
                 await self._emit(

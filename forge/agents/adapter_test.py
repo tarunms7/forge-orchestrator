@@ -9,6 +9,7 @@ from forge.agents.adapter import (
     _build_conventions_block,
     _build_dependency_context,
     _build_question_protocol,
+    build_agent_system_prompt,
 )
 
 # --- AgentResult tests ---
@@ -118,6 +119,17 @@ def test_conventions_block_json_string_list():
     result = _build_conventions_block(json.dumps(data), None)
     assert "Use type hints everywhere" in result
     assert "No global state" in result
+
+
+def test_agent_system_prompt_explains_existing_diff_vs_true_noop():
+    prompt = build_agent_system_prompt(
+        worktree_path="/tmp/worktree",
+        allowed_dirs=[],
+        allowed_files=["forge/api/routes/providers_test.py"],
+    )
+
+    assert "ALREADY PRESENT in the current worktree" in prompt
+    assert "Do NOT claim \"no changes needed\" if `git diff` still shows" in prompt
 
 
 # --- _build_dependency_context tests ---

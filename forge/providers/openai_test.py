@@ -59,7 +59,9 @@ def codex_entry() -> CatalogEntry:
         supports_structured_output=True,
         supports_reasoning=False,
         cost_key="openai:gpt-5.4",
-        validated_stages=frozenset(["agent", "ci_fix"]),
+        validated_stages=frozenset(
+            ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
+        ),
     )
 
 
@@ -81,7 +83,7 @@ def agents_entry() -> CatalogEntry:
         supports_structured_output=True,
         supports_reasoning=True,
         cost_key="openai:o3",
-        validated_stages=frozenset(["planner", "reviewer"]),
+        validated_stages=frozenset(["planner", "contract_builder", "reviewer"]),
     )
 
 
@@ -669,6 +671,7 @@ class TestCodexStart:
                 "forge.providers.openai._codex_auth_description",
                 return_value="Codex ChatGPT subscription login configured",
             ),
+            patch("forge.providers.openai._codex_cli_path", return_value="/usr/local/bin/codex"),
         ):
             handle = provider.start(
                 prompt="test prompt",
@@ -689,9 +692,15 @@ class TestCodexStart:
         assert result.output_tokens == 30
         assert result.resume_state is not None
         assert result.resume_state.session_token == "thread-123"
-        assert captured["client_options"] is None
+        assert captured["client_options"] == {"codexPathOverride": "/usr/local/bin/codex"}
         assert captured["thread_options"]["model"] == "gpt-5.4"
+        assert captured["thread_options"]["sandboxMode"] == "danger-full-access"
         assert captured["thread_options"]["workingDirectory"] == workspace.primary_cwd
+        assert captured["thread_options"]["approvalPolicy"] == "never"
+        assert captured["thread_options"]["skipGitRepoCheck"] is True
+        assert captured["thread_options"]["networkAccessEnabled"] is True
+        assert captured["thread_options"]["webSearchEnabled"] is True
+        assert captured["thread_options"]["modelReasoningEffort"] == "medium"
         assert "system rules" in captured["input"]
         assert "test prompt" in captured["input"]
 
@@ -731,6 +740,7 @@ class TestCodexStart:
             patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=True),
             patch("forge.providers.openai._try_import_codex", return_value=mock_sdk),
             patch("forge.providers.openai._codex_auth_description", return_value=None),
+            patch("forge.providers.openai._codex_cli_path", return_value=None),
         ):
             handle = provider.start(
                 prompt="test prompt",
@@ -746,6 +756,62 @@ class TestCodexStart:
 
         assert result.is_error is False
         assert captured["client_options"] == {"apiKey": "sk-test-key"}
+
+    async def test_codex_intelligence_mode_uses_high_reasoning_effort(
+        self,
+        provider: OpenAIProvider,
+        codex_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+        tool_policy: ToolPolicy,
+        output_contract: OutputContract,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _event_stream() -> Any:
+            yield {"type": "turn.completed"}
+
+        class _FakeThread:
+            async def run_streamed(self, input_: Any) -> Any:
+                return SimpleNamespace(events=_event_stream())
+
+        class _FakeCodexClient:
+            def __init__(self, options: Any = None) -> None:
+                captured["client_options"] = options
+
+            def start_thread(self, options: Any = None) -> Any:
+                captured["thread_options"] = options
+                return _FakeThread()
+
+        mock_sdk = MagicMock()
+        mock_sdk.__version__ = "0.1.0"
+        mock_sdk.start_thread = None
+        mock_sdk.startThread = None
+        mock_sdk.resume_thread = None
+        mock_sdk.resumeThread = None
+        mock_sdk.Codex = _FakeCodexClient
+
+        with (
+            patch("forge.providers.openai._try_import_codex", return_value=mock_sdk),
+            patch(
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
+            ),
+            patch("forge.providers.openai._codex_cli_path", return_value=None),
+        ):
+            handle = provider.start(
+                prompt="summarize this diff",
+                system_prompt="review carefully",
+                catalog_entry=codex_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=tool_policy,
+                output_contract=output_contract,
+                workspace=workspace,
+                max_turns=5,
+            )
+            result = await handle.result()
+
+        assert result.is_error is False
+        assert captured["thread_options"]["modelReasoningEffort"] == "high"
 
     async def test_codex_not_installed_raises(
         self,

@@ -51,6 +51,7 @@ from forge.core.provider_config import (
     build_provider_config_snapshot,
     build_provider_registry,
     resolve_model_for_stage,
+    resolve_registry_model,
 )
 from forge.core.sanitize import validate_task_id
 from forge.core.scheduler import Scheduler, SchedulingAnalysis
@@ -224,7 +225,7 @@ async def _generate_branch_name(
         return _sanitize_branch_name(description)
 
     try:
-        model_spec = ModelSpec.parse("haiku")
+        model_spec = resolve_registry_model(registry, "planner", "low")
         provider = registry.get_for_model(model_spec)
         catalog_entry = registry.get_catalog_entry(model_spec)
         handle = provider.start(

@@ -10,6 +10,7 @@ from forge.core.provider_config import (
     apply_provider_config_snapshot,
     build_provider_config_snapshot,
     build_provider_registry,
+    resolve_registry_model,
 )
 from forge.providers.base import ModelSpec
 
@@ -77,3 +78,16 @@ def test_build_provider_config_snapshot_records_stage_metadata() -> None:
     assert planner["spec"] == "claude:opus"
     assert planner["backend"] == "claude-code-sdk"
     assert planner["canonical_id"]
+
+
+def test_resolve_registry_model_uses_registry_settings_overrides() -> None:
+    """Registry-backed helper selection should honor per-stage overrides."""
+    settings = ForgeSettings(
+        openai_enabled=True,
+        reviewer_model="openai:gpt-5.4-mini",
+    )
+    registry = build_provider_registry(settings)
+
+    result = resolve_registry_model(registry, "reviewer", "low")
+
+    assert result == ModelSpec("openai", "gpt-5.4-mini")

@@ -40,6 +40,7 @@ from forge.core.provider_config import (
     build_provider_config_snapshot,
     build_provider_registry,
     build_settings_for_project,
+    resolve_registry_model,
 )
 from forge.core.templates import (
     BUILTIN_TEMPLATES,
@@ -212,7 +213,7 @@ async def _generate_pr_title(
 ) -> str:
     """Generate a concise PR title using a provider call, with heuristic fallback.
 
-    Uses haiku model for fast, cheap title generation.
+    Uses the configured reviewer model when a provider registry is available.
     Falls back to ``_sanitize_pr_title()`` if the provider call fails.
 
     Returns:
@@ -220,7 +221,6 @@ async def _generate_pr_title(
     """
     from forge.providers import (
         ExecutionMode,
-        ModelSpec,
         OutputContract,
         ToolPolicy,
         WorkspaceRoots,
@@ -247,7 +247,7 @@ async def _generate_pr_title(
             )
             title = (result.result if result else "").strip().strip("\"'").strip()
         else:
-            model_spec = ModelSpec.parse("haiku")
+            model_spec = resolve_registry_model(registry, "reviewer", "low")
             provider = registry.get_for_model(model_spec)
             catalog_entry = registry.get_catalog_entry(model_spec)
             handle = provider.start(
@@ -1106,8 +1106,19 @@ async def create_pr(
             f"pipeline `{pipeline_id[:8]}`*"
         )
 
+        title_settings, title_project_config = build_settings_for_project(
+            project_dir,
+            model_strategy=getattr(pipeline, "model_strategy", "auto"),
+            provider_config=getattr(pipeline, "provider_config", None),
+        )
+        title_registry = build_provider_registry(title_settings, title_project_config)
+
         # Generate a proper PR title via LLM (with heuristic fallback)
-        pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
+        pr_title_body = await _generate_pr_title(
+            pipeline.description,
+            task_summary,
+            registry=title_registry,
+        )
         pr_title = f"forge: {pr_title_body}"
 
         # Create PR — base_branch from DB, head is the pipeline branch
@@ -2323,8 +2334,19 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         f"pipeline `{pipeline_id[:8]}`*"
     )
 
+    title_settings, title_project_config = build_settings_for_project(
+        project_dir,
+        model_strategy=getattr(pipeline, "model_strategy", "auto"),
+        provider_config=getattr(pipeline, "provider_config", None),
+    )
+    title_registry = build_provider_registry(title_settings, title_project_config)
+
     # Generate a proper PR title via LLM (with heuristic fallback)
-    pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
+    pr_title_body = await _generate_pr_title(
+        pipeline.description,
+        task_summary,
+        registry=title_registry,
+    )
     pr_title = f"forge: {pr_title_body}"
 
     pr_result = await asyncio.to_thread(
