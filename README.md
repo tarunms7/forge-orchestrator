@@ -433,31 +433,31 @@ Manual task reruns also refund one consumed retry slot before rescheduling the t
 
 ### Local testing & mixed-provider verification
 
-For local development and testing provider routing:
-
-**Run focused provider tests:**
+**Run provider tests:**
 ```bash
-python -m pytest forge/core/provider_config_test.py forge/core/model_router_test.py forge/config/settings_test.py -v
+python -m pytest forge/core/provider_config_test.py \
+  forge/core/model_router_test.py forge/config/settings_test.py -v
 ```
 
-**Verify mixed-provider routing locally:**
+**Test mixed-provider routing:**
 ```bash
-FORGE_PLANNER_MODEL=claude:opus FORGE_REVIEWER_MODEL=openai:gpt-5.4 forge run --dry-run "test task"
+FORGE_PLANNER_MODEL=claude:opus FORGE_REVIEWER_MODEL=openai:gpt-5.4 \
+  forge run --dry-run "test task"
 ```
 
-This displays the routing summary during planning phase:
+Shows routing summary during planning:
 ```
 Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4
 ```
 
-**Local development directories:**
-- `FORGE_DATA_DIR` defaults to `~/.forge/` for global state (lessons, analytics)
-- Project-local `.forge/` contains pipelines, logs, and `forge.toml` config
-- Each pipeline gets isolated git worktrees in `.forge/worktrees/`
+**Local directories:**
+- `FORGE_DATA_DIR`: `~/.forge/` (global state)
+- `.forge/`: project pipelines, logs, config
+- `.forge/worktrees/`: isolated git worktrees
 
-**Provider health check:**
+**Check provider status:**
 ```bash
-forge providers list    # Shows available models and authentication status
+forge providers list
 ```
 
 ---
