@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from forge.tui.widgets.agent_output import (
-    _TYPING_FRAMES,
     AgentOutput,
+    _render_forging_shimmer,
     format_error_detail,
     format_header,
     format_output,
@@ -74,9 +74,11 @@ def test_format_output_no_typing_indicator_by_default():
 def test_format_output_with_streaming_shows_typing_indicator():
     lines = ["line1", "line2"]
     result = format_output(lines, streaming=True, typing_frame=0)
-    assert "Typing" in result
-    cursor = _TYPING_FRAMES[0]
-    assert cursor in result
+    assert result.endswith(
+        "  [bold #e8c48a]F[/][bold #d6a85f]o[/][bold #8b949e]r[/][bold #484f58]g[/]"
+        "[bold #484f58]i[/][bold #484f58]n[/][bold #484f58]g[/]"
+    )
+    assert result.count("[bold ") == len("Forging")
 
 
 def test_format_output_streaming_false_no_indicator():
@@ -89,18 +91,25 @@ def test_format_output_typing_frame_cycles():
     lines = ["line1"]
     result_0 = format_output(lines, streaming=True, typing_frame=0)
     result_1 = format_output(lines, streaming=True, typing_frame=1)
-    # Both should contain the typing indicator
-    assert "Typing" in result_0
-    assert "Typing" in result_1
-    # Cursor chars should differ
-    assert _TYPING_FRAMES[0] in result_0
-    assert _TYPING_FRAMES[1] in result_1
+    # Both should contain the forging shimmer
+    assert "Forging" not in result_0  # markup splits the word
+    assert "Forging" not in result_1
+    assert result_0 != result_1
+    assert result_0.startswith("line1\n  [bold ")
+    assert result_1.startswith("line1\n  [bold ")
 
 
 def test_format_output_empty_lines_no_streaming_indicator():
     """When lines is empty, streaming indicator should NOT appear (spinner shown instead)."""
     result = format_output([], streaming=True, typing_frame=0)
     assert "Waiting" in result
+
+
+def test_render_forging_shimmer_left_aligns_and_bolds():
+    result = _render_forging_shimmer(0)
+    assert result.startswith("  ")
+    assert result.count("[bold ") == len("Forging")
+    assert "[bold #e8c48a]F[/]" in result
 
 
 # ── AgentOutput widget unit tests ────────────────────────────────────────
@@ -374,7 +383,11 @@ def test_format_unified_output_gate_formatting():
 def test_format_unified_output_streaming_indicator():
     entries = [("agent", "working...")]
     result = format_unified_output(entries, streaming=True, typing_frame=0)
-    assert "Typing" in result
+    assert "Forging" not in result
+    assert result.endswith(
+        "  [bold #e8c48a]F[/][bold #d6a85f]o[/][bold #8b949e]r[/][bold #484f58]g[/]"
+        "[bold #484f58]i[/][bold #484f58]n[/][bold #484f58]g[/]"
+    )
 
 
 def test_format_unified_output_no_streaming_indicator_by_default():
