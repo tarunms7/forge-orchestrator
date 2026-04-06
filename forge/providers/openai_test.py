@@ -993,6 +993,52 @@ class TestCodexStart:
 
 
 class TestAgentsStart:
+    async def test_agents_streaming_emits_readable_commentary(
+        self,
+        provider: OpenAIProvider,
+        agents_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+        tool_policy: ToolPolicy,
+        output_contract: OutputContract,
+    ) -> None:
+        events: list[ProviderEvent] = []
+
+        async def _fake_stream(*args: Any, **kwargs: Any) -> Any:
+            stream_events = [
+                {"type": "response.text.delta", "delta": "I am reviewing the modified tests. "},
+                {"type": "response.text.delta", "delta": "Now I have enough context."},
+                {"type": "response.completed", "usage": {"input_tokens": 42, "output_tokens": 21}},
+            ]
+            for e in stream_events:
+                yield e
+
+        mock_agents = MagicMock()
+        mock_agents.__version__ = "0.1.0"
+        mock_agents.Agent = MagicMock(return_value=MagicMock())
+        mock_agents.Runner = MagicMock()
+        mock_agents.Runner.run_streamed = MagicMock(return_value=_fake_stream())
+
+        with patch("forge.providers.openai._try_import_agents", return_value=mock_agents):
+            handle = provider.start(
+                prompt="analyze this",
+                system_prompt="you are a reviewer",
+                catalog_entry=agents_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=tool_policy,
+                output_contract=output_contract,
+                workspace=workspace,
+                max_turns=3,
+                on_event=events.append,
+            )
+            result = await handle.result()
+
+        text_events = [event.text for event in events if event.kind == EventKind.TEXT]
+        assert text_events == [
+            "I am reviewing the modified tests.",
+            "Now I have enough context.",
+        ]
+        assert result.text == "I am reviewing the modified tests.\n\nNow I have enough context."
+
     async def test_agents_start_produces_events(
         self,
         provider: OpenAIProvider,

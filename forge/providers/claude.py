@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -22,6 +21,7 @@ from claude_code_sdk._internal import client as _sdk_client
 from claude_code_sdk._internal import message_parser as _sdk_parser
 from claude_code_sdk.types import StreamEvent
 
+from forge.providers._stream_text import drain_stream_text as _drain_stream_text
 from forge.providers.base import (
     CatalogEntry,
     EventKind,
@@ -269,43 +269,6 @@ def _convert_stream_event(msg: StreamEvent) -> list[ProviderEvent]:
         return [ProviderEvent(kind=EventKind.STATUS, status="completed", raw=msg)]
 
     return []
-
-
-def _drain_stream_text(buffer: str, *, force: bool = False) -> tuple[list[str], str]:
-    """Split buffered text deltas into readable commentary lines.
-
-    Claude partial messages arrive as many tiny text_delta chunks. We buffer them
-    until we have either a newline-terminated line, a complete sentence, or a
-    forced flush (e.g. before a tool call or message stop). This restores the
-    old "real commentary" feel without logging one token at a time.
-    """
-    fragments: list[str] = []
-    remaining = buffer
-
-    while "\n" in remaining:
-        line, remaining = remaining.split("\n", 1)
-        line = line.strip()
-        if line:
-            fragments.append(line)
-
-    sentence_pattern = re.compile(r"^(.*?[.!?])(?=\s+|$)", re.DOTALL)
-    while True:
-        match = sentence_pattern.match(remaining.lstrip())
-        if match is None:
-            break
-        fragment = match.group(1).strip()
-        if fragment:
-            fragments.append(fragment)
-        remaining = remaining.lstrip()[match.end() :]
-
-    if force:
-        tail = remaining.strip()
-        if tail:
-            fragments.append(tail)
-        remaining = ""
-
-    return fragments, remaining
-
 
 def _convert_result_message(msg: ResultMessage) -> tuple[list[ProviderEvent], ProviderResult]:
     """Convert a ResultMessage to events + final ProviderResult."""

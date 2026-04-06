@@ -2350,13 +2350,21 @@ class ExecutorMixin:
         except Exception as exc:
             logger.warning("Failed to load lessons: %s", exc)
 
+        allowed_dirs = self._settings.allowed_dirs
+        build_allowed_dirs = getattr(self, "_build_allowed_dirs", None)
+        if callable(build_allowed_dirs):
+            try:
+                allowed_dirs = build_allowed_dirs()
+            except Exception:
+                logger.warning("Falling back to settings.allowed_dirs", exc_info=True)
+
         try:
             result = await runtime.run_task(
                 agent_id,
                 prompt,
                 worktree_path,
                 task.files,
-                allowed_dirs=self._settings.allowed_dirs,
+                allowed_dirs=allowed_dirs,
                 model=agent_model,
                 on_message=_on_msg,
                 project_context=self._build_project_context(),

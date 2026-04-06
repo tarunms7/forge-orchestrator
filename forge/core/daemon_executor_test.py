@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from forge.agents.adapter import AgentResult
 from forge.core.daemon_executor import ExecutorMixin, _complexity_timeout
 from forge.merge.worker import MergeResult
 from forge.review.pipeline import GateResult
@@ -1048,6 +1049,74 @@ class TestPrepareWorktreeRebaseAbort:
         # _run_git should NOT have been called for rebase abort
         for call in mock_git.call_args_list:
             assert call.args[0] != ["rebase", "--abort"]
+
+
+@pytest.mark.asyncio
+class TestStreamAgentAllowedDirs:
+    async def test_stream_agent_uses_build_allowed_dirs_when_available(self):
+        mixin = ExecutorMixin()
+        mixin._settings = MagicMock(
+            allowed_dirs=["/settings-only"],
+            agent_timeout_seconds=600,
+            autonomy="balanced",
+            question_limit=3,
+            agent_max_turns=75,
+            test_cmd=None,
+            build_cmd=None,
+            lint_cmd=None,
+            lint_fix_cmd=None,
+        )
+        mixin._settings.resolve_reasoning_effort = MagicMock(return_value="medium")
+        mixin._project_dir = "/workspace/root"
+        mixin._snapshot = None
+        mixin._contracts = None
+        mixin._template_config = None
+        mixin._emit = AsyncMock()
+        mixin._build_project_context = MagicMock(return_value="")
+        mixin._build_allowed_dirs = MagicMock(
+            return_value=["/workspace/root/backend", "/workspace/root/frontend"]
+        )
+
+        db = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=None)
+        db.get_relevant_lessons = AsyncMock(return_value=[])
+        db.get_pipeline_contracts = AsyncMock(return_value=None)
+
+        runtime = MagicMock()
+        runtime.run_task = AsyncMock(
+            return_value=AgentResult(
+                success=True,
+                files_changed=[],
+                summary="done",
+                cost_usd=0.0,
+                input_tokens=0,
+                output_tokens=0,
+            )
+        )
+
+        task = MagicMock()
+        task.files = ["backend/app.py"]
+        task.depends_on = []
+        task.complexity = "medium"
+
+        result = await mixin._stream_agent(
+            runtime,
+            "agent-1",
+            "test prompt",
+            "/workspace/root/.forge/worktrees/backend/task-1",
+            task,
+            "task-1",
+            "pipe-1",
+            db,
+            "claude:sonnet",
+        )
+
+        assert result.success is True
+        runtime.run_task.assert_awaited_once()
+        assert runtime.run_task.await_args.kwargs["allowed_dirs"] == [
+            "/workspace/root/backend",
+            "/workspace/root/frontend",
+        ]
 
 
 @pytest.mark.asyncio

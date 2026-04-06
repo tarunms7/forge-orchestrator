@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from forge.providers._stream_text import drain_stream_text as _drain_stream_text
 from forge.providers.base import (
     CatalogEntry,
     EventKind,
@@ -1025,10 +1026,22 @@ class OpenAIProvider:
         start_time = time.monotonic()
         total_input_tokens = 0
         total_output_tokens = 0
-        final_text = ""
+        final_text_parts: list[str] = []
+        partial_text_buffer = ""
 
         if on_event:
             on_event(ProviderEvent(kind=EventKind.STATUS, status="started"))
+
+        def _emit_partial_fragments(*, force: bool = False, raw: Any | None = None) -> None:
+            nonlocal partial_text_buffer
+            fragments, partial_text_buffer = _drain_stream_text(
+                partial_text_buffer,
+                force=force,
+            )
+            for fragment in fragments:
+                final_text_parts.append(fragment)
+                if on_event:
+                    on_event(ProviderEvent(kind=EventKind.TEXT, text=fragment, raw=raw))
 
         try:
             agents = _try_import_agents()
@@ -1081,12 +1094,17 @@ class OpenAIProvider:
                 if provider_event is None:
                     continue
 
+                if provider_event.kind == EventKind.TEXT and provider_event.text:
+                    partial_text_buffer += provider_event.text
+                    _emit_partial_fragments(raw=event)
+                    continue
+
                 if provider_event.kind == EventKind.USAGE:
                     total_input_tokens += provider_event.input_tokens or 0
                     total_output_tokens += provider_event.output_tokens or 0
 
-                if provider_event.kind == EventKind.TEXT and provider_event.text:
-                    final_text += provider_event.text
+                if provider_event.kind == EventKind.STATUS and provider_event.status == "completed":
+                    _emit_partial_fragments(force=True, raw=event)
 
                 if on_event:
                     on_event(provider_event)
@@ -1108,12 +1126,13 @@ class OpenAIProvider:
             )
 
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        _emit_partial_fragments(force=True)
 
         if on_event:
             on_event(ProviderEvent(kind=EventKind.STATUS, status="completed"))
 
         return ProviderResult(
-            text=final_text,
+            text="\n\n".join(final_text_parts),
             is_error=False,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
