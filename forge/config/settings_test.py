@@ -273,6 +273,26 @@ class TestMultiProviderFields:
         s = ForgeSettings()
         assert s.cost_rates is None
 
+    def test_mixed_provider_settings_roundtrip(self):
+        """Create ForgeSettings with mixed providers and verify routing/reasoning methods work correctly."""
+        s = ForgeSettings(
+            planner_model="claude:opus",
+            reviewer_model="openai:gpt-5.4",
+            reviewer_reasoning_effort="high",
+        )
+
+        # Assert build_routing_overrides() returns correct dict
+        routing = s.build_routing_overrides()
+        assert routing["planner_model"] == "claude:opus"
+        assert routing["reviewer_model"] == "openai:gpt-5.4"
+
+        # Assert build_reasoning_effort_overrides() includes reviewer
+        reasoning = s.build_reasoning_effort_overrides()
+        assert reasoning["reviewer_reasoning_effort"] == "high"
+
+        # Assert resolve_reasoning_effort('reviewer', 'medium') == 'high'
+        assert s.resolve_reasoning_effort("reviewer", "medium") == "high"
+
 
 class TestBuildRoutingOverrides:
     def test_empty_when_no_models_set(self):
