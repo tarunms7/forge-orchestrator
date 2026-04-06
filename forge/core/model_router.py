@@ -84,7 +84,7 @@ _ROUTING_TABLE: dict[str, dict[str, dict[str, str]]] = {
 # Intra-provider escalation chains: model -> next tier up
 _ESCALATION_CHAINS: dict[str, dict[str, str]] = {
     "claude": {"haiku": "sonnet", "sonnet": "opus"},
-    "openai": {"gpt-5.4-nano": "gpt-5.4-mini", "gpt-5.4-mini": "gpt-5.4"},
+    "openai": {"gpt-5.3-codex": "gpt-5.4-mini", "gpt-5.4-mini": "gpt-5.4"},
 }
 
 # Provider tier map: maps high/medium/low tiers to provider-specific models.
@@ -94,7 +94,7 @@ _PROVIDER_TIER_MAP: dict[str, dict[str, str]] = {
     "openai": {
         "high": "openai:gpt-5.4",
         "medium": "openai:gpt-5.4-mini",
-        "low": "openai:gpt-5.4-nano",
+        "low": "openai:gpt-5.3-codex",
     },
 }
 

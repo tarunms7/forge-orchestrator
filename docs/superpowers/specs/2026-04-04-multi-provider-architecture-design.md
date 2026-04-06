@@ -1180,7 +1180,7 @@ Escalation stays within the same provider. If user configured OpenAI for agents,
 ```python
 _ESCALATION_CHAINS = {
     "claude": {"haiku": "sonnet", "sonnet": "opus"},
-    "openai": {"gpt-5.4-nano": "gpt-5.4-mini", "gpt-5.4-mini": "gpt-5.4"},
+    "openai": {"gpt-5.3-codex": "gpt-5.4-mini", "gpt-5.4-mini": "gpt-5.4"},
 }
 ```
 
@@ -1192,7 +1192,7 @@ For `--provider openai` CLI shorthand, the router maps strategy tiers to the tar
 
 ```python
 _PROVIDER_TIER_MAP = {
-    "openai": {"high": "gpt-5.4", "medium": "gpt-5.4-mini", "low": "gpt-5.4-nano"},
+    "openai": {"high": "gpt-5.4", "medium": "gpt-5.4-mini", "low": "gpt-5.3-codex"},
     "claude": {"high": "opus", "medium": "sonnet", "low": "haiku"},
 }
 ```
@@ -1267,7 +1267,7 @@ _DEFAULT_RATES = {
     "claude:default":       ModelRates(0.003, 0.015),
     "openai:gpt-5.4":      ModelRates(0.010, 0.030),
     "openai:gpt-5.4-mini": ModelRates(0.002, 0.008),
-    "openai:gpt-5.4-nano": ModelRates(0.0005, 0.002),
+    "openai:gpt-5.3-codex": ModelRates(0.006, 0.024),
     "openai:gpt-5.3-codex": ModelRates(0.006, 0.024),
     "openai:default":       ModelRates(0.003, 0.015),
 }
@@ -1527,10 +1527,11 @@ class ForgeSettings(BaseSettings):
 
 ```
 FORGE_OPENAI_ENABLED=true
-OPENAI_API_KEY=sk-...        # Standard OpenAI env var, not FORGE-prefixed
+OPENAI_API_KEY=sk-...        # Required for Responses API / o3
+CODEX_API_KEY=sk-...         # Optional fallback for Codex if `codex login` is unavailable
 ```
 
-`OPENAI_API_KEY` is not `FORGE_OPENAI_API_KEY` because the OpenAI SDK reads `OPENAI_API_KEY` by default. Fighting this convention creates friction.
+Codex-backed models should prefer an existing `codex login` session when present. `OPENAI_API_KEY` is still used for the Responses API path, and remains the standard env var rather than `FORGE_OPENAI_API_KEY`.
 
 ### 12.3 forge.toml Changes
 
@@ -1722,13 +1723,13 @@ Add provider health checks:
 
 ```
 Claude:    OK (claude-code-sdk v1.x, authenticated)
-OpenAI:    OK (codex-sdk v1.x, OPENAI_API_KEY set)
+OpenAI:    OK (codex-sdk v1.x, Codex ChatGPT subscription login configured)
 ```
 
 Or on failure:
 
 ```
-OpenAI:    FAIL — openai_enabled=true but OPENAI_API_KEY not set
+OpenAI:    FAIL — Codex auth not configured; run `codex login` or set `CODEX_API_KEY`
 ```
 
 ## 17. Forge MCP Server
@@ -1890,7 +1891,8 @@ No OpenAI API key needed in CI. All OpenAI provider tests use mocks. Real provid
 ### 20.1 For Existing Users
 
 - Upgrade Forge → zero behavior change. All defaults resolve to Claude. All bare model names work.
-- To enable OpenAI: set `FORGE_OPENAI_ENABLED=true` and `OPENAI_API_KEY=sk-...`
+- To enable OpenAI Codex models: set `FORGE_OPENAI_ENABLED=true` and run `codex login`
+- To enable OpenAI Responses API models such as `o3`: also set `OPENAI_API_KEY=sk-...`
 - To use OpenAI for agents: set `FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4` or use `--agent openai:gpt-5.4`
 
 ### 20.2 For Existing Configs

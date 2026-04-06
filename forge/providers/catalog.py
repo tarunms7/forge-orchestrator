@@ -150,10 +150,10 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
     ),
     CatalogEntry(
         provider="openai",
-        alias="gpt-5.4-nano",
-        canonical_id="gpt-5.4-nano-0414",
+        alias="gpt-5.3-codex",
+        canonical_id="gpt-5.3-codex",
         backend="codex-sdk",
-        tier="experimental",
+        tier="supported",
         can_use_tools=True,
         can_stream=True,
         can_resume_session=False,
@@ -163,8 +163,8 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         max_context_tokens=128_000,
         supports_structured_output=True,
         supports_reasoning=False,
-        cost_key="openai:gpt-5.4-nano",
-        validated_stages=frozenset(["agent"]),
+        cost_key="openai:gpt-5.3-codex",
+        validated_stages=frozenset(["agent", "ci_fix"]),
     ),
     # ---- OpenAI reasoning model (openai-agents-sdk) ----
     CatalogEntry(

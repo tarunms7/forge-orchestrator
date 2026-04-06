@@ -232,7 +232,8 @@ Before any pipeline starts, Forge runs fast checks:
 
 - Required provider tooling available
 - Claude CLI installed and authenticated when Claude models are selected
-- OpenAI enabled + `OPENAI_API_KEY` present when OpenAI models are selected
+- Codex-backed OpenAI models authenticated via `codex login` or `CODEX_API_KEY`
+- Responses API models authenticated via `OPENAI_API_KEY`
 - Git repo valid, base branch exists
 - `gh` CLI available (for PR creation)
 - Sufficient disk space (>1 GB)
@@ -302,7 +303,14 @@ FORGE_BUDGET_LIMIT_USD=5 forge run "Refactor auth to OAuth2"
 
 ```bash
 FORGE_OPENAI_ENABLED=true \
+FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4 \
+forge run "Add audit logging to billing flows"
+```
+
+```bash
+FORGE_OPENAI_ENABLED=true \
 OPENAI_API_KEY=sk-... \
+FORGE_PLANNER_MODEL=openai:o3 \
 FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4 \
 forge run "Add audit logging to billing flows"
 ```
@@ -342,7 +350,7 @@ Forge resolves models per pipeline stage. Built-in model specs are:
 | Provider | Models |
 |---|---|
 | `claude` | `claude:opus`, `claude:sonnet`, `claude:haiku` |
-| `openai` | `openai:gpt-5.4`, `openai:gpt-5.4-mini`, `openai:gpt-5.4-nano`, `openai:o3` |
+| `openai` | `openai:gpt-5.4`, `openai:gpt-5.4-mini`, `openai:gpt-5.3-codex`, `openai:o3` |
 
 | Strategy | Planner | Agents | Reviewer |
 |---|---|---|---|
@@ -359,6 +367,8 @@ Routing precedence:
 Forge persists the exact resolved provider snapshot in `pipelines.provider_config` when the pipeline is created. Restarts, retries, follow-up work, and webhook resumptions use that snapshot, not whatever your current settings happen to be later.
 
 `[[custom_models]]` entries are validated against the active provider registry and then injected as experimental catalog entries for that project. That means custom aliases are now executable, not just parsed.
+
+Codex-backed models use your existing `codex login` subscription session when available, and Forge only falls back to key auth for Codex if `CODEX_API_KEY` is explicitly set or no Codex login is present. `openai:o3` stays on the Responses API path and requires `OPENAI_API_KEY`.
 
 ---
 

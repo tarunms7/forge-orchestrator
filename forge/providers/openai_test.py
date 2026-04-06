@@ -110,16 +110,54 @@ class TestOpenAIProviderBasics:
         assert provider.name == "openai"
 
     def test_catalog_entries_returns_openai_only(self, provider: OpenAIProvider) -> None:
-        entries = provider.catalog_entries()
-        assert len(entries) >= 4  # gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, o3
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "forge.providers.openai._available_codex_model_aliases",
+                return_value={"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"},
+            ),
+        ):
+            entries = provider.catalog_entries()
+        assert len(entries) == 3
         for entry in entries:
             assert entry.provider == "openai"
 
     def test_catalog_entries_include_expected_models(self, provider: OpenAIProvider) -> None:
-        aliases = {e.alias for e in provider.catalog_entries()}
-        assert "gpt-5.4" in aliases
-        assert "gpt-5.4-mini" in aliases
-        assert "o3" in aliases
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}),
+            patch(
+                "forge.providers.openai._available_codex_model_aliases",
+                return_value={"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"},
+            ),
+        ):
+            aliases = {e.alias for e in provider.catalog_entries()}
+        assert aliases == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "o3"}
+
+    def test_catalog_entries_hide_agents_model_without_api_key(
+        self, provider: OpenAIProvider
+    ) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "forge.providers.openai._available_codex_model_aliases",
+                return_value={"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"},
+            ),
+        ):
+            aliases = {e.alias for e in provider.catalog_entries()}
+        assert "o3" not in aliases
+
+    def test_catalog_entries_filter_to_subscription_models(
+        self, provider: OpenAIProvider
+    ) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "forge.providers.openai._available_codex_model_aliases",
+                return_value={"gpt-5.4", "gpt-5.4-mini"},
+            ),
+        ):
+            aliases = {e.alias for e in provider.catalog_entries()}
+        assert aliases == {"gpt-5.4", "gpt-5.4-mini"}
 
 
 # ---------------------------------------------------------------------------
@@ -139,40 +177,59 @@ class TestHealthCheck:
                 "forge.providers.openai._try_import_agents",
                 return_value=SimpleNamespace(__version__="0.1.0"),
             ),
+            patch(
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
+            ),
+            patch(
+                "forge.providers.openai._available_codex_model_aliases",
+                return_value={"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"},
+            ),
         ):
             status = provider.health_check()
             assert status.healthy is True
             assert status.provider == "openai"
             assert not status.errors
 
-    def test_unhealthy_when_no_api_key(self, provider: OpenAIProvider) -> None:
-        env = dict(os.environ)
-        env.pop("OPENAI_API_KEY", None)
+    def test_healthy_codex_backend_with_chatgpt_auth(self, provider: OpenAIProvider) -> None:
         with (
-            patch.dict(os.environ, env, clear=True),
+            patch.dict(os.environ, {}, clear=True),
             patch(
                 "forge.providers.openai._try_import_codex",
                 return_value=SimpleNamespace(__version__="0.1.0"),
             ),
             patch(
-                "forge.providers.openai._try_import_agents",
-                return_value=SimpleNamespace(__version__="0.1.0"),
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
             ),
         ):
-            status = provider.health_check()
+            status = provider.health_check(backend="codex-sdk")
+            assert status.healthy is True
+            assert not status.errors
+
+    def test_unhealthy_codex_backend_when_no_auth(self, provider: OpenAIProvider) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "forge.providers.openai._try_import_codex",
+                return_value=SimpleNamespace(__version__="0.1.0"),
+            ),
+            patch("forge.providers.openai._codex_auth_description", return_value=None),
+        ):
+            status = provider.health_check(backend="codex-sdk")
             assert status.healthy is False
-            assert any("OPENAI_API_KEY" in e for e in status.errors)
+            assert any("codex login" in e.lower() or "codex_api_key" in e.lower() for e in status.errors)
 
     def test_unhealthy_when_codex_not_installed(self, provider: OpenAIProvider) -> None:
         with (
-            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}),
+            patch.dict(os.environ, {}, clear=True),
             patch("forge.providers.openai._try_import_codex", return_value=None),
             patch(
-                "forge.providers.openai._try_import_agents",
-                return_value=SimpleNamespace(__version__="0.1.0"),
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
             ),
         ):
-            status = provider.health_check()
+            status = provider.health_check(backend="codex-sdk")
             assert status.healthy is False
             assert any("codex" in e.lower() for e in status.errors)
 
@@ -191,16 +248,35 @@ class TestHealthCheck:
 
     def test_backend_specific_check_codex(self, provider: OpenAIProvider) -> None:
         with (
-            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}),
+            patch.dict(os.environ, {}, clear=True),
             patch(
                 "forge.providers.openai._try_import_codex",
                 return_value=SimpleNamespace(__version__="0.1.0"),
+            ),
+            patch(
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
             ),
         ):
             status = provider.health_check(backend="codex-sdk")
             assert status.healthy is True
             # Should not check agents-sdk
             assert not any("agents" in e.lower() for e in status.errors)
+
+    def test_backend_specific_check_codex_with_openai_api_key_fallback(
+        self, provider: OpenAIProvider
+    ) -> None:
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=True),
+            patch(
+                "forge.providers.openai._try_import_codex",
+                return_value=SimpleNamespace(__version__="0.1.0"),
+            ),
+            patch("forge.providers.openai._codex_auth_description", return_value=None),
+        ):
+            status = provider.health_check(backend="codex-sdk")
+            assert status.healthy is True
+            assert "fallback" in status.details.lower()
 
     def test_backend_specific_check_agents(self, provider: OpenAIProvider) -> None:
         with (
@@ -496,6 +572,7 @@ class TestCodexStart:
             await handle.result()
 
         # Safety instructions should be appended to instructions
+        assert captured_kwargs.get("model") == "gpt-5.4"
         instructions = captured_kwargs.get("instructions", "")
         assert "git push" in instructions
         assert "curl" in instructions
@@ -586,7 +663,13 @@ class TestCodexStart:
         mock_sdk.resumeThread = None
         mock_sdk.Codex = _FakeCodexClient
 
-        with patch("forge.providers.openai._try_import_codex", return_value=mock_sdk):
+        with (
+            patch("forge.providers.openai._try_import_codex", return_value=mock_sdk),
+            patch(
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
+            ),
+        ):
             handle = provider.start(
                 prompt="test prompt",
                 system_prompt="system rules",
@@ -606,10 +689,63 @@ class TestCodexStart:
         assert result.output_tokens == 30
         assert result.resume_state is not None
         assert result.resume_state.session_token == "thread-123"
-        assert captured["thread_options"]["model"] == "gpt-5.4-0414"
+        assert captured["client_options"] is None
+        assert captured["thread_options"]["model"] == "gpt-5.4"
         assert captured["thread_options"]["workingDirectory"] == workspace.primary_cwd
         assert "system rules" in captured["input"]
         assert "test prompt" in captured["input"]
+
+    async def test_codex_client_uses_api_key_when_cli_auth_missing(
+        self,
+        provider: OpenAIProvider,
+        codex_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+        tool_policy: ToolPolicy,
+        output_contract: OutputContract,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _event_stream() -> Any:
+            yield {"type": "turn.completed"}
+
+        class _FakeThread:
+            async def run_streamed(self, input_: Any) -> Any:
+                return SimpleNamespace(events=_event_stream())
+
+        class _FakeCodexClient:
+            def __init__(self, options: Any = None) -> None:
+                captured["client_options"] = options
+
+            def start_thread(self, options: Any = None) -> Any:
+                return _FakeThread()
+
+        mock_sdk = MagicMock()
+        mock_sdk.__version__ = "0.1.0"
+        mock_sdk.start_thread = None
+        mock_sdk.startThread = None
+        mock_sdk.resume_thread = None
+        mock_sdk.resumeThread = None
+        mock_sdk.Codex = _FakeCodexClient
+
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}, clear=True),
+            patch("forge.providers.openai._try_import_codex", return_value=mock_sdk),
+            patch("forge.providers.openai._codex_auth_description", return_value=None),
+        ):
+            handle = provider.start(
+                prompt="test prompt",
+                system_prompt="system rules",
+                catalog_entry=codex_entry,
+                execution_mode=ExecutionMode.CODING,
+                tool_policy=tool_policy,
+                output_contract=output_contract,
+                workspace=workspace,
+                max_turns=5,
+            )
+            result = await handle.result()
+
+        assert result.is_error is False
+        assert captured["client_options"] == {"apiKey": "sk-test-key"}
 
     async def test_codex_not_installed_raises(
         self,

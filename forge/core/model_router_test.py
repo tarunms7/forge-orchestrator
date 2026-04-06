@@ -179,12 +179,12 @@ class TestModelEscalation:
         )
         assert result == ModelSpec("openai", "gpt-5.4")
 
-    def test_escalation_openai_nano_to_mini(self):
+    def test_escalation_openai_codex_to_mini(self):
         result = select_model(
             "auto",
             "agent",
             "low",
-            overrides={"agent_model_low": "openai:gpt-5.4-nano"},
+            overrides={"agent_model_low": "openai:gpt-5.3-codex"},
             retry_count=2,
         )
         assert result == ModelSpec("openai", "gpt-5.4-mini")
@@ -200,7 +200,7 @@ class TestEscalationChains:
 
     def test_openai_chains(self):
         assert _ESCALATION_CHAINS["openai"] == {
-            "gpt-5.4-nano": "gpt-5.4-mini",
+            "gpt-5.3-codex": "gpt-5.4-mini",
             "gpt-5.4-mini": "gpt-5.4",
         }
 
@@ -214,7 +214,7 @@ class TestProviderTierMap:
     def test_openai_tiers(self):
         assert _PROVIDER_TIER_MAP["openai"]["high"] == "openai:gpt-5.4"
         assert _PROVIDER_TIER_MAP["openai"]["medium"] == "openai:gpt-5.4-mini"
-        assert _PROVIDER_TIER_MAP["openai"]["low"] == "openai:gpt-5.4-nano"
+        assert _PROVIDER_TIER_MAP["openai"]["low"] == "openai:gpt-5.3-codex"
 
 
 class TestTranslateToProvider:
@@ -224,8 +224,8 @@ class TestTranslateToProvider:
         assert translated["auto"]["planner"]["medium"] == "openai:gpt-5.4"
         # auto/agent/low was claude:sonnet (medium) -> openai:gpt-5.4-mini
         assert translated["auto"]["agent"]["low"] == "openai:gpt-5.4-mini"
-        # fast/agent/low was claude:haiku (low) -> openai:gpt-5.4-nano
-        assert translated["fast"]["agent"]["low"] == "openai:gpt-5.4-nano"
+        # fast/agent/low was claude:haiku (low) -> openai:gpt-5.3-codex
+        assert translated["fast"]["agent"]["low"] == "openai:gpt-5.3-codex"
 
     def test_translate_unknown_provider_returns_original(self):
         translated = translate_to_provider("unknown_provider")

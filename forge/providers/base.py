@@ -27,7 +27,7 @@ _BARE_ALIAS_PROVIDERS: dict[str, str] = {
     "haiku": "claude",
     "gpt-5.4": "openai",
     "gpt-5.4-mini": "openai",
-    "gpt-5.4-nano": "openai",
+    "gpt-5.3-codex": "openai",
     "o3": "openai",
 }
 

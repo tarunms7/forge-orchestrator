@@ -31,7 +31,7 @@ class TestCatalogCompleteness:
         openai = [e for e in FORGE_MODEL_CATALOG if e.provider == "openai"]
         assert len(openai) == 4
         aliases = {e.alias for e in openai}
-        assert aliases == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "o3"}
+        assert aliases == {"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "o3"}
 
     def test_all_entries_are_catalog_entry(self) -> None:
         for entry in FORGE_MODEL_CATALOG:
@@ -54,8 +54,8 @@ class TestCatalogCompleteness:
     def test_experimental_models(self) -> None:
         exp = [e for e in FORGE_MODEL_CATALOG if e.tier == "experimental"]
         aliases = {e.alias for e in exp}
-        assert "gpt-5.4-nano" in aliases
         assert "o3" in aliases
+        assert "gpt-5.3-codex" not in aliases
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ class TestHandleUnknownTool:
         assert verdict == AuditVerdict.ABORT
 
     def test_experimental_fails_open(self) -> None:
-        entry = _find_entry("gpt-5.4-nano")
+        entry = _find_entry("o3")
         assert entry.tier == "experimental"
         verdict = handle_unknown_tool("WeirdTool", entry)
         assert verdict == AuditVerdict.WARN

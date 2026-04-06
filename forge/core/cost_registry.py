@@ -62,7 +62,7 @@ _DEFAULT_RATES: dict[str, ModelRates] = {
     # OpenAI models
     "openai:gpt-5.4": ModelRates(input_per_1k=0.005, output_per_1k=0.015),
     "openai:gpt-5.4-mini": ModelRates(input_per_1k=0.0004, output_per_1k=0.0016),
-    "openai:gpt-5.4-nano": ModelRates(input_per_1k=0.0001, output_per_1k=0.0004),
+    "openai:gpt-5.3-codex": ModelRates(input_per_1k=0.006, output_per_1k=0.024),
     "openai:o3": ModelRates(input_per_1k=0.010, output_per_1k=0.040),
     # Provider defaults (fallback within a provider)
     "claude:default": ModelRates(input_per_1k=0.003, output_per_1k=0.015),

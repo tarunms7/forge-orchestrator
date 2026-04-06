@@ -17,6 +17,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from forge.providers.base import (
@@ -60,6 +61,104 @@ def _try_import_agents() -> Any | None:
         return agents
     except ImportError:
         return None
+
+
+def _codex_home() -> Path:
+    """Resolve the Codex home directory used by CLI auth and model cache."""
+    override = os.environ.get("CODEX_HOME")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".codex"
+
+
+def _read_json_file(path: Path) -> Any | None:
+    """Best-effort JSON reader used for local Codex metadata."""
+    try:
+        if not path.exists():
+            return None
+        return json.loads(path.read_text())
+    except Exception:
+        logger.debug("Failed to read JSON file %s", path, exc_info=True)
+        return None
+
+
+def _codex_auth_payload() -> dict[str, Any] | None:
+    """Load Codex auth metadata without depending on the CLI binary."""
+    data = _read_json_file(_codex_home() / "auth.json")
+    return data if isinstance(data, dict) else None
+
+
+def _codex_auth_description() -> str | None:
+    """Describe the currently available Codex auth source, if any."""
+    if os.environ.get("CODEX_API_KEY"):
+        return "Codex API key configured"
+
+    payload = _codex_auth_payload()
+    if not payload:
+        return None
+
+    auth_mode = str(payload.get("auth_mode", "")).strip().lower()
+    tokens = payload.get("tokens") or {}
+    has_session = isinstance(tokens, dict) and bool(tokens.get("access_token"))
+    embedded_api_key = payload.get("OPENAI_API_KEY")
+
+    if auth_mode == "chatgpt" and has_session:
+        return "Codex ChatGPT subscription login configured"
+    if auth_mode in {"api_key", "apikey"} and (embedded_api_key or has_session):
+        return "Codex CLI API-key auth configured"
+    if has_session or embedded_api_key:
+        return "Codex CLI auth configured"
+    return None
+
+
+def _has_codex_auth() -> bool:
+    """Return True when Codex execution can authenticate without more setup."""
+    return _codex_auth_description() is not None
+
+
+def _codex_models_cache() -> list[dict[str, Any]] | None:
+    """Load the local Codex models cache if available."""
+    data = _read_json_file(_codex_home() / "models_cache.json")
+    if not isinstance(data, dict):
+        return None
+    models = data.get("models")
+    if not isinstance(models, list):
+        return None
+    return [model for model in models if isinstance(model, dict)]
+
+
+def _available_codex_model_aliases() -> set[str] | None:
+    """Return model aliases exposed by the local Codex subscription cache."""
+    models = _codex_models_cache()
+    if models is None:
+        return None
+
+    aliases: set[str] = set()
+    for model in models:
+        slug = model.get("slug")
+        if isinstance(slug, str) and slug.strip():
+            aliases.add(slug.strip().lower())
+            continue
+        display_name = model.get("display_name")
+        if isinstance(display_name, str) and display_name.strip():
+            aliases.add(display_name.strip().lower())
+    return aliases
+
+
+def _codex_execution_model(catalog_entry: CatalogEntry) -> str:
+    """Use subscription-compatible aliases when invoking the Codex CLI backend."""
+    return catalog_entry.alias
+
+
+def _codex_api_key_override() -> str | None:
+    """Only pass an API key to Codex when CLI auth is unavailable or explicitly set."""
+    explicit = os.environ.get("CODEX_API_KEY")
+    if explicit:
+        return explicit
+    if _has_codex_auth():
+        return None
+    fallback = os.environ.get("OPENAI_API_KEY", "").strip()
+    return fallback or None
 
 
 # ---------------------------------------------------------------------------
@@ -403,40 +502,60 @@ class OpenAIProvider:
         return "openai"
 
     def catalog_entries(self) -> list[CatalogEntry]:
-        """Return OpenAI entries from FORGE_MODEL_CATALOG."""
-        return [e for e in FORGE_MODEL_CATALOG if e.provider == "openai"]
+        """Return OpenAI entries filtered to the locally executable subset when known."""
+        codex_aliases = _available_codex_model_aliases()
+        has_agents_auth = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+
+        entries: list[CatalogEntry] = []
+        for entry in FORGE_MODEL_CATALOG:
+            if entry.provider != "openai":
+                continue
+            if entry.backend == "codex-sdk" and codex_aliases is not None:
+                if entry.alias.lower() not in codex_aliases:
+                    continue
+            if entry.backend == "openai-agents-sdk" and not has_agents_auth:
+                continue
+            entries.append(entry)
+        return entries
 
     def health_check(self, backend: str | None = None) -> ProviderHealthStatus:
-        """Check OpenAI SDK availability and API key.
-
-        If backend is specified, only check that specific backend.
-        Otherwise check all OpenAI backends.
-        """
+        """Check OpenAI backend availability for the requested auth mode(s)."""
         errors: list[str] = []
         details_parts: list[str] = []
 
-        # Check API key (required for all backends)
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            errors.append("OPENAI_API_KEY environment variable not set")
+        backends: set[str]
+        if backend is not None:
+            backends = {backend}
         else:
-            details_parts.append("API key configured")
+            backends = {entry.backend for entry in self.catalog_entries()} or {"codex-sdk"}
 
-        # Check codex-sdk
-        if backend is None or backend == "codex-sdk":
+        if "codex-sdk" in backends:
             codex = _try_import_codex()
             if codex is not None:
                 details_parts.append(f"codex-sdk v{getattr(codex, '__version__', 'unknown')}")
             else:
                 errors.append("openai-codex-sdk not installed")
+            codex_auth = _codex_auth_description()
+            if codex_auth:
+                details_parts.append(codex_auth)
+            elif _codex_api_key_override():
+                details_parts.append("OPENAI_API_KEY fallback configured for Codex")
+            else:
+                errors.append("Codex auth not configured; run `codex login` or set `CODEX_API_KEY`")
 
-        # Check openai-agents-sdk
-        if backend is None or backend == "openai-agents-sdk":
+        if "openai-agents-sdk" in backends:
             agents = _try_import_agents()
             if agents is not None:
                 details_parts.append(f"agents-sdk v{getattr(agents, '__version__', 'unknown')}")
             else:
                 errors.append("openai-agents not installed")
+            api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+            if api_key:
+                details_parts.append("Responses API key configured")
+            else:
+                errors.append(
+                    "OPENAI_API_KEY environment variable not set for Responses API models"
+                )
 
         return ProviderHealthStatus(
             healthy=len(errors) == 0,
@@ -521,7 +640,7 @@ class OpenAIProvider:
         workspace: WorkspaceRoots,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
-            "model": catalog_entry.canonical_id,
+            "model": _codex_execution_model(catalog_entry),
             "sandboxMode": "workspace-write",
             "workingDirectory": workspace.primary_cwd,
             "approvalPolicy": "never",
@@ -595,7 +714,7 @@ class OpenAIProvider:
 
             # Configure Codex options
             codex_config = {
-                "model": catalog_entry.canonical_id,
+                "model": _codex_execution_model(catalog_entry),
                 "prompt": prompt,
                 "instructions": full_system,
                 "sandbox_mode": "workspace-write",
@@ -628,7 +747,7 @@ class OpenAIProvider:
                 if CodexClient is None:
                     raise RuntimeError("Codex SDK start function not found")
 
-                api_key = os.environ.get("OPENAI_API_KEY")
+                api_key = _codex_api_key_override()
                 client_options: dict[str, Any] = {}
                 if api_key:
                     client_options["apiKey"] = api_key

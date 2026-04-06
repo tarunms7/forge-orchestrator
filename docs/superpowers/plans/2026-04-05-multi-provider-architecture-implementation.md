@@ -462,7 +462,7 @@ Source design: `/Users/mtarun/Desktop/SideHustles/claude-does/docs/superpowers/s
   - default routing table
 - Saved web settings must be merged into daemon creation for new pipelines only.
 - Execution of an existing pipeline must use persisted `provider_config`, not current user settings.
-- `FORGE_OPENAI_ENABLED` and `OPENAI_API_KEY` are the environment variables for the OpenAI path.
+- `FORGE_OPENAI_ENABLED` gates the OpenAI provider; Codex-backed models should use `codex login` or `CODEX_API_KEY`, while Responses API models still require `OPENAI_API_KEY`.
 
 ## Database Migration Plan
 
