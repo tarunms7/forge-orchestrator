@@ -1216,7 +1216,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         builder = ContractBuilder(builder_llm)
 
         async def _on_contract_msg(msg):
-            text = _extract_text(msg)
+            text = _extract_activity(msg) or _extract_text(msg)
             if text:
                 await self._emit(
                     "contracts:output",

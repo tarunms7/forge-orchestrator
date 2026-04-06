@@ -97,6 +97,7 @@ class ContractBuilderLLM:
         self._model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
         self._cwd = cwd
         self._registry = registry
+        self._last_sdk_result: ProviderResult | None = None
         self._last_result: ProviderResult | None = None
 
     async def generate_contracts(
@@ -112,6 +113,8 @@ class ContractBuilderLLM:
 
         if self._registry is None:
             logger.warning("ProviderRegistry not set on ContractBuilderLLM")
+            self._last_sdk_result = None
+            self._last_result = None
             return ""
 
         provider = self._registry.get_for_model(self._model_spec)
@@ -141,8 +144,11 @@ class ContractBuilderLLM:
             result = await handle.result()
         except Exception as e:
             logger.warning("Provider call failed during contract generation: %s", e)
+            self._last_sdk_result = None
+            self._last_result = None
             return ""
 
+        self._last_sdk_result = result
         self._last_result = result
         result_text = result.text or ""
         return extract_json_block(result_text) or ""
