@@ -270,6 +270,7 @@ def _convert_stream_event(msg: StreamEvent) -> list[ProviderEvent]:
 
     return []
 
+
 def _convert_result_message(msg: ResultMessage) -> tuple[list[ProviderEvent], ProviderResult]:
     """Convert a ResultMessage to events + final ProviderResult."""
     events: list[ProviderEvent] = []

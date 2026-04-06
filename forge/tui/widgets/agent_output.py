@@ -29,7 +29,53 @@ _SPINNER_FRAMES = [
     ("[#3b82c4]◉[/]", "#3b82c4"),  # Medium
     ("[#58a6ff]●[/]", "#58a6ff"),  # Bright, full
 ]
+
+# Legacy typing frames (kept for backward compatibility with tests)
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
+
+# Shimmer forging animation
+_FORGING_WORD = "forging"
+_SHIMMER_COLORS = [
+    "#484f58",  # Dim base (TEXT_MUTED)
+    "#6e7681",  # Mid step 1
+    "#8b949e",  # Mid step 2
+    "#d6a85f",  # Bright (ACCENT_GOLD)
+    "#e8c48a",  # Peak (brighter gold)
+]
+
+
+def _render_forging_shimmer(frame: int, width: int = 72) -> str:
+    """Render the 'forging' shimmer animation with a brightness wave.
+
+    Args:
+        frame: Current animation frame number
+        width: Total visual width for right-alignment (default 72)
+
+    Returns:
+        Rich markup string with right-aligned shimmer text
+    """
+    word = _FORGING_WORD
+    hotspot_pos = frame % (len(word) + 3)  # +3 for pause between sweeps
+
+    chars = []
+    for i, char in enumerate(word):
+        distance = abs(i - hotspot_pos)
+        # 3-character glow: distance 0=peak, 1=bright, 2=mid, else=dim base
+        if distance == 0:
+            color = _SHIMMER_COLORS[4]  # Peak: #e8c48a
+        elif distance == 1:
+            color = _SHIMMER_COLORS[3]  # Bright: #d6a85f
+        elif distance == 2:
+            color = _SHIMMER_COLORS[2]  # Mid: #8b949e
+        else:
+            color = _SHIMMER_COLORS[0]  # Dim base: #484f58
+        chars.append(f"[{color}]{char}[/]")
+
+    shimmer_text = "".join(chars)
+    # Calculate padding for right alignment (account for visual chars only)
+    padding = max(0, width - len(word))
+    return " " * padding + shimmer_text
+
 
 # Dim→bright fade-in for new lines
 _FADE_STEPS = ["#30363d", "#484f58", "#6e7681", "#8b949e", "#c9d1d9"]
@@ -225,8 +271,7 @@ def format_output(
                 continue
             parts.append(rendered)
     if streaming:
-        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
-        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+        parts.append(_render_forging_shimmer(typing_frame))
     return "\n".join(parts)
 
 
@@ -275,8 +320,7 @@ def format_unified_output(
         parts.extend(_render_unified_chunk(source_type, line))
 
     if streaming:
-        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
-        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+        parts.append(_render_forging_shimmer(typing_frame))
 
     return "\n".join(parts)
 
@@ -404,14 +448,7 @@ class AgentOutput(Widget):
             return
         self._typing_frame += 1
         if self._rendered_parts:
-            # Skip update if content hasn't changed (only cursor frame differs)
-            content_hash = hash(tuple(self._rendered_parts))
-            if (
-                content_hash == self._last_content_hash
-                and self._typing_frame % len(_TYPING_FRAMES) != 0
-            ):
-                return
-            self._last_content_hash = content_hash
+            # Always update for shimmer animation since every frame changes colors
             self._update_content()
         else:
             try:
@@ -460,8 +497,7 @@ class AgentOutput(Widget):
                 else:
                     full = "\n".join(self._rendered_parts)
                 if self._streaming:
-                    cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                    full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                    full += f"\n{_render_forging_shimmer(self._typing_frame)}"
                 content.update(full)
                 if self._is_near_bottom():
                     self._request_scroll()
@@ -485,7 +521,7 @@ class AgentOutput(Widget):
         if active:
             self._typing_frame = 0
             try:
-                self._typing_timer = self.set_interval(0.3, self._tick_typing)
+                self._typing_timer = self.set_interval(0.12, self._tick_typing)
             except Exception:
                 pass  # Not yet composed
         else:
@@ -672,8 +708,7 @@ class AgentOutput(Widget):
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             full = "\n".join(self._rendered_parts)
             if self._streaming:
-                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                full += f"\n{_render_forging_shimmer(self._typing_frame)}"
             self.query_one("#agent-content", Static).update(full)
         except Exception:
             pass
@@ -742,8 +777,7 @@ class AgentOutput(Widget):
         elif self._rendered_parts:
             base = "\n".join(self._rendered_parts)
             if self._streaming:
-                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                base += f"\n[#58a6ff]● Typing{cursor}[/]"
+                base += f"\n{_render_forging_shimmer(self._typing_frame)}"
         elif self._unified_entries:
             base = format_unified_output(
                 self._unified_entries,
