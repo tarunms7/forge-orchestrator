@@ -32,6 +32,13 @@ from forge.tui.widgets.shortcut_bar import ShortcutBar
 logger = logging.getLogger("forge.tui.screens.final_approval")
 
 
+def _escape(text: str | None) -> str:
+    """Escape Rich markup characters in dynamic screen content."""
+    if text is None:
+        return ""
+    return str(text).replace("[", "\\[").replace("]", "\\]")
+
+
 def _summarize_task_states(tasks: list[dict]) -> dict[str, int]:
     summary = {
         "done": 0,
@@ -99,8 +106,8 @@ def _format_launch_banner(
         )
     elif pipeline_branch:
         target = (
-            f"[{TEXT_SECONDARY}]PR target:[/] [bold {ACCENT_BLUE}]{pipeline_branch}[/] "
-            f"[{TEXT_SECONDARY}]→[/] [bold {ACCENT_BLUE}]{base_branch}[/]"
+            f"[{TEXT_SECONDARY}]PR target:[/] [bold {ACCENT_BLUE}]{_escape(pipeline_branch)}[/] "
+            f"[{TEXT_SECONDARY}]→[/] [bold {ACCENT_BLUE}]{_escape(base_branch)}[/]"
         )
     else:
         target = f"[{TEXT_MUTED}]Branch target loading…[/]"
@@ -125,7 +132,10 @@ def _format_launch_status(
     if per_repo_pr_urls:
         lines = [f"[bold {ACCENT_GREEN}]PR live[/]"]
         for rid, url in sorted(per_repo_pr_urls.items()):
-            lines.append(f"[bold {ACCENT_GREEN}]{rid}:[/] [underline {ACCENT_BLUE}]{url}[/]")
+            lines.append(
+                f"[bold {ACCENT_GREEN}]{_escape(rid)}:[/] "
+                f"[underline {ACCENT_BLUE}]{_escape(url)}[/]"
+            )
         return "\n".join(lines)
     if multi_repo:
         return (
@@ -137,8 +147,8 @@ def _format_launch_status(
     return (
         f"[bold {ACCENT_CYAN}]Launch plan[/]\n"
         f"[{TEXT_SECONDARY}]Forge will open a pull request from "
-        f"[bold {ACCENT_BLUE}]{pipeline_branch}[/] into "
-        f"[bold {ACCENT_BLUE}]{base_branch}[/].[/]"
+        f"[bold {ACCENT_BLUE}]{_escape(pipeline_branch)}[/] into "
+        f"[bold {ACCENT_BLUE}]{_escape(base_branch)}[/].[/]"
     )
 
 
@@ -167,8 +177,9 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
     """Format a list of tasks as lines with status icons."""
     lines: list[str] = []
     for t in tasks:
-        title = t.get("title", "?")
-        state = t.get("state", t.get("review", "?"))
+        title = _escape(t.get("title", "?"))
+        state = str(t.get("state", t.get("review", "?")))
+        escaped_state = _escape(state)
 
         if state == "done":
             added = t.get("added", 0)
@@ -185,10 +196,10 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
                 f"{indent}[{ACCENT_GREEN}]✅[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]"
             )
         elif state == "error":
-            error = t.get("error", "failed")
+            error = _escape(t.get("error", "failed"))
             lines.append(f"{indent}[{ACCENT_RED}]❌[/] [bold]{title}[/]  [{ACCENT_RED}]{error}[/]")
         elif state == "blocked":
-            error = t.get("error", "blocked by dependency")
+            error = _escape(t.get("error", "blocked by dependency"))
             lines.append(
                 f"{indent}[{ACCENT_YELLOW}]⚠️[/] [bold]{title}[/]  [{ACCENT_YELLOW}]{error}[/]"
             )
@@ -219,7 +230,8 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
                     )
                 else:
                     lines.append(
-                        f"{indent}[{ACCENT_YELLOW}]⏳[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{state}  {stats}[/]"
+                        f"{indent}[{ACCENT_YELLOW}]⏳[/] [bold]{title}[/]  "
+                        f"[{TEXT_SECONDARY}]{escaped_state}  {stats}[/]"
                     )
             elif state == "in_review":
                 lines.append(
@@ -232,7 +244,8 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
             else:
                 # Fallback for unknown states (todo, etc.)
                 lines.append(
-                    f"{indent}[{TEXT_SECONDARY}]○[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{state}  {stats}[/]"
+                    f"{indent}[{TEXT_SECONDARY}]○[/] [bold]{title}[/]  "
+                    f"[{TEXT_SECONDARY}]{escaped_state}  {stats}[/]"
                 )
     return lines
 
@@ -259,7 +272,9 @@ def format_task_table(tasks: list[dict], multi_repo: bool = False) -> str:
         # Aggregate stats for repo header
         total_added = sum(t.get("added", 0) for t in repo_tasks)
         total_removed = sum(t.get("removed", 0) for t in repo_tasks)
-        lines.append(f"[bold {ACCENT_BLUE}]{repo_id}[/]  +{total_added}/-{total_removed}")
+        lines.append(
+            f"[bold {ACCENT_BLUE}]{_escape(repo_id)}[/]  +{total_added}/-{total_removed}"
+        )
         lines.extend(_format_task_list(repo_tasks, indent="    "))
     return "\n".join(lines)
 
@@ -334,7 +349,8 @@ class RepoSelectorScreen(Screen):
                 total_removed = sum(t.get("removed", 0) for t in repo_tasks)
                 marker = "▸ " if i == 0 else "  "
                 yield Static(
-                    f"{marker}[bold]{repo_id}[/]  [{TEXT_SECONDARY}]+{total_added}/-{total_removed}[/]",
+                    f"{marker}[bold]{_escape(repo_id)}[/] "
+                    f"[{TEXT_SECONDARY}]+{total_added}/-{total_removed}[/]",
                     id=f"repo-item-{i}",
                     classes="repo-item repo-item--selected" if i == 0 else "repo-item",
                 )
@@ -351,7 +367,8 @@ class RepoSelectorScreen(Screen):
                 total_removed = sum(t.get("removed", 0) for t in repo_tasks)
                 marker = "▸ " if i == self._cursor else "  "
                 widget.update(
-                    f"{marker}[bold]{repo_id}[/]  [{TEXT_SECONDARY}]+{total_added}/-{total_removed}[/]"
+                    f"{marker}[bold]{_escape(repo_id)}[/] "
+                    f"[{TEXT_SECONDARY}]+{total_added}/-{total_removed}[/]"
                 )
                 if i == self._cursor:
                     widget.add_class("repo-item--selected")
@@ -528,7 +545,7 @@ class FinalApprovalScreen(Screen):
                 warning = self.query_one("#behind-main-warning", Static)
                 warning.update(
                     f"[bold {ACCENT_YELLOW}]⚠ Branch is {count} commit{'s' if count != 1 else ''} "
-                    f"behind {base}. Sync before launch to avoid merge conflicts.[/]"
+                    f"behind {_escape(base)}. Sync before launch to avoid merge conflicts.[/]"
                 )
         except Exception:
             pass  # Non-critical — silently skip if git fails
@@ -605,7 +622,7 @@ class FinalApprovalScreen(Screen):
             return (
                 f"[bold {ACCENT_GREEN}]PR live[/]\n"
                 f"[{TEXT_SECONDARY}]Review, merge, or keep iterating on the branch.[/]\n"
-                f"[underline {ACCENT_BLUE}]{self._single_pr_url}[/]"
+                f"[underline {ACCENT_BLUE}]{_escape(self._single_pr_url)}[/]"
             )
         return _format_launch_status(
             self._pipeline_branch,

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+from rich.console import Console
 from textual.app import App, ComposeResult
 
 from forge.tui.screens.final_approval import (
     DiffScreen,
     FinalApprovalScreen,
+    _format_launch_status,
     format_summary_stats,
     format_task_table,
 )
@@ -44,6 +47,36 @@ def test_format_task_table():
     result = format_task_table(tasks)
     assert "JWT middleware" in result
     assert "14/14" in result
+
+
+def test_format_task_table_escapes_validation_errors_without_markup_error():
+    tasks = [
+        {
+            "title": "Retry summary [review]",
+            "state": "error",
+            "error": (
+                "Input should be 'completed' or 'failed' "
+                "[type=literal_error, input_value='in_progress', input_type=str]"
+            ),
+        }
+    ]
+    result = format_task_table(tasks)
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(result)
+    assert "\\[type=literal_error" in result
+    assert "Retry summary \\[review\\]" in result
+
+
+def test_format_launch_status_escapes_dynamic_values():
+    result = _format_launch_status(
+        "forge/topic[debug]",
+        "main[release]",
+        per_repo_pr_urls={"repo[one]": "https://example.com/pr/[42]"},
+    )
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(result)
+    assert "repo\\[one\\]" in result
+    assert "https://example.com/pr/\\[42\\]" in result
 
 
 def test_final_approval_screen_accepts_pipeline_branch():
