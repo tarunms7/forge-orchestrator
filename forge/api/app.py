@@ -171,35 +171,34 @@ def create_app(
     # ── Provider registry + cost registry ─────────────────────────────
     from forge.config.settings import ForgeSettings as _RegistrySettings
     from forge.core.cost_registry import CostRegistry
-    from forge.providers.registry import ProviderRegistry
+    from forge.core.provider_config import build_provider_registry, build_settings_for_project
 
     _reg_settings = _RegistrySettings()
-    registry = ProviderRegistry(_reg_settings)
-
-    # Register built-in providers
-    from forge.providers.claude import ClaudeProvider
-
-    registry.register(ClaudeProvider())
+    registry = build_provider_registry(_reg_settings)
 
     app.state.registry = registry
     app.state.cost_registry = CostRegistry(
         overrides=_reg_settings.build_cost_registry_overrides(),
     )
 
-    def daemon_factory(project_path: str, model_strategy: str):
+    def daemon_factory(
+        project_path: str,
+        model_strategy: str,
+        *,
+        user_settings: dict | None = None,
+        provider_config: str | dict | None = None,
+    ):
         """Create a ForgeDaemon + EventEmitter pair for a pipeline."""
-        from forge.config.settings import ForgeSettings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
 
         emitter = EventEmitter()
-        settings = ForgeSettings()
-        settings.model_strategy = model_strategy
-
-        # Apply saved web settings for new pipelines
-        if db is not None:
-            # Settings will be applied when the pipeline is created via API routes
-            pass
+        settings, _project_config = build_settings_for_project(
+            project_path,
+            user_settings=user_settings,
+            model_strategy=model_strategy,
+            provider_config=provider_config,
+        )
 
         daemon = ForgeDaemon(project_path, settings=settings, event_emitter=emitter)
         return daemon, emitter

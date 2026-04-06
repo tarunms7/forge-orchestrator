@@ -1220,10 +1220,24 @@ class ForgeApp(App):
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
         from forge.core.preflight import run_preflight
+        from forge.core.provider_config import (
+            build_provider_config_snapshot,
+            build_provider_registry,
+            resolve_pipeline_models,
+        )
 
         settings = self._settings or ForgeSettings()
         project_config = ProjectConfig.load(self._project_dir)
         apply_project_config(settings, project_config)
+        registry = build_provider_registry(settings, project_config)
+        config_issues = project_config.validate(registry)
+        if config_issues:
+            self._state.apply_event(
+                "pipeline:error",
+                {"error": "Project config invalid:\n" + "\n".join(config_issues)},
+            )
+            logger.error("Project config validation failed: %s", "; ".join(config_issues))
+            return
 
         # Pre-flight checks: catch issues before wasting time on planning
         repos_dict = {rc.id: rc for rc in self._repos} if self._repos else None
@@ -1231,6 +1245,12 @@ class ForgeApp(App):
             self._project_dir,
             base_branch=base_branch,
             repos=repos_dict,
+            registry=registry,
+            resolved_models=resolve_pipeline_models(
+                settings,
+                registry,
+                strategy=settings.model_strategy,
+            ),
         )
         if not preflight.passed:
             errors = "\n".join(
@@ -1285,6 +1305,13 @@ class ForgeApp(App):
             project_path=self._project_dir,
             project_name=os.path.basename(self._project_dir),
             repos_json=_build_pipeline_repos_json(repos),
+            provider_config=json.dumps(
+                build_provider_config_snapshot(
+                    settings,
+                    registry,
+                    strategy=settings.model_strategy,
+                )
+            ),
         )
 
         self._pipeline_start_time = asyncio.get_running_loop().time()
@@ -1312,7 +1339,6 @@ class ForgeApp(App):
             ]
             if self._dry_run_mode:
                 from forge.core.cost_estimator import estimate_pipeline_cost
-                from forge.core.model_router import select_model
 
                 settings = self._settings or ForgeSettings()
                 cost_float = await estimate_pipeline_cost(
@@ -1321,8 +1347,7 @@ class ForgeApp(App):
                 cost_estimate = {"estimated_cost": cost_float}
                 model_assignments = {
                     t.id: str(
-                        select_model(
-                            settings.model_strategy,
+                        self._daemon._select_model(
                             "agent",
                             t.complexity.value if hasattr(t.complexity, "value") else t.complexity,
                         )

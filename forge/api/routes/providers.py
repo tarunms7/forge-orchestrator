@@ -81,9 +81,16 @@ async def list_providers(
 
     providers: list[ProviderSummary] = []
     if registry is not None:
+        by_provider: dict[str, list[CatalogEntrySummary]] = {}
+        for entry in registry.all_catalog_entries():
+            by_provider.setdefault(entry.provider, []).append(_catalog_entry_to_summary(entry))
         for provider in registry.all_providers():
-            models = [_catalog_entry_to_summary(entry) for entry in provider.catalog_entries()]
-            providers.append(ProviderSummary(name=provider.name, models=models))
+            providers.append(
+                ProviderSummary(
+                    name=provider.name,
+                    models=by_provider.get(provider.name, []),
+                )
+            )
     else:
         # Fallback: build from static catalog when no registry is wired
         from forge.providers.catalog import FORGE_MODEL_CATALOG

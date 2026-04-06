@@ -345,6 +345,22 @@ class ProjectConfig:
         from forge.providers.base import ModelSpec
 
         issues: list[str] = []
+        provider_names = {
+            provider.name for provider in getattr(registry, "all_providers", lambda: [])()
+        }
+
+        seen_custom_specs: set[str] = set()
+        for custom_model in self.custom_models:
+            spec = f"{custom_model.provider}:{custom_model.alias}"
+            if spec in seen_custom_specs:
+                issues.append(f"custom_models duplicate alias '{spec}'")
+            seen_custom_specs.add(spec)
+            if provider_names and custom_model.provider not in provider_names:
+                issues.append(f"custom_models entry '{spec}' uses unregistered provider")
+            if not custom_model.canonical_id:
+                issues.append(f"custom_models entry '{spec}' missing canonical_id")
+            if not custom_model.backend:
+                issues.append(f"custom_models entry '{spec}' missing backend")
 
         # Validate agents.model
         try:

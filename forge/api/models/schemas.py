@@ -118,6 +118,7 @@ class TaskStatusResponse(BaseModel):
     ci_fix_attempt: int = 0
     ci_fix_max_retries: int = 3
     ci_fix_cost_usd: float = 0.0
+    provider_config: dict | None = None
 
 
 class TaskListItem(BaseModel):

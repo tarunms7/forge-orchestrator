@@ -62,3 +62,15 @@ async def test_app_metadata():
     app = create_app(jwt_secret="test-secret")
     assert app.title == "Forge"
     assert app.version == _expected_version
+
+
+async def test_app_registry_includes_openai_when_enabled(monkeypatch):
+    """App registry should expose OpenAI when FORGE_OPENAI_ENABLED is set."""
+    from forge.api.app import create_app
+
+    monkeypatch.setenv("FORGE_OPENAI_ENABLED", "true")
+    app = create_app(jwt_secret="test-secret")
+
+    provider_names = {provider.name for provider in app.state.registry.all_providers()}
+    assert "claude" in provider_names
+    assert "openai" in provider_names

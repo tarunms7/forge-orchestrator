@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 
 from forge.config.project_config import CMD_DISABLED
+from forge.core import model_router as _legacy_model_router
 from forge.core.daemon_helpers import (
     _extract_text,
     _find_related_test_files,
@@ -22,12 +23,15 @@ from forge.core.daemon_helpers import (
     async_subprocess,
 )
 from forge.core.logging_config import make_console
-from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
 
 logger = logging.getLogger("forge.daemon")
 console = make_console()
+
+# Backward-compatible module export for tests and call sites that still patch
+# forge.core.daemon_review.select_model directly.
+select_model = _legacy_model_router.select_model
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +409,33 @@ class ReviewMixin:
         health = getattr(self, "_health_monitor", None)
         if health:
             health.record_task_activity(task_id)
+
+    def _select_model(
+        self,
+        stage: str,
+        complexity: str = "medium",
+        *,
+        retry_count: int = 0,
+    ):
+        """Fallback model resolver for isolated ReviewMixin tests.
+
+        ForgeDaemon overrides this with the provider-aware implementation.
+        """
+        settings = getattr(self, "_settings", None)
+        overrides = None
+        build_overrides = getattr(settings, "build_routing_overrides", None)
+        if callable(build_overrides):
+            overrides = build_overrides()
+        strategy = getattr(self, "_strategy", None) or getattr(settings, "model_strategy", "auto")
+        registry = getattr(self, "_registry", None)
+        return select_model(
+            strategy,
+            stage,
+            complexity,
+            overrides=overrides,
+            retry_count=retry_count,
+            registry=registry,
+        )
 
     # -- command resolution ------------------------------------------------
 
@@ -1076,7 +1107,7 @@ class ReviewMixin:
                 f"[blue]  L2 (LLM): Code review for {task.id}"
                 f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
             )
-            reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
+            reviewer_model = self._select_model("reviewer", task.complexity or "medium")
             # Build sibling context so the reviewer knows about the DAG
             sibling_context = await self._build_sibling_context(task, db, pipeline_id)
             custom_review_focus = review_config["custom_review_focus"]

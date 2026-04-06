@@ -14,17 +14,33 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
-from forge.agents.adapter import ClaudeAdapter
+from forge.agents import adapter as _legacy_agent_adapter
 from forge.agents.runtime import AgentRuntime
+from forge.core import sdk_helpers
+from forge.core.cost_registry import CostRegistry
 from forge.core.events import EventEmitter
+from forge.core.provider_config import (
+    build_provider_registry,
+    build_settings_for_project,
+    resolve_model_for_stage,
+)
 from forge.core.sanitize import validate_repo_id, validate_task_id
 from forge.providers.base import (
     EventKind,
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
     ProviderEvent,
+    ToolPolicy,
+    WorkspaceRoots,
 )
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge.followup")
+
+# Backward-compatible export for existing tests/mocks that patch
+# forge.core.followup.ClaudeAdapter directly.
+ClaudeAdapter = _legacy_agent_adapter.ClaudeAdapter
 
 
 class FollowUpStatus(str, Enum):
@@ -86,6 +102,8 @@ class FollowUpExecution:
 async def classify_questions(
     questions: list[FollowUpQuestion],
     tasks: list[dict],
+    *,
+    registry: object | None = None,
 ) -> dict[int, str]:
     """Use an LLM call to classify which original task each follow-up relates to.
 
@@ -132,34 +150,46 @@ async def classify_questions(
         'Example response: {"0": "task-1", "1": "task-2", "2": "task-1"}'
     )
 
-    # Use sdk_query for classification (backward compat — will be replaced by
-    # provider protocol when a registry is injected).
     try:
-        from claude_code_sdk import ClaudeCodeOptions
+        if registry is None:
+            from claude_code_sdk import ClaudeCodeOptions
 
-        from forge.core.sdk_helpers import sdk_query
+            sdk_result = await sdk_helpers.sdk_query(
+                prompt=prompt,
+                options=ClaudeCodeOptions(
+                    system_prompt="You are a JSON classifier. Respond only with valid JSON.",
+                    max_turns=1,
+                ),
+            )
+            text = (sdk_result.result if sdk_result else "").strip()
+        else:
+            model_spec = ModelSpec.parse("haiku")
+            provider = registry.get_for_model(model_spec)
+            catalog_entry = registry.get_catalog_entry(model_spec)
+            handle = provider.start(
+                prompt=prompt,
+                system_prompt="You are a JSON classifier. Respond only with valid JSON.",
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=ToolPolicy(mode="allowlist", allowed_tools=[]),
+                output_contract=OutputContract(format="freeform"),
+                workspace=WorkspaceRoots(primary_cwd="."),
+                max_turns=1,
+            )
+            result = await handle.result()
+            text = (result.text or "").strip()
 
-        options = ClaudeCodeOptions(
-            system_prompt="You are a JSON classifier. Respond only with valid JSON.",
-            max_turns=1,
-        )
-        result = await sdk_query(prompt=prompt, options=options)
-        if result and result.result:
-            # Parse the JSON response
-            text = result.result.strip()
-            # Handle markdown code blocks
+        if text:
             if text.startswith("```"):
                 lines = text.split("\n")
                 text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
             mapping = json.loads(text)
-            # Convert to int keys and validate task IDs
             valid_task_ids = {t["id"] for t in tasks}
             classified: dict[int, str] = {}
             for k, v in mapping.items():
                 idx = int(k)
                 if 0 <= idx < len(questions) and v in valid_task_ids:
                     classified[idx] = v
-            # Assign unclassified questions to the first task as fallback
             for i in range(len(questions)):
                 if i not in classified:
                     classified[i] = tasks[0]["id"]
@@ -186,7 +216,7 @@ async def execute_followups(
       2. Determine the working branch
       3. Create/reuse a worktree on that branch
       4. Build a prompt with original context + follow-up questions
-      5. Spawn a Claude agent to address the follow-ups
+      5. Spawn a coding agent to address the follow-ups
       6. Stream output via events
       7. Commit changes and push to the same pipeline branch
 
@@ -315,7 +345,7 @@ async def _execute_task_followup(
     """Execute follow-up questions for a single task.
 
     Creates a worktree on the pipeline branch, builds a context-rich prompt,
-    and spawns a Claude agent to address the follow-ups.
+    and runs a provider-backed coding agent to address the follow-ups.
 
     Multi-repo aware: resolves repo_id from the task to determine the correct
     repo directory and worktree path layout.
@@ -330,6 +360,7 @@ async def _execute_task_followup(
     # Look up repo config from the pipeline
     repo_dir = project_dir  # fallback for single-repo
     is_multi_repo = False
+    pipeline = None
     try:
         pipeline = await db.get_pipeline(pipeline_id)
         if pipeline:
@@ -411,9 +442,26 @@ async def _execute_task_followup(
                         },
                     )
 
-        # Run the agent
-        adapter = ClaudeAdapter()
-        runtime = AgentRuntime(adapter=adapter, timeout_seconds=600)
+        settings, project_config = build_settings_for_project(
+            project_dir,
+            model_strategy=getattr(pipeline, "model_strategy", "auto") if pipeline else "auto",
+            provider_config=getattr(pipeline, "provider_config", None) if pipeline else None,
+        )
+        registry = build_provider_registry(settings, project_config)
+        agent_model = resolve_model_for_stage(
+            settings,
+            registry,
+            "agent",
+            "medium",
+            strategy=settings.model_strategy,
+        )
+        runtime = AgentRuntime(
+            timeout_seconds=600,
+            registry=registry,
+            cost_registry=CostRegistry(
+                overrides=settings.build_cost_registry_overrides(),
+            ),
+        )
 
         agent_result = await runtime.run_task(
             agent_id=f"followup-{task_id}",
@@ -421,6 +469,7 @@ async def _execute_task_followup(
             worktree_path=worktree_dir,
             allowed_files=task_files,
             on_message=on_message,
+            model=str(agent_model),
         )
 
         # If the agent made changes, commit and push

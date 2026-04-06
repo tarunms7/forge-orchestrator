@@ -169,7 +169,11 @@ async def submit_followup(
                     },
                 )
 
-            classification = await classify_questions(questions, pipeline_tasks)
+            classification = await classify_questions(
+                questions,
+                pipeline_tasks,
+                registry=getattr(request.app.state, "registry", None),
+            )
             followup.classification = classification
 
             if ws_manager:

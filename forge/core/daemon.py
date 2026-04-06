@@ -10,16 +10,17 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.project_config import load_repo_configs
 from forge.config.settings import ForgeSettings
+from forge.core import model_router as _legacy_model_router
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.claude_planner import ClaudePlannerLLM
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
 from forge.core.contracts import ContractSet, IntegrationHint
 from forge.core.cost_estimator import estimate_pipeline_cost
+from forge.core.cost_registry import CostRegistry
 
 # Mixin classes providing decomposed daemon functionality
 from forge.core.daemon_executor import ExecutorMixin
@@ -43,10 +44,14 @@ from forge.core.daemon_review import ReviewMixin
 from forge.core.errors import ForgeError
 from forge.core.events import EventEmitter
 from forge.core.logging_config import make_console
-from forge.core.model_router import select_model
 from forge.core.models import AgentState, RepoConfig, TaskGraph, TaskState, row_to_record
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
+from forge.core.provider_config import (
+    build_provider_config_snapshot,
+    build_provider_registry,
+    resolve_model_for_stage,
+)
 from forge.core.sanitize import validate_task_id
 from forge.core.scheduler import Scheduler, SchedulingAnalysis
 from forge.core.state import TaskStateMachine
@@ -67,6 +72,10 @@ from forge.storage.db import Database
 
 logger = logging.getLogger("forge")
 console = make_console()
+
+# Backward-compatible module export for tests and call sites that still patch
+# forge.core.daemon.select_model directly.
+select_model = _legacy_model_router.select_model
 
 
 _EXCLUDE_KEYWORDS = re.compile(
@@ -149,12 +158,12 @@ def _max_dependency_wave_width(tasks: list[object]) -> int:
     if not tasks:
         return 0
 
-    task_ids = {str(getattr(task, "id")) for task in tasks}
+    task_ids = {str(task.id) for task in tasks}
     dependents: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
     remaining_deps: dict[str, int] = {}
 
     for task in tasks:
-        task_id = str(getattr(task, "id"))
+        task_id = str(task.id)
         deps = [
             str(dep)
             for dep in (getattr(task, "depends_on", None) or [])
@@ -320,6 +329,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._active_tasks_lock = asyncio.Lock()
         self._effective_max_agents: int = self._settings.max_agents
         self._project_config = ProjectConfig.load(project_dir)
+        self._cost_registry = CostRegistry(
+            overrides=self._settings.build_cost_registry_overrides(),
+        )
         # Task list cache — avoids re-fetching from DB every poll iteration
         self._cached_tasks: list | None = None
         self._task_cache_time: float = 0.0
@@ -346,26 +358,24 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
     def _init_providers(self) -> ProviderRegistry:
         """Initialize provider registry. Always registers Claude, conditionally OpenAI."""
-        from forge.providers.claude import ClaudeProvider
+        return build_provider_registry(self._settings, self._project_config)
 
-        registry = ProviderRegistry(self._settings)
-        registry.register(ClaudeProvider())
-
-        if self._settings.openai_enabled:
-            try:
-                from forge.providers.openai import OpenAIProvider
-
-                registry.register(OpenAIProvider())
-                logger.info("OpenAI provider registered")
-            except ImportError:
-                logger.warning(
-                    "openai_enabled=True but OpenAI provider not available — "
-                    "install the openai SDK to enable OpenAI models"
-                )
-            except Exception as exc:
-                logger.warning("Failed to register OpenAI provider: %s", exc)
-
-        return registry
+    def _select_model(
+        self,
+        stage: str,
+        complexity: str = "medium",
+        *,
+        retry_count: int = 0,
+    ) -> ModelSpec:
+        """Resolve a stage model using settings overrides plus the provider registry."""
+        return resolve_model_for_stage(
+            self._settings,
+            self._registry,
+            stage,
+            complexity,
+            retry_count=retry_count,
+            strategy=self._strategy,
+        )
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB.
@@ -753,7 +763,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
 
         strategy = self._settings.model_strategy
-        planner_model = select_model(strategy, "planner", "high")
+        planner_model = self._select_model("planner", "high")
         console.print(f"[dim]Strategy: {strategy} | Planner: {planner_model}[/dim]")
 
         async def _planner_progress(msg: str) -> None:
@@ -1205,7 +1215,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         )
         await db.update_pipeline_status(pipeline_id, "contracts")
 
-        contract_model = select_model(self._strategy, "contract_builder", "high")
+        contract_model = self._select_model("contract_builder", "high")
         builder_llm = ContractBuilderLLM(
             model=contract_model, cwd=self._project_dir, registry=self._registry
         )
@@ -1392,8 +1402,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             memory_threshold_pct=self._settings.memory_threshold_pct,
             disk_threshold_gb=self._settings.disk_threshold_gb,
         )
-        adapter = ClaudeAdapter()
-        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
+        runtime = AgentRuntime(
+            timeout_seconds=self._settings.agent_timeout_seconds,
+            registry=self._registry,
+            cost_registry=self._cost_registry,
+        )
 
         # Initialize lesson stores
         # Determine pipeline branch name: use user-supplied name, or auto-generate from description
@@ -1820,6 +1833,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 budget_limit_usd=self._settings.budget_limit_usd,
                 project_path=self._project_dir,
                 project_name=os.path.basename(self._project_dir),
+                provider_config=json.dumps(
+                    build_provider_config_snapshot(
+                        self._settings,
+                        self._registry,
+                        strategy=self._strategy,
+                    )
+                ),
             )
             graph = await self.plan(
                 user_input,
@@ -1874,6 +1894,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 budget_limit_usd=self._settings.budget_limit_usd,
                 project_path=self._project_dir,
                 project_name=os.path.basename(self._project_dir),
+                provider_config=json.dumps(
+                    build_provider_config_snapshot(
+                        self._settings,
+                        self._registry,
+                        strategy=self._strategy,
+                    )
+                ),
             )
             graph = await self.plan(
                 user_input,
@@ -1884,7 +1911,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             cost = await estimate_pipeline_cost(len(graph.tasks), self._settings, self._strategy)
             model_assignments = {
-                t.id: select_model(self._strategy, "agent", t.complexity.value) for t in graph.tasks
+                t.id: self._select_model("agent", t.complexity.value) for t in graph.tasks
             }
             await db.update_pipeline_status(self._pipeline_id, "dry_run")
             return {

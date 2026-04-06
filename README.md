@@ -33,7 +33,7 @@ Type your task. Hit Ctrl+S. Walk away. Come back to a pull request.
 
 ## Why not just use Claude Code?
 
-Claude Code is great. Forge is built on it. Every Forge agent IS a Claude Code session. The planner IS a Claude Code session. So why not just use Claude Code directly?
+Claude Code is great. Forge is built on it. Claude remains the default provider, and Forge can now route selected stages through OpenAI when you explicitly enable it. So why not just use Claude Code directly?
 
 **Because you're the bottleneck.**
 
@@ -179,7 +179,7 @@ You: "Build a REST API with JWT auth and tests"
               — catches problems before spending money
                     │
               2. PLAN
-              Full Claude Code power — reads codebase,
+              Provider-aware planning — reads codebase,
               asks clarifying questions, builds task DAG
                     │
               3. CONTRACT
@@ -228,14 +228,17 @@ forge lessons add     # Manually teach Forge something
 
 ### Pre-flight validation
 
-Before any pipeline starts, Forge runs 8 fast checks:
+Before any pipeline starts, Forge runs fast checks:
 
-- Claude CLI installed and authenticated
+- Required provider tooling available
+- Claude CLI installed and authenticated when Claude models are selected
+- OpenAI enabled + `OPENAI_API_KEY` present when OpenAI models are selected
 - Git repo valid, base branch exists
 - `gh` CLI available (for PR creation)
 - Sufficient disk space (>1 GB)
 - No uncommitted changes that would interfere
 - Build/test commands resolvable
+- Requested models exist in the provider registry and are valid for their pipeline stages
 
 If anything fails, you get a clear error with a fix command — not a cryptic failure 5 minutes into planning.
 
@@ -285,12 +288,23 @@ All settings use the `FORGE_` prefix. Build and test commands are **auto-detecte
 | `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap |
 | `FORGE_MODEL_STRATEGY` | auto | `fast` / `auto` / `quality` |
+| `FORGE_OPENAI_ENABLED` | false | Enables the OpenAI provider and catalog |
+| `FORGE_PLANNER_MODEL` | *(unset)* | Override planner model with `provider:model` |
+| `FORGE_AGENT_MODEL_MEDIUM` | *(unset)* | Override the medium-complexity agent model |
+| `FORGE_REVIEWER_MODEL` | *(unset)* | Override reviewer model |
 | `FORGE_REQUIRE_APPROVAL` | false | Human approval before merge |
 | `FORGE_BUILD_CMD` | *(auto)* | Override build command |
 | `FORGE_TEST_CMD` | *(auto)* | Override test command |
 
 ```bash
 FORGE_BUDGET_LIMIT_USD=5 forge run "Refactor auth to OAuth2"
+```
+
+```bash
+FORGE_OPENAI_ENABLED=true \
+OPENAI_API_KEY=sk-... \
+FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4 \
+forge run "Add audit logging to billing flows"
 ```
 
 ### Project config
@@ -308,15 +322,43 @@ max_retries = 3
 [lint]
 check_cmd = "npm run lint"
 fix_cmd = "npm run lint:fix"
+
+[routing]
+planner = "claude:opus"
+agent_medium = "openai:gpt-5.4"
+reviewer = "claude:sonnet"
+
+[[custom_models]]
+alias = "sonnet-plus"
+provider = "claude"
+canonical_id = "claude-sonnet-plus-20260401"
+backend = "claude-code-sdk"
 ```
 
 ### Model routing
+
+Forge resolves models per pipeline stage. Built-in model specs are:
+
+| Provider | Models |
+|---|---|
+| `claude` | `claude:opus`, `claude:sonnet`, `claude:haiku` |
+| `openai` | `openai:gpt-5.4`, `openai:gpt-5.4-mini`, `openai:gpt-5.4-nano`, `openai:o3` |
 
 | Strategy | Planner | Agents | Reviewer |
 |---|---|---|---|
 | `fast` | Sonnet | Haiku | Haiku |
 | `auto` | Opus | Sonnet | Sonnet |
 | `quality` | Opus | Opus | Sonnet |
+
+Routing precedence:
+
+1. Explicit per-stage overrides from the UI or environment
+2. `.forge/forge.toml` `[routing]`
+3. Strategy defaults
+
+Forge persists the exact resolved provider snapshot in `pipelines.provider_config` when the pipeline is created. Restarts, retries, follow-up work, and webhook resumptions use that snapshot, not whatever your current settings happen to be later.
+
+`[[custom_models]]` entries are validated against the active provider registry and then injected as experimental catalog entries for that project. That means custom aliases are now executable, not just parsed.
 
 ---
 
@@ -360,12 +402,13 @@ forge/
   cli/           # Click CLI — 14 commands
   tui/           # Textual TUI — full terminal UI with live pipeline view
   core/          # Orchestration — daemon, planner, executor, scheduler, health monitor
-  agents/        # Claude Code SDK adapter — agent runtime, prompt building
+  agents/        # Shared agent runtime + prompt building across providers
   merge/         # Git worktree lifecycle — create, merge, cleanup
   review/        # Multi-gate review — lint, build, test, LLM review
   learning/      # Self-evolving — lesson store, runtime guard, extractor
   storage/       # SQLite via SQLAlchemy async — tasks, pipelines, events, analytics
   config/        # Settings, project config, forge.toml, workspace.toml
+  providers/     # Claude + OpenAI provider adapters, catalog, safety, costs
   api/           # FastAPI backend for web dashboard
 web/             # Next.js frontend — TypeScript, Tailwind, Zustand
 ```

@@ -14,6 +14,11 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from forge.core.async_utils import safe_create_task
+from forge.core.provider_config import (
+    build_provider_config_snapshot,
+    build_provider_registry,
+    build_settings_for_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +248,11 @@ async def github_webhook(request: Request) -> Response:
     pipeline_id = str(uuid.uuid4())
 
     project_dir: str = getattr(request.app.state, "webhook_project_dir", None) or os.getcwd()
+    settings, project_config = build_settings_for_project(project_dir, model_strategy="auto")
+    registry = build_provider_registry(settings, project_config)
+    provider_config_json = json.dumps(
+        build_provider_config_snapshot(settings, registry, strategy="auto")
+    )
 
     await forge_db.create_pipeline(
         id=pipeline_id,
@@ -251,6 +261,7 @@ async def github_webhook(request: Request) -> Response:
         model_strategy="auto",
         github_issue_url=issue_url,
         github_issue_number=issue_number,
+        provider_config=provider_config_json,
     )
 
     # 11. Launch background pipeline
@@ -339,7 +350,12 @@ async def _run_webhook_pipeline(
     Phases: plan -> execute -> PR, with issue comments at each stage.
     """
     try:
-        daemon, emitter = daemon_factory(project_dir, "auto")
+        pipeline = await forge_db.get_pipeline(pipeline_id)
+        daemon, emitter = daemon_factory(
+            project_dir,
+            "auto",
+            provider_config=getattr(pipeline, "provider_config", None) if pipeline else None,
+        )
 
         # Phase 1: Planning
         await _post_issue_comment(

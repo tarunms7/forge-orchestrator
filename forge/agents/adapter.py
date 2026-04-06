@@ -1,5 +1,7 @@
 """Agent adapter interface. Claude primary, others pluggable."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -154,6 +156,78 @@ You have {max_turns} turns for this task. Manage them wisely:
    ALWAYS use --no-verify to skip pre-commit hooks (the orchestrator runs its own review).
    If the commit fails, STOP TRYING. Do NOT retry with different flags. The orchestrator auto-commits your changes after you finish. Move on.
 4. If nothing meaningful to do (files don't exist, task already done), make no changes and commit with message "chore: no changes needed — <reason>". The reviewer will see the empty diff and your reasoning. This is a valid outcome."""
+
+
+def build_agent_system_prompt(
+    *,
+    worktree_path: str,
+    allowed_dirs: list[str],
+    allowed_files: list[str] | None = None,
+    project_context: str = "",
+    conventions_json: str | None = None,
+    conventions_md: str | None = None,
+    completed_deps: list[dict] | None = None,
+    contracts_block: str = "",
+    autonomy: str = "balanced",
+    questions_remaining: int = 3,
+    agent_max_turns: int = 75,
+    lessons_block: str = "",
+    project_commands: dict[str, str] | None = None,
+) -> str:
+    """Build the shared agent system prompt for all coding providers."""
+    if allowed_dirs:
+        extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
+    else:
+        extra_dirs_clause = ""
+    conventions_block = _build_conventions_block(conventions_json, conventions_md)
+    dependency_context = _build_dependency_context(completed_deps)
+    if allowed_files:
+        files_list = "\n".join(f"- {f}" for f in allowed_files)
+        file_scope_block = (
+            "## File Scope\n\n"
+            "You may only modify these files:\n"
+            f"{files_list}\n\n"
+            "Out-of-scope changes are automatically reverted before review.\n\n"
+            "**Exception**: Test files for the source files above "
+            "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
+        )
+    else:
+        file_scope_block = ""
+    question_protocol = _build_question_protocol(autonomy, questions_remaining)
+
+    project_commands_block = ""
+    if project_commands:
+        lines = ["## Project Commands", ""]
+        if project_commands.get("test"):
+            lines.append(f"- **Run tests**: `{project_commands['test']}`")
+        if project_commands.get("build"):
+            lines.append(f"- **Build**: `{project_commands['build']}`")
+        if project_commands.get("lint"):
+            lines.append(f"- **Lint**: `{project_commands['lint']}`")
+        if project_commands.get("lint_fix"):
+            lines.append(f"- **Lint fix**: `{project_commands['lint_fix']}`")
+        if len(lines) > 2:
+            lines.append("")
+            lines.append("Always verify your work by running the test command before committing.")
+            project_commands_block = "\n".join(lines)
+
+    max_turns = agent_max_turns
+    wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
+
+    return AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+        cwd=worktree_path,
+        extra_dirs_clause=extra_dirs_clause,
+        project_context=project_context,
+        conventions_block=conventions_block,
+        contracts_block=contracts_block,
+        dependency_context=dependency_context,
+        file_scope_block=file_scope_block,
+        question_protocol=question_protocol,
+        project_commands_block=project_commands_block,
+        lessons_block=lessons_block,
+        max_turns=max_turns,
+        wrap_up_turn=wrap_up_turn,
+    )
 
 
 def _build_conventions_block(
@@ -319,65 +393,22 @@ class ClaudeAdapter(AgentAdapter):
     ):
         """Build ClaudeCodeOptions with directory boundary enforcement."""
         from claude_code_sdk import ClaudeCodeOptions
-        if allowed_dirs:
-            extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
-        else:
-            extra_dirs_clause = ""
-        conventions_block = _build_conventions_block(conventions_json, conventions_md)
-        dependency_context = _build_dependency_context(completed_deps)
-        if allowed_files:
-            files_list = "\n".join(f"- {f}" for f in allowed_files)
-            file_scope_block = (
-                "## File Scope\n\n"
-                "You may only modify these files:\n"
-                f"{files_list}\n\n"
-                "Out-of-scope changes are automatically reverted before review.\n\n"
-                "**Exception**: Test files for the source files above "
-                "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
-            )
-        else:
-            file_scope_block = ""
-        question_protocol = _build_question_protocol(autonomy, questions_remaining)
-
-        # CLAUDE.md is loaded automatically by the Claude Code harness when
-        # we use append_system_prompt. No manual loading needed.
-
-        # Build project commands block so agents know how to test/build/lint
-        project_commands_block = ""
-        if project_commands:
-            lines = ["## Project Commands", ""]
-            if project_commands.get("test"):
-                lines.append(f"- **Run tests**: `{project_commands['test']}`")
-            if project_commands.get("build"):
-                lines.append(f"- **Build**: `{project_commands['build']}`")
-            if project_commands.get("lint"):
-                lines.append(f"- **Lint**: `{project_commands['lint']}`")
-            if project_commands.get("lint_fix"):
-                lines.append(f"- **Lint fix**: `{project_commands['lint_fix']}`")
-            if len(lines) > 2:  # More than just header
-                lines.append("")
-                lines.append(
-                    "Always verify your work by running the test command before committing."
-                )
-                project_commands_block = "\n".join(lines)
-
-        max_turns = agent_max_turns
-        wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
-
-        system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
-            cwd=worktree_path,
-            extra_dirs_clause=extra_dirs_clause,
+        system_prompt = build_agent_system_prompt(
+            worktree_path=worktree_path,
+            allowed_dirs=allowed_dirs,
+            allowed_files=allowed_files,
             project_context=project_context,
-            conventions_block=conventions_block,
+            conventions_json=conventions_json,
+            conventions_md=conventions_md,
+            completed_deps=completed_deps,
             contracts_block=contracts_block,
-            dependency_context=dependency_context,
-            file_scope_block=file_scope_block,
-            question_protocol=question_protocol,
-            project_commands_block=project_commands_block,
+            autonomy=autonomy,
+            questions_remaining=questions_remaining,
+            agent_max_turns=agent_max_turns,
             lessons_block=lessons_block,
-            max_turns=max_turns,
-            wrap_up_turn=wrap_up_turn,
+            project_commands=project_commands,
         )
+        max_turns = agent_max_turns
         return ClaudeCodeOptions(
             # Use append_system_prompt so the Claude Code CLI loads its full
             # harness first (skills, CLAUDE.md, memory, MCP servers, hooks)

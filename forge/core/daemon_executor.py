@@ -9,6 +9,7 @@ import os
 import time
 from datetime import UTC, datetime
 
+from forge.core import model_router as _legacy_model_router
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
@@ -25,7 +26,6 @@ from forge.core.daemon_helpers import (
     _run_git,
 )
 from forge.core.logging_config import make_console
-from forge.core.model_router import select_model
 from forge.core.models import AgentState, TaskState
 from forge.core.sanitize import validate_task_id
 from forge.learning.guard import GuardTriggered, RuntimeGuard
@@ -50,6 +50,10 @@ _GIT_ADD_EXCLUDES: list[str] = [
 
 logger = logging.getLogger("forge")
 console = make_console()
+
+# Backward-compatible module export for tests/mocks that still patch
+# forge.core.daemon_executor.select_model.
+select_model = _legacy_model_router.select_model
 
 _COMPLEXITY_MULTIPLIERS: dict[str, float] = {
     "low": 1.0,
@@ -88,6 +92,35 @@ class ExecutorMixin:
         health = getattr(self, "_health_monitor", None)
         if health:
             health.record_task_activity(task_id)
+
+    def _select_model(
+        self,
+        stage: str,
+        complexity: str = "medium",
+        *,
+        retry_count: int = 0,
+    ):
+        """Fallback model resolver for isolated mixin tests.
+
+        ForgeDaemon overrides this with the provider-aware implementation.
+        The mixin-level fallback preserves older unit tests that instantiate
+        ExecutorMixin directly without a provider registry.
+        """
+        settings = getattr(self, "_settings", None)
+        overrides = None
+        build_overrides = getattr(settings, "build_routing_overrides", None)
+        if callable(build_overrides):
+            overrides = build_overrides()
+        strategy = getattr(self, "_strategy", None) or getattr(settings, "model_strategy", "auto")
+        registry = getattr(self, "_registry", None)
+        return select_model(
+            strategy,
+            stage,
+            complexity,
+            overrides=overrides,
+            retry_count=retry_count,
+            registry=registry,
+        )
 
     # -- orchestrator ----------------------------------------------------
 
@@ -254,8 +287,10 @@ class ExecutorMixin:
             )
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         await self._attempt_merge(
             db,
@@ -300,8 +335,10 @@ class ExecutorMixin:
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit(
@@ -412,8 +449,10 @@ class ExecutorMixin:
             )
 
         pipeline_branch = merge_worker._main
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
 
         # _attempt_merge handles: compute diff → review → merge
@@ -581,8 +620,10 @@ class ExecutorMixin:
                 user message when resuming a paused conversation.
             resume: SDK session ID for conversation continuation (``ClaudeCodeOptions.resume``).
         """
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
@@ -1316,8 +1357,10 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
 
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         await self._attempt_merge(
             db,

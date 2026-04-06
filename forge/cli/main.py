@@ -155,6 +155,7 @@ def run(
         _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
 
     from forge.config.project_config import resolve_repos, validate_repos_startup
+    from forge.core.provider_config import build_provider_registry, resolve_pipeline_models
 
     # Resolve repos: CLI flags → workspace.toml → single-repo default
     repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
@@ -211,9 +212,26 @@ def run(
     # Pre-flight checks before starting the pipeline
     from forge.core.preflight import run_preflight
 
+    registry = build_provider_registry(settings, project_config)
+    config_issues = project_config.validate(registry)
+    resolved_models = resolve_pipeline_models(
+        settings,
+        registry,
+        strategy=settings.model_strategy,
+    )
+
     async def _run_with_preflight():
         repos_dict = {rc.id: rc for rc in repos} if repos else None
-        preflight = await run_preflight(project_dir, repos=repos_dict)
+        if config_issues:
+            for issue in config_issues:
+                click.echo(f"  ✗ config: {issue}", err=True)
+            raise SystemExit(1)
+        preflight = await run_preflight(
+            project_dir,
+            repos=repos_dict,
+            registry=registry,
+            resolved_models=resolved_models,
+        )
         if not preflight.passed:
             for e in preflight.errors:
                 click.echo(f"  ✗ {e.name}: {e.message}", err=True)

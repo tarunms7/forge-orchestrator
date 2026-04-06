@@ -57,8 +57,12 @@ class ProviderRegistry:
         """Register a provider and index all its catalog entries by str(entry.spec)."""
         self._providers[provider.name] = provider
         for entry in provider.catalog_entries():
-            key = str(entry.spec)
-            self._catalog[key] = entry
+            self.register_catalog_entry(entry)
+
+    def register_catalog_entry(self, entry: CatalogEntry) -> None:
+        """Register a catalog entry directly without creating a new provider."""
+        key = str(entry.spec)
+        self._catalog[key] = entry
 
     def get_provider(self, name: str) -> ProviderProtocol:
         """Get provider by name. Raises KeyError if not found."""
