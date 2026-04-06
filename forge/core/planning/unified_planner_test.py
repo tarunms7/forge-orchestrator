@@ -109,6 +109,53 @@ async def test_unified_planner_detects_forge_question(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_unified_planner_detects_plaintext_question_fallback(monkeypatch):
+    question_response = (
+        "I explored the codebase and found two possible auth patterns.\n"
+        "Let me ask a clarifying question before I continue.\n"
+        "**Question 1:** JWT or session auth?\n"
+    )
+    call_count = 0
+
+    async def mock_sdk_query(prompt, options, on_message=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return FakeSdkResult(question_response, session_id="sess-q1")
+        return FakeSdkResult(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "t1",
+                            "title": "T",
+                            "description": "Detailed description for task with auth and JWT implementation",
+                            "files": ["auth.py"],
+                        }
+                    ]
+                }
+            )
+        )
+
+    monkeypatch.setattr("forge.core.planning.unified_planner.sdk_query", mock_sdk_query)
+
+    questions_received = []
+
+    async def on_question(q):
+        questions_received.append(q)
+        return "JWT"
+
+    planner = UnifiedPlanner(model="opus", cwd="/tmp")
+    result = await planner.run(
+        user_input="Add auth", spec_text="", snapshot_text="", on_question=on_question
+    )
+    assert len(questions_received) == 1
+    assert questions_received[0]["question"] == "JWT or session auth?"
+    assert questions_received[0]["source"] == "plaintext_fallback"
+    assert result.task_graph is not None
+
+
+@pytest.mark.asyncio
 async def test_unified_planner_retries_on_invalid_json(monkeypatch):
     call_count = 0
 

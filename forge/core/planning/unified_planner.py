@@ -28,6 +28,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from forge.agents.adapter import _build_question_protocol
 from forge.core import sdk_helpers
+from forge.core.daemon_helpers import _parse_forge_question
 from forge.core.models import TaskGraph
 from forge.core.planning.models import ValidationResult
 from forge.core.planning.validator import validate_plan
@@ -48,9 +49,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("forge.planning.unified")
 sdk_query = sdk_helpers.sdk_query  # Backward-compat alias for legacy tests/mocks.
-
-_QUESTION_PATTERN = re.compile(r"FORGE_QUESTION:\s*\n?\s*(\{.*?\})\s*$", re.DOTALL)
-
 
 @dataclass
 class UnifiedPlannerResult:
@@ -224,21 +222,14 @@ class UnifiedPlanner:
                 continue
 
             # Check for FORGE_QUESTION — agent wants human input
-            q_match = _QUESTION_PATTERN.search(raw)
-            if q_match and on_question and questions_asked < self._question_limit:
-                try:
-                    q_data = json.loads(q_match.group(1))
-                except json.JSONDecodeError:
-                    q_data = None
-                if q_data and "question" in q_data:
-                    questions_asked += 1
-                    answer = await on_question(q_data)
-                    if answer:
-                        resume_state = (
-                            provider_result.resume_state if provider_result is not None else None
-                        )
-                        feedback = answer
-                        continue
+            q_data = _parse_forge_question(raw)
+            if q_data and on_question and questions_asked < self._question_limit:
+                questions_asked += 1
+                answer = await on_question(q_data)
+                if answer:
+                    resume_state = provider_result.resume_state if provider_result is not None else None
+                    feedback = answer
+                    continue
 
             # Try to parse TaskGraph
             resume_state = None

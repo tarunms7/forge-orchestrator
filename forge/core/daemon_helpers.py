@@ -24,6 +24,11 @@ console = make_console()
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
 _FORGE_LEARNING_MARKER = "FORGE_LEARNING:"
 _REVIEW_DIFF_EXCLUDES = (".claude/", ".forge/")
+_PLAINTEXT_QUESTION_LINE = re.compile(
+    r"^\s*\*{0,2}Question(?:\s+\d+)?\s*:\*{0,2}\s*(.+\?)\s*$",
+    re.IGNORECASE,
+)
+_PLAINTEXT_QUESTION_BULLET = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+(.*\S)\s*$")
 
 
 async def async_subprocess(
@@ -80,6 +85,48 @@ def _parse_forge_question(text: str | None) -> dict | None:
 
     marker_idx = text.rfind(_FORGE_QUESTION_MARKER)
     if marker_idx == -1:
+        lines = text.splitlines()
+        for idx, raw_line in enumerate(lines):
+            match = _PLAINTEXT_QUESTION_LINE.match(raw_line.strip())
+            if not match:
+                continue
+
+            question = match.group(1).strip()
+            if not question:
+                continue
+
+            context_lines: list[str] = []
+            back = idx - 1
+            while back >= 0 and lines[back].strip():
+                context_lines.append(lines[back].strip())
+                back -= 1
+            context = " ".join(reversed(context_lines)).strip()
+
+            suggestions: list[str] = []
+            forward = idx + 1
+            while forward < len(lines):
+                candidate = lines[forward].strip()
+                if not candidate:
+                    if suggestions:
+                        break
+                    forward += 1
+                    continue
+                bullet_match = _PLAINTEXT_QUESTION_BULLET.match(candidate)
+                if not bullet_match:
+                    break
+                suggestions.append(bullet_match.group(1).strip())
+                forward += 1
+
+            logger.info(
+                "Recovered plain-text question without FORGE_QUESTION marker: %s",
+                question[:200],
+            )
+            return {
+                "question": question,
+                "context": context or None,
+                "suggestions": suggestions,
+                "source": "plaintext_fallback",
+            }
         return None
 
     after_marker = text[marker_idx + len(_FORGE_QUESTION_MARKER) :].strip()

@@ -883,6 +883,33 @@ class TestParseForgeQuestion:
         assert result is not None
         assert "quoted" in result["question"]
 
+    def test_plaintext_question_line_is_recovered(self):
+        text = (
+            "I found the blocked detail panel pattern in the TUI.\n"
+            "Let me ask a clarifying question before I implement it.\n"
+            "**Question 1:** Should the blocked detail replace the normal output view?\n"
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Should the blocked detail replace the normal output view?"
+        assert "clarifying question" in (result["context"] or "")
+        assert result["source"] == "plaintext_fallback"
+
+    def test_plaintext_question_collects_following_suggestions(self):
+        text = (
+            "I need your input before I continue.\n"
+            "Question: Which layout should I use?\n"
+            "- Replace the output view entirely\n"
+            "- Show the detail above recent logs\n"
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Which layout should I use?"
+        assert result["suggestions"] == [
+            "Replace the output view entirely",
+            "Show the detail above recent logs",
+        ]
+
 
 class TestRunGit:
     """_run_git() wraps async_subprocess with logging and error handling."""

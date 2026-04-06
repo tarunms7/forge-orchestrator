@@ -7,6 +7,7 @@ def test_balanced_autonomy_protocol():
     assert "3" in protocol
     assert "80% confident" in protocol
     assert "FORGE_QUESTION:" in protocol
+    assert "ignored by Forge" in protocol
 
 
 def test_full_autonomy_no_questions():

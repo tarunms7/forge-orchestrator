@@ -100,6 +100,8 @@ FORGE_QUESTION:
 - ALWAYS provide 2-3 concrete suggestions.
 - ALWAYS explain what you found that led to the question.
 - NEVER ask open-ended "what should I do?" questions.
+- Plain-text questions in normal commentary are ignored by Forge and will NOT open the answer UI.
+- NEVER write "Question 1:" or similar in ordinary prose when you need input. Use the FORGE_QUESTION block only.
 - If you hit 0 remaining, proceed with best judgment."""
 
 
