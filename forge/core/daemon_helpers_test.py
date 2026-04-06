@@ -1279,6 +1279,30 @@ class TestExtractActivityProviderEvent:
         assert result is not None
         assert "pytest" in result
 
+    def test_tool_use_extracts_file_path_from_change_list(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="edit",
+            tool_input=json.dumps(
+                [{"path": "/workspace/backend/src/app.py", "kind": "replace"}]
+            ),
+        )
+        result = _extract_activity(event)
+        assert result == "✏️ Editing src/app.py"
+
+    def test_tool_use_write_uses_writing_label(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="write",
+            tool_input=json.dumps({"path": "/workspace/backend/src/new_file.py"}),
+        )
+        result = _extract_activity(event)
+        assert result == "✏️ Writing src/new_file.py"
+
 
 class TestHumanizeModelSpec:
     def test_claude_model_is_humanized(self):

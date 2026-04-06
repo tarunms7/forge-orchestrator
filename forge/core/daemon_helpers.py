@@ -318,6 +318,17 @@ _TOOL_ICONS = {
     "mcp_tool": "🧩",
 }
 
+_PATH_KEYS = (
+    "file_path",
+    "path",
+    "target_path",
+    "new_path",
+    "old_path",
+    "source_path",
+    "destination_path",
+)
+_COMMAND_KEYS = ("command", "cmd")
+
 
 def _normalize_tool_activity_name(tool: str) -> str:
     """Normalize legacy and provider tool names to Forge's lowercase form."""
@@ -356,7 +367,45 @@ def _humanize_tool_name(tool: str) -> str:
 def _coerce_tool_input(tool: str, raw_input: str | dict | None) -> dict:
     """Parse provider tool input, falling back to sensible raw-string adapters."""
     normalized = _normalize_tool_activity_name(tool)
+
+    def _extract_path(value: object) -> str | None:
+        if isinstance(value, dict):
+            for key in _PATH_KEYS:
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate
+            for candidate in value.values():
+                path = _extract_path(candidate)
+                if path:
+                    return path
+            return None
+        if isinstance(value, list):
+            for item in value:
+                path = _extract_path(item)
+                if path:
+                    return path
+        return None
+
+    def _extract_command(value: object) -> str | list[str] | None:
+        if isinstance(value, dict):
+            for key in _COMMAND_KEYS:
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate
+                if isinstance(candidate, list) and candidate:
+                    return [str(part) for part in candidate]
+            return None
+        return None
+
     if isinstance(raw_input, dict):
+        path = _extract_path(raw_input)
+        command = _extract_command(raw_input)
+        if normalized == "bash" and command:
+            return {"command": command}
+        if normalized in {"read", "write", "edit"} and path:
+            enriched = dict(raw_input)
+            enriched.setdefault("file_path", path)
+            return enriched
         return raw_input
     if not raw_input:
         return {}
@@ -366,7 +415,19 @@ def _coerce_tool_input(tool: str, raw_input: str | dict | None) -> dict:
         except (ValueError, TypeError):
             parsed = None
         if isinstance(parsed, dict):
+            path = _extract_path(parsed)
+            command = _extract_command(parsed)
+            if normalized == "bash" and command:
+                return {"command": command}
+            if normalized in {"read", "write", "edit"} and path:
+                enriched = dict(parsed)
+                enriched.setdefault("file_path", path)
+                return enriched
             return parsed
+        if isinstance(parsed, list):
+            path = _extract_path(parsed)
+            if normalized in {"read", "write", "edit"} and path:
+                return {"file_path": path, "changes": parsed}
         if normalized == "bash":
             return {"command": raw_input}
         if normalized in {"read", "write", "edit"}:
@@ -403,7 +464,11 @@ def _format_tool_activity(tool: str, inp: dict) -> str | None:
             short = cmd[:80] + ("..." if len(cmd) > 80 else "")
             return f"{icon} {short}"
         return f"{icon} Running command"
-    if normalized in ("write", "edit"):
+    if normalized == "write":
+        path = inp.get("file_path") or inp.get("path", "")
+        short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
+        return f"{icon} Writing {short}" if path else f"{icon} Writing file"
+    if normalized == "edit":
         path = inp.get("file_path") or inp.get("path", "")
         short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
         return f"{icon} Editing {short}" if path else f"{icon} Editing file"

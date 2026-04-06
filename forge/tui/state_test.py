@@ -120,6 +120,13 @@ def test_agent_output_suppresses_adjacent_duplicates():
     assert state.agent_output["t1"] == ["I have enough context."]
 
 
+def test_agent_tool_output_repeats_are_preserved():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading src/foo.py"})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading src/foo.py"})
+    assert state.agent_output["t1"] == ["📖 Reading src/foo.py", "📖 Reading src/foo.py"]
+
+
 def test_agent_output_ring_buffer():
     state = TuiState(max_output_lines=5)
     for i in range(10):
@@ -759,6 +766,16 @@ def test_planner_output_suppresses_adjacent_duplicates():
     state.apply_event("planner:output", {"line": "I need to read the current implementation first."})
     state.apply_event("planner:output", {"line": "I need to read the current implementation first."})
     assert state.planner_output == ["I need to read the current implementation first."]
+
+
+def test_planner_tool_output_repeats_are_preserved():
+    state = TuiState()
+    state.apply_event("planner:output", {"line": "⚡ pytest forge/api/routes/settings_test.py -q"})
+    state.apply_event("planner:output", {"line": "⚡ pytest forge/api/routes/settings_test.py -q"})
+    assert state.planner_output == [
+        "⚡ pytest forge/api/routes/settings_test.py -q",
+        "⚡ pytest forge/api/routes/settings_test.py -q",
+    ]
 
 
 def test_review_llm_output_appends_to_unified_log():
