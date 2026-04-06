@@ -514,9 +514,7 @@ async def test_run_with_retry_preserves_forge_question_text():
     """Provider-backed runs must preserve FORGE_QUESTION payloads for daemon pause/resume."""
     provider = MagicMock()
     catalog = _make_catalog_entry(provider="openai", alias="gpt-5.4-mini", backend="codex-sdk")
-    question_text = (
-        'FORGE_QUESTION:\n{"question":"Use pytest fixture or helper?","suggestions":["fixture","helper"]}'
-    )
+    question_text = 'FORGE_QUESTION:\n{"question":"Use pytest fixture or helper?","suggestions":["fixture","helper"]}'
     pr = _make_provider_result(text=question_text, model_canonical_id="gpt-5.4-mini-0414")
     provider.start.return_value = MockExecutionHandle(pr)
 

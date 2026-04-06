@@ -296,9 +296,7 @@ class RoutingConfig:
         for field_name in fields:
             value = getattr(self, field_name)
             if value not in valid_efforts:
-                raise ValueError(
-                    f"{field_name} must be 'low', 'medium', or 'high', got {value!r}"
-                )
+                raise ValueError(f"{field_name} must be 'low', 'medium', or 'high', got {value!r}")
 
     def to_overrides(self) -> dict[str, str]:
         """Convert to the overrides dict format expected by select_model()."""

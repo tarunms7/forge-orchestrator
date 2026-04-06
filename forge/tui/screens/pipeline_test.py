@@ -1350,13 +1350,19 @@ def test_phase_banner_scramble_animation_state():
 
 def test_phase_banner_scramble_progression():
     """_tick_scramble should resolve characters left-to-right and terminate."""
+    import warnings
+
     from forge.tui.screens.pipeline import PhaseBanner
 
     banner = PhaseBanner()
-    # Trigger phase change — set_interval fails pre-compose, so set state manually
-    banner.update_phase("executing")
-    # Pre-compose: timer creation fails, _animating is set to False
-    # But target_text is set correctly — we can test the tick logic directly
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        banner.update_phase("executing")
+    timer_warnings = [
+        warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)
+    ]
+    assert timer_warnings == [], f"Unexpected timer warnings: {timer_warnings}"
+
     assert banner._target_text != ""
     target_len = len(banner._target_text)
     assert target_len > 0
@@ -1374,18 +1380,26 @@ def test_phase_banner_scramble_progression():
 
 def test_phase_banner_scramble_interrupted_by_new_phase():
     """A new phase change mid-animation should reset target text."""
+    import warnings
+
     from forge.tui.screens.pipeline import PhaseBanner
 
     banner = PhaseBanner()
-    banner.update_phase("executing")
-    old_target = banner._target_text
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        banner.update_phase("executing")
+        old_target = banner._target_text
 
-    # Simulate partial animation
-    banner._animating = True
-    banner._resolved_count = 2
+        # Simulate partial animation
+        banner._animating = True
+        banner._resolved_count = 2
 
-    # New phase should reset
-    banner.update_phase("review")
+        # New phase should reset
+        banner.update_phase("review")
+    timer_warnings = [
+        warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)
+    ]
+    assert timer_warnings == [], f"Unexpected timer warnings: {timer_warnings}"
     assert banner._resolved_count == 0
     assert banner._target_text != old_target
 
