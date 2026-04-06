@@ -1,7 +1,7 @@
 """Tests for ClaudeProvider — health check, event conversion, tool policy, resume."""
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from forge.providers.base import (
     CatalogEntry,
@@ -16,6 +16,7 @@ from forge.providers.claude import (
     _convert_assistant_message,
     _convert_result_message,
     _convert_stream_event,
+    _drain_stream_text,
     _normalize_tool_name,
     _translate_denied_operations,
 )
@@ -153,6 +154,25 @@ class TestToolNameNormalization:
 
 
 class TestEventConversion:
+    def test_drain_stream_text_splits_completed_sentences(self):
+        fragments, remaining = _drain_stream_text(
+            "I am reading the current tests. Now I have enough context.",
+        )
+        assert fragments == [
+            "I am reading the current tests.",
+            "Now I have enough context.",
+        ]
+        assert remaining == ""
+
+    def test_drain_stream_text_keeps_incomplete_tail_until_forced(self):
+        fragments, remaining = _drain_stream_text("Still gathering context")
+        assert fragments == []
+        assert remaining == "Still gathering context"
+
+        forced, remaining = _drain_stream_text(remaining, force=True)
+        assert forced == ["Still gathering context"]
+        assert remaining == ""
+
     def test_convert_text_block(self):
         msg = MagicMock()
         text_block = MagicMock()
@@ -464,3 +484,52 @@ class TestBuildOptions:
             max_turns=10,
         )
         assert options.include_partial_messages is True
+
+
+class TestRunQueryStreaming:
+    async def test_run_query_emits_readable_partial_text_without_duplicate_result_text(self):
+        from claude_code_sdk.types import StreamEvent
+
+        events = []
+
+        async def _fake_query(*, prompt, options):
+            yield StreamEvent(
+                uuid="evt-1",
+                session_id="sess-1",
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "I am reading the current tests. "},
+                },
+            )
+            yield StreamEvent(
+                uuid="evt-2",
+                session_id="sess-1",
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Now I have enough context."},
+                },
+            )
+            yield _make_result_message(result="Now I have enough context.")
+
+        options = ClaudeProvider._build_options(
+            system_prompt="test",
+            catalog_entry=_make_catalog_entry(),
+            tool_policy=ToolPolicy(mode="unrestricted"),
+            workspace=WorkspaceRoots(primary_cwd="/tmp/test"),
+            max_turns=10,
+        )
+
+        with patch("forge.providers.claude.query", side_effect=_fake_query):
+            result = await ClaudeProvider._run_query(
+                prompt="test prompt",
+                options=options,
+                catalog_entry=_make_catalog_entry(),
+                on_event=events.append,
+            )
+
+        text_events = [event.text for event in events if event.kind == EventKind.TEXT]
+        assert text_events == [
+            "I am reading the current tests.",
+            "Now I have enough context.",
+        ]
+        assert result.text == "Now I have enough context."

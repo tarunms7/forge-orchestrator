@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -270,6 +271,42 @@ def _convert_stream_event(msg: StreamEvent) -> list[ProviderEvent]:
     return []
 
 
+def _drain_stream_text(buffer: str, *, force: bool = False) -> tuple[list[str], str]:
+    """Split buffered text deltas into readable commentary lines.
+
+    Claude partial messages arrive as many tiny text_delta chunks. We buffer them
+    until we have either a newline-terminated line, a complete sentence, or a
+    forced flush (e.g. before a tool call or message stop). This restores the
+    old "real commentary" feel without logging one token at a time.
+    """
+    fragments: list[str] = []
+    remaining = buffer
+
+    while "\n" in remaining:
+        line, remaining = remaining.split("\n", 1)
+        line = line.strip()
+        if line:
+            fragments.append(line)
+
+    sentence_pattern = re.compile(r"^(.*?[.!?])(?=\s+|$)", re.DOTALL)
+    while True:
+        match = sentence_pattern.match(remaining.lstrip())
+        if match is None:
+            break
+        fragment = match.group(1).strip()
+        if fragment:
+            fragments.append(fragment)
+        remaining = remaining.lstrip()[match.end() :]
+
+    if force:
+        tail = remaining.strip()
+        if tail:
+            fragments.append(tail)
+        remaining = ""
+
+    return fragments, remaining
+
+
 def _convert_result_message(msg: ResultMessage) -> tuple[list[ProviderEvent], ProviderResult]:
     """Convert a ResultMessage to events + final ProviderResult."""
     events: list[ProviderEvent] = []
@@ -515,10 +552,30 @@ class ClaudeProvider:
         """Run the SDK query, emitting ProviderEvents and returning ProviderResult."""
         start_time = time.monotonic()
         last_result: ResultMessage | None = None
+        partial_text_buffer = ""
+        saw_partial_text = False
 
         # Emit STATUS started
         if on_event:
             on_event(ProviderEvent(kind=EventKind.STATUS, status="started"))
+
+        def _emit_partial_fragments(*, force: bool = False, raw: Any | None = None) -> None:
+            nonlocal partial_text_buffer, saw_partial_text
+            fragments, partial_text_buffer = _drain_stream_text(
+                partial_text_buffer,
+                force=force,
+            )
+            if not on_event:
+                return
+            for fragment in fragments:
+                saw_partial_text = True
+                on_event(
+                    ProviderEvent(
+                        kind=EventKind.TEXT,
+                        text=fragment,
+                        raw=raw,
+                    )
+                )
 
         try:
             async for message in query(prompt=prompt, options=options):
@@ -530,14 +587,40 @@ class ClaudeProvider:
                     continue
 
                 if isinstance(message, StreamEvent):
+                    raw_event = getattr(message, "event", None) or {}
+                    if isinstance(raw_event, dict):
+                        event_type = raw_event.get("type")
+                        if event_type == "content_block_delta":
+                            delta = raw_event.get("delta") or {}
+                            if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                                text_delta = delta.get("text", "")
+                                if isinstance(text_delta, str) and text_delta:
+                                    partial_text_buffer += text_delta
+                                    _emit_partial_fragments(raw=message)
+                                continue
+
+                        if event_type == "content_block_start":
+                            block = raw_event.get("content_block") or {}
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                _emit_partial_fragments(force=True, raw=message)
+
+                        if event_type == "message_stop":
+                            _emit_partial_fragments(force=True, raw=message)
+
                     if on_event:
                         for event in _convert_stream_event(message):
                             on_event(event)
                     continue
 
                 # AssistantMessage or other SDK message types
+                _emit_partial_fragments(force=True, raw=message)
                 if on_event:
-                    for event in _convert_assistant_message(message):
+                    assistant_events = _convert_assistant_message(message)
+                    if saw_partial_text:
+                        assistant_events = [
+                            event for event in assistant_events if event.kind != EventKind.TEXT
+                        ]
+                    for event in assistant_events:
                         on_event(event)
 
         except Exception as e:
@@ -576,10 +659,13 @@ class ClaudeProvider:
                 model_canonical_id=catalog_entry.canonical_id,
             )
 
+        _emit_partial_fragments(force=True, raw=last_result)
         events, provider_result = _convert_result_message(last_result)
         provider_result.model_canonical_id = catalog_entry.canonical_id
 
         if on_event:
+            if saw_partial_text:
+                events = [event for event in events if event.kind != EventKind.TEXT]
             for event in events:
                 on_event(event)
 
