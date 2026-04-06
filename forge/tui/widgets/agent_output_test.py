@@ -639,7 +639,7 @@ def test_sync_streaming_rebuilds_rendered_parts():
         expected_parts.append(text)
 
     # Call sync_streaming (what _refresh_all does during streaming)
-    widget.sync_streaming("t1", "Task 1", "in_progress", entries)
+    widget.sync_streaming("t1", "Task 1", "completed", entries)
 
     # _rendered_parts must be rebuilt, NOT empty
     assert len(widget._rendered_parts) == 3
