@@ -126,9 +126,7 @@ def format_task_line(
         else:
             suffix_parts.append("⚠")
     elif summary.retry_count > 0:
-        suffix_parts.append(
-            f"[#d29922]↻ {summary.retry_count}/{summary.max_retries}[/#d29922]"
-        )
+        suffix_parts.append(f"[#d29922]↻ {summary.retry_count}/{summary.max_retries}[/#d29922]")
     elif state == "merging":
         _MERGE_STEP_LABELS = {
             "rebasing": "Rebasing",

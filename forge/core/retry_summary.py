@@ -46,9 +46,7 @@ def retry_summary_from_task(task: dict, max_retries: int = 5) -> RetrySummary:
     retry_count = task.get("retry_count", 0)
     error_message = task.get("error_message")
     retry_reason = task.get("retry_reason")
-    last_failure_category = (
-        classify_agent_error(error_message).category if error_message else None
-    )
+    last_failure_category = classify_agent_error(error_message).category if error_message else None
     return format_retry_summary(
         retry_count=retry_count,
         max_retries=max_retries,
