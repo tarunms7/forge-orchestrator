@@ -90,3 +90,11 @@ def test_project_forge_dir_absolute_path(tmp_path):
     result = project_forge_dir("relative/path")
     assert os.path.isabs(result)
     assert result.endswith(os.path.join("relative", "path", ".forge"))
+
+
+def test_project_forge_dir_repo_local_default(tmp_path):
+    """Call project_forge_dir(tmp_path) and assert the returned path is <tmp_path>/.forge and the directory exists."""
+    result = project_forge_dir(tmp_path)
+    expected = os.path.join(str(tmp_path), ".forge")
+    assert result == expected
+    assert os.path.isdir(expected)
