@@ -1338,8 +1338,8 @@ class TestHumanizeModelSpec:
         assert _humanize_model_spec("openai:o3") == "o3"
 
     def test_bare_alias_sonnet(self):
-        # handles 'sonnet' (no provider prefix)
-        assert _humanize_model_spec("sonnet") == "sonnet"
+        # bare 'sonnet' is parsed via ModelSpec.parse() into claude:sonnet
+        assert _humanize_model_spec("sonnet") == "Claude Sonnet"
 
     def test_empty_string(self):
         assert _humanize_model_spec("") == ""
