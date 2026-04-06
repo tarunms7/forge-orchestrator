@@ -38,6 +38,7 @@ from forge.core.daemon_helpers import (  # noqa: F401
     _humanize_model_spec,
     _print_status_table,
     async_subprocess,
+    format_routing_summary,
     update_repos_json_branches,
 )
 from forge.core.daemon_merge import MergeMixin
@@ -785,16 +786,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 await self._events.emit("planner:output", {"line": msg})
 
         await _planner_progress(f"Starting planner ({_humanize_model_spec(planner_model)})…")
-        routing_line = (
-            "Routing: "
-            f"Planner {_humanize_model_spec(planner_model)} | "
-            f"Agent (L/M/H) {_humanize_model_spec(agent_low_model)}/"
-            f"{_humanize_model_spec(agent_medium_model)}/"
-            f"{_humanize_model_spec(agent_high_model)} | "
-            f"Review {_humanize_model_spec(reviewer_model)}"
+        routing_line = format_routing_summary(
+            planner_model, agent_low_model, agent_medium_model, agent_high_model, reviewer_model, reviewer_effort
         )
-        if reviewer_effort:
-            routing_line += f" ({reviewer_effort} reasoning)"
         await _planner_progress(routing_line)
         await _planner_progress("Analyzing codebase structure…")
 

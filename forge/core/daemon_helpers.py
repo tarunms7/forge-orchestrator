@@ -515,6 +515,42 @@ def _humanize_model_spec(model: object) -> str:
     return raw
 
 
+def format_routing_summary(
+    planner_model: object,
+    agent_low_model: object,
+    agent_medium_model: object,
+    agent_high_model: object,
+    reviewer_model: object,
+    reviewer_effort: str | None = None,
+) -> str:
+    """Create a human-readable routing summary for the pipeline configuration.
+
+    Args:
+        planner_model: Model used for planning phase
+        agent_low_model: Model used for low-complexity agent tasks
+        agent_medium_model: Model used for medium-complexity agent tasks
+        agent_high_model: Model used for high-complexity agent tasks
+        reviewer_model: Model used for review phase
+        reviewer_effort: Optional reasoning effort level (e.g. 'high', 'medium')
+
+    Returns:
+        Formatted routing string like:
+        'Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet'
+        with optional ' (high reasoning)' suffix when reviewer_effort is provided.
+    """
+    routing_line = (
+        "Routing: "
+        f"Planner {_humanize_model_spec(planner_model)} | "
+        f"Agent (L/M/H) {_humanize_model_spec(agent_low_model)}/"
+        f"{_humanize_model_spec(agent_medium_model)}/"
+        f"{_humanize_model_spec(agent_high_model)} | "
+        f"Review {_humanize_model_spec(reviewer_model)}"
+    )
+    if reviewer_effort:
+        routing_line += f" ({reviewer_effort} reasoning)"
+    return routing_line
+
+
 def _is_review_excluded_path(path: str) -> bool:
     """Return True when a diff path points at Forge-managed infrastructure."""
     normalized = path.strip()
