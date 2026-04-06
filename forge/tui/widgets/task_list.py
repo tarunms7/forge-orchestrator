@@ -7,6 +7,7 @@ import re
 from textual.message import Message
 from textual.widget import Widget
 
+from forge.core.retry_summary import retry_summary_from_task
 from forge.tui.theme import STATE_COLORS, STATE_ICONS
 
 MAX_WIDTH = 40
@@ -116,8 +117,18 @@ def format_task_line(
 
     if task.get("_preparing") and state == "todo":
         suffix_parts.append("[#a371f7]⚙ PREP[/#a371f7]")
-    elif state == "error":
-        suffix_parts.append("⚠")
+    summary = retry_summary_from_task(task)
+    if state == "error":
+        if summary.retry_count > 0:
+            suffix_parts.append(
+                f"⚠ [#d29922]↻ {summary.retry_count}/{summary.max_retries}[/#d29922]"
+            )
+        else:
+            suffix_parts.append("⚠")
+    elif summary.retry_count > 0:
+        suffix_parts.append(
+            f"[#d29922]↻ {summary.retry_count}/{summary.max_retries}[/#d29922]"
+        )
     elif state == "merging":
         _MERGE_STEP_LABELS = {
             "rebasing": "Rebasing",

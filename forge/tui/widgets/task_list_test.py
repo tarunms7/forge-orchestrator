@@ -116,6 +116,61 @@ def test_format_task_line_non_error_no_badge():
     assert "⚠" not in line
 
 
+def test_format_task_line_retry_badge():
+    task = {
+        "id": "t1",
+        "title": "Retrying task",
+        "state": "done",
+        "retry_count": 2,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    assert "↻ 2/5" in line
+    assert "Retry 2/5" not in line
+
+
+def test_format_task_line_retry_badge_error_state():
+    task = {
+        "id": "t1",
+        "title": "Broken retrying task",
+        "state": "error",
+        "retry_count": 1,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    assert "⚠" in line
+    assert "↻ 1/5" in line
+
+
+def test_format_task_line_no_retry_badge_when_zero():
+    task = {
+        "id": "t1",
+        "title": "Fresh task",
+        "state": "done",
+        "retry_count": 0,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    assert "↻" not in line
+
+
+def test_format_task_line_retry_badge_valid_markup():
+    from io import StringIO
+
+    from rich.console import Console
+
+    task = {
+        "id": "t1",
+        "title": "Broken retrying task",
+        "state": "error",
+        "retry_count": 1,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(line)
+
+
 # ── Title truncation tests ──────────────────────────────────────────────
 
 
