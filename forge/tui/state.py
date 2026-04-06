@@ -23,6 +23,15 @@ _GATE_LABELS = {
 _EPHEMERAL_ACTIVITY_LINES = frozenset({"Initializing…", "Thinking…", "Typing…"})
 
 
+def _is_adjacent_duplicate(existing: list[str], new_line: str) -> bool:
+    """Return True when *new_line* is an immediate duplicate of the prior line."""
+    if not existing:
+        return False
+    prev = existing[-1].strip()
+    curr = new_line.strip()
+    return bool(prev and curr and prev == curr)
+
+
 class TuiState:
     """Single source of truth for TUI data."""
 
@@ -197,6 +206,11 @@ class TuiState:
             self._notify("agent_output")
             return
         lines = self.agent_output[tid]
+        if _is_adjacent_duplicate(lines, line):
+            if tid:
+                self.streaming_task_ids.add(tid)
+            self._notify("agent_output")
+            return
         if len(lines) >= self._max_output_lines:
             del lines[: len(lines) - self._max_output_lines + 10]
         lines.append(line)
@@ -212,6 +226,9 @@ class TuiState:
     def _on_planner_output(self, data: dict) -> None:
         line = data.get("line", "")
         if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+            self._notify("planner_output")
+            return
+        if _is_adjacent_duplicate(self.planner_output, line):
             self._notify("planner_output")
             return
         if len(self.planner_output) >= self._max_output_lines:
@@ -364,6 +381,10 @@ class TuiState:
                     logger.warning("review_llm_output for unexpected task_id=%r", task_id)
                 self.review_output[task_id] = []
             lines = self.review_output[task_id]
+            if _is_adjacent_duplicate(lines, line):
+                self.streaming_task_ids.add(task_id)
+                self._notify("review_output")
+                return
             if len(lines) >= self._max_output_lines:
                 del lines[: len(lines) - self._max_output_lines + 10]
             lines.append(line)
@@ -511,9 +532,13 @@ class TuiState:
         tid = data.get("task_id")
         if tid:
             lines = self.followup_output[tid]
+            line = data.get("line", "")
+            if _is_adjacent_duplicate(lines, line):
+                self._notify("followup_output")
+                return
             if len(lines) >= self._max_output_lines:
                 del lines[: len(lines) - self._max_output_lines + 10]
-            lines.append(data.get("line", ""))
+            lines.append(line)
             self._notify("followup_output")
 
     def _on_slot_acquired(self, data: dict) -> None:
@@ -555,6 +580,9 @@ class TuiState:
                 self.planner_output.append(f"─── {stage} ───")
             self._notify("planning_stage")
         line = data.get("line", "")
+        if _is_adjacent_duplicate(self.planner_output, line):
+            self._notify("planner_output")
+            return
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
         self.planner_output.append(line)

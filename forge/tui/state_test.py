@@ -113,6 +113,13 @@ def test_apply_agent_output_appends():
     assert state.agent_output["t1"] == ["Creating file...", "Done."]
 
 
+def test_agent_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "I have enough context."})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "I have enough context."})
+    assert state.agent_output["t1"] == ["I have enough context."]
+
+
 def test_agent_output_ring_buffer():
     state = TuiState(max_output_lines=5)
     for i in range(10):
@@ -632,6 +639,13 @@ def test_followup_output():
     assert state.followup_output["f1"] == ["Running...", "Done."]
 
 
+def test_followup_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "Collecting context..."})
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "Collecting context..."})
+    assert state.followup_output["f1"] == ["Collecting context..."]
+
+
 def test_followup_output_notifies():
     state = TuiState()
     changes = []
@@ -733,10 +747,32 @@ def test_agent_output_appends_to_unified_log():
     assert state.unified_log["t1"] == [("agent", "Creating file..."), ("agent", "Done.")]
 
 
+def test_agent_output_duplicate_is_not_added_to_unified_log():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."})
+    assert state.unified_log["t1"] == [("agent", "Reviewing the current implementation.")]
+
+
+def test_planner_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("planner:output", {"line": "I need to read the current implementation first."})
+    state.apply_event("planner:output", {"line": "I need to read the current implementation first."})
+    assert state.planner_output == ["I need to read the current implementation first."]
+
+
 def test_review_llm_output_appends_to_unified_log():
     state = TuiState()
     state.apply_event("review:llm_output", {"task_id": "t1", "line": "Checking scope..."})
     assert state.unified_log["t1"] == [("review", "Checking scope...")]
+
+
+def test_review_llm_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."})
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."})
+    assert state.review_output["t1"] == ["Reviewing the updated tests."]
+    assert state.unified_log["t1"] == [("review", "Reviewing the updated tests.")]
 
 
 def test_unified_log_interleaves_agent_and_review():
