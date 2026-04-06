@@ -787,7 +787,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         await _planner_progress(f"Starting planner ({_humanize_model_spec(planner_model)})…")
         routing_line = format_routing_summary(
-            planner_model, agent_low_model, agent_medium_model, agent_high_model, reviewer_model, reviewer_effort
+            planner_model,
+            agent_low_model,
+            agent_medium_model,
+            agent_high_model,
+            reviewer_model,
+            reviewer_effort,
         )
         await _planner_progress(routing_line)
         await _planner_progress("Analyzing codebase structure…")

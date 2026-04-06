@@ -1296,9 +1296,7 @@ class TestExtractActivityProviderEvent:
         event = ProviderEvent(
             kind=EventKind.TOOL_USE,
             tool_name="edit",
-            tool_input=json.dumps(
-                [{"path": "/workspace/backend/src/app.py", "kind": "replace"}]
-            ),
+            tool_input=json.dumps([{"path": "/workspace/backend/src/app.py", "kind": "replace"}]),
         )
         result = _extract_activity(event)
         assert result == "✏️ Editing src/app.py"
@@ -1347,6 +1345,7 @@ class TestHumanizeModelSpec:
     def test_model_spec_object(self):
         # accepts ModelSpec directly
         from forge.providers.base import ModelSpec
+
         spec = ModelSpec(provider="claude", model="opus")
         assert _humanize_model_spec(spec) == "Claude Opus"
 
@@ -1355,11 +1354,7 @@ class TestFormatRoutingSummary:
     def test_all_claude_default(self):
         # full Claude routing string
         result = format_routing_summary(
-            "claude:opus",
-            "claude:haiku",
-            "claude:sonnet",
-            "claude:opus",
-            "claude:sonnet"
+            "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "claude:sonnet"
         )
         expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet"
         assert result == expected
@@ -1367,11 +1362,7 @@ class TestFormatRoutingSummary:
     def test_mixed_providers(self):
         # Claude planner + OpenAI reviewer
         result = format_routing_summary(
-            "claude:opus",
-            "claude:haiku",
-            "claude:sonnet",
-            "claude:opus",
-            "openai:gpt-5.4"
+            "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "openai:gpt-5.4"
         )
         expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4"
         assert result == expected
@@ -1384,7 +1375,7 @@ class TestFormatRoutingSummary:
             "claude:sonnet",
             "claude:opus",
             "claude:sonnet",
-            reviewer_effort="high"
+            reviewer_effort="high",
         )
         expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet (high reasoning)"
         assert result == expected
@@ -1397,7 +1388,7 @@ class TestFormatRoutingSummary:
             "claude:sonnet",
             "claude:opus",
             "claude:sonnet",
-            reviewer_effort=None
+            reviewer_effort=None,
         )
         expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet"
         assert result == expected
