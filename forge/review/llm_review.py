@@ -577,6 +577,14 @@ def _extract_review_verdict(text: str) -> str | None:
         if verdict is not None:
             return verdict
 
+    verdict = _labeled_verdict(text)
+    if verdict is not None:
+        return verdict
+
+    verdict = _boundary_verdict(text)
+    if verdict is not None:
+        return verdict
+
     return None
 
 
@@ -596,4 +604,40 @@ def _leading_verdict(text: str) -> str | None:
     match = re.match(r"^(PASS|FAIL|UNCERTAIN)\b", candidate, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+    return None
+
+
+def _labeled_verdict(text: str) -> str | None:
+    """Return PASS/FAIL/UNCERTAIN for explicit final-verdict labels anywhere in text."""
+    matches = list(
+        re.finditer(
+            r"(?i)\b(?:final|overall)?\s*verdict\s*[:\-]\s*(PASS|FAIL|UNCERTAIN)\b",
+            text,
+        )
+    )
+    if matches:
+        return matches[-1].group(1).upper()
+    return None
+
+
+def _boundary_verdict(text: str) -> str | None:
+    """Return a verdict found after a strong boundary near the end of the response.
+
+    This is a last-resort salvage path for providers that concatenate exploratory
+    chatter and the final answer into a single blob like:
+        "Reviewing files first.PASS: looks good"
+
+    We only accept verdicts after the start of the text, a newline, or sentence-ending
+    punctuation to avoid matching ordinary mid-sentence prose like
+    "I think this is a FAIL because...".
+    """
+    tail = text[-4000:]
+    matches = list(
+        re.finditer(
+            r"(?im)(?:^|[\r\n]|(?<=[.!?]))\s*(PASS|FAIL|UNCERTAIN)\b(?::|$)",
+            tail,
+        )
+    )
+    if matches:
+        return matches[-1].group(1).upper()
     return None

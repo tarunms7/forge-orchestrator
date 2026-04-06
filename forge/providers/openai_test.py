@@ -722,6 +722,81 @@ class TestCodexStart:
         assert "system rules" in captured["input"]
         assert "test prompt" in captured["input"]
 
+    async def test_codex_client_joins_multiple_agent_messages_with_separators(
+        self,
+        provider: OpenAIProvider,
+        codex_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+        tool_policy: ToolPolicy,
+        output_contract: OutputContract,
+    ) -> None:
+        async def _event_stream() -> Any:
+            yield SimpleNamespace(
+                type="item.completed",
+                item=SimpleNamespace(
+                    type="agent_message",
+                    text="Reviewing the modified files first.",
+                    id="msg-1",
+                ),
+            )
+            yield SimpleNamespace(
+                type="item.completed",
+                item=SimpleNamespace(
+                    type="agent_message",
+                    text="PASS: the changes are correct",
+                    id="msg-2",
+                ),
+            )
+            yield SimpleNamespace(
+                type="turn.completed",
+                usage=SimpleNamespace(input_tokens=12, output_tokens=8),
+            )
+
+        class _FakeThread:
+            def __init__(self) -> None:
+                self.id = "thread-123"
+
+            async def run_streamed(self, input_: Any) -> Any:
+                return SimpleNamespace(events=_event_stream())
+
+        class _FakeCodexClient:
+            def __init__(self, options: Any = None) -> None:
+                self.options = options
+
+            def start_thread(self, options: Any = None) -> Any:
+                return _FakeThread()
+
+        mock_sdk = MagicMock()
+        mock_sdk.__version__ = "0.1.0"
+        mock_sdk.start_thread = None
+        mock_sdk.startThread = None
+        mock_sdk.resume_thread = None
+        mock_sdk.resumeThread = None
+        mock_sdk.Codex = _FakeCodexClient
+
+        with (
+            patch("forge.providers.openai._try_import_codex", return_value=mock_sdk),
+            patch(
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
+            ),
+            patch("forge.providers.openai._codex_cli_path", return_value="/usr/local/bin/codex"),
+        ):
+            handle = provider.start(
+                prompt="test prompt",
+                system_prompt="system rules",
+                catalog_entry=codex_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=tool_policy,
+                output_contract=output_contract,
+                workspace=workspace,
+                max_turns=5,
+            )
+            result = await handle.result()
+
+        assert result.is_error is False
+        assert result.text == "Reviewing the modified files first.\n\nPASS: the changes are correct"
+
     async def test_codex_client_uses_api_key_when_cli_auth_missing(
         self,
         provider: OpenAIProvider,

@@ -222,6 +222,23 @@ class TestParseReviewResult:
         # Stage 1 catches "FAIL" at the start of the text, so this is FAIL.
         assert result.passed is False
 
+    def test_explicit_verdict_label_detected(self):
+        result = _parse_review_result(
+            "Review notes:\nChecked the changed files.\nFinal verdict: PASS"
+        )
+        assert result.passed is True
+
+    def test_pass_after_sentence_boundary_detected(self):
+        result = _parse_review_result(
+            "Reviewing the modified files first.PASS: the changes are in scope and correct"
+        )
+        assert result.passed is True
+
+    def test_mid_sentence_fail_still_not_matched(self):
+        result = _parse_review_result("After looking around I think this is a FAIL because...")
+        assert result.passed is False
+        assert "Unclear" in result.details
+
 
 class TestOnMessagePassthrough:
     """gate2_llm_review() passes on_message to sdk_query."""

@@ -796,7 +796,7 @@ class OpenAIProvider:
         start_time = time.monotonic()
         total_input_tokens = 0
         total_output_tokens = 0
-        final_text = ""
+        final_text_parts: list[str] = []
         session_token: str | None = None
         thread: Any | None = None
 
@@ -912,7 +912,9 @@ class OpenAIProvider:
 
                 # Track text
                 if provider_event.kind == EventKind.TEXT and provider_event.text:
-                    final_text += provider_event.text
+                    text = provider_event.text.strip()
+                    if text:
+                        final_text_parts.append(text)
 
                 if on_event:
                     on_event(provider_event)
@@ -964,7 +966,7 @@ class OpenAIProvider:
             on_event(ProviderEvent(kind=EventKind.STATUS, status="completed"))
 
         return ProviderResult(
-            text=final_text,
+            text="\n\n".join(final_text_parts),
             is_error=False,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
