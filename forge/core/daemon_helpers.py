@@ -318,6 +318,7 @@ _TOOL_ICONS = {
     "mcp_tool": "🧩",
 }
 
+
 def _normalize_tool_activity_name(tool: str) -> str:
     """Normalize legacy and provider tool names to Forge's lowercase form."""
     normalized = (tool or "").strip()

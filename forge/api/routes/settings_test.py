@@ -237,6 +237,38 @@ class TestUpdateSettings:
         assert data["contract_builder_model"] == "claude:opus"
         assert data["ci_fix_model"] == "claude:sonnet"
 
+    async def test_mixed_provider_routing_roundtrip(self, client):
+        """PUT /settings should handle mixed-provider routing and persist correctly."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        # PUT with mixed providers
+        resp = await client.put(
+            "/api/settings",
+            json={
+                "planner_model": "claude:opus",
+                "agent_model_medium": "claude:sonnet",
+                "reviewer_model": "openai:gpt-5.4",
+                "reviewer_reasoning_effort": "high",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["planner_model"] == "claude:opus"
+        assert data["agent_model_medium"] == "claude:sonnet"
+        assert data["reviewer_model"] == "openai:gpt-5.4"
+        assert data["reviewer_reasoning_effort"] == "high"
+
+        # GET and assert persistence
+        resp = await client.get("/api/settings", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["planner_model"] == "claude:opus"
+        assert data["agent_model_medium"] == "claude:sonnet"
+        assert data["reviewer_model"] == "openai:gpt-5.4"
+        assert data["reviewer_reasoning_effort"] == "high"
+
 
 class TestSettingsProviderFields:
     """Tests for provider-aware fields in GET /api/settings."""
