@@ -276,20 +276,14 @@ class TestRuntimeGuardProviderEvent:
         guard = RuntimeGuard()
 
         guard.inspect(_pe_bash_call("pe-1", "pytest tests/"))
-        guard.inspect(
-            _pe_tool_result("pe-1", "ModuleNotFoundError: foo", is_error=True)
-        )
+        guard.inspect(_pe_tool_result("pe-1", "ModuleNotFoundError: foo", is_error=True))
 
         guard.inspect(_pe_bash_call("pe-2", "pytest tests/"))
-        guard.inspect(
-            _pe_tool_result("pe-2", "ModuleNotFoundError: bar", is_error=True)
-        )
+        guard.inspect(_pe_tool_result("pe-2", "ModuleNotFoundError: bar", is_error=True))
 
         guard.inspect(_pe_bash_call("pe-3", "pytest tests/"))
         with pytest.raises(GuardTriggered) as exc_info:
-            guard.inspect(
-                _pe_tool_result("pe-3", "ModuleNotFoundError: baz", is_error=True)
-            )
+            guard.inspect(_pe_tool_result("pe-3", "ModuleNotFoundError: baz", is_error=True))
 
         assert guard.triggered
         assert len(exc_info.value.failures) == 3
@@ -304,9 +298,7 @@ class TestRuntimeGuardProviderEvent:
 
         # ProviderEvent
         guard.inspect(_pe_bash_call("pe-1", "pytest tests/"))
-        result = guard.inspect(
-            _pe_tool_result("pe-1", "ModuleNotFoundError: x", is_error=True)
-        )
+        result = guard.inspect(_pe_tool_result("pe-1", "ModuleNotFoundError: x", is_error=True))
 
         assert result == "warning"
         assert guard.warning_issued

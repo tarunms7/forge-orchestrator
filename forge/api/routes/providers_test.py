@@ -128,7 +128,9 @@ class TestListProvidersWithOpenAIEnabled:
                 provider_names = [provider["name"] for provider in data["providers"]]
                 assert "openai" in provider_names
 
-                openai = next(provider for provider in data["providers"] if provider["name"] == "openai")
+                openai = next(
+                    provider for provider in data["providers"] if provider["name"] == "openai"
+                )
                 aliases = [model["alias"] for model in openai["models"]]
                 assert "gpt-5.4-mini" in aliases
         finally:

@@ -364,7 +364,9 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
         if item_type == "command_execution":
             tool_input = item_command or (str(item_content) if item_content else None)
         elif item_content:
-            tool_input = json.dumps(item_content) if isinstance(item_content, dict) else str(item_content)
+            tool_input = (
+                json.dumps(item_content) if isinstance(item_content, dict) else str(item_content)
+            )
         elif item_changes:
             tool_input = json.dumps(
                 [
