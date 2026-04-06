@@ -15,6 +15,7 @@ from forge.providers.claude import (
     _ClaudeExecutionHandle,
     _convert_assistant_message,
     _convert_result_message,
+    _convert_stream_event,
     _normalize_tool_name,
     _translate_denied_operations,
 )
@@ -193,6 +194,58 @@ class TestEventConversion:
         assert len(events) == 1
         assert events[0].kind == EventKind.TOOL_RESULT
         assert events[0].tool_output == "output text"
+
+    def test_convert_thinking_block(self):
+        msg = MagicMock()
+        thinking_block = MagicMock()
+        thinking_block.type = "thinking"
+        msg.content = [thinking_block]
+
+        events = _convert_assistant_message(msg)
+        assert len(events) == 1
+        assert events[0].kind == EventKind.STATUS
+        assert events[0].status == "thinking"
+
+    def test_convert_stream_event_tool_use(self):
+        from claude_code_sdk.types import StreamEvent
+
+        event = StreamEvent(
+            uuid="evt-1",
+            session_id="sess-1",
+            event={
+                "type": "content_block_start",
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tool-1",
+                    "name": "Read",
+                    "input": {"file_path": "forge/tui/app.py"},
+                },
+            },
+        )
+
+        events = _convert_stream_event(event)
+        assert len(events) == 1
+        assert events[0].kind == EventKind.TOOL_USE
+        assert events[0].tool_name == "read"
+        assert events[0].tool_call_id == "tool-1"
+        assert "file_path" in (events[0].tool_input or "")
+
+    def test_convert_stream_event_text_delta_emits_typing(self):
+        from claude_code_sdk.types import StreamEvent
+
+        event = StreamEvent(
+            uuid="evt-2",
+            session_id="sess-1",
+            event={
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Hello"},
+            },
+        )
+
+        events = _convert_stream_event(event)
+        assert len(events) == 1
+        assert events[0].kind == EventKind.STATUS
+        assert events[0].status == "typing"
 
     def test_convert_empty_content(self):
         msg = MagicMock()
@@ -401,3 +454,13 @@ class TestBuildOptions:
         assert options.append_system_prompt is not None
         assert "Reasoning effort: high" in options.append_system_prompt
         assert "test" in options.append_system_prompt
+
+    def test_partial_messages_enabled_for_live_streaming(self):
+        options = ClaudeProvider._build_options(
+            system_prompt="test",
+            catalog_entry=_make_catalog_entry(),
+            tool_policy=ToolPolicy(mode="unrestricted"),
+            workspace=WorkspaceRoots(primary_cwd="/tmp/test"),
+            max_turns=10,
+        )
+        assert options.include_partial_messages is True

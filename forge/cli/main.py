@@ -291,6 +291,8 @@ def tui(project_dir: str, strategy: str | None, dry_run: bool, repo: tuple[str, 
     forge_dir = os.path.join(project_dir, ".forge")
     if not os.path.isdir(forge_dir):
         os.makedirs(forge_dir, exist_ok=True)
+    if "FORGE_DATA_DIR" not in os.environ:
+        os.environ["FORGE_DATA_DIR"] = os.path.join(forge_dir, "data")
 
     from forge.config.project_config import (
         ProjectConfig,

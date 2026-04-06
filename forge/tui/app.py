@@ -356,6 +356,19 @@ class ForgeApp(App):
         if callback is not None:
             self._state.on_change(callback)
 
+    def _queue_state_event(self, event_type: str, data: dict) -> None:
+        """Queue state application onto the Textual UI loop.
+
+        Embedded daemon tasks can emit events very quickly. Applying state
+        synchronously inside the event callback starves the UI repaint loop
+        and makes output appear in a burst at the end. Queueing the mutation
+        back onto Textual's message pump keeps planner/agent/review streaming live.
+        """
+        try:
+            self.call_next(self._state.apply_event, event_type, data)
+        except Exception:
+            self._state.apply_event(event_type, data)
+
     # Fields that change frequently and don't need a full screen refresh
     _HIGH_FREQ_FIELDS = frozenset(
         {"agent_output", "review_output", "cost", "elapsed", "followup_output"}
@@ -1275,7 +1288,7 @@ class ForgeApp(App):
         for evt_type in TUI_EVENT_TYPES:
 
             async def _handler(data, _type=evt_type):
-                self._state.apply_event(_type, data)
+                self._queue_state_event(_type, data)
 
             self._bus.subscribe(evt_type, _handler)
 
@@ -1730,7 +1743,7 @@ class ForgeApp(App):
         for evt_type in TUI_EVENT_TYPES:
 
             async def _handler(data, _type=evt_type):
-                self._state.apply_event(_type, data)
+                self._queue_state_event(_type, data)
 
             self._bus.subscribe(evt_type, _handler)
 

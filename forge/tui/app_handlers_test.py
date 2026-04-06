@@ -3,6 +3,37 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 
+def test_queue_state_event_uses_call_next():
+    """Embedded event handlers should queue state updates onto the UI loop."""
+    from forge.tui.app import ForgeApp
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._state = MagicMock()
+    app.call_next = MagicMock()
+
+    app._queue_state_event("task:agent_output", {"task_id": "t1", "line": "hello"})
+
+    app.call_next.assert_called_once_with(
+        app._state.apply_event,
+        "task:agent_output",
+        {"task_id": "t1", "line": "hello"},
+    )
+    app._state.apply_event.assert_not_called()
+
+
+def test_queue_state_event_falls_back_to_direct_apply():
+    """If scheduling fails, the event should still update local state immediately."""
+    from forge.tui.app import ForgeApp
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._state = MagicMock()
+    app.call_next = MagicMock(side_effect=RuntimeError("not mounted"))
+
+    app._queue_state_event("planner:output", {"line": "Thinking..."})
+
+    app._state.apply_event.assert_called_once_with("planner:output", {"line": "Thinking..."})
+
+
 @pytest.mark.asyncio
 async def test_graceful_quit_resets_stuck_tasks():
     """Graceful quit should reset non-terminal tasks to TODO and mark pipeline interrupted."""
@@ -262,7 +293,7 @@ async def test_history_resume_partial_pipeline_retries_failed_tasks():
             MagicMock(id="t-blocked", state="blocked"),
         ]
     )
-    app._db.retry_task = AsyncMock()
+    app._db.reset_task_for_human_retry = AsyncMock()
     app._db.update_task_state = AsyncMock()
     app._db.update_pipeline_status = AsyncMock()
 
@@ -297,7 +328,7 @@ async def test_history_resume_partial_pipeline_retries_failed_tasks():
 
     await app.on_pipeline_list_resume_requested(event)
 
-    app._db.retry_task.assert_awaited_once_with("t-error")
+    app._db.reset_task_for_human_retry.assert_awaited_once_with("t-error")
     app._db.update_task_state.assert_any_await("t-blocked", "todo")
     app._db.update_pipeline_status.assert_awaited_once_with("pipe-1", "retrying")
     app._resume_execution.assert_awaited_once()

@@ -19,6 +19,7 @@ from typing import Any, Literal
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage, query
 from claude_code_sdk._internal import client as _sdk_client
 from claude_code_sdk._internal import message_parser as _sdk_parser
+from claude_code_sdk.types import StreamEvent
 
 from forge.providers.base import (
     CatalogEntry,
@@ -172,6 +173,14 @@ def _convert_assistant_message(msg: Any) -> list[ProviderEvent]:
                     raw=block,
                 )
             )
+        elif block_type == "thinking":
+            events.append(
+                ProviderEvent(
+                    kind=EventKind.STATUS,
+                    status="thinking",
+                    raw=block,
+                )
+            )
         elif block_type == "tool_use":
             tool_name = getattr(block, "name", "")
             tool_input_raw = getattr(block, "input", "")
@@ -202,6 +211,63 @@ def _convert_assistant_message(msg: Any) -> list[ProviderEvent]:
                 )
             )
     return events
+
+
+def _convert_stream_event(msg: StreamEvent) -> list[ProviderEvent]:
+    """Convert a Claude SDK partial stream event into ProviderEvent(s).
+
+    Claude emits rich streaming updates through StreamEvent objects when
+    include_partial_messages is enabled. Most of these are useful as
+    high-level activity signals rather than literal text chunks, so we
+    convert them to status/tool events the TUI can humanize cleanly.
+    """
+    raw_event = getattr(msg, "event", None) or {}
+    if not isinstance(raw_event, dict):
+        return []
+
+    event_type = raw_event.get("type")
+    if event_type == "message_start":
+        return [ProviderEvent(kind=EventKind.STATUS, status="thinking", raw=msg)]
+
+    if event_type == "content_block_start":
+        block = raw_event.get("content_block") or {}
+        if not isinstance(block, dict):
+            return []
+        block_type = block.get("type")
+        if block_type == "text":
+            return [ProviderEvent(kind=EventKind.STATUS, status="typing", raw=msg)]
+        if block_type == "thinking":
+            return [ProviderEvent(kind=EventKind.STATUS, status="thinking", raw=msg)]
+        if block_type == "tool_use":
+            tool_name = block.get("name", "")
+            tool_input = block.get("input")
+            tool_input_str = json.dumps(tool_input) if isinstance(tool_input, dict) else None
+            return [
+                ProviderEvent(
+                    kind=EventKind.TOOL_USE,
+                    tool_name=_normalize_tool_name(tool_name),
+                    tool_call_id=block.get("id"),
+                    tool_input=tool_input_str,
+                    raw=msg,
+                )
+            ]
+        return []
+
+    if event_type == "content_block_delta":
+        delta = raw_event.get("delta") or {}
+        if not isinstance(delta, dict):
+            return []
+        delta_type = delta.get("type")
+        if delta_type == "text_delta":
+            return [ProviderEvent(kind=EventKind.STATUS, status="typing", raw=msg)]
+        if delta_type in {"thinking_delta", "input_json_delta"}:
+            return [ProviderEvent(kind=EventKind.STATUS, status="thinking", raw=msg)]
+        return []
+
+    if event_type == "message_stop":
+        return [ProviderEvent(kind=EventKind.STATUS, status="completed", raw=msg)]
+
+    return []
 
 
 def _convert_result_message(msg: ResultMessage) -> tuple[list[ProviderEvent], ProviderResult]:
@@ -422,6 +488,9 @@ class ClaudeProvider:
             "cwd": workspace.primary_cwd,
             "model": catalog_entry.canonical_id,
             "max_turns": max_turns,
+            # Surface partial Claude activity so planner/agent/review logs
+            # stream progressively instead of only showing the final summary.
+            "include_partial_messages": True,
         }
 
         # Resume from prior session
@@ -458,6 +527,12 @@ class ClaudeProvider:
 
                 if isinstance(message, ResultMessage):
                     last_result = message
+                    continue
+
+                if isinstance(message, StreamEvent):
+                    if on_event:
+                        for event in _convert_stream_event(message):
+                            on_event(event)
                     continue
 
                 # AssistantMessage or other SDK message types
