@@ -374,3 +374,28 @@ class TestBuildCostRegistryOverrides:
         overrides = s.build_cost_registry_overrides()
         assert overrides["claude:sonnet"].input_per_1k == 0.005
         assert overrides["claude:sonnet"].output_per_1k == 0.025
+
+
+def test_data_dir_defaults_to_repo_local_forge_data_dir(tmp_path, monkeypatch):
+    """Verify that when FORGE_DATA_DIR is set, ForgeSettings().data_dir uses it. When unset and XDG_DATA_HOME is unset, it falls back to ~/.local/share/forge."""
+    # Test case 1: FORGE_DATA_DIR is set
+    test_forge_dir = str(tmp_path / "custom_forge_data")
+    monkeypatch.setenv("FORGE_DATA_DIR", test_forge_dir)
+    s1 = ForgeSettings()
+    assert s1.data_dir == test_forge_dir
+
+    # Test case 2: FORGE_DATA_DIR unset, XDG_DATA_HOME set
+    monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
+    xdg_dir = str(tmp_path / "xdg_data")
+    monkeypatch.setenv("XDG_DATA_HOME", xdg_dir)
+    s2 = ForgeSettings()
+    expected_xdg = str(tmp_path / "xdg_data" / "forge")
+    assert s2.data_dir == expected_xdg
+
+    # Test case 3: Both FORGE_DATA_DIR and XDG_DATA_HOME unset - should fall back to ~/.local/share/forge
+    monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    import os
+    s3 = ForgeSettings()
+    expected_fallback = os.path.join(os.path.expanduser("~"), ".local", "share", "forge")
+    assert s3.data_dir == expected_fallback

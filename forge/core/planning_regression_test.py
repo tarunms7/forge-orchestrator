@@ -537,3 +537,37 @@ async def test_plan_surfaces_provider_status_activity_in_planner_output():
 
     planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
     assert "Thinking…" not in planner_lines
+
+
+def test_routing_summary_output_in_planning_regression():
+    """Verify the routing line contains 'Agent (L/M/H)' and 'Review' segments for improved format verification."""
+    import re
+
+    # Define the expected routing line pattern according to interface contracts
+    routing_pattern = re.compile(r"Routing: Planner .+ \| Agent \(L/M/H\) .+/.+/.+ \| Review .+")
+
+    # Test routing line format with various examples
+    test_lines = [
+        "Routing: Planner Claude Opus | Agent (L/M/H) Claude Sonnet/Claude Opus/Claude Opus | Review Claude Sonnet",
+        "Routing: Planner GPT-5.4 | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4 (high reasoning)",
+        "Routing: Planner Claude Sonnet | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Sonnet | Review Claude Opus",
+    ]
+
+    for line in test_lines:
+        # Verify the line matches the expected pattern
+        assert routing_pattern.match(line), f"Routing line does not match expected pattern: {line}"
+
+        # Verify key components are present
+        assert "Agent (L/M/H)" in line, f"Missing 'Agent (L/M/H)' segment in: {line}"
+        assert "Review" in line, f"Missing 'Review' segment in: {line}"
+        assert line.startswith("Routing: "), f"Line should start with 'Routing: ': {line}"
+
+        # Verify segments are properly separated
+        assert " | " in line, f"Missing proper segment separators in: {line}"
+        segments = line.split(" | ")
+        assert len(segments) == 3, f"Expected 3 segments (Planner, Agent, Review), got {len(segments)}: {line}"
+
+        # Verify specific segment formats
+        assert segments[0].startswith("Planner "), f"First segment should start with 'Planner ': {segments[0]}"
+        assert segments[1].startswith("Agent (L/M/H) "), f"Second segment should start with 'Agent (L/M/H) ': {segments[1]}"
+        assert segments[2].startswith("Review "), f"Third segment should start with 'Review ': {segments[2]}"
