@@ -767,15 +767,23 @@ def test_agent_output_appends_to_unified_log():
 
 def test_agent_output_duplicate_is_not_added_to_unified_log():
     state = TuiState()
-    state.apply_event("task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."})
-    state.apply_event("task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."})
+    state.apply_event(
+        "task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."}
+    )
+    state.apply_event(
+        "task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."}
+    )
     assert state.unified_log["t1"] == [("agent", "Reviewing the current implementation.")]
 
 
 def test_planner_output_suppresses_adjacent_duplicates():
     state = TuiState()
-    state.apply_event("planner:output", {"line": "I need to read the current implementation first."})
-    state.apply_event("planner:output", {"line": "I need to read the current implementation first."})
+    state.apply_event(
+        "planner:output", {"line": "I need to read the current implementation first."}
+    )
+    state.apply_event(
+        "planner:output", {"line": "I need to read the current implementation first."}
+    )
     assert state.planner_output == ["I need to read the current implementation first."]
 
 
@@ -797,8 +805,12 @@ def test_review_llm_output_appends_to_unified_log():
 
 def test_review_llm_output_suppresses_adjacent_duplicates():
     state = TuiState()
-    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."})
-    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."})
+    state.apply_event(
+        "review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."}
+    )
+    state.apply_event(
+        "review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."}
+    )
     assert state.review_output["t1"] == ["Reviewing the updated tests."]
     assert state.unified_log["t1"] == [("review", "Reviewing the updated tests.")]
 

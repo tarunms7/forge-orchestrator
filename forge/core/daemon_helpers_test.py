@@ -25,6 +25,7 @@ from forge.core.daemon_helpers import (
     _run_git,
     async_subprocess,
     compute_worktree_path,
+    format_routing_summary,
 )
 from forge.providers.base import EventKind, ProviderEvent
 
@@ -1295,9 +1296,7 @@ class TestExtractActivityProviderEvent:
         event = ProviderEvent(
             kind=EventKind.TOOL_USE,
             tool_name="edit",
-            tool_input=json.dumps(
-                [{"path": "/workspace/backend/src/app.py", "kind": "replace"}]
-            ),
+            tool_input=json.dumps([{"path": "/workspace/backend/src/app.py", "kind": "replace"}]),
         )
         result = _extract_activity(event)
         assert result == "✏️ Editing src/app.py"
@@ -1320,3 +1319,76 @@ class TestHumanizeModelSpec:
 
     def test_openai_model_is_humanized(self):
         assert _humanize_model_spec("openai:gpt-5.4-mini") == "GPT-5.4 Mini"
+
+    def test_claude_opus(self):
+        assert _humanize_model_spec("claude:opus") == "Claude Opus"
+
+    def test_claude_haiku(self):
+        assert _humanize_model_spec("claude:haiku") == "Claude Haiku"
+
+    def test_openai_gpt54(self):
+        assert _humanize_model_spec("openai:gpt-5.4") == "GPT-5.4"
+
+    def test_openai_codex(self):
+        assert _humanize_model_spec("openai:gpt-5.3-codex") == "GPT-5.3 Codex"
+
+    def test_openai_o3(self):
+        assert _humanize_model_spec("openai:o3") == "o3"
+
+    def test_bare_alias_sonnet(self):
+        # bare 'sonnet' is parsed via ModelSpec.parse() into claude:sonnet
+        assert _humanize_model_spec("sonnet") == "Claude Sonnet"
+
+    def test_empty_string(self):
+        assert _humanize_model_spec("") == ""
+
+    def test_model_spec_object(self):
+        # accepts ModelSpec directly
+        from forge.providers.base import ModelSpec
+
+        spec = ModelSpec(provider="claude", model="opus")
+        assert _humanize_model_spec(spec) == "Claude Opus"
+
+
+class TestFormatRoutingSummary:
+    def test_all_claude_default(self):
+        # full Claude routing string
+        result = format_routing_summary(
+            "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "claude:sonnet"
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet"
+        assert result == expected
+
+    def test_mixed_providers(self):
+        # Claude planner + OpenAI reviewer
+        result = format_routing_summary(
+            "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "openai:gpt-5.4"
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4"
+        assert result == expected
+
+    def test_with_reasoning_effort(self):
+        # appends '(high reasoning)'
+        result = format_routing_summary(
+            "claude:opus",
+            "claude:haiku",
+            "claude:sonnet",
+            "claude:opus",
+            "claude:sonnet",
+            reviewer_effort="high",
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet (high reasoning)"
+        assert result == expected
+
+    def test_without_reasoning_effort(self):
+        # no suffix
+        result = format_routing_summary(
+            "claude:opus",
+            "claude:haiku",
+            "claude:sonnet",
+            "claude:opus",
+            "claude:sonnet",
+            reviewer_effort=None,
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet"
+        assert result == expected
