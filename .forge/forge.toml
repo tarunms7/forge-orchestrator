@@ -37,16 +37,31 @@ enabled = true
 max_retries = 3             # How many times to retry on review rejection
 
 
+# ── Model Routing ─────────────────────────────────────────────────────
+# Keep planning / execution on Claude, but run reviews on Codex with
+# a higher reasoning budget.
+[routing]
+planner = "claude:opus"
+# planner_reasoning_effort = "medium"   # Claude stages also honor effort via prompt shaping
+agent_low = "claude:sonnet"
+agent_medium = "claude:sonnet"
+agent_high = "claude:opus"
+reviewer = "openai:gpt-5.4"
+reviewer_reasoning_effort = "high"
+contract_builder = "claude:opus"
+ci_fix = "claude:sonnet"
+
+
 # ── Agents ─────────────────────────────────────────────────────────────
 
 [agents]
 max_parallel = 5            # Max concurrent agents (each uses ~300-500 MB)
-max_turns = 75              # Max turns per agent. Increase for complex tasks.
+max_turns = 300              # Max turns per agent. Increase for complex tasks.
 model = "sonnet"            # "sonnet", "opus", "haiku"
-autonomy = "balanced"       # "full" = never ask questions
+autonomy = "supervised"       # "full" = never ask questions
                             # "balanced" = ask when <80% confident (default)
                             # "supervised" = ask about everything
-timeout_seconds = 600       # Per-agent timeout in seconds
+timeout_seconds = 3600       # Per-agent timeout in seconds
 
 
 # ── Instructions ───────────────────────────────────────────────────────

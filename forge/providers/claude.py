@@ -14,7 +14,7 @@ import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage, query
 from claude_code_sdk._internal import client as _sdk_client
@@ -40,6 +40,21 @@ from forge.providers.catalog import (
 )
 
 logger = logging.getLogger("forge.providers.claude")
+
+_CLAUDE_REASONING_APPEND_PROMPTS: dict[str, str] = {
+    "low": (
+        "Reasoning effort: low. Prioritize responsiveness and direct execution. "
+        "Avoid exhaustive exploration unless the task clearly demands it."
+    ),
+    "medium": (
+        "Reasoning effort: medium. Balance speed with care. Verify key assumptions "
+        "before committing to a plan or implementation."
+    ),
+    "high": (
+        "Reasoning effort: high. Think carefully, inspect relevant context before "
+        "deciding, verify assumptions, and prefer stronger validation before finalizing."
+    ),
+}
 
 # ---------------------------------------------------------------------------
 # SDK monkey-patch for unknown message types (e.g. rate_limit_event)
@@ -349,6 +364,7 @@ class ClaudeProvider:
         output_contract: OutputContract,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
         mcp_servers: list[MCPServerConfig] | None = None,
         resume_state: ResumeState | None = None,
         on_event: Callable[[ProviderEvent], None] | None = None,
@@ -364,6 +380,7 @@ class ClaudeProvider:
             tool_policy=tool_policy,
             workspace=workspace,
             max_turns=max_turns,
+            reasoning_effort=reasoning_effort,
             resume_state=resume_state,
         )
 
@@ -388,11 +405,19 @@ class ClaudeProvider:
         tool_policy: ToolPolicy,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
         resume_state: ResumeState | None = None,
     ) -> ClaudeCodeOptions:
         """Assemble ClaudeCodeOptions from provider parameters."""
+        append_system_prompt = system_prompt
+        if reasoning_effort and catalog_entry.supports_reasoning:
+            effort_prompt = _CLAUDE_REASONING_APPEND_PROMPTS[reasoning_effort]
+            append_system_prompt = (
+                f"{system_prompt}\n\n{effort_prompt}" if system_prompt else effort_prompt
+            )
+
         kwargs: dict[str, Any] = {
-            "append_system_prompt": system_prompt,
+            "append_system_prompt": append_system_prompt,
             "permission_mode": "bypassPermissions",
             "cwd": workspace.primary_cwd,
             "model": catalog_entry.canonical_id,

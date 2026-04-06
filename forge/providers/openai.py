@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from forge.providers.base import (
     CatalogEntry,
@@ -38,6 +38,12 @@ from forge.providers.base import (
 from forge.providers.catalog import CODEX_TOOL_MAP, FORGE_MODEL_CATALOG
 
 logger = logging.getLogger("forge.providers.openai")
+
+def _default_reasoning_effort(
+    execution_mode: ExecutionMode,
+) -> Literal["low", "medium", "high"]:
+    return "high" if execution_mode == ExecutionMode.INTELLIGENCE else "medium"
+
 
 # ---------------------------------------------------------------------------
 # Lazy SDK imports
@@ -407,6 +413,12 @@ def _convert_codex_event(event: Any) -> ProviderEvent | None:
         text = item_content if isinstance(item_content, str) else str(item_content)
         return ProviderEvent(kind=EventKind.TEXT, text=text, raw=event)
 
+    if event_type == "turn.started":
+        return ProviderEvent(kind=EventKind.STATUS, status="thinking", raw=event)
+
+    if event_type == "item.started" and item_type == "agent_message":
+        return ProviderEvent(kind=EventKind.STATUS, status="typing", raw=event)
+
     if event_type == "item.started" and item_type in CODEX_TOOL_MAP:
         tool_input: str | None
         if item_type == "command_execution":
@@ -541,6 +553,9 @@ def _convert_agents_event(event: Any) -> ProviderEvent | None:
         text = _get("delta", "")
         return ProviderEvent(kind=EventKind.TEXT, text=str(text), raw=event)
 
+    if event_type in {"response.created", "response.in_progress"}:
+        return ProviderEvent(kind=EventKind.STATUS, status="thinking", raw=event)
+
     if event_type == "response.completed":
         usage = _get("usage", {})
         if isinstance(usage, dict) and usage:
@@ -644,6 +659,7 @@ class OpenAIProvider:
         output_contract: OutputContract,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
         mcp_servers: list[MCPServerConfig] | None = None,
         resume_state: ResumeState | None = None,
         on_event: Callable[[ProviderEvent], None] | None = None,
@@ -658,6 +674,7 @@ class OpenAIProvider:
                 tool_policy=tool_policy,
                 workspace=workspace,
                 max_turns=max_turns,
+                reasoning_effort=reasoning_effort,
                 resume_state=resume_state,
                 on_event=on_event,
             )
@@ -670,6 +687,7 @@ class OpenAIProvider:
                 output_contract=output_contract,
                 workspace=workspace,
                 max_turns=max_turns,
+                reasoning_effort=reasoning_effort,
                 mcp_servers=mcp_servers,
                 on_event=on_event,
             )
@@ -710,6 +728,7 @@ class OpenAIProvider:
         catalog_entry: CatalogEntry,
         workspace: WorkspaceRoots,
         execution_mode: ExecutionMode,
+        reasoning_effort: Literal["low", "medium", "high"] | None,
     ) -> dict[str, Any]:
         options: dict[str, Any] = {
             "model": _codex_execution_model(catalog_entry),
@@ -719,9 +738,7 @@ class OpenAIProvider:
             "skipGitRepoCheck": True,
             "networkAccessEnabled": True,
             "webSearchEnabled": True,
-            "modelReasoningEffort": "high"
-            if execution_mode == ExecutionMode.INTELLIGENCE
-            else "medium",
+            "modelReasoningEffort": reasoning_effort or _default_reasoning_effort(execution_mode),
         }
         return options
 
@@ -734,6 +751,7 @@ class OpenAIProvider:
         tool_policy: ToolPolicy,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None,
         resume_state: ResumeState | None,
         on_event: Callable[[ProviderEvent], None] | None,
     ) -> _CodexExecutionHandle:
@@ -747,6 +765,7 @@ class OpenAIProvider:
                 tool_policy=tool_policy,
                 workspace=workspace,
                 max_turns=max_turns,
+                reasoning_effort=reasoning_effort,
                 resume_state=resume_state,
                 on_event=on_event,
             )
@@ -762,6 +781,7 @@ class OpenAIProvider:
         tool_policy: ToolPolicy,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None,
         resume_state: ResumeState | None,
         on_event: Callable[[ProviderEvent], None] | None,
     ) -> ProviderResult:
@@ -800,9 +820,8 @@ class OpenAIProvider:
                 "skip_git_repo_check": True,
                 "network_access_enabled": True,
                 "web_search_enabled": True,
-                "model_reasoning_effort": (
-                    "high" if execution_mode == ExecutionMode.INTELLIGENCE else "medium"
-                ),
+                "model_reasoning_effort": reasoning_effort
+                or _default_reasoning_effort(execution_mode),
             }
 
             # Resume vs new thread
@@ -842,6 +861,7 @@ class OpenAIProvider:
                     catalog_entry,
                     workspace,
                     execution_mode,
+                    reasoning_effort,
                 )
 
                 if resume_state and resume_state.session_token:
@@ -954,6 +974,7 @@ class OpenAIProvider:
         output_contract: OutputContract,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None,
         mcp_servers: list[MCPServerConfig] | None,
         on_event: Callable[[ProviderEvent], None] | None,
     ) -> _AgentsExecutionHandle:
@@ -967,6 +988,7 @@ class OpenAIProvider:
                 output_contract=output_contract,
                 workspace=workspace,
                 max_turns=max_turns,
+                reasoning_effort=reasoning_effort,
                 mcp_servers=mcp_servers,
                 on_event=on_event,
             )
@@ -982,6 +1004,7 @@ class OpenAIProvider:
         output_contract: OutputContract,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None,
         mcp_servers: list[MCPServerConfig] | None,
         on_event: Callable[[ProviderEvent], None] | None,
     ) -> ProviderResult:

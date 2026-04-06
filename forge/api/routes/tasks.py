@@ -40,6 +40,7 @@ from forge.core.provider_config import (
     build_provider_config_snapshot,
     build_provider_registry,
     build_settings_for_project,
+    resolve_reasoning_effort_for_stage,
     resolve_registry_model,
 )
 from forge.core.templates import (
@@ -259,6 +260,11 @@ async def _generate_pr_title(
                 output_contract=OutputContract(format="freeform"),
                 workspace=WorkspaceRoots(primary_cwd="."),
                 max_turns=1,
+                reasoning_effort=resolve_reasoning_effort_for_stage(
+                    registry.settings,
+                    "reviewer",
+                    "low",
+                ),
             )
             result = await handle.result()
             title = (result.text if result else "").strip().strip("\"'").strip()
@@ -1927,7 +1933,7 @@ async def retry_task(
     if task.state != "error":
         raise HTTPException(400, f"Task is in state '{task.state}', can only retry errored tasks")
 
-    await forge_db.retry_task(task_id)  # Resets to todo, increments retry_count
+    await forge_db.reset_task_for_human_retry(task_id)
 
     # Cascade-reset downstream BLOCKED tasks whose only blocking dependency
     # is this task.  They couldn't run because the parent failed; now that

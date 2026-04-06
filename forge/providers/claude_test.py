@@ -388,3 +388,16 @@ class TestBuildOptions:
             resume_state=state,
         )
         assert options.resume == "sess-abc"
+
+    def test_reasoning_effort_appends_guidance(self):
+        options = ClaudeProvider._build_options(
+            system_prompt="test",
+            catalog_entry=_make_catalog_entry(),
+            tool_policy=ToolPolicy(mode="unrestricted"),
+            workspace=WorkspaceRoots(primary_cwd="/tmp/test"),
+            max_turns=10,
+            reasoning_effort="high",
+        )
+        assert options.append_system_prompt is not None
+        assert "Reasoning effort: high" in options.append_system_prompt
+        assert "test" in options.append_system_prompt

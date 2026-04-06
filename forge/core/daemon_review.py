@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from forge.config.project_config import CMD_DISABLED
 from forge.core import model_router as _legacy_model_router
 from forge.core.daemon_helpers import (
+    _extract_activity,
     _extract_text,
     _find_related_test_files,
     _get_changed_files_vs_main,
@@ -700,8 +701,8 @@ class ReviewMixin:
         _MAX_BATCH_SIZE = 50
 
         async def _on_msg(msg):
-            # _extract_text handles both ProviderEvent and legacy SDK messages
-            text = _extract_text(msg)
+            # _extract_activity handles text, tool-use, and provider status updates.
+            text = _extract_activity(msg) or _extract_text(msg)
             if not text:
                 return
             self._record_health_activity(task_id)
@@ -742,8 +743,56 @@ class ReviewMixin:
             self._record_health_activity(task_id)
             full_payload = {"task_id": task_id, **payload}
             await self._emit(event_name, full_payload, db=db, pipeline_id=pipeline_id)
+            progress_line = self._format_review_progress_line(event_name, payload)
+            if progress_line:
+                await self._emit(
+                    "review:llm_output",
+                    {"task_id": task_id, "line": progress_line},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
 
         return _on_review_event
+
+    @staticmethod
+    def _format_review_progress_line(event_name: str, payload: dict) -> str | None:
+        """Render review progress events as user-visible activity lines."""
+        if event_name == "review:strategy_selected":
+            strategy = payload.get("strategy", "unknown")
+            chunk_count = payload.get("chunk_count")
+            diff_lines = payload.get("diff_lines")
+            details: list[str] = [f"strategy={strategy}"]
+            if chunk_count is not None:
+                details.append(f"chunks={chunk_count}")
+            if diff_lines is not None:
+                details.append(f"diff_lines={diff_lines}")
+            return "Review strategy selected: " + ", ".join(details)
+
+        if event_name == "review:chunk_started":
+            idx = payload.get("chunk_index")
+            total = payload.get("chunk_total")
+            risk = payload.get("risk_label")
+            files = payload.get("files") or []
+            suffix: list[str] = []
+            if risk:
+                suffix.append(f"risk={risk}")
+            if files:
+                suffix.append(f"files={len(files)}")
+            suffix_str = f" ({', '.join(suffix)})" if suffix else ""
+            return f"Review chunk {idx}/{total} started{suffix_str}"
+
+        if event_name == "review:chunk_complete":
+            idx = payload.get("chunk_index")
+            total = payload.get("chunk_total")
+            verdict = payload.get("verdict", "UNKNOWN")
+            issues = payload.get("issue_count")
+            issues_str = f", issues={issues}" if issues is not None else ""
+            return f"Review chunk {idx}/{total} complete: {verdict}{issues_str}"
+
+        if event_name == "review:synthesis_started":
+            return "Review synthesis started"
+
+        return None
 
     # -- main review pipeline ----------------------------------------------
 

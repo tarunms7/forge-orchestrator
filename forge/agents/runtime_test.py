@@ -508,3 +508,30 @@ async def test_run_with_retry_resume_state_populated():
     )
     assert result.session_id == "sess-123"
     assert result.resume_state is rs
+
+
+async def test_run_with_retry_preserves_forge_question_text():
+    """Provider-backed runs must preserve FORGE_QUESTION payloads for daemon pause/resume."""
+    provider = MagicMock()
+    catalog = _make_catalog_entry(provider="openai", alias="gpt-5.4-mini", backend="codex-sdk")
+    question_text = (
+        'FORGE_QUESTION:\n{"question":"Use pytest fixture or helper?","suggestions":["fixture","helper"]}'
+    )
+    pr = _make_provider_result(text=question_text, model_canonical_id="gpt-5.4-mini-0414")
+    provider.start.return_value = MockExecutionHandle(pr)
+
+    result = await run_with_retry(
+        provider=provider,
+        catalog_entry=catalog,
+        prompt="Build X",
+        system_prompt="Agent",
+        execution_mode=ExecutionMode.CODING,
+        tool_policy=ToolPolicy(mode="unrestricted"),
+        output_contract=OutputContract(format="freeform"),
+        workspace=WorkspaceRoots(primary_cwd="/tmp/wt", read_only_dirs=[]),
+        max_turns=75,
+        timeout_seconds=600,
+    )
+
+    assert result.success is True
+    assert "FORGE_QUESTION:" in result.summary

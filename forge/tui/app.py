@@ -962,7 +962,7 @@ class ForgeApp(App):
         reset_ids: list[str] = []
         for task in tasks:
             if task.state == "error":
-                await self._db.retry_task(task.id)
+                await self._db.reset_task_for_human_retry(task.id)
                 reset_ids.append(task.id)
             elif task.state == "blocked":
                 await self._db.update_task_state(task.id, "todo")

@@ -257,13 +257,17 @@ class TestMultiProviderFields:
         assert s.reviewer_model is None
         assert s.contract_builder_model is None
         assert s.ci_fix_model is None
+        assert s.planner_reasoning_effort is None
+        assert s.reviewer_reasoning_effort is None
 
     def test_per_stage_model_from_env(self, monkeypatch):
         monkeypatch.setenv("FORGE_PLANNER_MODEL", "opus")
         monkeypatch.setenv("FORGE_REVIEWER_MODEL", "openai:gpt-5.4")
+        monkeypatch.setenv("FORGE_REVIEWER_REASONING_EFFORT", "high")
         s = ForgeSettings()
         assert s.planner_model == "opus"
         assert s.reviewer_model == "openai:gpt-5.4"
+        assert s.reviewer_reasoning_effort == "high"
 
     def test_cost_rates_default_none(self):
         s = ForgeSettings()
@@ -305,6 +309,38 @@ class TestBuildRoutingOverrides:
         s = ForgeSettings(planner_model="openai:gpt-5.4")
         overrides = s.build_routing_overrides()
         assert overrides["planner_model"] == "openai:gpt-5.4"
+
+
+class TestBuildReasoningEffortOverrides:
+    def test_empty_when_no_effort_set(self):
+        s = ForgeSettings()
+        assert s.build_reasoning_effort_overrides() == {}
+
+    def test_includes_set_fields(self):
+        s = ForgeSettings(
+            planner_reasoning_effort="high",
+            reviewer_reasoning_effort="low",
+        )
+        assert s.build_reasoning_effort_overrides() == {
+            "planner_reasoning_effort": "high",
+            "reviewer_reasoning_effort": "low",
+        }
+
+    def test_resolve_reasoning_effort_by_stage(self):
+        s = ForgeSettings(
+            planner_reasoning_effort="high",
+            agent_model_medium_reasoning_effort="medium",
+            reviewer_reasoning_effort="low",
+        )
+        assert s.resolve_reasoning_effort("planner", "high") == "high"
+        assert s.resolve_reasoning_effort("agent", "medium") == "medium"
+        assert s.resolve_reasoning_effort("reviewer", "low") == "low"
+        assert s.resolve_reasoning_effort("ci_fix", "medium") is None
+
+
+def test_invalid_reasoning_effort_raises():
+    with pytest.raises(ValidationError):
+        ForgeSettings(reviewer_reasoning_effort="turbo")
 
 
 class TestBuildCostRegistryOverrides:

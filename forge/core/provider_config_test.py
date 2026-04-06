@@ -66,6 +66,15 @@ def test_build_provider_registry_skips_unregistered_custom_provider() -> None:
     assert not registry.validate_model(ModelSpec.parse("custom:my-model"))
 
 
+def test_build_provider_registry_auto_registers_openai_for_routed_stage() -> None:
+    """OpenAI should be registered when stage routing references an OpenAI model."""
+    settings = ForgeSettings(reviewer_model="openai:gpt-5.4")
+
+    registry = build_provider_registry(settings)
+
+    assert registry.get_provider("openai").name == "openai"
+
+
 def test_build_provider_config_snapshot_records_stage_metadata() -> None:
     """Pipeline snapshots should persist provider, backend, and canonical_id."""
     settings = ForgeSettings()
@@ -78,6 +87,40 @@ def test_build_provider_config_snapshot_records_stage_metadata() -> None:
     assert planner["spec"] == "claude:opus"
     assert planner["backend"] == "claude-code-sdk"
     assert planner["canonical_id"]
+
+
+def test_build_provider_config_snapshot_records_reasoning_effort() -> None:
+    """Explicit reasoning-effort overrides should persist in the pipeline snapshot."""
+    settings = ForgeSettings(
+        openai_enabled=True,
+        reviewer_model="openai:gpt-5.4",
+        reviewer_reasoning_effort="high",
+    )
+    registry = build_provider_registry(settings)
+
+    snapshot = build_provider_config_snapshot(settings, registry)
+
+    assert snapshot["stages"]["reviewer"]["reasoning_effort"] == "high"
+
+
+def test_apply_provider_config_snapshot_restores_reasoning_effort() -> None:
+    """Persisted reasoning effort should be replayed onto fresh settings."""
+    settings = ForgeSettings()
+
+    apply_provider_config_snapshot(
+        settings,
+        {
+            "stages": {
+                "reviewer": {
+                    "spec": "openai:gpt-5.4",
+                    "reasoning_effort": "high",
+                }
+            }
+        },
+    )
+
+    assert settings.reviewer_model == "openai:gpt-5.4"
+    assert settings.reviewer_reasoning_effort == "high"
 
 
 def test_resolve_registry_model_uses_registry_settings_overrides() -> None:

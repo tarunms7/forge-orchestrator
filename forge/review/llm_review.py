@@ -366,6 +366,10 @@ async def gate2_llm_review(
                 output_contract=OutputContract(format="freeform"),
                 workspace=workspace,
                 max_turns=75,
+                reasoning_effort=registry.settings.resolve_reasoning_effort(
+                    "reviewer",
+                    "medium",
+                ),
                 on_event=_on_event,
             )
             result = await asyncio.wait_for(

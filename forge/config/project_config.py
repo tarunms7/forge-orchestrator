@@ -71,6 +71,18 @@ enabled = true
 max_retries = 3             # How many times to retry on review rejection
 
 
+# ── Model Routing ──────────────────────────────────────────────────────
+# Override models per stage. Any stage not listed here keeps strategy defaults.
+# Reasoning effort overrides are only used by providers that support them
+# (for example, Codex-backed OpenAI review).
+#
+# [routing]
+# planner = "claude:opus"
+# agent_medium = "claude:sonnet"
+# reviewer = "openai:gpt-5.4"
+# reviewer_reasoning_effort = "high"   # "low" | "medium" | "high"
+
+
 # ── Agents ─────────────────────────────────────────────────────────────
 
 [agents]
@@ -262,6 +274,31 @@ class RoutingConfig:
     reviewer: str | None = None
     contract_builder: str | None = None
     ci_fix: str | None = None
+    planner_reasoning_effort: str | None = None
+    agent_low_reasoning_effort: str | None = None
+    agent_medium_reasoning_effort: str | None = None
+    agent_high_reasoning_effort: str | None = None
+    reviewer_reasoning_effort: str | None = None
+    contract_builder_reasoning_effort: str | None = None
+    ci_fix_reasoning_effort: str | None = None
+
+    def __post_init__(self):
+        valid_efforts = {"low", "medium", "high", None}
+        fields = (
+            "planner_reasoning_effort",
+            "agent_low_reasoning_effort",
+            "agent_medium_reasoning_effort",
+            "agent_high_reasoning_effort",
+            "reviewer_reasoning_effort",
+            "contract_builder_reasoning_effort",
+            "ci_fix_reasoning_effort",
+        )
+        for field_name in fields:
+            value = getattr(self, field_name)
+            if value not in valid_efforts:
+                raise ValueError(
+                    f"{field_name} must be 'low', 'medium', or 'high', got {value!r}"
+                )
 
     def to_overrides(self) -> dict[str, str]:
         """Convert to the overrides dict format expected by select_model()."""
@@ -280,6 +317,25 @@ class RoutingConfig:
             result["contract_builder_model"] = self.contract_builder
         if self.ci_fix is not None:
             result["ci_fix_model"] = self.ci_fix
+        return result
+
+    def to_reasoning_overrides(self) -> dict[str, str]:
+        """Convert reasoning-effort fields into ForgeSettings attr names."""
+        result: dict[str, str] = {}
+        if self.planner_reasoning_effort is not None:
+            result["planner_reasoning_effort"] = self.planner_reasoning_effort
+        if self.agent_low_reasoning_effort is not None:
+            result["agent_model_low_reasoning_effort"] = self.agent_low_reasoning_effort
+        if self.agent_medium_reasoning_effort is not None:
+            result["agent_model_medium_reasoning_effort"] = self.agent_medium_reasoning_effort
+        if self.agent_high_reasoning_effort is not None:
+            result["agent_model_high_reasoning_effort"] = self.agent_high_reasoning_effort
+        if self.reviewer_reasoning_effort is not None:
+            result["reviewer_reasoning_effort"] = self.reviewer_reasoning_effort
+        if self.contract_builder_reasoning_effort is not None:
+            result["contract_builder_reasoning_effort"] = self.contract_builder_reasoning_effort
+        if self.ci_fix_reasoning_effort is not None:
+            result["ci_fix_reasoning_effort"] = self.ci_fix_reasoning_effort
         return result
 
 
@@ -482,6 +538,15 @@ class ProjectConfig:
                 reviewer=routing_raw.get("reviewer"),
                 contract_builder=routing_raw.get("contract_builder"),
                 ci_fix=routing_raw.get("ci_fix"),
+                planner_reasoning_effort=routing_raw.get("planner_reasoning_effort"),
+                agent_low_reasoning_effort=routing_raw.get("agent_low_reasoning_effort"),
+                agent_medium_reasoning_effort=routing_raw.get("agent_medium_reasoning_effort"),
+                agent_high_reasoning_effort=routing_raw.get("agent_high_reasoning_effort"),
+                reviewer_reasoning_effort=routing_raw.get("reviewer_reasoning_effort"),
+                contract_builder_reasoning_effort=routing_raw.get(
+                    "contract_builder_reasoning_effort"
+                ),
+                ci_fix_reasoning_effort=routing_raw.get("ci_fix_reasoning_effort"),
             ),
             custom_models=[
                 CustomModelConfig(
@@ -541,6 +606,30 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
         settings.ci_fix_max_retries = config.ci_fix.max_retries
     if "FORGE_CI_FIX_BUDGET_USD" not in env:
         settings.ci_fix_budget_usd = config.ci_fix.budget_usd
+
+    # Stage routing from forge.toml
+    routing_env_map = {
+        "planner_model": "FORGE_PLANNER_MODEL",
+        "agent_model_low": "FORGE_AGENT_MODEL_LOW",
+        "agent_model_medium": "FORGE_AGENT_MODEL_MEDIUM",
+        "agent_model_high": "FORGE_AGENT_MODEL_HIGH",
+        "reviewer_model": "FORGE_REVIEWER_MODEL",
+        "contract_builder_model": "FORGE_CONTRACT_BUILDER_MODEL",
+        "ci_fix_model": "FORGE_CI_FIX_MODEL",
+        "planner_reasoning_effort": "FORGE_PLANNER_REASONING_EFFORT",
+        "agent_model_low_reasoning_effort": "FORGE_AGENT_MODEL_LOW_REASONING_EFFORT",
+        "agent_model_medium_reasoning_effort": "FORGE_AGENT_MODEL_MEDIUM_REASONING_EFFORT",
+        "agent_model_high_reasoning_effort": "FORGE_AGENT_MODEL_HIGH_REASONING_EFFORT",
+        "reviewer_reasoning_effort": "FORGE_REVIEWER_REASONING_EFFORT",
+        "contract_builder_reasoning_effort": "FORGE_CONTRACT_BUILDER_REASONING_EFFORT",
+        "ci_fix_reasoning_effort": "FORGE_CI_FIX_REASONING_EFFORT",
+    }
+    for attr_name, value in config.routing.to_overrides().items():
+        if routing_env_map[attr_name] not in env:
+            setattr(settings, attr_name, value)
+    for attr_name, value in config.routing.to_reasoning_overrides().items():
+        if routing_env_map[attr_name] not in env:
+            setattr(settings, attr_name, value)
 
     # Disabled checks → set command to None (skip the gate)
     if not config.lint.enabled:

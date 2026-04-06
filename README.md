@@ -346,7 +346,8 @@ fix_cmd = "npm run lint:fix"
 [routing]
 planner = "claude:opus"
 agent_medium = "openai:gpt-5.4"
-reviewer = "claude:sonnet"
+reviewer = "openai:gpt-5.4"
+reviewer_reasoning_effort = "high"
 
 [[custom_models]]
 alias = "sonnet-plus"
@@ -376,6 +377,18 @@ Routing precedence:
 2. `.forge/forge.toml` `[routing]`
 3. Strategy defaults
 
+You can also override reasoning effort per stage in `.forge/forge.toml` using:
+
+- `planner_reasoning_effort`
+- `agent_low_reasoning_effort`
+- `agent_medium_reasoning_effort`
+- `agent_high_reasoning_effort`
+- `reviewer_reasoning_effort`
+- `contract_builder_reasoning_effort`
+- `ci_fix_reasoning_effort`
+
+Accepted values are `low`, `medium`, and `high`. OpenAI Codex/Responses models use native reasoning-effort controls. Claude stages also honor these settings, but Claude Code receives them as prompt-level effort guidance because the Claude SDK does not expose a native reasoning-effort parameter.
+
 Forge persists the exact resolved provider snapshot in `pipelines.provider_config` when the pipeline is created. Restarts, retries, follow-up work, and webhook resumptions use that snapshot, not whatever your current settings happen to be later.
 
 Any stage can be routed independently as long as the selected model has the required hard capabilities for that stage. Common examples:
@@ -390,6 +403,8 @@ Helper intelligence calls also follow the active stage routing instead of hardco
 - PR-title generation follows the reviewer model
 - follow-up question classification follows the planner model
 
+If any routed stage points at an OpenAI model, Forge automatically registers the OpenAI provider for that pipeline even when you did not explicitly set `FORGE_OPENAI_ENABLED=true`.
+
 `[[custom_models]]` entries are validated against the active provider registry and then injected as experimental catalog entries for that project. That means custom aliases are now executable, not just parsed.
 
 Codex-backed models use your existing `codex login` subscription session when available, and Forge only falls back to key auth for Codex if `CODEX_API_KEY` is explicitly set or no Codex login is present. Forge prefers your installed `codex` CLI when available so it shares the same subscription/auth state you already use manually. `openai:o3` stays on the Responses API path and requires `OPENAI_API_KEY`.
@@ -402,6 +417,8 @@ Codex-backed executions now run with the same high-power posture Forge already u
 - Forge-level safety policy still enforced for explicitly denied operations
 
 If you need to point Forge at a specific Codex binary, set `FORGE_CODEX_PATH=/absolute/path/to/codex`.
+
+Manual task reruns also refund one consumed retry slot before rescheduling the task, so abrupt provider failures or exhausted review loops do not leave a human-triggered recovery with zero room for error.
 
 ---
 

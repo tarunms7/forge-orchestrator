@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+ReasoningEffort = Literal["low", "medium", "high"]
 
 
 class ForgeSettings(BaseSettings):
@@ -72,6 +76,13 @@ class ForgeSettings(BaseSettings):
     reviewer_model: str | None = None
     contract_builder_model: str | None = None
     ci_fix_model: str | None = None
+    planner_reasoning_effort: ReasoningEffort | None = None
+    agent_model_low_reasoning_effort: ReasoningEffort | None = None
+    agent_model_medium_reasoning_effort: ReasoningEffort | None = None
+    agent_model_high_reasoning_effort: ReasoningEffort | None = None
+    reviewer_reasoning_effort: ReasoningEffort | None = None
+    contract_builder_reasoning_effort: ReasoningEffort | None = None
+    ci_fix_reasoning_effort: ReasoningEffort | None = None
 
     # New-style cost rates: dict of "provider:model" -> {input_per_1k, output_per_1k}
     cost_rates: dict[str, dict[str, float]] | None = None
@@ -239,6 +250,44 @@ class ForgeSettings(BaseSettings):
         if self.ci_fix_model is not None:
             result["ci_fix_model"] = self.ci_fix_model
         return result
+
+    def build_reasoning_effort_overrides(self) -> dict[str, ReasoningEffort]:
+        """Collect explicit per-stage reasoning-effort overrides."""
+        result: dict[str, ReasoningEffort] = {}
+        if self.planner_reasoning_effort is not None:
+            result["planner_reasoning_effort"] = self.planner_reasoning_effort
+        if self.agent_model_low_reasoning_effort is not None:
+            result["agent_model_low_reasoning_effort"] = self.agent_model_low_reasoning_effort
+        if self.agent_model_medium_reasoning_effort is not None:
+            result["agent_model_medium_reasoning_effort"] = self.agent_model_medium_reasoning_effort
+        if self.agent_model_high_reasoning_effort is not None:
+            result["agent_model_high_reasoning_effort"] = self.agent_model_high_reasoning_effort
+        if self.reviewer_reasoning_effort is not None:
+            result["reviewer_reasoning_effort"] = self.reviewer_reasoning_effort
+        if self.contract_builder_reasoning_effort is not None:
+            result["contract_builder_reasoning_effort"] = self.contract_builder_reasoning_effort
+        if self.ci_fix_reasoning_effort is not None:
+            result["ci_fix_reasoning_effort"] = self.ci_fix_reasoning_effort
+        return result
+
+    def resolve_reasoning_effort(
+        self,
+        stage: str,
+        complexity: str = "medium",
+    ) -> ReasoningEffort | None:
+        """Return the explicit reasoning-effort override for a stage, if any."""
+        if stage == "agent":
+            normalized = complexity if complexity in {"low", "medium", "high"} else "medium"
+            return getattr(self, f"agent_model_{normalized}_reasoning_effort")
+
+        attr_map = {
+            "planner": "planner_reasoning_effort",
+            "reviewer": "reviewer_reasoning_effort",
+            "contract_builder": "contract_builder_reasoning_effort",
+            "ci_fix": "ci_fix_reasoning_effort",
+        }
+        attr_name = attr_map.get(stage)
+        return getattr(self, attr_name) if attr_name else None
 
     def build_cost_registry_overrides(self) -> dict:
         """Convert both legacy cost_rate_* fields and new cost_rates dict.

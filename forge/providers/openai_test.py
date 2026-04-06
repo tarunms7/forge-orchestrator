@@ -330,6 +330,19 @@ class TestCodexEventConversion:
         assert result.kind == EventKind.TEXT
         assert result.text == "Hello world"
 
+    def test_turn_started_emits_thinking_status(self) -> None:
+        result = _convert_codex_event({"type": "turn.started"})
+        assert result is not None
+        assert result.kind == EventKind.STATUS
+        assert result.status == "thinking"
+
+    def test_agent_message_started_emits_typing_status(self) -> None:
+        event = {"type": "item.started", "item": {"type": "agent_message", "id": "m-1"}}
+        result = _convert_codex_event(event)
+        assert result is not None
+        assert result.kind == EventKind.STATUS
+        assert result.status == "typing"
+
     def test_tool_use_event(self) -> None:
         event = {
             "type": "item.started",
@@ -417,6 +430,12 @@ class TestAgentsEventConversion:
         assert result is not None
         assert result.kind == EventKind.TEXT
         assert result.text == "Hello"
+
+    def test_response_created_emits_thinking_status(self) -> None:
+        result = _convert_agents_event({"type": "response.created"})
+        assert result is not None
+        assert result.kind == EventKind.STATUS
+        assert result.status == "thinking"
 
     def test_response_completed_with_usage(self) -> None:
         event = {
@@ -812,6 +831,63 @@ class TestCodexStart:
 
         assert result.is_error is False
         assert captured["thread_options"]["modelReasoningEffort"] == "high"
+
+    async def test_codex_reasoning_effort_override_is_honored(
+        self,
+        provider: OpenAIProvider,
+        codex_entry: CatalogEntry,
+        workspace: WorkspaceRoots,
+        tool_policy: ToolPolicy,
+        output_contract: OutputContract,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        async def _event_stream() -> Any:
+            yield {"type": "turn.completed"}
+
+        class _FakeThread:
+            async def run_streamed(self, input_: Any) -> Any:
+                return SimpleNamespace(events=_event_stream())
+
+        class _FakeCodexClient:
+            def __init__(self, options: Any = None) -> None:
+                captured["client_options"] = options
+
+            def start_thread(self, options: Any = None) -> Any:
+                captured["thread_options"] = options
+                return _FakeThread()
+
+        mock_sdk = MagicMock()
+        mock_sdk.__version__ = "0.1.0"
+        mock_sdk.start_thread = None
+        mock_sdk.startThread = None
+        mock_sdk.resume_thread = None
+        mock_sdk.resumeThread = None
+        mock_sdk.Codex = _FakeCodexClient
+
+        with (
+            patch("forge.providers.openai._try_import_codex", return_value=mock_sdk),
+            patch(
+                "forge.providers.openai._codex_auth_description",
+                return_value="Codex ChatGPT subscription login configured",
+            ),
+            patch("forge.providers.openai._codex_cli_path", return_value=None),
+        ):
+            handle = provider.start(
+                prompt="review this carefully",
+                system_prompt="",
+                catalog_entry=codex_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=tool_policy,
+                output_contract=output_contract,
+                workspace=workspace,
+                max_turns=5,
+                reasoning_effort="low",
+            )
+            result = await handle.result()
+
+        assert result.is_error is False
+        assert captured["thread_options"]["modelReasoningEffort"] == "low"
 
     async def test_codex_not_installed_raises(
         self,

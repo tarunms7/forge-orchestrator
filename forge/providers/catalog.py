@@ -108,7 +108,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_mcp_servers=True,
         max_context_tokens=200_000,
         supports_structured_output=False,
-        supports_reasoning=False,
+        supports_reasoning=True,
         cost_key="claude:haiku",
         validated_stages=frozenset(["agent", "reviewer", "ci_fix"]),
     ),
@@ -127,7 +127,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_mcp_servers=False,
         max_context_tokens=128_000,
         supports_structured_output=True,
-        supports_reasoning=False,
+        supports_reasoning=True,
         cost_key="openai:gpt-5.4",
         validated_stages=frozenset(
             ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
@@ -147,7 +147,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_mcp_servers=False,
         max_context_tokens=128_000,
         supports_structured_output=True,
-        supports_reasoning=False,
+        supports_reasoning=True,
         cost_key="openai:gpt-5.4-mini",
         validated_stages=frozenset(
             ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]
@@ -167,7 +167,7 @@ FORGE_MODEL_CATALOG: list[CatalogEntry] = [
         supports_mcp_servers=False,
         max_context_tokens=128_000,
         supports_structured_output=True,
-        supports_reasoning=False,
+        supports_reasoning=True,
         cost_key="openai:gpt-5.3-codex",
         validated_stages=frozenset(
             ["planner", "contract_builder", "agent", "reviewer", "ci_fix"]

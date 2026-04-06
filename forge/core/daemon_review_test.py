@@ -673,6 +673,25 @@ class TestMakeReviewOnMessage:
         await flush()
         assert mixin._emit.call_count == 0
 
+    @pytest.mark.asyncio
+    async def test_prefers_activity_lines_for_tool_events(self):
+        """Provider tool/status activity should stream even when there is no plain text."""
+        mixin = self._make_mixin()
+
+        with patch("forge.core.daemon_review.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.2]
+            on_msg, _flush = mixin._make_review_on_message("task-1", MagicMock(), "pipe-1")
+
+            with (
+                patch("forge.core.daemon_review._extract_activity", return_value="📖 Reading foo.py"),
+                patch("forge.core.daemon_review._extract_text", return_value=None),
+            ):
+                await on_msg(MagicMock())
+
+        emit_calls = [(call.args[0], call.args[1]) for call in mixin._emit.call_args_list]
+        assert emit_calls[0][0] == "review:llm_output"
+        assert emit_calls[0][1]["line"] == "📖 Reading foo.py"
+
 
 class TestMakeReviewEventCallback:
     """Review progress callbacks should emit UI events and refresh health state."""
@@ -691,11 +710,17 @@ class TestMakeReviewEventCallback:
         await callback("review:chunk_started", {"chunk_index": 1})
 
         mixin._health_monitor.record_task_activity.assert_called_once_with("task-7")
-        mixin._emit.assert_awaited_once()
-        event_name, payload = mixin._emit.await_args.args[:2]
-        assert event_name == "review:chunk_started"
-        assert payload["task_id"] == "task-7"
-        assert payload["chunk_index"] == 1
+        assert mixin._emit.await_count == 2
+
+        first_name, first_payload = mixin._emit.await_args_list[0].args[:2]
+        assert first_name == "review:chunk_started"
+        assert first_payload["task_id"] == "task-7"
+        assert first_payload["chunk_index"] == 1
+
+        second_name, second_payload = mixin._emit.await_args_list[1].args[:2]
+        assert second_name == "review:llm_output"
+        assert second_payload["task_id"] == "task-7"
+        assert "Review chunk 1/" in second_payload["line"]
 
 
 class TestRunReviewPassesOnMessage:

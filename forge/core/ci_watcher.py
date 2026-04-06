@@ -407,6 +407,7 @@ async def dispatch_fix_agent(
         output_contract=OutputContract(format="freeform"),
         workspace=workspace,
         max_turns=max_turns,
+        reasoning_effort=registry.settings.resolve_reasoning_effort("ci_fix", "medium"),
     )
     result = await handle.result()
 

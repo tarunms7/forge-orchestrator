@@ -380,6 +380,10 @@ async def review_chunk(
                 output_contract=OutputContract(format="json"),
                 workspace=workspace,
                 max_turns=40,
+                reasoning_effort=registry.settings.resolve_reasoning_effort(
+                    "reviewer",
+                    "medium",
+                ),
                 on_event=_on_event,
             )
             result = await asyncio.wait_for(handle.result(), timeout=600)
@@ -602,6 +606,10 @@ async def synthesize_results(
                 output_contract=OutputContract(format="freeform"),
                 workspace=workspace,
                 max_turns=5,
+                reasoning_effort=registry.settings.resolve_reasoning_effort(
+                    "reviewer",
+                    "medium",
+                ),
             )
             result = await asyncio.wait_for(handle.result(), timeout=120)
         except (TimeoutError, Exception) as exc:

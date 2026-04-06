@@ -24,6 +24,13 @@ DEFAULT_SETTINGS: dict = {
     "reviewer_model": "sonnet",
     "contract_builder_model": "opus",
     "ci_fix_model": "sonnet",
+    "planner_reasoning_effort": None,
+    "agent_model_low_reasoning_effort": None,
+    "agent_model_medium_reasoning_effort": None,
+    "agent_model_high_reasoning_effort": None,
+    "reviewer_reasoning_effort": None,
+    "contract_builder_reasoning_effort": None,
+    "ci_fix_reasoning_effort": None,
     "autonomy": "balanced",
     "question_limit": 3,
     "question_timeout": 1800,
@@ -45,6 +52,19 @@ class UpdateSettingsRequest(BaseModel):
     reviewer_model: str | None = None
     contract_builder_model: str | None = None
     ci_fix_model: str | None = None
+    planner_reasoning_effort: str | None = Field(None, pattern="^(low|medium|high)$")
+    agent_model_low_reasoning_effort: str | None = Field(None, pattern="^(low|medium|high)$")
+    agent_model_medium_reasoning_effort: str | None = Field(
+        None, pattern="^(low|medium|high)$"
+    )
+    agent_model_high_reasoning_effort: str | None = Field(
+        None, pattern="^(low|medium|high)$"
+    )
+    reviewer_reasoning_effort: str | None = Field(None, pattern="^(low|medium|high)$")
+    contract_builder_reasoning_effort: str | None = Field(
+        None, pattern="^(low|medium|high)$"
+    )
+    ci_fix_reasoning_effort: str | None = Field(None, pattern="^(low|medium|high)$")
     autonomy: str | None = None
     question_limit: int | None = Field(None, ge=1, le=10)
     question_timeout: int | None = Field(None, ge=60, le=7200)

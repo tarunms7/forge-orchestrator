@@ -132,6 +132,10 @@ class ContractBuilderLLM:
                 output_contract=OutputContract(format="json"),
                 workspace=workspace,
                 max_turns=10,
+                reasoning_effort=self._registry.settings.resolve_reasoning_effort(
+                    "contract_builder",
+                    "high",
+                ),
                 on_event=_on_event,
             )
             result = await handle.result()

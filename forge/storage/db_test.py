@@ -531,6 +531,29 @@ async def test_restart_pipeline_nonexistent_returns_zeros(db: Database):
     assert result == {"tasks_reset": 0, "events_deleted": 0}
 
 
+async def test_reset_task_for_human_retry_refunds_one_retry(db: Database):
+    """Explicit human retry should restore one consumed retry slot."""
+    await db.create_task(
+        id="t-human-retry",
+        title="Retry",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-r1",
+    )
+    await db.retry_task("t-human-retry")
+
+    task = await db.get_task("t-human-retry")
+    assert task.retry_count == 1
+
+    await db.reset_task_for_human_retry("t-human-retry")
+
+    task = await db.get_task("t-human-retry")
+    assert task.state == "todo"
+    assert task.retry_count == 0
+
+
 # ── cancel_pipeline_hard tests ──────────────────────────────────────
 
 

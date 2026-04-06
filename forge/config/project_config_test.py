@@ -179,6 +179,31 @@ class TestApplyProjectConfig:
         apply_project_config(settings, config)
         assert settings.test_cmd == "npm test"
 
+    def test_applies_routing_and_reasoning_settings(self):
+        from forge.config.settings import ForgeSettings
+
+        config = ProjectConfig(
+            routing=RoutingConfig(
+                planner="claude:opus",
+                reviewer="openai:gpt-5.4",
+                reviewer_reasoning_effort="high",
+            )
+        )
+        settings = ForgeSettings()
+        apply_project_config(settings, config)
+        assert settings.planner_model == "claude:opus"
+        assert settings.reviewer_model == "openai:gpt-5.4"
+        assert settings.reviewer_reasoning_effort == "high"
+
+    def test_routing_env_var_wins_over_toml(self, monkeypatch):
+        from forge.config.settings import ForgeSettings
+
+        monkeypatch.setenv("FORGE_REVIEWER_REASONING_EFFORT", "low")
+        config = ProjectConfig(routing=RoutingConfig(reviewer_reasoning_effort="high"))
+        settings = ForgeSettings()
+        apply_project_config(settings, config)
+        assert settings.reviewer_reasoning_effort == "low"
+
 
 class TestIntegrationConfig:
     """Tests for [integration] section parsing."""
@@ -691,6 +716,7 @@ class TestRoutingConfig:
         assert r.agent_low is None
         assert r.reviewer is None
         assert r.ci_fix is None
+        assert r.reviewer_reasoning_effort is None
 
     def test_to_overrides_empty(self):
         r = RoutingConfig()
@@ -700,6 +726,10 @@ class TestRoutingConfig:
         r = RoutingConfig(planner="opus", ci_fix="haiku")
         overrides = r.to_overrides()
         assert overrides == {"planner_model": "opus", "ci_fix_model": "haiku"}
+
+    def test_to_reasoning_overrides_partial(self):
+        r = RoutingConfig(reviewer_reasoning_effort="high")
+        assert r.to_reasoning_overrides() == {"reviewer_reasoning_effort": "high"}
 
     def test_to_overrides_all(self):
         r = RoutingConfig(
@@ -720,14 +750,20 @@ class TestRoutingConfig:
             'planner = "opus"\n'
             'agent_low = "haiku"\n'
             'reviewer = "openai:gpt-5.4"\n'
+            'reviewer_reasoning_effort = "high"\n'
             'ci_fix = "sonnet"\n'
         )
         config = ProjectConfig.from_toml(str(toml_path))
         assert config.routing.planner == "opus"
         assert config.routing.agent_low == "haiku"
         assert config.routing.reviewer == "openai:gpt-5.4"
+        assert config.routing.reviewer_reasoning_effort == "high"
         assert config.routing.ci_fix == "sonnet"
         assert config.routing.agent_medium is None
+
+    def test_invalid_reasoning_effort_raises(self):
+        with pytest.raises(ValueError, match="reasoning_effort"):
+            RoutingConfig(reviewer_reasoning_effort="turbo")
 
     def test_from_toml_no_routing_section(self, tmp_path):
         toml_path = tmp_path / "forge.toml"

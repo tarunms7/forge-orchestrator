@@ -1250,3 +1250,7 @@ class TestExtractActivityProviderEvent:
         result = _extract_activity(event)
         assert result is not None
         assert "def main" in result
+
+    def test_status_event_returns_human_label(self):
+        event = ProviderEvent(kind=EventKind.STATUS, status="thinking")
+        assert _extract_activity(event) == "Thinking…"

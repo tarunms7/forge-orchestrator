@@ -843,6 +843,32 @@ class Database:
                     task.review_feedback = review_feedback
                 await session.commit()
 
+    async def reset_task_for_human_retry(
+        self,
+        task_id: str,
+        *,
+        review_feedback: str | None = None,
+        refund_retry: bool = True,
+    ) -> None:
+        """Reset a task for an explicit human retry without burning extra budget.
+
+        Human-driven retries happen after a pipeline/task has already failed for a
+        visible reason. Refund one consumed retry slot so abrupt failures do not
+        permanently steal all remaining room for recovery.
+        """
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                if refund_retry and task.retry_count > 0:
+                    task.retry_count -= 1
+                task.state = "todo"
+                task.assigned_agent = None
+                task.retry_reason = None
+                task.error_message = None
+                if review_feedback is not None:
+                    task.review_feedback = review_feedback
+                await session.commit()
+
     async def retry_task_for_merge(self, task_id: str) -> None:
         """Reset a task for merge-only retry (skip agent + review on next run).
 

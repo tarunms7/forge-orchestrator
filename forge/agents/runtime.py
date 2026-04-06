@@ -76,6 +76,7 @@ class AgentRuntime:
         project_dir: str | None = None,
         agent_max_turns: int = 75,
         project_commands: dict[str, str] | None = None,
+        reasoning_effort: str | None = None,
     ) -> AgentResult:
         if self._registry is not None:
             return await self._run_provider_task(
@@ -99,6 +100,7 @@ class AgentRuntime:
                 project_dir=project_dir,
                 agent_max_turns=agent_max_turns,
                 project_commands=project_commands,
+                reasoning_effort=reasoning_effort,
             )
 
         if self._adapter is None:
@@ -208,6 +210,7 @@ class AgentRuntime:
         project_dir: str | None = None,
         agent_max_turns: int = 75,
         project_commands: dict[str, str] | None = None,
+        reasoning_effort: str | None = None,
     ) -> AgentResult:
         effective_timeout = timeout_seconds if timeout_seconds is not None else self._timeout
         spec = model if isinstance(model, ModelSpec) else ModelSpec.parse(model)
@@ -269,6 +272,7 @@ class AgentRuntime:
             on_event=_on_event if on_message is not None else None,
             resume_state=resume_state,
             cost_registry=self._cost_registry,
+            reasoning_effort=reasoning_effort,
         )
         result.files_changed = await _get_changed_files(worktree_path)
         return result
@@ -290,6 +294,7 @@ async def run_with_retry(
     max_retries: int = 2,
     resume_state: ResumeState | None = None,
     cost_registry: CostRegistry | None = None,
+    reasoning_effort: str | None = None,
 ) -> AgentResult:
     """Provider-protocol-aware retry loop with safety auditor integration.
 
@@ -311,6 +316,7 @@ async def run_with_retry(
         on_event: Optional callback for streaming events to consumers.
         max_retries: Number of retries (total attempts = max_retries + 1).
         resume_state: Optional resume state for continuing a session.
+        reasoning_effort: Optional per-stage reasoning effort override.
 
     Returns:
         AgentResult with provider metadata populated.
@@ -355,6 +361,7 @@ async def run_with_retry(
                 output_contract=output_contract,
                 workspace=workspace,
                 max_turns=max_turns,
+                reasoning_effort=reasoning_effort,
                 resume_state=resume_state if attempt == 0 else None,
                 on_event=event_cb,
             )

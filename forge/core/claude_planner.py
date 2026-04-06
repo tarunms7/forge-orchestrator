@@ -8,6 +8,9 @@ import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from claude_code_sdk import ClaudeCodeOptions
+
+from forge.core import sdk_helpers
 from forge.core.errors import SdkCallError
 from forge.core.planner import PlannerLLM
 from forge.core.sanitize import extract_json_block
@@ -26,6 +29,7 @@ if TYPE_CHECKING:
     from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.planner")
+sdk_query = sdk_helpers.sdk_query  # Backward-compat alias for legacy tests/mocks.
 
 PLANNER_SYSTEM_PROMPT = """You are a task decomposition engine for a multi-agent coding system called Forge.
 
@@ -162,7 +166,27 @@ class ClaudePlannerLLM(PlannerLLM):
             system_prompt += self._system_prompt_modifier
 
         if self._registry is None:
-            raise SdkCallError("ProviderRegistry not set on ClaudePlannerLLM")
+            try:
+                result = await sdk_query(
+                    prompt=prompt,
+                    options=ClaudeCodeOptions(
+                        system_prompt=system_prompt,
+                        max_turns=30,
+                        cwd=self._cwd or ".",
+                        model=self._model_spec.model,
+                    ),
+                    on_message=on_message,
+                )
+            except Exception as e:
+                raise SdkCallError(f"SDK call failed: {e}", original_error=e) from e
+
+            result_text = (
+                getattr(result, "result", None)
+                or getattr(result, "result_text", None)
+                or ""
+            )
+            extracted = extract_json_block(result_text) or result_text
+            return extracted
 
         provider = self._registry.get_for_model(self._model_spec)
         catalog_entry = self._registry.get_catalog_entry(self._model_spec)
@@ -184,6 +208,10 @@ class ClaudePlannerLLM(PlannerLLM):
                 output_contract=OutputContract(format="freeform"),
                 workspace=workspace,
                 max_turns=30,
+                reasoning_effort=self._registry.settings.resolve_reasoning_effort(
+                    "planner",
+                    "high",
+                ),
                 on_event=_on_event,
             )
             result = await handle.result()

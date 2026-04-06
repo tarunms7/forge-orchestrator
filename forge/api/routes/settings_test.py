@@ -65,6 +65,7 @@ class TestGetSettings:
         assert data["agent_model_medium"] == "opus"
         assert data["agent_model_high"] == "opus"
         assert data["reviewer_model"] == "sonnet"
+        assert data["reviewer_reasoning_effort"] is None
 
 
 class TestUpdateSettings:
@@ -115,6 +116,36 @@ class TestUpdateSettings:
         # Unchanged model fields keep defaults
         assert data["agent_model_medium"] == "opus"
         assert data["agent_model_high"] == "opus"
+
+    async def test_update_reasoning_effort_fields(self, client):
+        """PUT /settings should update per-stage reasoning effort fields."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        resp = await client.put(
+            "/api/settings",
+            json={
+                "reviewer_reasoning_effort": "high",
+                "planner_reasoning_effort": "medium",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["reviewer_reasoning_effort"] == "high"
+        assert data["planner_reasoning_effort"] == "medium"
+
+    async def test_validation_rejects_invalid_reasoning_effort(self, client):
+        """PUT /settings should reject invalid reasoning-effort values."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        resp = await client.put(
+            "/api/settings",
+            json={"reviewer_reasoning_effort": "turbo"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
 
     async def test_settings_persist_across_requests(self, client):
         """Settings should persist across multiple requests (DB-backed)."""

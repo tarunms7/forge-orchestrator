@@ -23,6 +23,7 @@ from forge.core.provider_config import (
     build_provider_registry,
     build_settings_for_project,
     resolve_model_for_stage,
+    resolve_reasoning_effort_for_stage,
     resolve_registry_model,
 )
 from forge.core.sanitize import validate_repo_id, validate_task_id
@@ -175,6 +176,11 @@ async def classify_questions(
                 output_contract=OutputContract(format="freeform"),
                 workspace=WorkspaceRoots(primary_cwd="."),
                 max_turns=1,
+                reasoning_effort=resolve_reasoning_effort_for_stage(
+                    registry.settings,
+                    "planner",
+                    "low",
+                ),
             )
             result = await handle.result()
             text = (result.text or "").strip()
@@ -470,6 +476,7 @@ async def _execute_task_followup(
             allowed_files=task_files,
             on_message=on_message,
             model=str(agent_model),
+            reasoning_effort=settings.resolve_reasoning_effort("agent", "medium"),
         )
 
         # If the agent made changes, commit and push

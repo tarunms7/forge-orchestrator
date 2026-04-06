@@ -26,6 +26,13 @@ _USER_SETTINGS_TO_ATTR = {
     "reviewer_model": "reviewer_model",
     "contract_builder_model": "contract_builder_model",
     "ci_fix_model": "ci_fix_model",
+    "planner_reasoning_effort": "planner_reasoning_effort",
+    "agent_model_low_reasoning_effort": "agent_model_low_reasoning_effort",
+    "agent_model_medium_reasoning_effort": "agent_model_medium_reasoning_effort",
+    "agent_model_high_reasoning_effort": "agent_model_high_reasoning_effort",
+    "reviewer_reasoning_effort": "reviewer_reasoning_effort",
+    "contract_builder_reasoning_effort": "contract_builder_reasoning_effort",
+    "ci_fix_reasoning_effort": "ci_fix_reasoning_effort",
     "autonomy": "autonomy",
     "question_limit": "question_limit",
     "question_timeout": "question_timeout",
@@ -40,6 +47,16 @@ _SNAPSHOT_TO_SETTING = {
     "reviewer": "reviewer_model",
     "contract_builder": "contract_builder_model",
     "ci_fix": "ci_fix_model",
+}
+
+_SNAPSHOT_TO_REASONING_SETTING = {
+    "planner": "planner_reasoning_effort",
+    "agent_low": "agent_model_low_reasoning_effort",
+    "agent_medium": "agent_model_medium_reasoning_effort",
+    "agent_high": "agent_model_high_reasoning_effort",
+    "reviewer": "reviewer_reasoning_effort",
+    "contract_builder": "contract_builder_reasoning_effort",
+    "ci_fix": "ci_fix_reasoning_effort",
 }
 
 _ROUTING_PLAN = (
@@ -114,6 +131,14 @@ def apply_provider_config_snapshot(
                 spec = f"{provider}:{model}"
         if isinstance(spec, str) and spec:
             setattr(settings, settings_attr, spec)
+        reasoning_effort = entry.get("reasoning_effort")
+        reasoning_attr = _SNAPSHOT_TO_REASONING_SETTING.get(snapshot_key)
+        if (
+            reasoning_attr
+            and isinstance(reasoning_effort, str)
+            and reasoning_effort in {"low", "medium", "high"}
+        ):
+            setattr(settings, reasoning_attr, reasoning_effort)
 
 
 def build_settings_for_project(
@@ -163,6 +188,37 @@ def _custom_entry_from_config(
     )
 
 
+def _settings_reference_provider(settings: ForgeSettings, provider_name: str) -> bool:
+    """Return True when any explicit per-stage override references a provider."""
+    model_fields = (
+        settings.planner_model,
+        settings.agent_model_low,
+        settings.agent_model_medium,
+        settings.agent_model_high,
+        settings.reviewer_model,
+        settings.contract_builder_model,
+        settings.ci_fix_model,
+    )
+    for raw in model_fields:
+        if not raw:
+            continue
+        try:
+            if ModelSpec.parse(raw).provider == provider_name:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def resolve_reasoning_effort_for_stage(
+    settings: ForgeSettings,
+    stage: str,
+    complexity: str = "medium",
+) -> str | None:
+    """Resolve the explicit reasoning-effort override for a stage, if configured."""
+    return settings.resolve_reasoning_effort(stage, complexity)
+
+
 def build_provider_registry(
     settings: ForgeSettings,
     project_config: ProjectConfig | None = None,
@@ -173,7 +229,11 @@ def build_provider_registry(
     registry = ProviderRegistry(settings)
     registry.register(ClaudeProvider())
 
-    if settings.openai_enabled:
+    needs_openai = settings.openai_enabled or _settings_reference_provider(settings, "openai")
+    if not needs_openai and project_config is not None:
+        needs_openai = any(cm.provider == "openai" for cm in project_config.custom_models)
+
+    if needs_openai:
         try:
             from forge.providers.openai import OpenAIProvider
 
@@ -299,11 +359,13 @@ def build_provider_config_snapshot(
 ) -> dict[str, Any]:
     """Build the persisted per-stage provider routing snapshot for a pipeline."""
     stages: dict[str, dict[str, str]] = {}
-    for snapshot_key, spec in resolve_pipeline_models(
+    resolved = resolve_pipeline_models(
         settings,
         registry,
         strategy=strategy,
-    ).items():
+    )
+    for snapshot_key, stage, complexity in _ROUTING_PLAN:
+        spec = resolved[snapshot_key]
         entry = registry.get_catalog_entry(spec)
         stages[snapshot_key] = {
             "spec": str(spec),
@@ -312,6 +374,9 @@ def build_provider_config_snapshot(
             "backend": entry.backend,
             "canonical_id": entry.canonical_id,
         }
+        reasoning_effort = resolve_reasoning_effort_for_stage(settings, stage, complexity)
+        if reasoning_effort is not None:
+            stages[snapshot_key]["reasoning_effort"] = reasoning_effort
     return {
         "model_strategy": strategy or settings.model_strategy,
         "stages": stages,

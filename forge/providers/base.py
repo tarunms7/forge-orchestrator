@@ -345,6 +345,7 @@ class ProviderProtocol(Protocol):
         output_contract: OutputContract,
         workspace: WorkspaceRoots,
         max_turns: int,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
         mcp_servers: list[MCPServerConfig] | None = None,
         resume_state: ResumeState | None = None,
         on_event: Callable[[ProviderEvent], None] | None = None,

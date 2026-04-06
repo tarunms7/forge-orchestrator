@@ -23,9 +23,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from claude_code_sdk import ClaudeCodeOptions
 from pydantic import ValidationError as PydanticValidationError
 
 from forge.agents.adapter import _build_question_protocol
+from forge.core import sdk_helpers
 from forge.core.models import TaskGraph
 from forge.core.planning.models import ValidationResult
 from forge.core.planning.validator import validate_plan
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
     from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.planning.unified")
+sdk_query = sdk_helpers.sdk_query  # Backward-compat alias for legacy tests/mocks.
 
 _QUESTION_PATTERN = re.compile(r"FORGE_QUESTION:\s*\n?\s*(\{.*?\})\s*$", re.DOTALL)
 
@@ -127,12 +130,12 @@ class UnifiedPlanner:
         resume_state: ResumeState | None = None
         feedback: str | None = None
 
-        if self._registry is None:
-            raise RuntimeError("ProviderRegistry not set on UnifiedPlanner")
-
-        provider = self._registry.get_for_model(self._model_spec)
-        catalog_entry = self._registry.get_catalog_entry(self._model_spec)
+        provider = None
+        catalog_entry = None
         workspace = WorkspaceRoots(primary_cwd=self._cwd or ".")
+        if self._registry is not None:
+            provider = self._registry.get_for_model(self._model_spec)
+            catalog_entry = self._registry.get_catalog_entry(self._model_spec)
 
         # Bridge async on_message callback from sync on_event
         def _on_event(event: ProviderEvent) -> None:
@@ -158,39 +161,63 @@ class UnifiedPlanner:
                 lessons_block=lessons_block,
                 repo_ids=self._repo_ids,
             )
+            provider_result = None
 
             try:
-                handle = provider.start(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    catalog_entry=catalog_entry,
-                    execution_mode=ExecutionMode.INTELLIGENCE,
-                    tool_policy=PLANNER_TOOL_POLICY,
-                    output_contract=OutputContract(format="forge_question_capable"),
-                    workspace=workspace,
-                    max_turns=self._max_turns,
-                    resume_state=resume_state,
-                    on_event=_on_event,
-                )
-                result = await handle.result()
+                if provider is None or catalog_entry is None:
+                    sdk_result = await sdk_query(
+                        prompt=prompt,
+                        options=ClaudeCodeOptions(
+                            system_prompt=system_prompt,
+                            cwd=self._cwd or ".",
+                            model=self._model_spec.model,
+                            max_turns=self._max_turns,
+                            disallowed_tools=["Edit", "Write"],
+                        ),
+                        on_message=on_message,
+                    )
+                    raw = (
+                        getattr(sdk_result, "result", None)
+                        or getattr(sdk_result, "result_text", None)
+                        or ""
+                    )
+                    total_cost += float(getattr(sdk_result, "cost_usd", 0.0) or 0.0)
+                    total_input += int(getattr(sdk_result, "input_tokens", 0) or 0)
+                    total_output += int(getattr(sdk_result, "output_tokens", 0) or 0)
+                else:
+                    handle = provider.start(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        catalog_entry=catalog_entry,
+                        execution_mode=ExecutionMode.INTELLIGENCE,
+                        tool_policy=PLANNER_TOOL_POLICY,
+                        output_contract=OutputContract(format="forge_question_capable"),
+                        workspace=workspace,
+                        max_turns=self._max_turns,
+                        reasoning_effort=self._registry.settings.resolve_reasoning_effort(
+                            "planner",
+                            "high",
+                        ),
+                        resume_state=resume_state,
+                        on_event=_on_event,
+                    )
+                    provider_result = await handle.result()
+                    # Calculate cost from provider result
+                    attempt_cost = 0.0
+                    if provider_result.provider_reported_cost_usd is not None:
+                        attempt_cost = provider_result.provider_reported_cost_usd
+                    total_cost += attempt_cost
+                    total_input += provider_result.input_tokens
+                    total_output += provider_result.output_tokens
+                    raw = provider_result.text or ""
             except Exception as e:
                 logger.warning("UnifiedPlanner provider error on attempt %d: %s", attempt + 1, e)
                 feedback = f"Provider error: {e}"
                 resume_state = None
                 continue
 
-            if result.is_error and not result.text:
+            if provider_result is not None and provider_result.is_error and not provider_result.text:
                 continue
-
-            # Calculate cost from provider result
-            attempt_cost = 0.0
-            if result.provider_reported_cost_usd is not None:
-                attempt_cost = result.provider_reported_cost_usd
-            total_cost += attempt_cost
-            total_input += result.input_tokens
-            total_output += result.output_tokens
-
-            raw = result.text or ""
 
             # Check for FORGE_QUESTION — agent wants human input
             q_match = _QUESTION_PATTERN.search(raw)
@@ -203,7 +230,9 @@ class UnifiedPlanner:
                     questions_asked += 1
                     answer = await on_question(q_data)
                     if answer:
-                        resume_state = result.resume_state
+                        resume_state = (
+                            provider_result.resume_state if provider_result is not None else None
+                        )
                         feedback = answer
                         continue
 
@@ -251,7 +280,7 @@ class UnifiedPlanner:
                     f"Your TaskGraph has structural issues:\n{issue_text}\n\n"
                     "Fix these and produce a corrected TaskGraph JSON."
                 )
-                resume_state = result.resume_state
+                resume_state = provider_result.resume_state if provider_result is not None else None
                 logger.warning(
                     "UnifiedPlanner attempt %d has %d validation issues, retrying",
                     attempt + 1,
