@@ -16,6 +16,7 @@ from forge.agents.adapter import (
     _get_changed_files,
     build_agent_system_prompt,
 )
+from forge.core.async_utils import safe_create_task
 from forge.core.cost_registry import CostRegistry
 from forge.learning.guard import GuardTriggered
 from forge.providers.base import (
@@ -251,7 +252,7 @@ class AgentRuntime:
             try:
                 result = on_message(event)
                 if inspect.isawaitable(result):
-                    asyncio.create_task(result)
+                    safe_create_task(result, logger=logger, name=f'agent-event-{agent_id}')
             except Exception:
                 logger.warning("Agent event callback failed for %s", agent_id, exc_info=True)
 

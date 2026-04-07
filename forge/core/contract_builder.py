@@ -8,6 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from forge.core.async_utils import safe_create_task
 from forge.core.contracts import ContractSet, IntegrationHint
 from forge.core.models import TaskGraph
 from forge.core.sanitize import extract_json_block
@@ -123,7 +124,7 @@ class ContractBuilderLLM:
 
         def _on_event(event: ProviderEvent) -> None:
             if on_message is not None:
-                asyncio.ensure_future(on_message(event))
+                safe_create_task(on_message(event), logger=logger, name='contract-event')
 
         try:
             handle = provider.start(

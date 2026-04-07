@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from claude_code_sdk import ClaudeCodeOptions
 
 from forge.core import sdk_helpers
+from forge.core.async_utils import safe_create_task
 from forge.core.errors import SdkCallError
 from forge.core.planner import PlannerLLM
 from forge.core.sanitize import extract_json_block
@@ -194,7 +195,7 @@ class ClaudePlannerLLM(PlannerLLM):
         # Bridge async on_message callback from sync on_event
         def _on_event(event: ProviderEvent) -> None:
             if on_message is not None:
-                asyncio.ensure_future(on_message(event))
+                safe_create_task(on_message(event), logger=logger, name='planner-event')
 
         try:
             handle = provider.start(

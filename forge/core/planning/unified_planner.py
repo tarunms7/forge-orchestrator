@@ -28,6 +28,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from forge.agents.adapter import _build_question_protocol
 from forge.core import sdk_helpers
+from forge.core.async_utils import safe_create_task
 from forge.core.daemon_helpers import _parse_forge_question
 from forge.core.models import TaskGraph
 from forge.core.planning.models import ValidationResult
@@ -139,7 +140,7 @@ class UnifiedPlanner:
         # Bridge async on_message callback from sync on_event
         def _on_event(event: ProviderEvent) -> None:
             if on_message is not None:
-                asyncio.ensure_future(on_message(event))
+                safe_create_task(on_message(event), logger=logger, name='unified-planner-event')
 
         for attempt in range(self._max_retries):
             logger.info("UnifiedPlanner attempt %d/%d", attempt + 1, self._max_retries)
