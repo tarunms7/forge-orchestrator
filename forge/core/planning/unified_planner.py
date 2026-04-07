@@ -15,7 +15,6 @@ runs locally in Python after the agent finishes — no LLM call, milliseconds.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
