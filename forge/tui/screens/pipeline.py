@@ -822,7 +822,9 @@ class PipelineScreen(Screen):
                     self._auto_switch_chat(tid, task)
         elif state.phase == "planning" and state.planner_output:
             agent_output.clear_error_detail()
-            agent_output.update_output("planner", "Planning", "planning", state.planner_collapsed_output)
+            agent_output.update_output(
+                "planner", "Planning", "planning", state.planner_collapsed_output
+            )
             agent_output.set_streaming(True)
             # Auto-switch to chat view when a planning question is pending
             planning_q = state.pending_questions.get("__planning__")

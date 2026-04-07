@@ -8,7 +8,9 @@ from textual.widgets import TextArea
 
 _MOUSE_REPORT_RE = re.compile(r"(?:\x1b)?\[*<\d+;\d+;\d+[Mm]?")
 _RAW_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|[@-_])")
-_CARET_ESCAPE_RE = re.compile(r"(?:\^\[)+(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|<\d+;\d+;\d+[Mm]?|[0-9;?]*[A-Za-z~]?)")
+_CARET_ESCAPE_RE = re.compile(
+    r"(?:\^\[)+(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|<\d+;\d+;\d+[Mm]?|[0-9;?]*[A-Za-z~]?)"
+)
 _PARTIAL_BRACKETED_PASTE_RE = re.compile(r"\[+20[01]~")
 _BRACKET_STUTTER_RE = re.compile(r"\[{3,}(?:M\[?)?")
 _PARTIAL_CSI_KEY_RE = re.compile(r"\[+(?:[0-9;?]*[ABCDHFMP~])")

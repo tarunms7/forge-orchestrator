@@ -176,7 +176,7 @@ class TuiState:
 
         # Set planner completion status and count candidate tasks
         old_status = self.planner_status
-        self.planner_status = 'planning complete'
+        self.planner_status = "planning complete"
         self.planner_candidate_tasks = len(tasks_list)
         if old_status != self.planner_status:
             self._notify("planner_status")
@@ -271,15 +271,15 @@ class TuiState:
 
         # Infer planner status from line content
         old_status = self.planner_status
-        if line.startswith('📖 Reading'):
-            self.planner_status = 'reading files'
+        if line.startswith("📖 Reading"):
+            self.planner_status = "reading files"
             self.planner_files_examined += 1
-        elif line.startswith('🔍 Searching') or line.startswith('🔍 Grep'):
-            self.planner_status = 'scanning codebase'
-        elif 'Planner generating' in line and '⚙' in line:
-            self.planner_status = 'building task graph'
-        elif 'Analyzing codebase' in line or 'Starting planner' in line:
-            self.planner_status = 'scanning codebase'
+        elif line.startswith("🔍 Searching") or line.startswith("🔍 Grep"):
+            self.planner_status = "scanning codebase"
+        elif "Planner generating" in line and "⚙" in line:
+            self.planner_status = "building task graph"
+        elif "Analyzing codebase" in line or "Starting planner" in line:
+            self.planner_status = "scanning codebase"
 
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
@@ -681,7 +681,7 @@ class TuiState:
 
         # Set planner status to waiting for input
         old_status = self.planner_status
-        self.planner_status = 'waiting for human input'
+        self.planner_status = "waiting for human input"
         if old_status != self.planner_status:
             self._notify("planner_status")
 
@@ -696,7 +696,7 @@ class TuiState:
 
         # Resume planner status after answering question
         old_status = self.planner_status
-        self.planner_status = 'reading files'
+        self.planner_status = "reading files"
         if old_status != self.planner_status:
             self._notify("planner_status")
 
@@ -721,15 +721,15 @@ class TuiState:
 
         # Infer planner status from line content
         old_status = self.planner_status
-        if line.startswith('📖 Reading'):
-            self.planner_status = 'reading files'
+        if line.startswith("📖 Reading"):
+            self.planner_status = "reading files"
             self.planner_files_examined += 1
-        elif line.startswith('🔍 Searching') or line.startswith('🔍 Grep'):
-            self.planner_status = 'scanning codebase'
-        elif 'Planner generating' in line and '⚙' in line:
-            self.planner_status = 'building task graph'
-        elif 'Analyzing codebase' in line or 'Starting planner' in line:
-            self.planner_status = 'scanning codebase'
+        elif line.startswith("🔍 Searching") or line.startswith("🔍 Grep"):
+            self.planner_status = "scanning codebase"
+        elif "Planner generating" in line and "⚙" in line:
+            self.planner_status = "building task graph"
+        elif "Analyzing codebase" in line or "Starting planner" in line:
+            self.planner_status = "scanning codebase"
 
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
@@ -924,7 +924,7 @@ class TuiState:
             return []
 
         collapsed = []
-        collapsible_prefixes = ['📖 Reading', '🔍 Searching', '🔍 Grep']
+        collapsible_prefixes = ["📖 Reading", "🔍 Searching", "🔍 Grep"]
         i = 0
 
         while i < len(self.planner_output):
@@ -946,8 +946,9 @@ class TuiState:
             # Found a collapsible line, look for consecutive matches
             run_start = i
             run_end = i
-            while (run_end < len(self.planner_output) and
-                   self.planner_output[run_end].startswith(matching_prefix)):
+            while run_end < len(self.planner_output) and self.planner_output[run_end].startswith(
+                matching_prefix
+            ):
                 run_end += 1
 
             run_length = run_end - run_start

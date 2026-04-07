@@ -650,7 +650,9 @@ async def synthesize_results(
         except (TimeoutError, Exception) as exc:
             logger.warning("Synthesis attempt %d/%d failed: %s", attempt, max_attempts, exc)
             if attempt == max_attempts:
-                return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
+                return _synthesis_fallback(
+                    chunk_results, chunks, pre_verdict, total_cost, strategy_label
+                )
             await asyncio.sleep(2**attempt)
             continue
 
@@ -666,7 +668,9 @@ async def synthesize_results(
         raw = result.text or ""
         if not raw:
             if attempt == max_attempts:
-                return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
+                return _synthesis_fallback(
+                    chunk_results, chunks, pre_verdict, total_cost, strategy_label
+                )
             await asyncio.sleep(2**attempt)
             continue
 
