@@ -406,6 +406,7 @@ class AgentOutput(Widget):
         self._typing_timer = None
         self._error_mode: bool = False
         self._unified_entries: list[tuple[str, str]] = []
+        self._blocked_detail: str | None = None
         self._search_pattern: str | None = None
         # Incremental rendering state
         self._rendered_parts: list[str] = []
@@ -460,14 +461,7 @@ class AgentOutput(Widget):
             try:
                 content = self.query_one("#agent-content", Static)
                 if self._unified_entries:
-                    content.update(
-                        format_unified_output(
-                            self._unified_entries,
-                            self._spinner_frame,
-                            streaming=True,
-                            typing_frame=self._typing_frame,
-                        )
-                    )
+                    content.update(self._format_content_with_blocked_detail())
                 else:
                     content.update(
                         format_output(
@@ -508,7 +502,7 @@ class AgentOutput(Widget):
                 if self._is_near_bottom():
                     self._request_scroll()
             elif self._unified_entries:
-                content.update(format_unified_output(self._unified_entries, self._spinner_frame))
+                content.update(self._format_content_with_blocked_detail())
             else:
                 content.update(format_output(self._lines, self._spinner_frame))
         except Exception:
@@ -543,14 +537,7 @@ class AgentOutput(Widget):
             try:
                 content = self.query_one("#agent-content", Static)
                 if self._unified_entries:
-                    content.update(
-                        format_unified_output(
-                            self._unified_entries,
-                            self._spinner_frame,
-                            streaming=self._streaming,
-                            typing_frame=self._typing_frame,
-                        )
-                    )
+                    content.update(self._format_content_with_blocked_detail())
                 else:
                     content.update(
                         format_output(
@@ -617,6 +604,7 @@ class AgentOutput(Widget):
         self._state = state
         self._lines = list(lines)  # Copy to avoid aliasing state.agent_output[tid]
         self._unified_entries = []  # Clear unified data when switching to line-based mode
+        self._blocked_detail = None  # Clear blocked detail when switching to line-based mode
 
         # Reset streaming state on full refresh
         self.set_streaming(False)
@@ -690,6 +678,9 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
+        self._blocked_detail = (
+            None  # Clear blocked detail in sync mode (streaming doesn't show blocked detail)
+        )
         self._lines = []
         # Reset fade animation
         self._fade_step = len(_FADE_STEPS)
@@ -728,15 +719,21 @@ class AgentOutput(Widget):
         title: str | None,
         state: str | None,
         entries: list[tuple[str, str]],
+        blocked_detail: str | None = None,
     ) -> None:
         """Full refresh with unified log entries.
 
         Replaces _unified_entries with the authoritative state from TuiState.
+
+        Args:
+            blocked_detail: Optional multi-line blocked reason detail. When provided,
+                           prepend as styled header above unified content.
         """
         self._task_id = task_id
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
+        self._blocked_detail = blocked_detail
         self._lines = []  # Clear line-based data when switching to unified mode
         # Reset incremental rendering state
         self._rendered_parts = []
@@ -751,12 +748,51 @@ class AgentOutput(Widget):
         try:
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             self.query_one("#agent-content", Static).update(
-                format_unified_output(entries, self._spinner_frame)
+                self._format_content_with_blocked_detail()
             )
             if entries and self._is_near_bottom():
                 self._request_scroll()
         except Exception:
             pass  # Not yet composed
+
+    def _format_content_with_blocked_detail(self) -> str:
+        """Format unified content with optional blocked detail header."""
+        unified_output = format_unified_output(
+            self._unified_entries,
+            self._spinner_frame,
+            streaming=self._streaming,
+            typing_frame=self._typing_frame,
+        )
+
+        if not self._blocked_detail:
+            return unified_output
+
+        # Determine color based on blocked reason content
+        detail_lines = self._blocked_detail.split("\n")
+        if detail_lines:
+            first_line = detail_lines[0].lower()
+            if "blocked" in first_line and "failed" in first_line:
+                color = "#f0883e"  # Orange for blocked-by-failure
+            else:
+                color = "#8b949e"  # Gray for waiting-on-deps
+        else:
+            color = "#8b949e"
+
+        # Format blocked detail header
+        header_lines = []
+        for line in detail_lines:
+            if line.strip():
+                header_lines.append(f"[{color}]{_escape(line)}[/]")
+            else:
+                header_lines.append("")
+
+        header = "\n".join(header_lines)
+        separator = "[#30363d]─────────────────────────────────────────[/#30363d]"
+
+        if unified_output.strip():
+            return f"{header}\n{separator}\n\n{unified_output}"
+        else:
+            return f"{header}\n{separator}"
 
     def set_search_highlights(self, pattern: str | None) -> int:
         """Apply or clear search highlights on the current content.
@@ -785,12 +821,7 @@ class AgentOutput(Widget):
             if self._streaming:
                 base += f"\n{_render_forging_shimmer(self._typing_frame)}"
         elif self._unified_entries:
-            base = format_unified_output(
-                self._unified_entries,
-                self._spinner_frame,
-                streaming=self._streaming,
-                typing_frame=self._typing_frame,
-            )
+            base = self._format_content_with_blocked_detail()
         else:
             base = format_output(
                 self._lines,
@@ -864,7 +895,7 @@ class AgentOutput(Widget):
             )
             if self._unified_entries:
                 self.query_one("#agent-content", Static).update(
-                    format_unified_output(self._unified_entries, self._spinner_frame)
+                    self._format_content_with_blocked_detail()
                 )
             else:
                 self.query_one("#agent-content", Static).update(
