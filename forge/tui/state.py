@@ -95,6 +95,11 @@ class TuiState:
         self.planning_stage: str = ""
         self.last_auto_decided: dict | None = None
 
+        # Planner progress tracking
+        self.planner_status: str = ""
+        self.planner_files_examined: int = 0
+        self.planner_candidate_tasks: int = 0
+
         # Task diffs: computed by the daemon from the worktree, stored here
         # so the TUI can display them immediately without running git commands.
         self.task_diffs: dict[str, str] = {}  # task_id → diff text
@@ -148,7 +153,9 @@ class TuiState:
         self.repos = data.get("repos", [])
         self.tasks.clear()
         self.task_order.clear()
-        for t in data.get("tasks", []):
+        tasks_list = data.get("tasks", [])
+
+        for t in tasks_list:
             tid = t.get("id")
             if not tid:
                 logger.warning("Skipping task without id in plan_ready: %s", t)
@@ -166,6 +173,14 @@ class TuiState:
                 "repo": t.get("repo"),
             }
             self.task_order.append(tid)
+
+        # Set planner completion status and count candidate tasks
+        old_status = self.planner_status
+        self.planner_status = 'planning complete'
+        self.planner_candidate_tasks = len(tasks_list)
+        if old_status != self.planner_status:
+            self._notify("planner_status")
+
         if self.task_order:
             # Always reset — IDs may change after daemon remaps them
             self.selected_task_id = self.task_order[0]
@@ -253,9 +268,26 @@ class TuiState:
         if _is_adjacent_duplicate(self.planner_output, line):
             self._notify("planner_output")
             return
+
+        # Infer planner status from line content
+        old_status = self.planner_status
+        if line.startswith('📖 Reading'):
+            self.planner_status = 'reading files'
+            self.planner_files_examined += 1
+        elif line.startswith('🔍 Searching') or line.startswith('🔍 Grep'):
+            self.planner_status = 'scanning codebase'
+        elif 'Planner generating' in line and '⚙' in line:
+            self.planner_status = 'building task graph'
+        elif 'Analyzing codebase' in line or 'Starting planner' in line:
+            self.planner_status = 'scanning codebase'
+
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
         self.planner_output.append(line)
+
+        # Notify status change if it changed
+        if old_status != self.planner_status:
+            self._notify("planner_status")
         self._notify("planner_output")
 
     def _on_cost_update(self, data: dict) -> None:
@@ -582,6 +614,12 @@ class TuiState:
         self.scheduling = None
         self.merge_substatus.clear()
         self.review_substatus.clear()
+
+        # Clear planner progress fields
+        self.planner_status = ""
+        self.planner_files_examined = 0
+        self.planner_candidate_tasks = 0
+
         self.phase = "planning"
         self._notify("phase")
 
@@ -640,6 +678,13 @@ class TuiState:
         if question_id:
             question["question_id"] = question_id
         self.pending_questions["__planning__"] = question
+
+        # Set planner status to waiting for input
+        old_status = self.planner_status
+        self.planner_status = 'waiting for human input'
+        if old_status != self.planner_status:
+            self._notify("planner_status")
+
         self._notify("planning")
 
     def _on_planning_answer(self, data: dict) -> None:
@@ -648,6 +693,13 @@ class TuiState:
         if q:
             history = self.question_history.setdefault("__planning__", [])
             history.append({"question": q, "answer": data.get("answer")})
+
+        # Resume planner status after answering question
+        old_status = self.planner_status
+        self.planner_status = 'reading files'
+        if old_status != self.planner_status:
+            self._notify("planner_status")
+
         self._notify("planning")
 
     def _handle_planning_output(self, stage: str, data: dict) -> None:
@@ -666,9 +718,26 @@ class TuiState:
         if _is_adjacent_duplicate(self.planner_output, line):
             self._notify("planner_output")
             return
+
+        # Infer planner status from line content
+        old_status = self.planner_status
+        if line.startswith('📖 Reading'):
+            self.planner_status = 'reading files'
+            self.planner_files_examined += 1
+        elif line.startswith('🔍 Searching') or line.startswith('🔍 Grep'):
+            self.planner_status = 'scanning codebase'
+        elif 'Planner generating' in line and '⚙' in line:
+            self.planner_status = 'building task graph'
+        elif 'Analyzing codebase' in line or 'Starting planner' in line:
+            self.planner_status = 'scanning codebase'
+
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
         self.planner_output.append(line)
+
+        # Notify status change if it changed
+        if old_status != self.planner_status:
+            self._notify("planner_status")
         self._notify("planner_output")
 
     # ── Integration health check handlers ──────────────────────────
@@ -797,6 +866,11 @@ class TuiState:
         self.pending_questions.clear()
         self.pr_url = None
         self._pending_state_updates.clear()
+
+        # Clear planner progress fields
+        self.planner_status = ""
+        self.planner_files_examined = 0
+        self.planner_candidate_tasks = 0
         self.error_history.clear()
         self.planning_stage = ""
         self.task_diffs.clear()
@@ -841,6 +915,56 @@ class TuiState:
     @property
     def is_multi_repo(self) -> bool:
         return len(self.repos) > 1
+
+    @property
+    def planner_collapsed_output(self) -> list[str]:
+        """Return a collapsed view of planner_output where consecutive runs of 3+
+        lines sharing the same emoji prefix are replaced with first line, summary, last line."""
+        if not self.planner_output:
+            return []
+
+        collapsed = []
+        collapsible_prefixes = ['📖 Reading', '🔍 Searching', '🔍 Grep']
+        i = 0
+
+        while i < len(self.planner_output):
+            line = self.planner_output[i]
+
+            # Check if this line matches any collapsible prefix
+            matching_prefix = None
+            for prefix in collapsible_prefixes:
+                if line.startswith(prefix):
+                    matching_prefix = prefix
+                    break
+
+            if matching_prefix is None:
+                # Not a collapsible line, add as-is
+                collapsed.append(line)
+                i += 1
+                continue
+
+            # Found a collapsible line, look for consecutive matches
+            run_start = i
+            run_end = i
+            while (run_end < len(self.planner_output) and
+                   self.planner_output[run_end].startswith(matching_prefix)):
+                run_end += 1
+
+            run_length = run_end - run_start
+
+            if run_length < 3:
+                # Run is too short to collapse, add all lines
+                for j in range(run_start, run_end):
+                    collapsed.append(self.planner_output[j])
+            else:
+                # Collapse the run: first line, summary, last line
+                collapsed.append(self.planner_output[run_start])
+                collapsed.append(f"  ... and {run_length - 2} more")
+                collapsed.append(self.planner_output[run_end - 1])
+
+            i = run_end
+
+        return collapsed
 
     _EVENT_MAP: dict[str, Callable[[TuiState, dict], None]] = {
         "pipeline:phase_changed": _on_phase_changed,
