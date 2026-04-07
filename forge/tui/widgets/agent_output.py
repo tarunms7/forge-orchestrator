@@ -35,13 +35,13 @@ _TYPING_FRAMES = ["▍", "▌", "▍", " "]
 
 # Shimmer forging animation
 _FORGING_LETTERS = [
-    ("╔═╗", "╠╣ ", "╚  "),  # F
-    ("╔═╗", "║ ║", "╚═╝"),  # O
-    ("╦═╗", "╠╦╝", "╩╚═"),  # R
-    ("╔═╗", "║ ╦", "╚═╝"),  # G
-    ("╦", "║", "╩"),  # I
-    ("╔╗╔", "║║║", "╝╚╝"),  # N
-    ("╔═╗", "║ ╦", "╚═╝"),  # G
+    ("╠╣", "╚"),  # F
+    ("║ ║", "╚═╝"),  # O
+    ("╠╦╝", "╩╚═"),  # R
+    ("║ ╦", "╚═╝"),  # G
+    ("║", "╩"),  # I
+    ("║║║", "╝╚╝"),  # N
+    ("║ ╦", "╚═╝"),  # G
 ]
 _SHIMMER_COLORS = [
     "#484f58",  # Dim base (TEXT_MUTED)
@@ -64,7 +64,8 @@ def _render_forging_shimmer(frame: int) -> str:
     hotspot_pos = frame % (len(_FORGING_LETTERS) + 3)  # +3 for pause between sweeps
 
     rows: list[str] = []
-    for row_idx in range(3):
+    row_count = len(_FORGING_LETTERS[0])
+    for row_idx in range(row_count):
         row_parts: list[str] = []
         for i, letter in enumerate(_FORGING_LETTERS):
             distance = abs(i - hotspot_pos)
