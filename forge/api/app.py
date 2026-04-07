@@ -168,15 +168,38 @@ def create_app(
 
     app.state.ws_manager = ConnectionManager()
 
-    def daemon_factory(project_path: str, model_strategy: str):
+    # ── Provider registry + cost registry ─────────────────────────────
+    from forge.config.settings import ForgeSettings as _RegistrySettings
+    from forge.core.cost_registry import CostRegistry
+    from forge.core.provider_config import build_provider_registry, build_settings_for_project
+
+    _reg_settings = _RegistrySettings()
+    registry = build_provider_registry(_reg_settings)
+
+    app.state.registry = registry
+    app.state.cost_registry = CostRegistry(
+        overrides=_reg_settings.build_cost_registry_overrides(),
+    )
+
+    def daemon_factory(
+        project_path: str,
+        model_strategy: str,
+        *,
+        user_settings: dict | None = None,
+        provider_config: str | dict | None = None,
+    ):
         """Create a ForgeDaemon + EventEmitter pair for a pipeline."""
-        from forge.config.settings import ForgeSettings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
 
         emitter = EventEmitter()
-        settings = ForgeSettings()
-        settings.model_strategy = model_strategy
+        settings, _project_config = build_settings_for_project(
+            project_path,
+            user_settings=user_settings,
+            model_strategy=model_strategy,
+            provider_config=provider_config,
+        )
+
         daemon = ForgeDaemon(project_path, settings=settings, event_emitter=emitter)
         return daemon, emitter
 
@@ -233,6 +256,7 @@ def create_app(
     from forge.api.routes.followup import router as followup_router
     from forge.api.routes.github import router as github_router
     from forge.api.routes.history import router as history_router
+    from forge.api.routes.providers import router as providers_router
     from forge.api.routes.settings import router as settings_router
     from forge.api.routes.tasks import router as tasks_router
     from forge.api.routes.templates import router as templates_router
@@ -247,6 +271,7 @@ def create_app(
     app.include_router(settings_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
     app.include_router(webhooks_router, prefix="/api")
+    app.include_router(providers_router, prefix="/api")
 
     # ── WebSocket endpoint ─────────────────────────────────────────
     from forge.api.ws.handler import websocket_endpoint

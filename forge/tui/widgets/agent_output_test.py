@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from forge.tui.widgets.agent_output import (
-    _TYPING_FRAMES,
+    _FORGING_LETTERS,
     AgentOutput,
+    _render_forging_shimmer,
     format_error_detail,
     format_header,
     format_output,
@@ -74,9 +75,12 @@ def test_format_output_no_typing_indicator_by_default():
 def test_format_output_with_streaming_shows_typing_indicator():
     lines = ["line1", "line2"]
     result = format_output(lines, streaming=True, typing_frame=0)
-    assert "Typing" in result
-    cursor = _TYPING_FRAMES[0]
-    assert cursor in result
+    assert result.endswith(
+        "[bold #e8c48a]╚  [/] [bold #d6a85f]╚═╝[/] [bold #8b949e]╩╚═[/] "
+        "[bold #484f58]╚═╝[/] [bold #484f58]╩[/] [bold #484f58]╝╚╝[/] "
+        "[bold #484f58]╚═╝[/]"
+    )
+    assert result.count("[bold ") == len(_FORGING_LETTERS) * 3
 
 
 def test_format_output_streaming_false_no_indicator():
@@ -89,18 +93,27 @@ def test_format_output_typing_frame_cycles():
     lines = ["line1"]
     result_0 = format_output(lines, streaming=True, typing_frame=0)
     result_1 = format_output(lines, streaming=True, typing_frame=1)
-    # Both should contain the typing indicator
-    assert "Typing" in result_0
-    assert "Typing" in result_1
-    # Cursor chars should differ
-    assert _TYPING_FRAMES[0] in result_0
-    assert _TYPING_FRAMES[1] in result_1
+    # Both should contain the forging shimmer
+    assert "Forging" not in result_0  # markup splits the word
+    assert "Forging" not in result_1
+    assert result_0 != result_1
+    assert result_0.startswith("line1\n[bold ")
+    assert result_1.startswith("line1\n[bold ")
 
 
 def test_format_output_empty_lines_no_streaming_indicator():
     """When lines is empty, streaming indicator should NOT appear (spinner shown instead)."""
     result = format_output([], streaming=True, typing_frame=0)
     assert "Waiting" in result
+
+
+def test_render_forging_shimmer_left_aligns_and_bolds():
+    result = _render_forging_shimmer(0)
+    assert result.startswith("[bold ")
+    assert "\n" in result
+    assert result.count("[bold ") == len(_FORGING_LETTERS) * 3
+    assert result.count("\n") == 2
+    assert "[bold #e8c48a]╔═╗[/]" in result
 
 
 # ── AgentOutput widget unit tests ────────────────────────────────────────
@@ -374,7 +387,12 @@ def test_format_unified_output_gate_formatting():
 def test_format_unified_output_streaming_indicator():
     entries = [("agent", "working...")]
     result = format_unified_output(entries, streaming=True, typing_frame=0)
-    assert "Typing" in result
+    assert "Forging" not in result
+    assert result.endswith(
+        "[bold #e8c48a]╚  [/] [bold #d6a85f]╚═╝[/] [bold #8b949e]╩╚═[/] "
+        "[bold #484f58]╚═╝[/] [bold #484f58]╩[/] [bold #484f58]╝╚╝[/] "
+        "[bold #484f58]╚═╝[/]"
+    )
 
 
 def test_format_unified_output_no_streaming_indicator_by_default():
@@ -622,7 +640,7 @@ def test_sync_streaming_rebuilds_rendered_parts():
         expected_parts.append(text)
 
     # Call sync_streaming (what _refresh_all does during streaming)
-    widget.sync_streaming("t1", "Task 1", "in_progress", entries)
+    widget.sync_streaming("t1", "Task 1", "completed", entries)
 
     # _rendered_parts must be rebuilt, NOT empty
     assert len(widget._rendered_parts) == 3
@@ -745,3 +763,60 @@ def test_append_unified_starts_fade():
     # Before compose, set_interval fails so fade is skipped
     assert widget._fade_step == len(_FADE_STEPS)
     assert widget._fade_timer is None
+
+
+def test_update_unified_with_blocked_detail_prepends_header():
+    """Test that blocked detail is prepended as styled header above unified content."""
+    widget = AgentOutput()
+    entries = [("agent", "Some agent output")]
+    blocked_detail = "Waiting for dependencies to complete:\n  - task-2\n  - task-3"
+
+    widget.update_unified("task-1", "Test Task", "blocked", entries, blocked_detail=blocked_detail)
+
+    # Should store the blocked detail
+    assert widget._blocked_detail == blocked_detail
+
+    # Test the formatted content includes blocked detail
+    content = widget._format_content_with_blocked_detail()
+    assert "Waiting for dependencies to complete:" in content
+    assert "task-2" in content
+    assert "task-3" in content
+    assert "#8b949e" in content  # Gray color for waiting
+    assert "─────────────────────────────────────────" in content  # Separator
+
+
+def test_update_unified_without_blocked_detail_no_header():
+    """Test that update_unified without blocked_detail works normally."""
+    widget = AgentOutput()
+    entries = [("agent", "Some agent output")]
+
+    widget.update_unified("task-1", "Test Task", "in_progress", entries)
+
+    # Should not have blocked detail
+    assert widget._blocked_detail is None
+
+    # Test the formatted content doesn't include blocked detail header
+    content = widget._format_content_with_blocked_detail()
+    assert "Waiting for dependencies" not in content
+    assert "[#30363d]─────────────────────────────────────────[/#30363d]" not in content
+
+
+def test_format_content_with_blocked_detail_failed_deps():
+    """Test blocked detail formatting for failed dependencies uses correct color."""
+    widget = AgentOutput()
+    entries = [("agent", "Some output")]
+    widget._unified_entries = entries
+    widget._spinner_frame = 0
+    widget._streaming = False
+    widget._typing_frame = 0
+
+    # Test failed dependencies get orange color
+    blocked_detail = (
+        "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
+    )
+    widget._blocked_detail = blocked_detail
+
+    content = widget._format_content_with_blocked_detail()
+    assert "#f0883e" in content  # Orange color for failed deps
+    assert "auth-backend (failed)" in content
+    assert "db-setup (failed)" in content

@@ -13,21 +13,27 @@ import time
 from dataclasses import dataclass
 
 from forge.config.project_config import CMD_DISABLED
+from forge.core import model_router as _legacy_model_router
 from forge.core.daemon_helpers import (
+    _extract_activity,
     _extract_text,
     _find_related_test_files,
     _get_changed_files_vs_main,
+    _humanize_model_spec,
     _is_pytest_cmd,
     _run_git,
     async_subprocess,
 )
 from forge.core.logging_config import make_console
-from forge.core.model_router import select_model
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
 
 logger = logging.getLogger("forge.daemon")
 console = make_console()
+
+# Backward-compatible module export for tests and call sites that still patch
+# forge.core.daemon_review.select_model directly.
+select_model = _legacy_model_router.select_model
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +74,22 @@ async def _async_shell(
         stdout=stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else "",
         stderr=stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else "",
     )
+
+
+def _discover_review_python(worktree_path: str) -> str | None:
+    """Return a repo-local Python interpreter path for reviewer Bash commands if present."""
+    current = os.path.abspath(worktree_path)
+    visited: set[str] = set()
+    while current not in visited:
+        visited.add(current)
+        candidate = os.path.join(current, ".venv", "bin", "python")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +428,33 @@ class ReviewMixin:
         if health:
             health.record_task_activity(task_id)
 
+    def _select_model(
+        self,
+        stage: str,
+        complexity: str = "medium",
+        *,
+        retry_count: int = 0,
+    ):
+        """Fallback model resolver for isolated ReviewMixin tests.
+
+        ForgeDaemon overrides this with the provider-aware implementation.
+        """
+        settings = getattr(self, "_settings", None)
+        overrides = None
+        build_overrides = getattr(settings, "build_routing_overrides", None)
+        if callable(build_overrides):
+            overrides = build_overrides()
+        strategy = getattr(self, "_strategy", None) or getattr(settings, "model_strategy", "auto")
+        registry = getattr(self, "_registry", None)
+        return select_model(
+            strategy,
+            stage,
+            complexity,
+            overrides=overrides,
+            retry_count=retry_count,
+            registry=registry,
+        )
+
     # -- command resolution ------------------------------------------------
 
     def _resolve_build_cmd(self, *, repo_id: str | None = None) -> str | None:
@@ -660,13 +709,17 @@ class ReviewMixin:
         Returns (callback, flush) where *flush* drains any remaining
         buffered lines.  The pattern mirrors ``_stream_agent`` in
         daemon_executor.
+
+        Accepts both legacy SDK messages and ProviderEvent objects
+        (via _extract_text which handles both).
         """
         _last_flush = [time.monotonic()]
         _batch: list[str] = []
         _MAX_BATCH_SIZE = 50
 
         async def _on_msg(msg):
-            text = _extract_text(msg)
+            # _extract_activity handles text, tool-use, and provider status updates.
+            text = _extract_activity(msg) or _extract_text(msg)
             if not text:
                 return
             self._record_health_activity(task_id)
@@ -707,8 +760,69 @@ class ReviewMixin:
             self._record_health_activity(task_id)
             full_payload = {"task_id": task_id, **payload}
             await self._emit(event_name, full_payload, db=db, pipeline_id=pipeline_id)
+            progress_line = self._format_review_progress_line(event_name, payload)
+            if progress_line:
+                await self._emit(
+                    "review:llm_output",
+                    {"task_id": task_id, "line": progress_line},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
 
         return _on_review_event
+
+    @staticmethod
+    def _format_review_progress_line(event_name: str, payload: dict) -> str | None:
+        """Render review progress events as user-visible activity lines."""
+        if event_name == "review:strategy_selected":
+            strategy = payload.get("strategy", "unknown")
+            chunk_count = payload.get("chunk_count")
+            diff_lines = payload.get("diff_lines")
+            details: list[str] = [f"strategy={strategy}"]
+            if chunk_count is not None:
+                details.append(f"chunks={chunk_count}")
+            if diff_lines is not None:
+                details.append(f"diff_lines={diff_lines}")
+            return "Review strategy selected: " + ", ".join(details)
+
+        if event_name == "review:chunk_started":
+            idx = payload.get("chunk_index")
+            total = payload.get("chunk_total")
+            risk = payload.get("risk_label")
+            files = payload.get("files") or []
+            suffix: list[str] = []
+            if risk:
+                suffix.append(f"risk={risk}")
+            if files:
+                suffix.append(f"files={len(files)}")
+            suffix_str = f" ({', '.join(suffix)})" if suffix else ""
+            return f"Review chunk {idx}/{total} started{suffix_str}"
+
+        if event_name == "review:chunk_complete":
+            idx = payload.get("chunk_index")
+            total = payload.get("chunk_total")
+            verdict = payload.get("verdict", "UNKNOWN")
+            issues = payload.get("issue_count")
+            issues_str = f", issues={issues}" if issues is not None else ""
+            return f"Review chunk {idx}/{total} complete: {verdict}{issues_str}"
+
+        if event_name == "review:synthesis_started":
+            return "Review synthesis started"
+
+        if event_name == "review:timeout":
+            timeout_seconds = payload.get("timeout_seconds", "?")
+            attempt = payload["attempt"]
+            max_attempts = payload["max_attempts"]
+            return (
+                f"L2 review timed out after {timeout_seconds}s (attempt {attempt}/{max_attempts})"
+            )
+
+        if event_name == "review:retry":
+            attempt = payload["attempt"]
+            max_attempts = payload["max_attempts"]
+            return f"Retrying review attempt {attempt}/{max_attempts}"
+
+        return None
 
     # -- main review pipeline ----------------------------------------------
 
@@ -807,6 +921,12 @@ class ReviewMixin:
         feedback_parts: list[str] = []
         gate_timeout = self._settings.agent_timeout_seconds // 2
         review_t0 = time.monotonic()
+        build_validation_line = "- Build gate: SKIPPED — no build command configured"
+        lint_validation_line = "- Lint gate: SKIPPED — lint gate not run"
+        test_validation_line = "- Test gate: SKIPPED — no test command configured"
+        prefer_deep_review = False
+
+        await self._emit("review:started", {"task_id": task.id}, db=db, pipeline_id=pipeline_id)
 
         # Gate 0: Build gate (skip silently if no command configured)
         build_cmd = self._resolve_build_cmd(repo_id=repo_id)
@@ -841,6 +961,10 @@ class ReviewMixin:
             )
             if not build_result.passed:
                 if build_result.infra_error:
+                    build_validation_line = (
+                        f"- Build gate: SKIPPED (infra error) — {build_result.details[:200]}"
+                    )
+                    prefer_deep_review = True
                     console.print(
                         f"[yellow]  Gate 0 (build) skipped — environment error: {build_result.details[:200]}[/yellow]"
                     )
@@ -865,10 +989,22 @@ class ReviewMixin:
                         )
                     except Exception:
                         pass
+                    await self._emit(
+                        "review:failed",
+                        {
+                            "task_id": task.id,
+                            "gate": "gate0_build",
+                            "details": build_result.details,
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
                     return False, "\n\n".join(feedback_parts), False
             else:
+                build_validation_line = f"- Build gate: PASSED — {build_result.details}"
                 console.print("[green]  Gate 0 (build) passed[/green]")
         else:
+            build_validation_line = "- Build gate: SKIPPED — no build command configured"
             console.print("[dim]  Gate 0 (build): skipped — no build command configured[/dim]")
             await self._emit(
                 "task:review_update",
@@ -925,6 +1061,10 @@ class ReviewMixin:
         )
         if not gate1_result.passed:
             if gate1_result.infra_error:
+                lint_validation_line = (
+                    f"- Lint gate: SKIPPED (infra error) — {gate1_result.details[:200]}"
+                )
+                prefer_deep_review = True
                 console.print(
                     f"[yellow]  L1 (lint) skipped — environment error: {gate1_result.details[:200]}[/yellow]"
                 )
@@ -950,8 +1090,15 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
+                await self._emit(
+                    "review:failed",
+                    {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
                 return False, "\n\n".join(feedback_parts), False
         else:
+            lint_validation_line = f"- Lint gate: PASSED — {gate1_result.details}"
             console.print("[green]  L1 passed[/green]")
 
         # L1 may have auto-fixed lint issues (unused imports, etc.) and
@@ -1003,6 +1150,10 @@ class ReviewMixin:
             )
             if not test_result.passed:
                 if test_result.infra_error:
+                    test_validation_line = (
+                        f"- Test gate: SKIPPED (infra error) — {test_result.details[:200]}"
+                    )
+                    prefer_deep_review = True
                     console.print(
                         f"[yellow]  Gate 1.5 (test) skipped — environment error: {test_result.details[:200]}[/yellow]"
                     )
@@ -1027,9 +1178,23 @@ class ReviewMixin:
                         )
                     except Exception:
                         pass
+                    await self._emit(
+                        "review:failed",
+                        {
+                            "task_id": task.id,
+                            "gate": "gate1_5_test",
+                            "details": test_result.details,
+                        },
+                        db=db,
+                        pipeline_id=pipeline_id,
+                    )
                     return False, "\n\n".join(feedback_parts), False
+            else:
+                test_validation_line = f"- Test gate: PASSED — {test_result.details}"
             console.print("[green]  Gate 1.5 (test) passed[/green]")
         else:
+            test_validation_line = "- Test gate: SKIPPED — no test command configured"
+            prefer_deep_review = True
             console.print("[dim]  Gate 1.5 (test): skipped — no test command configured[/dim]")
             await self._emit(
                 "task:review_update",
@@ -1068,11 +1233,31 @@ class ReviewMixin:
                 getattr(task, "review_feedback", None) if task.retry_count > 0 else None
             )
             prior_diff = getattr(task, "prior_diff", None) if task.retry_count > 0 else None
+            reviewer_python = _discover_review_python(worktree_path)
+            validation_context = (
+                "## Validation Context\n"
+                f"{build_validation_line}\n"
+                f"{lint_validation_line}\n"
+                f"{test_validation_line}\n\n"
+                + (
+                    f"Preferred Python for verification commands: {reviewer_python}\n"
+                    "If you run Python-based Bash checks, use that interpreter (for example,"
+                    f" `{reviewer_python} -m pytest ...`) instead of bare `python`.\n\n"
+                    if reviewer_python
+                    else ""
+                )
+                + "Treat skipped or infra-errored validation as reduced coverage: inspect the current code"
+                " more deeply and use focused tools/commands where that helps confirm correctness."
+            )
             console.print(
                 f"[blue]  L2 (LLM): Code review for {task.id}"
                 f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
             )
-            reviewer_model = select_model(self._strategy, "reviewer", task.complexity or "medium")
+            reviewer_model = self._select_model("reviewer", task.complexity or "medium")
+            reviewer_effort = None
+            resolve_effort = getattr(self._settings, "resolve_reasoning_effort", None)
+            if callable(resolve_effort):
+                reviewer_effort = resolve_effort("reviewer", task.complexity or "medium")
             # Build sibling context so the reviewer knows about the DAG
             sibling_context = await self._build_sibling_context(task, db, pipeline_id)
             custom_review_focus = review_config["custom_review_focus"]
@@ -1113,6 +1298,16 @@ class ReviewMixin:
                 db=db,
                 pipeline_id=pipeline_id,
             )
+            review_start_line = f"Starting review ({_humanize_model_spec(reviewer_model)}"
+            if reviewer_effort:
+                review_start_line += f", {reviewer_effort} reasoning"
+            review_start_line += ")…"
+            await self._emit(
+                "review:llm_output",
+                {"task_id": task.id, "line": review_start_line},
+                db=db,
+                pipeline_id=pipeline_id,
+            )
             on_message, flush_review = self._make_review_on_message(
                 task.id,
                 db,
@@ -1135,13 +1330,16 @@ class ReviewMixin:
                 allowed_files=task.files,
                 delta_diff=delta_diff,
                 sibling_context=sibling_context,
+                validation_context=validation_context,
                 custom_review_focus=custom_review_focus,
+                prefer_deep_review=prefer_deep_review or bool(prior_feedback),
                 on_message=on_message,
                 on_review_event=on_review_event,
                 adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
                 medium_diff_threshold=_review_cfg.medium_diff_threshold if _review_cfg else 400,
                 large_diff_threshold=_review_cfg.large_diff_threshold if _review_cfg else 2000,
                 max_chunk_lines=_review_cfg.max_chunk_lines if _review_cfg else 600,
+                registry=getattr(self, "_registry", None),
             )
             await flush_review()
             # Emit LLM feedback so the TUI can display reviewer comments
@@ -1205,6 +1403,16 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
+                await self._emit(
+                    "review:failed",
+                    {
+                        "task_id": task.id,
+                        "gate": "gate2_llm_review",
+                        "details": gate2_result.details,
+                    },
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
                 return False, gate2_result.details, True
             if not gate2_result.passed:
                 console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
@@ -1218,6 +1426,16 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
+                await self._emit(
+                    "review:failed",
+                    {
+                        "task_id": task.id,
+                        "gate": "gate2_llm_review",
+                        "details": gate2_result.details,
+                    },
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
                 return False, "\n\n".join(feedback_parts), False
             console.print("[green]  L2 passed[/green]")
 
@@ -1231,6 +1449,16 @@ class ReviewMixin:
                     "This is a SECOND REVIEW PASS. A previous reviewer already "
                     "approved. Catch anything they missed."
                 )
+                extra_start_line = f"Starting extra review ({_humanize_model_spec(reviewer_model)}"
+                if reviewer_effort:
+                    extra_start_line += f", {reviewer_effort} reasoning"
+                extra_start_line += ")…"
+                await self._emit(
+                    "review:llm_output",
+                    {"task_id": task.id, "line": extra_start_line},
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
                 gate2_extra, extra_cost_info = await gate2_llm_review(
                     task.title,
                     task.description,
@@ -1240,12 +1468,15 @@ class ReviewMixin:
                     project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
                     allowed_files=task.files,
                     sibling_context=sibling_context,
+                    validation_context=validation_context,
                     custom_review_focus=extra_focus,
+                    prefer_deep_review=True,
                     on_review_event=on_review_event,
                     adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
                     medium_diff_threshold=_review_cfg.medium_diff_threshold if _review_cfg else 400,
                     large_diff_threshold=_review_cfg.large_diff_threshold if _review_cfg else 2000,
                     max_chunk_lines=_review_cfg.max_chunk_lines if _review_cfg else 600,
+                    registry=getattr(self, "_registry", None),
                 )
                 # Track extra review cost
                 if extra_cost_info.cost_usd > 0:
@@ -1311,6 +1542,16 @@ class ReviewMixin:
                             )
                         except Exception:
                             pass
+                        await self._emit(
+                            "review:failed",
+                            {
+                                "task_id": task.id,
+                                "gate": "gate2_llm_review_extra",
+                                "details": gate2_extra.details,
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id,
+                        )
                         return False, "\n\n".join(feedback_parts), False
                 else:
                     console.print("[green]  L2 (extra pass) passed[/green]")
@@ -1323,6 +1564,7 @@ class ReviewMixin:
             await db.set_task_timing(task.id, review_duration_s=review_elapsed)
         except Exception:
             logger.debug("Failed to record review_duration_s for %s", task.id, exc_info=True)
+        await self._emit("review:passed", {"task_id": task.id}, db=db, pipeline_id=pipeline_id)
         return True, None, False
 
     async def _run_lint_gate(

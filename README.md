@@ -33,7 +33,7 @@ Type your task. Hit Ctrl+S. Walk away. Come back to a pull request.
 
 ## Why not just use Claude Code?
 
-Claude Code is great. Forge is built on it. Every Forge agent IS a Claude Code session. The planner IS a Claude Code session. So why not just use Claude Code directly?
+Claude Code is great. Forge is built on it. Claude remains the default provider, and Forge can now route selected stages through OpenAI when you explicitly enable it. So why not just use Claude Code directly?
 
 **Because you're the bottleneck.**
 
@@ -179,7 +179,7 @@ You: "Build a REST API with JWT auth and tests"
               — catches problems before spending money
                     │
               2. PLAN
-              Full Claude Code power — reads codebase,
+              Provider-aware planning — reads codebase,
               asks clarifying questions, builds task DAG
                     │
               3. CONTRACT
@@ -228,14 +228,18 @@ forge lessons add     # Manually teach Forge something
 
 ### Pre-flight validation
 
-Before any pipeline starts, Forge runs 8 fast checks:
+Before any pipeline starts, Forge runs fast checks:
 
-- Claude CLI installed and authenticated
+- Required provider tooling available
+- Claude CLI installed and authenticated when Claude models are selected
+- Codex-backed OpenAI models authenticated via `codex login` or `CODEX_API_KEY`
+- Responses API models authenticated via `OPENAI_API_KEY`
 - Git repo valid, base branch exists
 - `gh` CLI available (for PR creation)
 - Sufficient disk space (>1 GB)
 - No uncommitted changes that would interfere
 - Build/test commands resolvable
+- Requested models exist in the provider registry and are valid for their pipeline stages
 
 If anything fails, you get a clear error with a fix command — not a cryptic failure 5 minutes into planning.
 
@@ -285,12 +289,42 @@ All settings use the `FORGE_` prefix. Build and test commands are **auto-detecte
 | `FORGE_MAX_RETRIES` | 5 | Retries per task on failure |
 | `FORGE_BUDGET_LIMIT_USD` | 0 (unlimited) | Per-pipeline spend cap |
 | `FORGE_MODEL_STRATEGY` | auto | `fast` / `auto` / `quality` |
+| `FORGE_OPENAI_ENABLED` | false | Enables the OpenAI provider and catalog |
+| `FORGE_CONTRACT_BUILDER_MODEL` | *(unset)* | Override contract-builder model |
+| `FORGE_PLANNER_MODEL` | *(unset)* | Override planner model with `provider:model` |
+| `FORGE_AGENT_MODEL_LOW` | *(unset)* | Override the low-complexity agent model |
+| `FORGE_AGENT_MODEL_MEDIUM` | *(unset)* | Override the medium-complexity agent model |
+| `FORGE_AGENT_MODEL_HIGH` | *(unset)* | Override the high-complexity agent model |
+| `FORGE_REVIEWER_MODEL` | *(unset)* | Override reviewer model |
+| `FORGE_CI_FIX_MODEL` | *(unset)* | Override CI fix model |
 | `FORGE_REQUIRE_APPROVAL` | false | Human approval before merge |
 | `FORGE_BUILD_CMD` | *(auto)* | Override build command |
 | `FORGE_TEST_CMD` | *(auto)* | Override test command |
 
 ```bash
 FORGE_BUDGET_LIMIT_USD=5 forge run "Refactor auth to OAuth2"
+```
+
+```bash
+FORGE_OPENAI_ENABLED=true \
+FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4 \
+forge run "Add audit logging to billing flows"
+```
+
+```bash
+FORGE_OPENAI_ENABLED=true \
+OPENAI_API_KEY=sk-... \
+FORGE_PLANNER_MODEL=openai:o3 \
+FORGE_AGENT_MODEL_MEDIUM=openai:gpt-5.4 \
+forge run "Add audit logging to billing flows"
+```
+
+```bash
+FORGE_OPENAI_ENABLED=true \
+FORGE_PLANNER_MODEL=claude:opus \
+FORGE_AGENT_MODEL_MEDIUM=claude:sonnet \
+FORGE_REVIEWER_MODEL=openai:gpt-5.4-mini \
+forge run "Audit provider routing regressions"
 ```
 
 ### Project config
@@ -308,15 +342,123 @@ max_retries = 3
 [lint]
 check_cmd = "npm run lint"
 fix_cmd = "npm run lint:fix"
+
+[routing]
+planner = "claude:opus"
+agent_medium = "openai:gpt-5.4"
+reviewer = "openai:gpt-5.4"
+reviewer_reasoning_effort = "high"
+
+[[custom_models]]
+alias = "sonnet-plus"
+provider = "claude"
+canonical_id = "claude-sonnet-plus-20260401"
+backend = "claude-code-sdk"
 ```
 
 ### Model routing
+
+Forge resolves models per pipeline stage. Built-in model specs are:
+
+| Provider | Models |
+|---|---|
+| `claude` | `claude:opus`, `claude:sonnet`, `claude:haiku` |
+| `openai` | `openai:gpt-5.4`, `openai:gpt-5.4-mini`, `openai:gpt-5.3-codex`, `openai:o3` |
 
 | Strategy | Planner | Agents | Reviewer |
 |---|---|---|---|
 | `fast` | Sonnet | Haiku | Haiku |
 | `auto` | Opus | Sonnet | Sonnet |
 | `quality` | Opus | Opus | Sonnet |
+
+Routing precedence:
+
+1. Explicit per-stage overrides from the UI or environment
+2. `.forge/forge.toml` `[routing]`
+3. Strategy defaults
+
+If you previously exported smoke-test overrides like `FORGE_AGENT_MODEL_LOW`,
+`FORGE_AGENT_MODEL_MEDIUM`, `FORGE_AGENT_MODEL_HIGH`, or `FORGE_REVIEWER_MODEL`,
+they will continue to win until you unset them. A quick reset looks like:
+
+```bash
+unset FORGE_AGENT_MODEL_LOW FORGE_AGENT_MODEL_MEDIUM FORGE_AGENT_MODEL_HIGH
+unset FORGE_REVIEWER_MODEL FORGE_PLANNER_MODEL
+unset FORGE_AGENT_MODEL_LOW_REASONING_EFFORT FORGE_AGENT_MODEL_MEDIUM_REASONING_EFFORT
+unset FORGE_AGENT_MODEL_HIGH_REASONING_EFFORT FORGE_REVIEWER_REASONING_EFFORT
+```
+
+You can also override reasoning effort per stage in `.forge/forge.toml` using:
+
+- `planner_reasoning_effort`
+- `agent_low_reasoning_effort`
+- `agent_medium_reasoning_effort`
+- `agent_high_reasoning_effort`
+- `reviewer_reasoning_effort`
+- `contract_builder_reasoning_effort`
+- `ci_fix_reasoning_effort`
+
+Accepted values are `low`, `medium`, and `high`. OpenAI Codex/Responses models use native reasoning-effort controls. Claude stages also honor these settings, but Claude Code receives them as prompt-level effort guidance because the Claude SDK does not expose a native reasoning-effort parameter.
+
+Forge persists the exact resolved provider snapshot in `pipelines.provider_config` when the pipeline is created. Restarts, retries, follow-up work, and webhook resumptions use that snapshot, not whatever your current settings happen to be later.
+
+Any stage can be routed independently as long as the selected model has the required hard capabilities for that stage. Common examples:
+
+- Claude planner + Claude agent + Codex reviewer
+- O3 planner + Codex agent + Claude reviewer
+- Claude planner + Codex CI fix + Claude merge/review flow
+
+Helper intelligence calls also follow the active stage routing instead of hardcoding Claude:
+
+- branch-name generation follows the planner model
+- PR-title generation follows the reviewer model
+- follow-up question classification follows the planner model
+
+If any routed stage points at an OpenAI model, Forge automatically registers the OpenAI provider for that pipeline even when you did not explicitly set `FORGE_OPENAI_ENABLED=true`.
+
+`[[custom_models]]` entries are validated against the active provider registry and then injected as experimental catalog entries for that project. That means custom aliases are now executable, not just parsed.
+
+Codex-backed models use your existing `codex login` subscription session when available, and Forge only falls back to key auth for Codex if `CODEX_API_KEY` is explicitly set or no Codex login is present. Forge prefers your installed `codex` CLI when available so it shares the same subscription/auth state you already use manually. `openai:o3` stays on the Responses API path and requires `OPENAI_API_KEY`.
+
+Codex-backed executions now run with the same high-power posture Forge already uses for Claude coding agents:
+
+- full-access Codex sandbox mode
+- automatic execution with no per-command approval prompts
+- live network access and native web search enabled
+- Forge-level safety policy still enforced for explicitly denied operations
+
+If you need to point Forge at a specific Codex binary, set `FORGE_CODEX_PATH=/absolute/path/to/codex`.
+
+Manual task reruns also refund one consumed retry slot before rescheduling the task, so abrupt provider failures or exhausted review loops do not leave a human-triggered recovery with zero room for error.
+
+### Local testing & mixed-provider verification
+
+**Run provider tests:**
+```bash
+python -m pytest forge/core/provider_config_test.py \
+  forge/core/model_router_test.py forge/config/settings_test.py -v
+```
+
+**Test mixed-provider routing:**
+```bash
+FORGE_PLANNER_MODEL=claude:opus FORGE_REVIEWER_MODEL=openai:gpt-5.4 \
+  forge run --dry-run "test task"
+```
+
+Shows routing summary during planning:
+```
+Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4
+```
+
+**Local directories:**
+- `FORGE_DATA_DIR`: `~/.forge/` (global state)
+- `.forge/`: project pipelines, logs, config
+- `.forge/worktrees/`: isolated git worktrees
+
+**Check provider status:**
+```bash
+forge providers list
+```
 
 ---
 
@@ -360,12 +502,13 @@ forge/
   cli/           # Click CLI — 14 commands
   tui/           # Textual TUI — full terminal UI with live pipeline view
   core/          # Orchestration — daemon, planner, executor, scheduler, health monitor
-  agents/        # Claude Code SDK adapter — agent runtime, prompt building
+  agents/        # Shared agent runtime + prompt building across providers
   merge/         # Git worktree lifecycle — create, merge, cleanup
   review/        # Multi-gate review — lint, build, test, LLM review
   learning/      # Self-evolving — lesson store, runtime guard, extractor
   storage/       # SQLite via SQLAlchemy async — tasks, pipelines, events, analytics
   config/        # Settings, project config, forge.toml, workspace.toml
+  providers/     # Claude + OpenAI provider adapters, catalog, safety, costs
   api/           # FastAPI backend for web dashboard
 web/             # Next.js frontend — TypeScript, Tailwind, Zustand
 ```
@@ -380,6 +523,8 @@ web/             # Next.js frontend — TypeScript, Tailwind, Zustand
 | Claude CLI not authenticated | `claude login` |
 | `gh: command not found` | Install [GitHub CLI](https://cli.github.com) and `gh auth login` |
 | Pipeline stuck | Forge auto-detects stuck tasks. Check `.forge/forge.log` |
+| Task shows as blocked or waiting | **Waiting for dependencies** — task will run automatically once upstream tasks finish. **Blocked by failed task** — a dependency failed; retry or skip the failed task to unblock. **Waiting for human input** — answer the pending question in the TUI (select the task, press Enter). |
+| Task exhausted retry budget | Forge allows up to 5 retries per task (configurable via `FORGE_MAX_RETRIES`). Automatic failures (timeouts, review rejections) consume a slot. Manual reruns via the TUI refund one slot first, so a human-triggered recovery always has room for at least one more automatic retry. Check `.forge/forge.log` for the failure category. |
 | Database issues | `forge doctor` |
 | Upgrade fails | `forge upgrade` auto-handles Python 3.12 installation |
 

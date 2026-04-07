@@ -125,6 +125,63 @@ async def test_pipeline_error_no_notification_when_none():
 
 
 @pytest.mark.asyncio
+async def test_review_failure_error_view_prefers_review_details_and_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Review task",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("review:llm_output", {"task_id": "t1", "line": "Reviewing README..."})
+        state.apply_event(
+            "task:review_update",
+            {
+                "task_id": "t1",
+                "gate": "L2",
+                "passed": False,
+                "details": "FAIL: README documents the wrong FORGE_DATA_DIR default.",
+            },
+        )
+        state.apply_event(
+            "review:gate_failed",
+            {
+                "task_id": "t1",
+                "gate": "gate2_llm_review",
+                "details": "FAIL: README documents the wrong FORGE_DATA_DIR default.",
+            },
+        )
+        state.apply_event(
+            "task:state_changed",
+            {
+                "task_id": "t1",
+                "state": "error",
+                "error": "Max retries exceeded. Last feedback: truncated",
+            },
+        )
+        await pilot.pause()
+
+        agent_output = app.screen.query_one("AgentOutput")
+        content = agent_output.query_one("#agent-content")
+
+        assert agent_output.is_error_mode is True
+        assert agent_output._lines == ["Reviewing README..."]
+        rendered = str(content.render())
+        assert "FAIL: README documents the wrong FORGE_DATA_DIR default." in rendered
+
+
+@pytest.mark.asyncio
 async def test_pipeline_shows_planner_output_during_planning():
     """Planner output streams into AgentOutput during planning phase."""
     state = TuiState()
@@ -138,6 +195,24 @@ async def test_pipeline_shows_planner_output_during_planning():
         assert agent_output._task_id == "planner"
         assert len(agent_output._lines) == 2
         assert "Reading forge/core/daemon.py..." in agent_output._lines[0]
+        assert agent_output._streaming is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_hides_ephemeral_planner_status_lines():
+    """Thinking/typing pulses should stay transient instead of polluting planner logs."""
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event("pipeline:phase_changed", {"phase": "planning"})
+        state.apply_event("planner:output", {"line": "Thinking…"})
+        state.apply_event("planner:output", {"line": "📖 Reading forge/core/daemon.py"})
+        await pilot.pause()
+
+        agent_output = app.screen.query_one("AgentOutput")
+        assert agent_output._task_id == "planner"
+        assert agent_output._streaming is True
+        assert state.planner_output == ["📖 Reading forge/core/daemon.py"]
 
 
 @pytest.mark.asyncio
@@ -585,6 +660,35 @@ async def test_agent_output_fast_path_calls_append_unified():
             state.apply_event("task:agent_output", {"task_id": "t1", "line": "hello"})
             await pilot.pause()
             mock_append.assert_called_once_with("agent", "hello")
+
+
+@pytest.mark.asyncio
+async def test_agent_output_fast_path_skips_adjacent_duplicate_tool_line():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        await pilot.pause()
+        agent_output = app.screen.query_one("AgentOutput")
+        with patch.object(agent_output, "append_unified") as mock_append:
+            state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading foo.py"})
+            state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading foo.py"})
+            await pilot.pause()
+            mock_append.assert_called_once_with("agent", "📖 Reading foo.py")
 
 
 @pytest.mark.asyncio
@@ -1350,13 +1454,19 @@ def test_phase_banner_scramble_animation_state():
 
 def test_phase_banner_scramble_progression():
     """_tick_scramble should resolve characters left-to-right and terminate."""
+    import warnings
+
     from forge.tui.screens.pipeline import PhaseBanner
 
     banner = PhaseBanner()
-    # Trigger phase change — set_interval fails pre-compose, so set state manually
-    banner.update_phase("executing")
-    # Pre-compose: timer creation fails, _animating is set to False
-    # But target_text is set correctly — we can test the tick logic directly
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        banner.update_phase("executing")
+    timer_warnings = [
+        warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)
+    ]
+    assert timer_warnings == [], f"Unexpected timer warnings: {timer_warnings}"
+
     assert banner._target_text != ""
     target_len = len(banner._target_text)
     assert target_len > 0
@@ -1374,18 +1484,26 @@ def test_phase_banner_scramble_progression():
 
 def test_phase_banner_scramble_interrupted_by_new_phase():
     """A new phase change mid-animation should reset target text."""
+    import warnings
+
     from forge.tui.screens.pipeline import PhaseBanner
 
     banner = PhaseBanner()
-    banner.update_phase("executing")
-    old_target = banner._target_text
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        banner.update_phase("executing")
+        old_target = banner._target_text
 
-    # Simulate partial animation
-    banner._animating = True
-    banner._resolved_count = 2
+        # Simulate partial animation
+        banner._animating = True
+        banner._resolved_count = 2
 
-    # New phase should reset
-    banner.update_phase("review")
+        # New phase should reset
+        banner.update_phase("review")
+    timer_warnings = [
+        warning for warning in caught_warnings if "Timer._run_timer" in str(warning.message)
+    ]
+    assert timer_warnings == [], f"Unexpected timer warnings: {timer_warnings}"
     assert banner._resolved_count == 0
     assert banner._target_text != old_target
 

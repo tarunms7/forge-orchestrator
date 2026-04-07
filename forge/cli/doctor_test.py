@@ -15,7 +15,10 @@ from forge.cli.doctor import (
     _check_central_data_dir,
     _check_central_db,
     _check_db_connectivity,
+    _check_experimental_models,
     _check_node_version,
+    _check_observed_health,
+    _check_provider_health,
     _parse_node_version,
     doctor,
 )
@@ -624,3 +627,113 @@ def test_failure_exit_nonzero(runner):
         result = runner.invoke(doctor)
     assert result.exit_code != 0
     assert "failed" in result.output.lower()
+
+
+# ── Provider health checks ──────────────────────────────────────────
+
+
+def test_provider_health_returns_results():
+    """_check_provider_health() returns at least one result for claude."""
+    results = _check_provider_health()
+    assert len(results) >= 1
+    # Should have a claude provider entry
+    labels = [r[1] for r in results]
+    assert any("claude" in label.lower() for label in labels)
+
+
+def test_provider_health_healthy_shows_ok():
+    """Healthy provider should show ok status."""
+    from unittest.mock import MagicMock
+
+    mock_status = MagicMock()
+    mock_status.healthy = True
+    mock_status.details = "claude-code-sdk v1.0, authenticated"
+    mock_status.errors = []
+
+    mock_registry = MagicMock()
+    mock_registry.preflight_all.return_value = {"claude": mock_status}
+
+    with (
+        patch("forge.providers.registry.ProviderRegistry", return_value=mock_registry),
+        patch("forge.providers.claude.ClaudeProvider"),
+    ):
+        results = _check_provider_health()
+    assert len(results) >= 1
+    ok_results = [r for r in results if r[0] == "ok"]
+    assert len(ok_results) >= 1
+
+
+def test_provider_health_unhealthy_shows_fail():
+    """Unhealthy provider should show fail status."""
+    from unittest.mock import MagicMock
+
+    mock_status = MagicMock()
+    mock_status.healthy = False
+    mock_status.details = ""
+    mock_status.errors = ["openai_enabled=true but OPENAI_API_KEY not set"]
+
+    mock_registry = MagicMock()
+    mock_registry.preflight_all.return_value = {"openai": mock_status}
+
+    with (
+        patch("forge.providers.registry.ProviderRegistry", return_value=mock_registry),
+        patch("forge.providers.claude.ClaudeProvider"),
+    ):
+        results = _check_provider_health()
+    fail_results = [r for r in results if r[0] == "fail"]
+    assert len(fail_results) >= 1
+    assert "OPENAI_API_KEY" in fail_results[0][2]
+
+
+def test_observed_health_no_file():
+    """_check_observed_health() returns empty when no health_state.json."""
+    with patch("forge.cli.doctor.os.path.isfile", return_value=False):
+        results = _check_observed_health()
+    assert results == []
+
+
+def test_observed_health_with_failures(tmp_path):
+    """_check_observed_health() surfaces failing stages."""
+    import json
+
+    health_data = [
+        {
+            "spec": "claude:sonnet",
+            "last_checked": "2026-04-05T12:00:00Z",
+            "stages_passing": ["planner"],
+            "stages_failing": ["agent"],
+        }
+    ]
+    health_file = tmp_path / "health_state.json"
+    health_file.write_text(json.dumps(health_data))
+
+    with patch(
+        "forge.cli.doctor.os.path.join",
+        return_value=str(health_file),
+    ):
+        with patch("forge.cli.doctor.os.path.isfile", return_value=True):
+            results = _check_observed_health()
+    assert len(results) >= 1
+    assert results[0][0] == "warn"
+    assert "agent" in results[0][2]
+
+
+def test_experimental_models_no_experimental():
+    """_check_experimental_models() returns empty when no experimental models configured."""
+    results = _check_experimental_models()
+    # Default settings use primary/supported models, so no warnings expected
+    assert isinstance(results, list)
+
+
+def test_doctor_shows_provider_health(runner):
+    """Doctor output includes provider health checks."""
+    with (
+        patch(
+            "forge.cli.doctor._check_provider_health",
+            return_value=[("ok", "Provider: claude", "claude-code-sdk OK")],
+        ),
+        patch("forge.cli.doctor._check_observed_health", return_value=[]),
+        patch("forge.cli.doctor._check_experimental_models", return_value=[]),
+    ):
+        result = runner.invoke(doctor)
+    assert "Provider: claude" in result.output

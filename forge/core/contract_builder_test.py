@@ -1,7 +1,7 @@
 """Tests for the Contract Builder (mocked LLM)."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -9,6 +9,7 @@ from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
 from forge.core.contracts import ContractType, IntegrationHint
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
 from forge.core.sanitize import extract_json_block as _extract_json_block
+from forge.providers import ProviderResult
 
 # -- Helpers ---------------------------------------------------------------
 
@@ -184,6 +185,42 @@ class TestParseAndValidate:
         cs, err = self.builder._parse_and_validate(bad_json, self.graph)
         assert cs is None
         assert "unknown task" in err
+
+
+class TestContractBuilderLLM:
+    def test_init_sets_last_sdk_result_to_none(self):
+        llm = ContractBuilderLLM()
+        assert llm._last_sdk_result is None
+        assert llm._last_result is None
+
+    @pytest.mark.asyncio
+    async def test_generate_contracts_stores_last_sdk_result(self):
+        llm = ContractBuilderLLM(model="claude:sonnet", cwd="/tmp", registry=MagicMock())
+        provider_result = ProviderResult(
+            text=_valid_contract_json(),
+            is_error=False,
+            input_tokens=10,
+            output_tokens=5,
+            resume_state=None,
+            duration_ms=25,
+            provider_reported_cost_usd=None,
+            model_canonical_id="claude:sonnet",
+        )
+
+        handle = MagicMock()
+        handle.result = AsyncMock(return_value=provider_result)
+        provider = MagicMock()
+        provider.start.return_value = handle
+
+        llm._registry.get_for_model.return_value = provider
+        llm._registry.get_catalog_entry.return_value = MagicMock()
+        llm._registry.settings.resolve_reasoning_effort.return_value = "high"
+
+        raw = await llm.generate_contracts(_sample_graph(), _sample_hints())
+
+        assert json.loads(raw)["api_contracts"][0]["id"] == "contract-api-1"
+        assert llm._last_sdk_result is provider_result
+        assert llm._last_result is provider_result
 
 
 # -- ContractBuilder.build tests (mocked LLM) ----------------------------

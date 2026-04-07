@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from forge.storage.db import Database
 
 logger = logging.getLogger("forge.tui.pr_creator")
+
+_PR_URL_RE = re.compile(r"https://github\.com/\S+/pull/\d+")
 
 
 # Formatters to try, in order.  Each entry: (tool_name, check_binary, cmd, cwd_subdir, success_indicator)
@@ -101,7 +104,15 @@ async def auto_format_branch(project_dir: str, branch: str) -> bool:
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
             if proc.returncode != 0:
-                logger.warning("Could not create format worktree: %s", stderr.decode())
+                stderr_text = stderr.decode()
+                if "already checked out at" in stderr_text:
+                    logger.info(
+                        "Skipping auto-format worktree for %s because the branch is already "
+                        "checked out in the current workspace",
+                        branch,
+                    )
+                else:
+                    logger.warning("Could not create format worktree: %s", stderr_text)
                 return False
 
             # Detect and run formatters
@@ -326,6 +337,29 @@ async def create_pr(
     base: str = "main",
     head: str | None = None,
 ) -> str | None:
+    if head:
+        try:
+            existing = await asyncio.create_subprocess_exec(
+                "gh",
+                "pr",
+                "view",
+                head,
+                "--json",
+                "url",
+                "-q",
+                ".url",
+                cwd=project_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(existing.communicate(), timeout=30)
+            existing_url = stdout.decode().strip()
+            if existing.returncode == 0 and existing_url:
+                logger.info("PR already exists for %s: %s", head, existing_url)
+                return existing_url
+        except Exception:
+            logger.debug("Existing PR lookup failed for %s", head, exc_info=True)
+
     # --head is REQUIRED: the working directory is on main, not the pipeline branch.
     # Without --head, gh tries to create a PR from main→main which always fails.
     cmd = ["gh", "pr", "create", "--title", title, "--body", body, "--base", base]
@@ -341,7 +375,13 @@ async def create_pr(
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         if proc.returncode != 0:
-            logger.error("PR creation failed (exit %d): %s", proc.returncode, stderr.decode())
+            stderr_text = stderr.decode()
+            match = _PR_URL_RE.search(stderr_text)
+            if match:
+                existing_url = match.group(0)
+                logger.info("PR creation returned existing PR URL: %s", existing_url)
+                return existing_url
+            logger.error("PR creation failed (exit %d): %s", proc.returncode, stderr_text)
             return None
         url = stdout.decode().strip()
         logger.info("PR created: %s", url)

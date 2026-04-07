@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from forge.tui.widgets.followup_input import (
     DEFAULT_SUGGESTIONS,
     FollowUpInput,
+    FollowUpTextArea,
     format_context_badge,
     format_followup_history,
 )
@@ -235,9 +236,29 @@ def test_followup_input_clear_action_clears_text():
 
 def test_followup_input_clear_action_handles_missing_widget():
     """FollowUpTextArea has action_clear_input and it sets text to empty string."""
-    from forge.tui.widgets.followup_input import FollowUpTextArea
-
     ta = FollowUpTextArea()
     # Should not raise even on empty text
     ta.action_clear_input()
     assert ta.text == ""
+
+
+def test_followup_text_area_changed_strips_terminal_noise():
+    ta = FollowUpTextArea()
+    ta.load_text("Add tests<35;40;23M please")
+    ta.move_cursor((0, len("Add tests<35;40;23M please")))
+
+    ta.on_text_area_changed(FollowUpTextArea.Changed(ta))
+
+    assert ta.text == "Add tests please"
+    assert ta.cursor_location == (0, len("Add tests please"))
+
+
+def test_followup_text_area_changed_strips_caret_escape_noise():
+    ta = FollowUpTextArea()
+    ta.load_text("Add tests ^[[A please")
+    ta.move_cursor((0, len("Add tests ^[[A please")))
+
+    ta.on_text_area_changed(FollowUpTextArea.Changed(ta))
+
+    assert ta.text == "Add tests  please"
+    assert ta.cursor_location == (0, len("Add tests  please"))

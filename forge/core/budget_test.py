@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from forge.core.budget import BudgetExceededError, check_budget
+from forge.core.budget import BudgetExceededError, check_budget, resolve_cost
 from forge.core.errors import ForgeError
 
 
@@ -106,3 +106,53 @@ class TestCheckBudget:
 
         with pytest.raises(asyncio.TimeoutError):
             await check_budget(db, "pipe-1", settings)
+
+    async def test_cost_registry_param_accepted(self):
+        """cost_registry parameter is accepted without error."""
+        from forge.core.cost_registry import CostRegistry
+
+        db = _make_db(pipeline_cost=0.5, pipeline_budget=1.0)
+        settings = _make_settings()
+        cost_registry = CostRegistry()
+        await check_budget(db, "pipe-1", settings, cost_registry=cost_registry)
+
+
+class TestResolveCost:
+    def test_uses_provider_reported_cost(self):
+        from forge.core.cost_registry import CostRegistry
+        from forge.providers.base import ModelSpec, ProviderResult
+
+        result = ProviderResult(
+            text="done",
+            is_error=False,
+            input_tokens=1000,
+            output_tokens=500,
+            resume_state=None,
+            duration_ms=1000,
+            provider_reported_cost_usd=0.42,
+            model_canonical_id="claude-sonnet-4",
+        )
+        spec = ModelSpec("claude", "sonnet")
+        registry = CostRegistry()
+        cost = resolve_cost(result, spec, registry)
+        assert cost == 0.42
+
+    def test_calculates_from_tokens(self):
+        from forge.core.cost_registry import CostRegistry
+        from forge.providers.base import ModelSpec, ProviderResult
+
+        result = ProviderResult(
+            text="done",
+            is_error=False,
+            input_tokens=1000,
+            output_tokens=1000,
+            resume_state=None,
+            duration_ms=1000,
+            provider_reported_cost_usd=None,
+            model_canonical_id="claude-sonnet-4",
+        )
+        spec = ModelSpec("claude", "sonnet")
+        registry = CostRegistry()
+        cost = resolve_cost(result, spec, registry)
+        # 1000/1000 * 0.003 + 1000/1000 * 0.015 = 0.018
+        assert abs(cost - 0.018) < 0.001

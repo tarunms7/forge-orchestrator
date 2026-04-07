@@ -44,6 +44,7 @@ if command -v uv >/dev/null 2>&1; then
 else
     info "uv not found — installing..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
+    # shellcheck source=/dev/null
     [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     if ! command -v uv >/dev/null 2>&1; then
         error "uv installation failed. Install manually: https://docs.astral.sh/uv/"
@@ -72,6 +73,18 @@ fi
 
 FORGE_VERSION="$(forge --version 2>/dev/null || echo 'unknown')"
 success "forge-orchestrator installed (${FORGE_VERSION})"
+
+# ── Optional: OpenAI SDKs ────────────────────────────────────────────
+if [ "${FORGE_OPENAI_ENABLED:-}" = "1" ] || [ "${FORGE_OPENAI_ENABLED:-}" = "true" ]; then
+    info "FORGE_OPENAI_ENABLED set — installing OpenAI SDKs..."
+    if uv pip install "forge-orchestrator[openai]" 2>/dev/null; then
+        success "OpenAI SDKs installed (codex-sdk + agents-sdk)"
+    else
+        warn "OpenAI SDK install failed — OpenAI models won't be available"
+    fi
+else
+    info "Skipping OpenAI SDKs (set FORGE_OPENAI_ENABLED=1 to install)"
+fi
 
 # ══════════════════════════════════════════════════════════════════════
 #  Step 3 — Clone/update repo (needed for web frontend)
@@ -104,9 +117,11 @@ if command -v node >/dev/null 2>&1; then
 
     if command -v npm >/dev/null 2>&1; then
         info "Installing frontend dependencies..."
-        npm install --prefix "$WEB_DIR" --silent 2>/dev/null && \
-            success "Frontend dependencies installed" || \
+        if npm install --prefix "$WEB_DIR" --silent 2>/dev/null; then
+            success "Frontend dependencies installed"
+        else
             warn "npm install failed — 'forge serve' web UI won't work, TUI still works fine"
+        fi
     else
         warn "npm not found — 'forge serve' web UI won't work, TUI still works fine"
     fi
@@ -145,9 +160,11 @@ fi
 step 6 "Running forge doctor..."
 
 if command -v forge >/dev/null 2>&1; then
-    forge doctor 2>/dev/null && \
-        success "All checks passed" || \
+    if forge doctor 2>/dev/null; then
+        success "All checks passed"
+    else
         warn "Some checks failed — run 'forge doctor' for details"
+    fi
 else
     warn "forge not found on PATH — open a new terminal"
 fi
@@ -157,7 +174,7 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 step 7 "You're all set!"
 
-printf "\n${GREEN}${BOLD}Forge installed successfully!${RESET}\n\n"
+printf "\n%s%sForge installed successfully!%s\n\n" "${GREEN}" "${BOLD}" "${RESET}"
 info "Get started:"
 info "  cd your-project"
 info "  forge tui              — interactive terminal UI"

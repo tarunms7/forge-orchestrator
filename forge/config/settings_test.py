@@ -233,3 +233,164 @@ def test_question_timeout_too_low_raises():
 def test_question_timeout_too_high_raises():
     with pytest.raises(ValidationError, match="question_timeout must be between 60 and 7200"):
         ForgeSettings(question_timeout=7201)
+
+
+# --- Multi-provider fields ---
+
+
+class TestMultiProviderFields:
+    def test_openai_enabled_default(self):
+        s = ForgeSettings()
+        assert s.openai_enabled is False
+
+    def test_openai_enabled_from_env(self, monkeypatch):
+        monkeypatch.setenv("FORGE_OPENAI_ENABLED", "true")
+        s = ForgeSettings()
+        assert s.openai_enabled is True
+
+    def test_per_stage_model_defaults_none(self):
+        s = ForgeSettings()
+        assert s.planner_model is None
+        assert s.agent_model_low is None
+        assert s.agent_model_medium is None
+        assert s.agent_model_high is None
+        assert s.reviewer_model is None
+        assert s.contract_builder_model is None
+        assert s.ci_fix_model is None
+        assert s.planner_reasoning_effort is None
+        assert s.reviewer_reasoning_effort is None
+
+    def test_per_stage_model_from_env(self, monkeypatch):
+        monkeypatch.setenv("FORGE_PLANNER_MODEL", "opus")
+        monkeypatch.setenv("FORGE_REVIEWER_MODEL", "openai:gpt-5.4")
+        monkeypatch.setenv("FORGE_REVIEWER_REASONING_EFFORT", "high")
+        s = ForgeSettings()
+        assert s.planner_model == "opus"
+        assert s.reviewer_model == "openai:gpt-5.4"
+        assert s.reviewer_reasoning_effort == "high"
+
+    def test_cost_rates_default_none(self):
+        s = ForgeSettings()
+        assert s.cost_rates is None
+
+    def test_mixed_provider_settings_roundtrip(self):
+        """Create ForgeSettings with mixed providers and verify routing/reasoning methods work correctly."""
+        s = ForgeSettings(
+            planner_model="claude:opus",
+            reviewer_model="openai:gpt-5.4",
+            reviewer_reasoning_effort="high",
+        )
+
+        # Assert build_routing_overrides() returns correct dict
+        routing = s.build_routing_overrides()
+        assert routing["planner_model"] == "claude:opus"
+        assert routing["reviewer_model"] == "openai:gpt-5.4"
+
+        # Assert build_reasoning_effort_overrides() includes reviewer
+        reasoning = s.build_reasoning_effort_overrides()
+        assert reasoning["reviewer_reasoning_effort"] == "high"
+
+        # Assert resolve_reasoning_effort('reviewer', 'medium') == 'high'
+        assert s.resolve_reasoning_effort("reviewer", "medium") == "high"
+
+
+class TestBuildRoutingOverrides:
+    def test_empty_when_no_models_set(self):
+        s = ForgeSettings()
+        assert s.build_routing_overrides() == {}
+
+    def test_includes_set_fields(self):
+        s = ForgeSettings(
+            planner_model="opus",
+            agent_model_low="haiku",
+            ci_fix_model="sonnet",
+        )
+        overrides = s.build_routing_overrides()
+        assert overrides == {
+            "planner_model": "opus",
+            "agent_model_low": "haiku",
+            "ci_fix_model": "sonnet",
+        }
+
+    def test_all_fields(self):
+        s = ForgeSettings(
+            planner_model="opus",
+            agent_model_low="haiku",
+            agent_model_medium="sonnet",
+            agent_model_high="opus",
+            reviewer_model="sonnet",
+            contract_builder_model="opus",
+            ci_fix_model="sonnet",
+        )
+        overrides = s.build_routing_overrides()
+        assert len(overrides) == 7
+
+    def test_accepts_provider_prefix(self):
+        s = ForgeSettings(planner_model="openai:gpt-5.4")
+        overrides = s.build_routing_overrides()
+        assert overrides["planner_model"] == "openai:gpt-5.4"
+
+
+class TestBuildReasoningEffortOverrides:
+    def test_empty_when_no_effort_set(self):
+        s = ForgeSettings()
+        assert s.build_reasoning_effort_overrides() == {}
+
+    def test_includes_set_fields(self):
+        s = ForgeSettings(
+            planner_reasoning_effort="high",
+            reviewer_reasoning_effort="low",
+        )
+        assert s.build_reasoning_effort_overrides() == {
+            "planner_reasoning_effort": "high",
+            "reviewer_reasoning_effort": "low",
+        }
+
+    def test_resolve_reasoning_effort_by_stage(self):
+        s = ForgeSettings(
+            planner_reasoning_effort="high",
+            agent_model_medium_reasoning_effort="medium",
+            reviewer_reasoning_effort="low",
+        )
+        assert s.resolve_reasoning_effort("planner", "high") == "high"
+        assert s.resolve_reasoning_effort("agent", "medium") == "medium"
+        assert s.resolve_reasoning_effort("reviewer", "low") == "low"
+        assert s.resolve_reasoning_effort("ci_fix", "medium") is None
+
+
+def test_invalid_reasoning_effort_raises():
+    with pytest.raises(ValidationError):
+        ForgeSettings(reviewer_reasoning_effort="turbo")
+
+
+class TestBuildCostRegistryOverrides:
+    def test_legacy_fields_migrated(self):
+        s = ForgeSettings()
+        overrides = s.build_cost_registry_overrides()
+        assert "claude:sonnet" in overrides
+        assert "claude:opus" in overrides
+        assert "claude:haiku" in overrides
+        assert overrides["claude:sonnet"].input_per_1k == 0.003
+
+    def test_new_cost_rates_overlay(self):
+        s = ForgeSettings(
+            cost_rates={
+                "openai:gpt-5.4": {"input_per_1k": 0.01, "output_per_1k": 0.03},
+            }
+        )
+        overrides = s.build_cost_registry_overrides()
+        assert "openai:gpt-5.4" in overrides
+        assert overrides["openai:gpt-5.4"].input_per_1k == 0.01
+        # Legacy still present
+        assert "claude:sonnet" in overrides
+
+    def test_new_rates_override_legacy(self):
+        """New cost_rates should override legacy rates for the same key."""
+        s = ForgeSettings(
+            cost_rates={
+                "claude:sonnet": {"input_per_1k": 0.005, "output_per_1k": 0.025},
+            }
+        )
+        overrides = s.build_cost_registry_overrides()
+        assert overrides["claude:sonnet"].input_per_1k == 0.005
+        assert overrides["claude:sonnet"].output_per_1k == 0.025

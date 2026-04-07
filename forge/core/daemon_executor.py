@@ -9,6 +9,7 @@ import os
 import time
 from datetime import UTC, datetime
 
+from forge.core import model_router as _legacy_model_router
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.daemon_helpers import (
     _build_agent_prompt,
@@ -19,13 +20,13 @@ from forge.core.daemon_helpers import (
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
+    _humanize_model_spec,
     _load_conventions_md,
     _parse_forge_question,
     _resolve_ref,
     _run_git,
 )
 from forge.core.logging_config import make_console
-from forge.core.model_router import select_model
 from forge.core.models import AgentState, TaskState
 from forge.core.sanitize import validate_task_id
 from forge.learning.guard import GuardTriggered, RuntimeGuard
@@ -46,10 +47,41 @@ _GIT_ADD_EXCLUDES: list[str] = [
     ":(exclude).ruff_cache",
     ":(exclude).pytest_cache",
     ":(exclude).mypy_cache",
+    ":(exclude).codegraph",
+    ":(exclude)screenshots",
 ]
+
+_STAGE_EXCLUDED_PREFIXES: tuple[str, ...] = (
+    ".venv/",
+    "venv/",
+    ".env/",
+    "node_modules/",
+    "__pycache__/",
+    ".ruff_cache/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".codegraph/",
+    "screenshots/",
+)
+_STAGE_EXCLUDED_EXACT: tuple[str, ...] = (
+    ".venv",
+    "venv",
+    ".env",
+    "node_modules",
+    "__pycache__",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".codegraph",
+    "screenshots",
+)
 
 logger = logging.getLogger("forge")
 console = make_console()
+
+# Backward-compatible module export for tests/mocks that still patch
+# forge.core.daemon_executor.select_model.
+select_model = _legacy_model_router.select_model
 
 _COMPLEXITY_MULTIPLIERS: dict[str, float] = {
     "low": 1.0,
@@ -62,6 +94,47 @@ def _complexity_timeout(base_seconds: int, complexity: str | None) -> int:
     """Scale agent timeout by task complexity."""
     multiplier = _COMPLEXITY_MULTIPLIERS.get(complexity or "medium", 1.5)
     return int(base_seconds * multiplier)
+
+
+def _is_stage_excluded_path(path: str) -> bool:
+    normalized = path.strip()
+    if not normalized:
+        return True
+    return normalized in _STAGE_EXCLUDED_EXACT or normalized.startswith(_STAGE_EXCLUDED_PREFIXES)
+
+
+def _extract_stageable_paths(status_output: str) -> list[str]:
+    paths: list[str] = []
+    for raw_line in status_output.splitlines():
+        line = raw_line.rstrip()
+        if len(line) < 4:
+            continue
+        candidate = line[3:]
+        if " -> " in candidate:
+            candidate = candidate.split(" -> ", 1)[1]
+        candidate = candidate.strip()
+        if not candidate or _is_stage_excluded_path(candidate):
+            continue
+        paths.append(candidate)
+    return paths
+
+
+async def _stage_paths_from_status(
+    worktree_path: str,
+    status_output: str,
+    *,
+    description: str,
+) -> bool:
+    paths = _extract_stageable_paths(status_output)
+    if not paths:
+        return False
+    add_result = await _run_git(
+        ["add", "-A", "--", *paths],
+        cwd=worktree_path,
+        check=False,
+        description=description,
+    )
+    return add_result.returncode == 0
 
 
 class ExecutorMixin:
@@ -88,6 +161,55 @@ class ExecutorMixin:
         health = getattr(self, "_health_monitor", None)
         if health:
             health.record_task_activity(task_id)
+
+    async def _record_task_completion_if_terminal(self, db, task_id: str) -> None:
+        """Persist completed_at only once a task reaches a terminal state."""
+        try:
+            task = await db.get_task(task_id)
+        except Exception:
+            logger.debug("Failed to load %s before recording completion", task_id, exc_info=True)
+            return
+
+        if not task or task.state not in (
+            TaskState.DONE.value,
+            TaskState.ERROR.value,
+            TaskState.CANCELLED.value,
+        ):
+            return
+
+        try:
+            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+
+    def _select_model(
+        self,
+        stage: str,
+        complexity: str = "medium",
+        *,
+        retry_count: int = 0,
+    ):
+        """Fallback model resolver for isolated mixin tests.
+
+        ForgeDaemon overrides this with the provider-aware implementation.
+        The mixin-level fallback preserves older unit tests that instantiate
+        ExecutorMixin directly without a provider registry.
+        """
+        settings = getattr(self, "_settings", None)
+        overrides = None
+        build_overrides = getattr(settings, "build_routing_overrides", None)
+        if callable(build_overrides):
+            overrides = build_overrides()
+        strategy = getattr(self, "_strategy", None) or getattr(settings, "model_strategy", "auto")
+        registry = getattr(self, "_registry", None)
+        return select_model(
+            strategy,
+            stage,
+            complexity,
+            overrides=overrides,
+            retry_count=retry_count,
+            registry=registry,
+        )
 
     # -- orchestrator ----------------------------------------------------
 
@@ -180,6 +302,7 @@ class ExecutorMixin:
                 pipeline_id=pid,
                 question_data=question_data,
                 session_id=agent_result.session_id,
+                resume_state=getattr(agent_result, "resume_state", None),
             )
             return
 
@@ -215,7 +338,9 @@ class ExecutorMixin:
                 # the task legitimately required no modifications.
                 # Mark done directly (skip review and merge).
                 console.print(
-                    f"[bold green]{task_id}: no changes needed — marking done[/bold green]"
+                    "[bold green]"
+                    f"{task_id}: no additional in-scope changes and no diff vs base "
+                    "— marking done[/bold green]"
                 )
                 await db.update_task_state(task_id, TaskState.DONE.value)
                 await self._emit(
@@ -253,8 +378,10 @@ class ExecutorMixin:
             )
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         await self._attempt_merge(
             db,
@@ -271,11 +398,7 @@ class ExecutorMixin:
             agent_summary=agent_result.summary if agent_result else "",
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        # Record task completion time
-        try:
-            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
-        except Exception:
-            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+        await self._record_task_completion_if_terminal(db, task_id)
 
     # -- merge-only fast path -------------------------------------------
 
@@ -299,8 +422,10 @@ class ExecutorMixin:
             await self._handle_retry(db, task_id, worktree_mgr, pipeline_id=pipeline_id)
             await db.release_agent(agent_id)
             return
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit(
@@ -344,11 +469,7 @@ class ExecutorMixin:
                 pre_merge_ref=pre_merge_ref,
             )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        # Record task completion time for merge-only fast path
-        try:
-            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
-        except Exception:
-            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+        await self._record_task_completion_if_terminal(db, task_id)
 
     # -- review-only path for resume -------------------------------------
 
@@ -411,8 +532,10 @@ class ExecutorMixin:
             )
 
         pipeline_branch = merge_worker._main
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
 
         # _attempt_merge handles: compute diff → review → merge
@@ -429,10 +552,7 @@ class ExecutorMixin:
             pipeline_branch=pipeline_branch,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        try:
-            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
-        except Exception:
-            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+        await self._record_task_completion_if_terminal(db, task_id)
 
     # -- worktree creation ----------------------------------------------
 
@@ -580,8 +700,10 @@ class ExecutorMixin:
                 user message when resuming a paused conversation.
             resume: SDK session ID for conversation continuation (``ClaudeCodeOptions.resume``).
         """
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         console.print(f"[dim]{task_id}: using {agent_model}[/dim]")
         prompt = prompt_override if prompt_override is not None else self._build_prompt(task)
@@ -589,7 +711,10 @@ class ExecutorMixin:
         # Emit startup message so TUI shows progress before first SDK output
         await self._emit(
             "task:agent_output",
-            {"task_id": task_id, "line": f"⚙ Starting agent ({agent_model})…"},
+            {
+                "task_id": task_id,
+                "line": f"⚙ Starting agent ({_humanize_model_spec(agent_model)})…",
+            },
             db=db,
             pipeline_id=pid,
         )
@@ -619,6 +744,10 @@ class ExecutorMixin:
             await db.set_task_turns(task_id, num_turns=num_turns, max_turns=max_turns)
         except Exception:
             logger.debug("Failed to record task turns for %s", task_id, exc_info=True)
+
+        # Persist provider metadata (model, backend, model_history)
+        await self._persist_provider_info(db, task_id, result)
+
         if hasattr(result, "cost_usd") and result.cost_usd > 0:
             await db.add_task_agent_cost(
                 task_id, result.cost_usd, result.input_tokens, result.output_tokens
@@ -691,6 +820,135 @@ class ExecutorMixin:
             )
         return result
 
+    # -- provider info persistence -----------------------------------------
+
+    async def _persist_provider_info(self, db, task_id: str, result) -> None:
+        """Persist provider metadata (model, backend, model_history) after agent run.
+
+        Writes provider_model, backend, canonical_model_id, and appends to
+        model_history on the task row. Safe to call even if the result doesn't
+        have provider fields (legacy AgentResult).
+        """
+        provider_model = getattr(result, "provider_model", None)
+        backend = getattr(result, "backend", None)
+        canonical_model_id = getattr(result, "canonical_model_id", None)
+        model_history_entry = getattr(result, "model_history_entry", None)
+
+        if provider_model or backend or canonical_model_id:
+            try:
+                await db.update_task_provider_info(
+                    task_id,
+                    provider_model=provider_model,
+                    backend=backend,
+                    canonical_model_id=canonical_model_id,
+                )
+            except Exception:
+                logger.debug("Failed to persist provider info for %s", task_id, exc_info=True)
+
+        if model_history_entry:
+            try:
+                await db.append_task_model_history(task_id, model_history_entry)
+            except Exception:
+                logger.debug("Failed to append model_history for %s", task_id, exc_info=True)
+
+    # -- Layer C rollback: git state verification --------------------------
+
+    async def _snapshot_git_state(self, worktree_path: str) -> dict:
+        """Capture pre-agent git state for rollback verification."""
+        head_ref = await _run_git(
+            ["rev-parse", "HEAD"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot HEAD",
+        )
+        tags = await _run_git(
+            ["tag", "--list"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot tags",
+        )
+        remotes = await _run_git(
+            ["remote", "-v"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot remotes",
+        )
+        stash_list = await _run_git(
+            ["stash", "list"],
+            cwd=worktree_path,
+            check=False,
+            description="snapshot stash",
+        )
+        return {
+            "head": head_ref.stdout.strip() if head_ref.returncode == 0 else "",
+            "tags": set(tags.stdout.strip().splitlines()) if tags.returncode == 0 else set(),
+            "remotes": remotes.stdout.strip() if remotes.returncode == 0 else "",
+            "stash_count": len(stash_list.stdout.strip().splitlines())
+            if stash_list.returncode == 0
+            else 0,
+        }
+
+    async def _verify_and_rollback_git_state(
+        self, worktree_path: str, pre_snapshot: dict, task_id: str
+    ) -> None:
+        """Post-agent verification: check HEAD hasn't moved unexpectedly, etc."""
+        post_snapshot = await self._snapshot_git_state(worktree_path)
+
+        # Check for in-progress rebase/merge markers
+        rebase_marker = os.path.join(worktree_path, ".git", "rebase-merge")
+        rebase_apply = os.path.join(worktree_path, ".git", "rebase-apply")
+        merge_head = os.path.join(worktree_path, ".git", "MERGE_HEAD")
+
+        for marker, abort_cmd in [
+            (rebase_marker, ["rebase", "--abort"]),
+            (rebase_apply, ["rebase", "--abort"]),
+            (merge_head, ["merge", "--abort"]),
+        ]:
+            if os.path.exists(marker):
+                logger.warning(
+                    "%s: detected in-progress operation (%s), aborting",
+                    task_id,
+                    marker,
+                )
+                await _run_git(
+                    abort_cmd,
+                    cwd=worktree_path,
+                    check=False,
+                    description=f"abort {abort_cmd[0]}",
+                )
+
+        # Check for unexpected tag changes
+        new_tags = post_snapshot["tags"] - pre_snapshot["tags"]
+        if new_tags:
+            logger.warning(
+                "%s: agent created tags %s — removing them",
+                task_id,
+                new_tags,
+            )
+            for tag in new_tags:
+                await _run_git(
+                    ["tag", "-d", tag],
+                    cwd=worktree_path,
+                    check=False,
+                    description=f"remove tag {tag}",
+                )
+
+        # Check for remote changes
+        if post_snapshot["remotes"] != pre_snapshot["remotes"]:
+            logger.warning(
+                "%s: agent modified remotes — this is blocked by policy",
+                task_id,
+            )
+
+        # Check for unexpected stash changes
+        if post_snapshot["stash_count"] != pre_snapshot["stash_count"]:
+            logger.info(
+                "%s: stash count changed from %d to %d",
+                task_id,
+                pre_snapshot["stash_count"],
+                post_snapshot["stash_count"],
+            )
+
     # -- infrastructure file cleanup --------------------------------------
 
     # Files written by Forge into the worktree that must NEVER be staged,
@@ -746,23 +1004,23 @@ class ExecutorMixin:
             description="check working tree",
         )
         if status.stdout.strip():
-            await _run_git(
-                ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
-                cwd=worktree_path,
-                check=False,
+            staged_any = await _stage_paths_from_status(
+                worktree_path,
+                status.stdout,
                 description="stage remaining changes before rebase",
             )
-            await _run_git(
-                [
-                    "commit",
-                    "--no-verify",
-                    "-m",
-                    f"chore({task_id}): preserve uncommitted changes before rebase",
-                ],
-                cwd=worktree_path,
-                check=False,
-                description="commit remaining changes before rebase",
-            )
+            if staged_any:
+                await _run_git(
+                    [
+                        "commit",
+                        "--no-verify",
+                        "-m",
+                        f"chore({task_id}): preserve uncommitted changes before rebase",
+                    ],
+                    cwd=worktree_path,
+                    check=False,
+                    description="commit remaining changes before rebase",
+                )
 
     # -- auto-commit safety net -------------------------------------------
 
@@ -804,18 +1062,13 @@ class ExecutorMixin:
 
         # Stage everything (including new files the agent created), but
         # exclude virtual environments and caches that agents may create.
-        add_result = await _run_git(
-            ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
-            cwd=worktree_path,
-            check=False,
+        staged_any = await _stage_paths_from_status(
+            worktree_path,
+            status.stdout,
             description="auto-stage agent changes",
         )
-        if add_result.returncode != 0:
-            logger.warning(
-                "%s: git add failed during auto-commit: %s",
-                task_id,
-                add_result.stderr.strip(),
-            )
+        if not staged_any:
+            logger.info("%s: no stageable changes remained after exclusions", task_id)
             return False
 
         # Build a descriptive commit message from the task title
@@ -853,6 +1106,7 @@ class ExecutorMixin:
         question_data: dict,
         session_id: str | None,
         pipeline_id: str | None = None,
+        resume_state: object | None = None,
     ) -> None:
         """Persist a FORGE_QUESTION and transition the task to awaiting_input.
 
@@ -872,7 +1126,7 @@ class ExecutorMixin:
             source=question_data.get("source"),
         )
 
-        # Store session_id and increment questions_asked counter
+        # Store session_id (+ resume_state via dual-write) and increment questions_asked
         if session_id:
             async with db._session_factory() as session:
                 from forge.storage.db import TaskRow
@@ -881,6 +1135,12 @@ class ExecutorMixin:
                 if task_row:
                     task_row.session_id = session_id
                     task_row.questions_asked = (task_row.questions_asked or 0) + 1
+                    # Dual-write resume_state from ResumeState if available
+                    if resume_state is not None:
+                        from forge.storage.db import Database as _DB
+
+                        rs_json, _ = _DB.write_resume_state(resume_state)
+                        task_row.resume_state = rs_json
                     await session.commit()
         else:
             # No session_id: still increment the counter
@@ -993,6 +1253,7 @@ class ExecutorMixin:
                     pipeline_id=pipeline_id,
                     question_data=question_data,
                     session_id=agent_result.session_id,
+                    resume_state=getattr(agent_result, "resume_state", None),
                 )
                 return True, current_session
 
@@ -1028,6 +1289,16 @@ class ExecutorMixin:
             return
 
         session_id = getattr(task, "session_id", None)
+
+        # Dual-read: prefer resume_state column, fall back to session_id
+        from forge.storage.db import Database as _DB
+
+        _rs_raw = getattr(task, "resume_state", None)
+        # Guard: only pass to parser if it's actually a string (not a mock/None)
+        _rs_json = _rs_raw if isinstance(_rs_raw, str) else None
+        resume_state_obj = _DB.read_resume_state(_rs_json, session_id)
+        # Use session_token from ResumeState for resume (backward compat)
+        effective_session_id = resume_state_obj.session_token if resume_state_obj else session_id
 
         # Transition back to in_progress
         await db.update_task_state(task_id, TaskState.IN_PROGRESS.value)
@@ -1066,7 +1337,7 @@ class ExecutorMixin:
             worktree_path,
             pid,
             pipeline_branch=pipeline_branch,
-            resume=session_id,
+            resume=effective_session_id,
             prompt_override=answer,
         )
 
@@ -1084,6 +1355,7 @@ class ExecutorMixin:
                 pipeline_id=pid,
                 question_data=question_data,
                 session_id=agent_result.session_id,
+                resume_state=getattr(agent_result, "resume_state", None),
             )
             return
 
@@ -1116,7 +1388,9 @@ class ExecutorMixin:
                 # Agent made zero changes and nothing was reverted —
                 # the task legitimately required no modifications.
                 console.print(
-                    f"[bold green]{task_id}: no changes needed — marking done (after resume)[/bold green]"
+                    "[bold green]"
+                    f"{task_id}: no additional in-scope changes and no diff vs base "
+                    "— marking done (after resume)[/bold green]"
                 )
                 await db.update_task_state(task_id, TaskState.DONE.value)
                 await self._emit(
@@ -1157,8 +1431,10 @@ class ExecutorMixin:
             await db.release_agent(agent_id)
             return
 
-        agent_model = select_model(
-            self._strategy, "agent", task.complexity or "medium", retry_count=task.retry_count
+        agent_model = self._select_model(
+            "agent",
+            task.complexity or "medium",
+            retry_count=task.retry_count,
         )
         await self._attempt_merge(
             db,
@@ -1451,7 +1727,7 @@ class ExecutorMixin:
 
         # Stage and commit the reverts
         await _run_git(
-            ["add", "-A", "--"] + _GIT_ADD_EXCLUDES,
+            ["add", "-A", "--", *out_of_scope],
             cwd=worktree_path,
             check=False,
             description="stage scope reverts",
@@ -1663,6 +1939,17 @@ class ExecutorMixin:
                     console.print(
                         f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]"
                     )
+                    await self._emit(
+                        "review:re_review",
+                        {
+                            "task_id": task_id,
+                            "attempt": re_review_attempt + 2,
+                            "max_attempts": max_re_reviews + 1,
+                            "reason": "transient_failure",
+                        },
+                        db=db,
+                        pipeline_id=pid,
+                    )
                     continue
                 break
             if needs_human:
@@ -1697,7 +1984,7 @@ class ExecutorMixin:
                     db,
                     task_id,
                     agent_id,
-                    question_data,
+                    question_data=question_data,
                     session_id=None,
                     pipeline_id=pid,
                 )
@@ -2146,13 +2433,21 @@ class ExecutorMixin:
         except Exception as exc:
             logger.warning("Failed to load lessons: %s", exc)
 
+        allowed_dirs = self._settings.allowed_dirs
+        build_allowed_dirs = getattr(self, "_build_allowed_dirs", None)
+        if callable(build_allowed_dirs):
+            try:
+                allowed_dirs = build_allowed_dirs()
+            except Exception:
+                logger.warning("Falling back to settings.allowed_dirs", exc_info=True)
+
         try:
             result = await runtime.run_task(
                 agent_id,
                 prompt,
                 worktree_path,
                 task.files,
-                allowed_dirs=self._settings.allowed_dirs,
+                allowed_dirs=allowed_dirs,
                 model=agent_model,
                 on_message=_on_msg,
                 project_context=self._build_project_context(),
@@ -2167,6 +2462,10 @@ class ExecutorMixin:
                 timeout_seconds=task_timeout,
                 project_dir=self._project_dir,
                 agent_max_turns=self._settings.agent_max_turns,
+                reasoning_effort=self._settings.resolve_reasoning_effort(
+                    "agent",
+                    getattr(task, "complexity", None) or "medium",
+                ),
                 project_commands={
                     k: v
                     for k, v in {

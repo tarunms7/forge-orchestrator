@@ -19,6 +19,7 @@ from forge.core.followup import (
     classify_questions,
     execute_followups,
 )
+from forge.core.provider_config import build_provider_registry, build_settings_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,21 @@ async def submit_followup(
                     },
                 )
 
-            classification = await classify_questions(questions, pipeline_tasks)
+            followup_settings, followup_project_config = build_settings_for_project(
+                pipeline.project_dir,
+                model_strategy=getattr(pipeline, "model_strategy", "auto"),
+                provider_config=getattr(pipeline, "provider_config", None),
+            )
+            followup_registry = build_provider_registry(
+                followup_settings,
+                followup_project_config,
+            )
+
+            classification = await classify_questions(
+                questions,
+                pipeline_tasks,
+                registry=followup_registry,
+            )
             followup.classification = classification
 
             if ws_manager:

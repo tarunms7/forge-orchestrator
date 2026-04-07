@@ -29,7 +29,59 @@ _SPINNER_FRAMES = [
     ("[#3b82c4]◉[/]", "#3b82c4"),  # Medium
     ("[#58a6ff]●[/]", "#58a6ff"),  # Bright, full
 ]
+
+# Legacy typing frames (kept for backward compatibility with tests)
 _TYPING_FRAMES = ["▍", "▌", "▍", " "]
+
+# Shimmer forging animation
+_FORGING_LETTERS = [
+    ("╔═╗", "╠╣ ", "╚  "),  # F
+    ("╔═╗", "║ ║", "╚═╝"),  # O
+    ("╦═╗", "╠╦╝", "╩╚═"),  # R
+    ("╔═╗", "║ ╦", "╚═╝"),  # G
+    ("╦", "║", "╩"),  # I
+    ("╔╗╔", "║║║", "╝╚╝"),  # N
+    ("╔═╗", "║ ╦", "╚═╝"),  # G
+]
+_SHIMMER_COLORS = [
+    "#484f58",  # Dim base (TEXT_MUTED)
+    "#6e7681",  # Mid step 1
+    "#8b949e",  # Mid step 2
+    "#d6a85f",  # Bright (ACCENT_GOLD)
+    "#e8c48a",  # Peak (brighter gold)
+]
+
+
+def _render_forging_shimmer(frame: int) -> str:
+    """Render the 'forging' shimmer animation with a brightness wave.
+
+    Args:
+        frame: Current animation frame number
+
+    Returns:
+        Rich markup string with left-aligned shimmer block art
+    """
+    hotspot_pos = frame % (len(_FORGING_LETTERS) + 3)  # +3 for pause between sweeps
+
+    rows: list[str] = []
+    for row_idx in range(3):
+        row_parts: list[str] = []
+        for i, letter in enumerate(_FORGING_LETTERS):
+            distance = abs(i - hotspot_pos)
+            # 3-character glow: distance 0=peak, 1=bright, 2=mid, else=dim base
+            if distance == 0:
+                color = _SHIMMER_COLORS[4]  # Peak: #e8c48a
+            elif distance == 1:
+                color = _SHIMMER_COLORS[3]  # Bright: #d6a85f
+            elif distance == 2:
+                color = _SHIMMER_COLORS[2]  # Mid: #8b949e
+            else:
+                color = _SHIMMER_COLORS[0]  # Dim base: #484f58
+            row_parts.append(f"[bold {color}]{letter[row_idx]}[/]")
+        rows.append(" ".join(row_parts))
+
+    return "\n".join(rows)
+
 
 # Dim→bright fade-in for new lines
 _FADE_STEPS = ["#30363d", "#484f58", "#6e7681", "#8b949e", "#c9d1d9"]
@@ -225,8 +277,7 @@ def format_output(
                 continue
             parts.append(rendered)
     if streaming:
-        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
-        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+        parts.append(_render_forging_shimmer(typing_frame))
     return "\n".join(parts)
 
 
@@ -275,8 +326,7 @@ def format_unified_output(
         parts.extend(_render_unified_chunk(source_type, line))
 
     if streaming:
-        cursor = _TYPING_FRAMES[typing_frame % len(_TYPING_FRAMES)]
-        parts.append(f"[#58a6ff]● Typing{cursor}[/]")
+        parts.append(_render_forging_shimmer(typing_frame))
 
     return "\n".join(parts)
 
@@ -356,6 +406,7 @@ class AgentOutput(Widget):
         self._typing_timer = None
         self._error_mode: bool = False
         self._unified_entries: list[tuple[str, str]] = []
+        self._blocked_detail: str | None = None
         self._search_pattern: str | None = None
         # Incremental rendering state
         self._rendered_parts: list[str] = []
@@ -404,27 +455,13 @@ class AgentOutput(Widget):
             return
         self._typing_frame += 1
         if self._rendered_parts:
-            # Skip update if content hasn't changed (only cursor frame differs)
-            content_hash = hash(tuple(self._rendered_parts))
-            if (
-                content_hash == self._last_content_hash
-                and self._typing_frame % len(_TYPING_FRAMES) != 0
-            ):
-                return
-            self._last_content_hash = content_hash
+            # Always update for shimmer animation since every frame changes colors
             self._update_content()
         else:
             try:
                 content = self.query_one("#agent-content", Static)
                 if self._unified_entries:
-                    content.update(
-                        format_unified_output(
-                            self._unified_entries,
-                            self._spinner_frame,
-                            streaming=True,
-                            typing_frame=self._typing_frame,
-                        )
-                    )
+                    content.update(self._format_content_with_blocked_detail())
                 else:
                     content.update(
                         format_output(
@@ -460,13 +497,12 @@ class AgentOutput(Widget):
                 else:
                     full = "\n".join(self._rendered_parts)
                 if self._streaming:
-                    cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                    full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                    full += f"\n{_render_forging_shimmer(self._typing_frame)}"
                 content.update(full)
                 if self._is_near_bottom():
                     self._request_scroll()
             elif self._unified_entries:
-                content.update(format_unified_output(self._unified_entries, self._spinner_frame))
+                content.update(self._format_content_with_blocked_detail())
             else:
                 content.update(format_output(self._lines, self._spinner_frame))
         except Exception:
@@ -485,7 +521,7 @@ class AgentOutput(Widget):
         if active:
             self._typing_frame = 0
             try:
-                self._typing_timer = self.set_interval(0.3, self._tick_typing)
+                self._typing_timer = self.set_interval(0.12, self._tick_typing)
             except Exception:
                 pass  # Not yet composed
         else:
@@ -501,14 +537,7 @@ class AgentOutput(Widget):
             try:
                 content = self.query_one("#agent-content", Static)
                 if self._unified_entries:
-                    content.update(
-                        format_unified_output(
-                            self._unified_entries,
-                            self._spinner_frame,
-                            streaming=self._streaming,
-                            typing_frame=self._typing_frame,
-                        )
-                    )
+                    content.update(self._format_content_with_blocked_detail())
                 else:
                     content.update(
                         format_output(
@@ -575,6 +604,7 @@ class AgentOutput(Widget):
         self._state = state
         self._lines = list(lines)  # Copy to avoid aliasing state.agent_output[tid]
         self._unified_entries = []  # Clear unified data when switching to line-based mode
+        self._blocked_detail = None  # Clear blocked detail when switching to line-based mode
 
         # Reset streaming state on full refresh
         self.set_streaming(False)
@@ -648,6 +678,9 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
+        self._blocked_detail = (
+            None  # Clear blocked detail in sync mode (streaming doesn't show blocked detail)
+        )
         self._lines = []
         # Reset fade animation
         self._fade_step = len(_FADE_STEPS)
@@ -672,8 +705,7 @@ class AgentOutput(Widget):
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             full = "\n".join(self._rendered_parts)
             if self._streaming:
-                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                full += f"\n[#58a6ff]● Typing{cursor}[/]"
+                full += f"\n{_render_forging_shimmer(self._typing_frame)}"
             self.query_one("#agent-content", Static).update(full)
         except Exception:
             pass
@@ -687,15 +719,21 @@ class AgentOutput(Widget):
         title: str | None,
         state: str | None,
         entries: list[tuple[str, str]],
+        blocked_detail: str | None = None,
     ) -> None:
         """Full refresh with unified log entries.
 
         Replaces _unified_entries with the authoritative state from TuiState.
+
+        Args:
+            blocked_detail: Optional multi-line blocked reason detail. When provided,
+                           prepend as styled header above unified content.
         """
         self._task_id = task_id
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
+        self._blocked_detail = blocked_detail
         self._lines = []  # Clear line-based data when switching to unified mode
         # Reset incremental rendering state
         self._rendered_parts = []
@@ -710,12 +748,51 @@ class AgentOutput(Widget):
         try:
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
             self.query_one("#agent-content", Static).update(
-                format_unified_output(entries, self._spinner_frame)
+                self._format_content_with_blocked_detail()
             )
             if entries and self._is_near_bottom():
                 self._request_scroll()
         except Exception:
             pass  # Not yet composed
+
+    def _format_content_with_blocked_detail(self) -> str:
+        """Format unified content with optional blocked detail header."""
+        unified_output = format_unified_output(
+            self._unified_entries,
+            self._spinner_frame,
+            streaming=self._streaming,
+            typing_frame=self._typing_frame,
+        )
+
+        if not self._blocked_detail:
+            return unified_output
+
+        # Determine color based on blocked reason content
+        detail_lines = self._blocked_detail.split("\n")
+        if detail_lines:
+            first_line = detail_lines[0].lower()
+            if "blocked" in first_line and "failed" in first_line:
+                color = "#f0883e"  # Orange for blocked-by-failure
+            else:
+                color = "#8b949e"  # Gray for waiting-on-deps
+        else:
+            color = "#8b949e"
+
+        # Format blocked detail header
+        header_lines = []
+        for line in detail_lines:
+            if line.strip():
+                header_lines.append(f"[{color}]{_escape(line)}[/]")
+            else:
+                header_lines.append("")
+
+        header = "\n".join(header_lines)
+        separator = "[#30363d]─────────────────────────────────────────[/#30363d]"
+
+        if unified_output.strip():
+            return f"{header}\n{separator}\n\n{unified_output}"
+        else:
+            return f"{header}\n{separator}"
 
     def set_search_highlights(self, pattern: str | None) -> int:
         """Apply or clear search highlights on the current content.
@@ -742,15 +819,9 @@ class AgentOutput(Widget):
         elif self._rendered_parts:
             base = "\n".join(self._rendered_parts)
             if self._streaming:
-                cursor = _TYPING_FRAMES[self._typing_frame % len(_TYPING_FRAMES)]
-                base += f"\n[#58a6ff]● Typing{cursor}[/]"
+                base += f"\n{_render_forging_shimmer(self._typing_frame)}"
         elif self._unified_entries:
-            base = format_unified_output(
-                self._unified_entries,
-                self._spinner_frame,
-                streaming=self._streaming,
-                typing_frame=self._typing_frame,
-            )
+            base = self._format_content_with_blocked_detail()
         else:
             base = format_output(
                 self._lines,
@@ -824,7 +895,7 @@ class AgentOutput(Widget):
             )
             if self._unified_entries:
                 self.query_one("#agent-content", Static).update(
-                    format_unified_output(self._unified_entries, self._spinner_frame)
+                    self._format_content_with_blocked_detail()
                 )
             else:
                 self.query_one("#agent-content", Static).update(

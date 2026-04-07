@@ -77,6 +77,7 @@ class PhaseBanner(Widget):
         super().__init__()
         self._phase = "idle"
         self._read_only_banner: str | None = None
+        self._planner_detail: str = ""
         # Scramble-resolve animation state
         self._target_text: str = ""
         self._target_colour: str = "#8b949e"
@@ -94,6 +95,9 @@ class PhaseBanner(Widget):
         if old_phase == phase:
             self.refresh()
             return
+        # Clear planner detail when phase changes away from planning
+        if old_phase == "planning" and phase != "planning":
+            self._planner_detail = ""
         # Start scramble-resolve animation
         label, colour = _PHASE_BANNER.get(phase, ("Unknown", "#8b949e"))
         icon, _, text = label.partition(" ")
@@ -112,9 +116,10 @@ class PhaseBanner(Widget):
 
         if self._scramble_timer is not None:
             self._scramble_timer.stop()
-        try:
+            self._scramble_timer = None
+        if self.is_mounted:
             self._scramble_timer = self.set_interval(0.045, self._tick_scramble)
-        except Exception:
+        else:
             self._animating = False
         self.refresh()
 
@@ -131,11 +136,28 @@ class PhaseBanner(Widget):
     def on_unmount(self) -> None:
         if self._scramble_timer is not None:
             self._scramble_timer.stop()
+            self._scramble_timer = None
         if self._countdown_timer is not None:
             self._countdown_timer.stop()
+            self._countdown_timer = None
 
     def set_read_only_banner(self, text: str | None) -> None:
         self._read_only_banner = text
+        self.refresh()
+
+    def update_planner_detail(self, status: str, files_examined: int, candidate_tasks: int) -> None:
+        """Update the planner detail summary line."""
+        if status == "waiting for human input":
+            self._planner_detail = "⏳ waiting for your answer"
+        elif status:
+            parts = [status]
+            if files_examined > 0:
+                parts.append(f"{files_examined} files examined")
+            if candidate_tasks > 0:
+                parts.append(f"{candidate_tasks} tasks")
+            self._planner_detail = " · ".join(parts)
+        else:
+            self._planner_detail = ""
         self.refresh()
 
     def stop_countdown(self) -> None:
@@ -188,6 +210,8 @@ class PhaseBanner(Widget):
             display = f"[bold {self._target_colour}]{self._target_icon}{resolved}[/][#484f58]{scrambled}[/]"
             if self._read_only_banner:
                 display += f"\n[dim]{self._read_only_banner}[/]"
+            elif self._phase == "planning" and self._planner_detail:
+                display += f"\n[dim]{self._planner_detail}[/]"
             return _vertically_center(display)
 
         # Normal static render
@@ -202,6 +226,8 @@ class PhaseBanner(Widget):
         banner = f"[bold {colour}]{icon_prefix}{spaced}[/]"
         if self._read_only_banner:
             banner += f"\n[dim]{self._read_only_banner}[/]"
+        elif self._phase == "planning" and self._planner_detail:
+            banner += f"\n[dim]{self._planner_detail}[/]"
         return _vertically_center(banner)
 
 
@@ -497,6 +523,18 @@ class PipelineScreen(Screen):
             except Exception:
                 pass
             return
+        if field == "planner_status":
+            # Update planner detail banner
+            try:
+                state = self._state
+                self.query_one(PhaseBanner).update_planner_detail(
+                    state.planner_status,
+                    state.planner_files_examined,
+                    state.planner_candidate_tasks,
+                )
+            except Exception:
+                pass
+            return
         if field in (
             "tasks",
             "phase",
@@ -735,10 +773,12 @@ class PipelineScreen(Screen):
                 t["_queue_status"] = scheduling_info.get("status", "")
                 t["_priority_rank"] = scheduling_info.get("priority_rank")
                 t["_blocked_reason"] = scheduling_info.get("reason", "")
+                t["_blocking_task_ids"] = scheduling_info.get("blocking_task_ids", [])
             else:
                 t.pop("_queue_status", None)
                 t.pop("_priority_rank", None)
                 t.pop("_blocked_reason", None)
+                t.pop("_blocking_task_ids", None)
         task_list.update_tasks(
             ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo
         )
@@ -750,21 +790,42 @@ class PipelineScreen(Screen):
             task = state.tasks[tid]
             unified = state.unified_log.get(tid, [])
             if task.get("state") == "error":
-                agent_output.render_error_detail(tid, task, state.agent_output.get(tid, []))
+                error_task, error_lines = self._build_error_detail_context(tid, task)
+                agent_output.render_error_detail(tid, error_task, error_lines)
             elif tid in self._agent_streaming_tasks or tid in self._review_streaming_tasks:
                 # Streaming active — sync data WITHOUT toggling streaming off/on
                 # (update_unified calls set_streaming(False) which causes double render)
                 agent_output.sync_streaming(tid, task.get("title"), task.get("state"), unified)
             else:
                 agent_output._error_mode = False  # Exit error mode without double-render
-                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
+
+                # Generate blocked detail if task is blocked/waiting
+                blocked_detail = None
+                if task.get("_blocked_reason") and task.get("state") in ("todo", "blocked"):
+                    from forge.core.blocked_reason import format_blocked_detail
+
+                    blocking_ids = task.get("_blocking_task_ids", [])
+                    blocked_detail = format_blocked_detail(
+                        task["_blocked_reason"], task.get("_queue_status", ""), blocking_ids
+                    )
+
+                agent_output.update_unified(
+                    tid,
+                    task.get("title"),
+                    task.get("state"),
+                    unified,
+                    blocked_detail=blocked_detail,
+                )
 
                 # Auto-switch to chat view when the selected task is awaiting input
                 if task.get("state") == "awaiting_input":
                     self._auto_switch_chat(tid, task)
         elif state.phase == "planning" and state.planner_output:
             agent_output.clear_error_detail()
-            agent_output.update_output("planner", "Planning", "planning", state.planner_output)
+            agent_output.update_output(
+                "planner", "Planning", "planning", state.planner_collapsed_output
+            )
+            agent_output.set_streaming(True)
             # Auto-switch to chat view when a planning question is pending
             planning_q = state.pending_questions.get("__planning__")
             if planning_q:
@@ -786,8 +847,9 @@ class PipelineScreen(Screen):
                     "planner",
                     "Planning",
                     "planning",
-                    state.planner_output or ["⚙ Initializing planner..."],
+                    state.planner_collapsed_output or ["⚙ Initializing planner..."],
                 )
+                agent_output.set_streaming(state.phase == "planning")
             else:
                 agent_output.update_output(None, None, None, [])
 
@@ -835,6 +897,36 @@ class PipelineScreen(Screen):
             split_pane.remove_class("full-width")
 
         decision_badge.update_count(len(state.pending_questions))
+
+    def _build_error_detail_context(self, task_id: str, task: dict) -> tuple[dict, list[str]]:
+        """Choose the most useful failure context for the selected errored task.
+
+        Review failures should show reviewer feedback and review-stream lines rather
+        than generic agent output, otherwise the UI says "review error" without
+        exposing the actual review error in the active pane.
+        """
+        state = self._state
+        review_data = task.get("review") or {}
+        review_gates = state.review_gates.get(task_id) or task.get("review_gates") or {}
+        review_failed = bool(
+            review_data.get("passed") is False
+            or review_gates.get("gate2_llm_review", {}).get("status") == "failed"
+        )
+
+        error_task = dict(task)
+        if review_failed:
+            review_details = (
+                review_data.get("details")
+                or review_gates.get("gate2_llm_review", {}).get("details")
+                or task.get("error")
+            )
+            if review_details:
+                error_task["error"] = review_details
+            review_lines = state.review_output.get(task_id, [])
+            if review_lines:
+                return error_task, review_lines
+
+        return error_task, state.agent_output.get(task_id, [])
 
     # ------------------------------------------------------------------
     # On-demand diff loading

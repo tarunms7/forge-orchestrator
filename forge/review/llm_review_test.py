@@ -51,6 +51,16 @@ class TestBuildReviewPrompt:
         prompt = _build_review_prompt("T", "D", "diff", sibling_context=None)
         assert "Pipeline Task Context" not in prompt
 
+    def test_includes_validation_context(self):
+        prompt = _build_review_prompt(
+            "T",
+            "D",
+            "diff",
+            validation_context="## Validation Context\n- Test gate: SKIPPED — infra error",
+        )
+        assert "Validation Context" in prompt
+        assert "Test gate: SKIPPED" in prompt
+
     def test_includes_file_scope(self):
         """File scope enforcement appears in the prompt."""
         prompt = _build_review_prompt(
@@ -222,6 +232,23 @@ class TestParseReviewResult:
         # Stage 1 catches "FAIL" at the start of the text, so this is FAIL.
         assert result.passed is False
 
+    def test_explicit_verdict_label_detected(self):
+        result = _parse_review_result(
+            "Review notes:\nChecked the changed files.\nFinal verdict: PASS"
+        )
+        assert result.passed is True
+
+    def test_pass_after_sentence_boundary_detected(self):
+        result = _parse_review_result(
+            "Reviewing the modified files first.PASS: the changes are in scope and correct"
+        )
+        assert result.passed is True
+
+    def test_mid_sentence_fail_still_not_matched(self):
+        result = _parse_review_result("After looking around I think this is a FAIL because...")
+        assert result.passed is False
+        assert "Unclear" in result.details
+
 
 class TestOnMessagePassthrough:
     """gate2_llm_review() passes on_message to sdk_query."""
@@ -338,6 +365,15 @@ class TestReviewSystemPrompt:
 
         assert "Do NOT claim you ran `git`" in REVIEW_SYSTEM_PROMPT
         assert "Prior review feedback can be stale" in REVIEW_SYSTEM_PROMPT
+
+    def test_prompt_requires_tool_assisted_verification(self):
+        from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
+
+        assert "Read, Glob, Grep, and Bash" in REVIEW_SYSTEM_PROMPT
+        assert (
+            "Read the current version of each changed in-scope source file" in REVIEW_SYSTEM_PROMPT
+        )
+        assert "preferred Python interpreter" in REVIEW_SYSTEM_PROMPT
 
 
 class TestRetryPromptNoSuppression:
@@ -511,6 +547,66 @@ class TestAdaptiveReviewDispatch:
 
         diff = "diff --git a/x b/x\n+line\n"
         assert select_strategy(diff, 400, 2000) == ReviewStrategy.TIER1
+
+    @pytest.mark.asyncio
+    async def test_prefer_deep_review_promotes_small_diff_to_tier2(self):
+        from forge.review.pipeline import GateResult, ReviewCostInfo
+
+        diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n+line\n"
+        expected = GateResult(
+            passed=True,
+            gate="gate2_llm_review",
+            details="PASS: synthesized",
+            review_strategy="tier2",
+        )
+        with (
+            patch(
+                "forge.review.synthesizer.run_chunked_review", new_callable=AsyncMock
+            ) as mock_chunked,
+            patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk,
+        ):
+            mock_chunked.return_value = (expected, ReviewCostInfo())
+            result, _ = await gate2_llm_review(
+                "T",
+                "D",
+                diff,
+                prefer_deep_review=True,
+            )
+
+        assert result.review_strategy == "tier2"
+        mock_chunked.assert_awaited_once()
+        mock_sdk.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_risky_small_diff_promotes_to_tier2(self):
+        from forge.review.pipeline import GateResult, ReviewCostInfo
+
+        lines = "".join(f"+line{i}\n" for i in range(40))
+        diff = (
+            "diff --git a/auth/session.py b/auth/session.py\n"
+            "--- a/auth/session.py\n"
+            "+++ b/auth/session.py\n"
+            "@@ -1,1 +1,40 @@\n"
+            f"{lines}"
+        )
+        expected = GateResult(
+            passed=True,
+            gate="gate2_llm_review",
+            details="PASS: synthesized",
+            review_strategy="tier2",
+        )
+        with (
+            patch(
+                "forge.review.synthesizer.run_chunked_review", new_callable=AsyncMock
+            ) as mock_chunked,
+            patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk,
+        ):
+            mock_chunked.return_value = (expected, ReviewCostInfo())
+            result, _ = await gate2_llm_review("T", "D", diff)
+
+        assert result.review_strategy == "tier2"
+        mock_chunked.assert_awaited_once()
+        mock_sdk.assert_not_called()
 
 
 class TestCostTrackingOnEmptyResult:

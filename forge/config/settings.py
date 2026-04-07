@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+ReasoningEffort = Literal["low", "medium", "high"]
 
 
 class ForgeSettings(BaseSettings):
@@ -53,13 +57,35 @@ class ForgeSettings(BaseSettings):
     # Budget & cost tracking
     budget_limit_usd: float = 0.0  # 0 means unlimited
 
-    # Cost rates per 1K tokens (USD)
+    # Cost rates per 1K tokens (USD) — legacy fields, kept for backward compat
     cost_rate_sonnet_input: float = 0.003
     cost_rate_sonnet_output: float = 0.015
     cost_rate_haiku_input: float = 0.00025
     cost_rate_haiku_output: float = 0.00125
     cost_rate_opus_input: float = 0.015
     cost_rate_opus_output: float = 0.075
+
+    # Multi-provider support
+    openai_enabled: bool = False  # env: FORGE_OPENAI_ENABLED
+
+    # Per-stage model overrides (env: FORGE_PLANNER_MODEL, etc.)
+    planner_model: str | None = None
+    agent_model_low: str | None = None
+    agent_model_medium: str | None = None
+    agent_model_high: str | None = None
+    reviewer_model: str | None = None
+    contract_builder_model: str | None = None
+    ci_fix_model: str | None = None
+    planner_reasoning_effort: ReasoningEffort | None = None
+    agent_model_low_reasoning_effort: ReasoningEffort | None = None
+    agent_model_medium_reasoning_effort: ReasoningEffort | None = None
+    agent_model_high_reasoning_effort: ReasoningEffort | None = None
+    reviewer_reasoning_effort: ReasoningEffort | None = None
+    contract_builder_reasoning_effort: ReasoningEffort | None = None
+    ci_fix_reasoning_effort: ReasoningEffort | None = None
+
+    # New-style cost rates: dict of "provider:model" -> {input_per_1k, output_per_1k}
+    cost_rates: dict[str, dict[str, float]] | None = None
 
     # Auth
     auth_disabled: bool = False
@@ -201,3 +227,92 @@ class ForgeSettings(BaseSettings):
         if not self.db_url:
             self.db_url = forge_db_url()
         return self
+
+    def build_routing_overrides(self) -> dict[str, str]:
+        """Collect all per-stage model fields into the overrides dict format.
+
+        Returns a dict suitable for passing as ``overrides`` to ``select_model()``.
+        Only includes fields that are explicitly set (not None).
+        """
+        result: dict[str, str] = {}
+        if self.planner_model is not None:
+            result["planner_model"] = self.planner_model
+        if self.agent_model_low is not None:
+            result["agent_model_low"] = self.agent_model_low
+        if self.agent_model_medium is not None:
+            result["agent_model_medium"] = self.agent_model_medium
+        if self.agent_model_high is not None:
+            result["agent_model_high"] = self.agent_model_high
+        if self.reviewer_model is not None:
+            result["reviewer_model"] = self.reviewer_model
+        if self.contract_builder_model is not None:
+            result["contract_builder_model"] = self.contract_builder_model
+        if self.ci_fix_model is not None:
+            result["ci_fix_model"] = self.ci_fix_model
+        return result
+
+    def build_reasoning_effort_overrides(self) -> dict[str, ReasoningEffort]:
+        """Collect explicit per-stage reasoning-effort overrides."""
+        result: dict[str, ReasoningEffort] = {}
+        if self.planner_reasoning_effort is not None:
+            result["planner_reasoning_effort"] = self.planner_reasoning_effort
+        if self.agent_model_low_reasoning_effort is not None:
+            result["agent_model_low_reasoning_effort"] = self.agent_model_low_reasoning_effort
+        if self.agent_model_medium_reasoning_effort is not None:
+            result["agent_model_medium_reasoning_effort"] = self.agent_model_medium_reasoning_effort
+        if self.agent_model_high_reasoning_effort is not None:
+            result["agent_model_high_reasoning_effort"] = self.agent_model_high_reasoning_effort
+        if self.reviewer_reasoning_effort is not None:
+            result["reviewer_reasoning_effort"] = self.reviewer_reasoning_effort
+        if self.contract_builder_reasoning_effort is not None:
+            result["contract_builder_reasoning_effort"] = self.contract_builder_reasoning_effort
+        if self.ci_fix_reasoning_effort is not None:
+            result["ci_fix_reasoning_effort"] = self.ci_fix_reasoning_effort
+        return result
+
+    def resolve_reasoning_effort(
+        self,
+        stage: str,
+        complexity: str = "medium",
+    ) -> ReasoningEffort | None:
+        """Return the explicit reasoning-effort override for a stage, if any."""
+        if stage == "agent":
+            normalized = complexity if complexity in {"low", "medium", "high"} else "medium"
+            return getattr(self, f"agent_model_{normalized}_reasoning_effort")
+
+        attr_map = {
+            "planner": "planner_reasoning_effort",
+            "reviewer": "reviewer_reasoning_effort",
+            "contract_builder": "contract_builder_reasoning_effort",
+            "ci_fix": "ci_fix_reasoning_effort",
+        }
+        attr_name = attr_map.get(stage)
+        return getattr(self, attr_name) if attr_name else None
+
+    def build_cost_registry_overrides(self) -> dict:
+        """Convert both legacy cost_rate_* fields and new cost_rates dict.
+
+        Returns a dict of ``"provider:model"`` -> ``ModelRates`` suitable for
+        passing as ``overrides`` to ``CostRegistry()``.
+        """
+        from forge.core.cost_registry import ModelRates, migrate_legacy_cost_settings
+
+        # Start with legacy fields
+        result = migrate_legacy_cost_settings(
+            sonnet_input=self.cost_rate_sonnet_input,
+            sonnet_output=self.cost_rate_sonnet_output,
+            haiku_input=self.cost_rate_haiku_input,
+            haiku_output=self.cost_rate_haiku_output,
+            opus_input=self.cost_rate_opus_input,
+            opus_output=self.cost_rate_opus_output,
+        )
+
+        # Overlay new-style cost_rates if provided
+        if self.cost_rates:
+            for key, rates_dict in self.cost_rates.items():
+                result[key] = ModelRates(
+                    input_per_1k=rates_dict.get("input_per_1k", 0.0),
+                    output_per_1k=rates_dict.get("output_per_1k", 0.0),
+                )
+
+        return result

@@ -65,6 +65,7 @@ class TestGetSettings:
         assert data["agent_model_medium"] == "opus"
         assert data["agent_model_high"] == "opus"
         assert data["reviewer_model"] == "sonnet"
+        assert data["reviewer_reasoning_effort"] is None
 
 
 class TestUpdateSettings:
@@ -115,6 +116,36 @@ class TestUpdateSettings:
         # Unchanged model fields keep defaults
         assert data["agent_model_medium"] == "opus"
         assert data["agent_model_high"] == "opus"
+
+    async def test_update_reasoning_effort_fields(self, client):
+        """PUT /settings should update per-stage reasoning effort fields."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        resp = await client.put(
+            "/api/settings",
+            json={
+                "reviewer_reasoning_effort": "high",
+                "planner_reasoning_effort": "medium",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["reviewer_reasoning_effort"] == "high"
+        assert data["planner_reasoning_effort"] == "medium"
+
+    async def test_validation_rejects_invalid_reasoning_effort(self, client):
+        """PUT /settings should reject invalid reasoning-effort values."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        resp = await client.put(
+            "/api/settings",
+            json={"reviewer_reasoning_effort": "turbo"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
 
     async def test_settings_persist_across_requests(self, client):
         """Settings should persist across multiple requests (DB-backed)."""
@@ -183,3 +214,105 @@ class TestUpdateSettings:
         data = resp.json()
         assert data["max_agents"] == 8
         assert data["model_strategy"] == "quality"
+
+    async def test_update_provider_model_format(self, client):
+        """PUT /settings should accept provider:model format for model fields."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        resp = await client.put(
+            "/api/settings",
+            json={
+                "planner_model": "claude:opus",
+                "agent_model_low": "claude:sonnet",
+                "contract_builder_model": "claude:opus",
+                "ci_fix_model": "claude:sonnet",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["planner_model"] == "claude:opus"
+        assert data["agent_model_low"] == "claude:sonnet"
+        assert data["contract_builder_model"] == "claude:opus"
+        assert data["ci_fix_model"] == "claude:sonnet"
+
+    async def test_mixed_provider_routing_roundtrip(self, client):
+        """PUT /settings should handle mixed-provider routing and persist correctly."""
+        token = await _register_and_get_token(client)
+        headers = _auth_header(token)
+
+        # PUT with mixed providers
+        resp = await client.put(
+            "/api/settings",
+            json={
+                "planner_model": "claude:opus",
+                "agent_model_medium": "claude:sonnet",
+                "reviewer_model": "openai:gpt-5.4",
+                "reviewer_reasoning_effort": "high",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["planner_model"] == "claude:opus"
+        assert data["agent_model_medium"] == "claude:sonnet"
+        assert data["reviewer_model"] == "openai:gpt-5.4"
+        assert data["reviewer_reasoning_effort"] == "high"
+
+        # GET and assert persistence
+        resp = await client.get("/api/settings", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["planner_model"] == "claude:opus"
+        assert data["agent_model_medium"] == "claude:sonnet"
+        assert data["reviewer_model"] == "openai:gpt-5.4"
+        assert data["reviewer_reasoning_effort"] == "high"
+
+
+class TestSettingsProviderFields:
+    """Tests for provider-aware fields in GET /api/settings."""
+
+    async def test_get_includes_openai_enabled(self, client):
+        """GET /settings should include openai_enabled field."""
+        token = await _register_and_get_token(client)
+        resp = await client.get("/api/settings", headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "openai_enabled" in data
+        assert isinstance(data["openai_enabled"], bool)
+
+    async def test_get_includes_available_providers(self, client):
+        """GET /settings should include available_providers list."""
+        token = await _register_and_get_token(client)
+        resp = await client.get("/api/settings", headers=_auth_header(token))
+        data = resp.json()
+        assert "available_providers" in data
+        assert isinstance(data["available_providers"], list)
+        assert "claude" in data["available_providers"]
+
+    async def test_get_includes_catalog(self, client):
+        """GET /settings should include catalog list."""
+        token = await _register_and_get_token(client)
+        resp = await client.get("/api/settings", headers=_auth_header(token))
+        data = resp.json()
+        assert "catalog" in data
+        assert isinstance(data["catalog"], list)
+        assert len(data["catalog"]) >= 1
+
+        # Check catalog entry shape
+        entry = data["catalog"][0]
+        assert "alias" in entry
+        assert "canonical_id" in entry
+        assert "backend" in entry
+        assert "tier" in entry
+        assert "capabilities" in entry
+        assert "validated_stages" in entry
+
+    async def test_get_includes_contract_builder_and_ci_fix(self, client):
+        """GET /settings should include contract_builder_model and ci_fix_model."""
+        token = await _register_and_get_token(client)
+        resp = await client.get("/api/settings", headers=_auth_header(token))
+        data = resp.json()
+        assert "contract_builder_model" in data
+        assert "ci_fix_model" in data

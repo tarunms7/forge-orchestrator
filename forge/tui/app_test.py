@@ -1,6 +1,6 @@
-"""Tests for _build_task_summaries multi-repo fields and multi-repo wiring."""
+"""Tests for PR task summaries and multi-repo wiring."""
 
-from forge.tui.app import _build_task_summaries
+from forge.tui.app import _build_task_summaries, _partition_pr_task_summaries
 from forge.tui.state import TuiState
 
 
@@ -68,6 +68,86 @@ class TestBuildTaskSummariesRepoId:
         # Task C — defaults
         assert summaries[2]["repo_id"] == "default"
         assert summaries[2]["cost_usd"] == 0
+
+        # All tasks should have enrichment fields (with defaults since no state data provided)
+        for summary in summaries:
+            assert summary["retry_count"] == 0
+            assert summary["blocked_reason"] == ""
+            assert summary["review_substatus"] == ""
+            assert summary["merge_substatus"] == ""
+            assert summary["review_gates"] == {}
+
+    def test_build_task_summaries_with_enrichment_data(self):
+        """_build_task_summaries should populate enrichment fields when state data provided."""
+        tasks = [
+            {
+                "id": "task1",
+                "title": "Retry task",
+                "state": "done",
+                "merge_result": {
+                    "success": True,
+                    "linesAdded": 5,
+                    "linesRemoved": 1,
+                    "filesChanged": 1,
+                },
+            },
+            {
+                "id": "task2",
+                "title": "Blocked task",
+                "state": "blocked",
+                "error": "dependency failed",
+            },
+            {
+                "id": "task3",
+                "title": "Reviewing task",
+                "state": "in_review",
+            },
+        ]
+        error_history = {"task1": ["first error", "second error"]}
+        review_substatus = {"task3": "🔨 Build running"}
+        merge_substatus = {"task1": "rebasing"}
+        review_gates = {"task3": {"gate0_build": {"status": "passed"}}}
+
+        summaries = _build_task_summaries(
+            tasks,
+            error_history=error_history,
+            review_substatus=review_substatus,
+            merge_substatus=merge_substatus,
+            review_gates=review_gates,
+        )
+
+        assert len(summaries) == 3
+
+        # Task 1 - has retry history
+        assert summaries[0]["title"] == "Retry task"
+        assert summaries[0]["retry_count"] == 2
+        assert summaries[0]["blocked_reason"] == ""
+        assert summaries[0]["merge_substatus"] == "rebasing"
+
+        # Task 2 - blocked
+        assert summaries[1]["title"] == "Blocked task"
+        assert summaries[1]["retry_count"] == 0
+        assert summaries[1]["blocked_reason"] == "dependency failed"
+
+        # Task 3 - in review
+        assert summaries[2]["title"] == "Reviewing task"
+        assert summaries[2]["review_substatus"] == "🔨 Build running"
+        assert summaries[2]["review_gates"] == {"gate0_build": {"status": "passed"}}
+
+    def test_partition_pr_task_summaries_excludes_transient_states(self):
+        summaries = [
+            {"title": "Done", "state": "done"},
+            {"title": "Merging", "state": "merging", "error": ""},
+            {"title": "Reviewing", "state": "in_review", "error": ""},
+            {"title": "Failed", "state": "error", "error": "review failed"},
+            {"title": "Blocked", "state": "blocked", "error": "dep failed"},
+        ]
+
+        done_tasks, failed_tasks = _partition_pr_task_summaries(summaries)
+
+        assert [task["title"] for task in done_tasks] == ["Done"]
+        assert failed_tasks is not None
+        assert [task["title"] for task in failed_tasks] == ["Failed", "Blocked"]
 
 
 class TestMultiRepoPrCreationEvents:

@@ -25,6 +25,8 @@ class ReviewStrategy(Enum):
 # Default thresholds (changed lines, not total lines)
 DEFAULT_MEDIUM_THRESHOLD = 400  # above this → TIER2
 DEFAULT_LARGE_THRESHOLD = 2000  # above this → TIER3
+DEFAULT_DEEP_REVIEW_RISK_THRESHOLD = 8.0
+DEFAULT_DEEP_REVIEW_LINES_THRESHOLD = 120
 
 
 def count_diff_lines(diff: str) -> int:
@@ -106,6 +108,36 @@ def select_strategy(
     if n >= medium_threshold:
         return ReviewStrategy.TIER2
     return ReviewStrategy.TIER1
+
+
+def should_deepen_small_diff_review(
+    diff: str,
+    *,
+    file_scores: list[FileRiskScore] | None = None,
+    risk_threshold: float = DEFAULT_DEEP_REVIEW_RISK_THRESHOLD,
+    line_threshold: int = DEFAULT_DEEP_REVIEW_LINES_THRESHOLD,
+) -> bool:
+    """Return True when a nominally-small diff deserves chunked Tier 2 review.
+
+    Small diffs can still hide subtle bugs when they touch high-risk code or make
+    substantial changes in a few files. This helper promotes those cases out of a
+    single-pass review without forcing every tiny diff through synthesis.
+    """
+    if not diff or not diff.strip():
+        return False
+
+    file_scores = file_scores if file_scores is not None else score_files(diff)
+    if not file_scores:
+        return False
+
+    if any(fs.score >= risk_threshold for fs in file_scores):
+        return True
+
+    changed_source_files = [fs for fs in file_scores if not _is_test_file(fs.path)]
+    if len(changed_source_files) >= 2 and count_diff_lines(diff) >= line_threshold:
+        return True
+
+    return False
 
 
 @dataclass

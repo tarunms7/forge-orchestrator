@@ -6,6 +6,7 @@ from textual.widgets import Static
 
 from forge.tui.screens.home import HomeScreen, PromptTextArea, format_recent_pipelines
 from forge.tui.widgets.pipeline_list import PipelineList
+from forge.tui.widgets.sanitized_text_area import strip_terminal_input_noise
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 SAMPLE_PIPELINES = [
@@ -105,6 +106,59 @@ def test_format_recent_pipelines():
 def test_format_recent_pipelines_empty():
     result = format_recent_pipelines([])
     assert "No recent pipelines" in result
+
+
+def test_strip_terminal_input_noise_removes_mouse_packets():
+    raw = "hello\x1b[<35;40;23M world <64;12;9Mdone"
+    assert strip_terminal_input_noise(raw) == "hello world done"
+
+
+def test_strip_terminal_input_noise_removes_partial_mouse_packets_without_escape():
+    raw = "hello[<35;40;23M world [[<64;12;9Mdone"
+    assert strip_terminal_input_noise(raw) == "hello world done"
+
+
+def test_strip_terminal_input_noise_removes_caret_ansi_sequences():
+    raw = "ship it ^[[200~please^[[201~ now ^[[A"
+    assert strip_terminal_input_noise(raw) == "ship it please now "
+
+
+def test_strip_terminal_input_noise_removes_bracket_stutter_fragments():
+    raw = "abc[[[[[[[[M[def"
+    assert strip_terminal_input_noise(raw) == "abcdef"
+
+
+def test_prompt_text_area_changed_strips_terminal_noise_and_preserves_cursor():
+    prompt = PromptTextArea()
+    prompt.load_text("Ship it<35;40;23M now")
+    prompt.move_cursor((0, len("Ship it<35;40;23M now")))
+
+    prompt.on_text_area_changed(PromptTextArea.Changed(prompt))
+
+    assert prompt.text == "Ship it now"
+    assert prompt.cursor_location == (0, len("Ship it now"))
+
+
+def test_prompt_text_area_changed_strips_caret_notation_escape_noise():
+    prompt = PromptTextArea()
+    prompt.load_text("Build it ^[[200~now^[[201~")
+    prompt.move_cursor((0, len("Build it ^[[200~now^[[201~")))
+
+    prompt.on_text_area_changed(PromptTextArea.Changed(prompt))
+
+    assert prompt.text == "Build it now"
+    assert prompt.cursor_location == (0, len("Build it now"))
+
+
+def test_prompt_text_area_changed_strips_bracket_stutter_noise():
+    prompt = PromptTextArea()
+    prompt.load_text("Make Forge [[[[[[[[M[planner better")
+    prompt.move_cursor((0, len("Make Forge [[[[[[[[M[planner better")))
+
+    prompt.on_text_area_changed(PromptTextArea.Changed(prompt))
+
+    assert prompt.text == "Make Forge planner better"
+    assert prompt.cursor_location == (0, len("Make Forge planner better"))
 
 
 def test_format_recent_pipelines_flattens_multiline_description():

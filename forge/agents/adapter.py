@@ -1,88 +1,34 @@
 """Agent adapter interface. Claude primary, others pluggable."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from claude_code_sdk import ClaudeCodeOptions
-
-from forge.core.sdk_helpers import sdk_query
+from forge.providers.restrictions import AGENT_DENIED_OPERATIONS
 
 logger = logging.getLogger("forge.agents")
 
 
-# ── Agent permission rules ──────────────────────────────────────────
-# Passed directly to ClaudeCodeOptions as disallowed_tools (denylist).
-# No file is written to the worktree — permissions flow through the SDK,
-# keeping the git working tree clean for rebase.
-#
-# Design: denylist only. Agents use append_system_prompt so they get the
-# full Claude Code harness (skills, MCP servers, memory, hooks) plus ALL
-# tools. We only BLOCK dangerous operations: branch management (orchestrator
-# handles that), network access, privilege escalation, system modification.
+# Re-export for backward compatibility — callers that imported
+# AGENT_DISALLOWED_TOOLS from here can now use AGENT_DENIED_OPERATIONS
+# from forge.providers.restrictions instead.
+AGENT_DISALLOWED_TOOLS = AGENT_DENIED_OPERATIONS
 
-AGENT_DISALLOWED_TOOLS = [
-    # Git operations that only the orchestrator should perform.
-    # Both bare commands and with-args variants are blocked.
-    "Bash(git push)",
-    "Bash(git push *)",
-    "Bash(git rebase)",
-    "Bash(git rebase *)",
-    "Bash(git checkout)",
-    "Bash(git checkout *)",
-    "Bash(git reset --hard)",
-    "Bash(git reset --hard *)",
-    "Bash(git branch -D *)",
-    "Bash(git branch -d *)",
-    "Bash(git merge)",
-    "Bash(git merge *)",
-    "Bash(git clean *)",
-    "Bash(git stash)",
-    "Bash(git stash *)",
-    "Bash(git cherry-pick *)",
-    "Bash(git tag *)",
-    "Bash(git remote *)",
-    # Network — no exfiltration or downloads
-    "Bash(curl *)",
-    "Bash(wget *)",
-    "Bash(ssh *)",
-    "Bash(scp *)",
-    "Bash(rsync *)",
-    "Bash(nc *)",
-    "Bash(ncat *)",
-    "Bash(telnet *)",
-    "Bash(ftp *)",
-    # Privilege escalation
-    "Bash(sudo *)",
-    "Bash(su *)",
-    "Bash(doas *)",
-    # Permission changes
-    "Bash(chmod *)",
-    "Bash(chown *)",
-    "Bash(chgrp *)",
-    # Process management
-    "Bash(kill *)",
-    "Bash(pkill *)",
-    "Bash(killall *)",
-    # Container/VM escape
-    "Bash(docker *)",
-    "Bash(podman *)",
-    # System modification
-    "Bash(systemctl *)",
-    "Bash(service *)",
-    "Bash(mount *)",
-    "Bash(umount *)",
-    # Environment pollution (could affect other agents)
-    "Bash(export *)",
-    "Bash(unset *)",
-    # Sensitive file reads
-    "Read(.env)",
-    "Read(.env.*)",
-]
+
+def _translate_denied_to_sdk(denied_ops: list[str]) -> list[str]:
+    """Translate Forge denied_operations to Claude SDK disallowed_tools format.
+
+    Uses the ClaudeProvider's translator for consistency.
+    """
+    from forge.providers.claude import _translate_denied_operations
+
+    return _translate_denied_operations(denied_ops)
 
 
 def _build_question_protocol(autonomy: str = "balanced", remaining: int = 3) -> str:
@@ -154,6 +100,8 @@ FORGE_QUESTION:
 - ALWAYS provide 2-3 concrete suggestions.
 - ALWAYS explain what you found that led to the question.
 - NEVER ask open-ended "what should I do?" questions.
+- Plain-text questions in normal commentary are ignored by Forge and will NOT open the answer UI.
+- NEVER write "Question 1:" or similar in ordinary prose when you need input. Use the FORGE_QUESTION block only.
 - If you hit 0 remaining, proceed with best judgment."""
 
 
@@ -209,7 +157,80 @@ You have {max_turns} turns for this task. Manage them wisely:
    Max 72 chars. Describe WHAT changed, don't copy the task title.
    ALWAYS use --no-verify to skip pre-commit hooks (the orchestrator runs its own review).
    If the commit fails, STOP TRYING. Do NOT retry with different flags. The orchestrator auto-commits your changes after you finish. Move on.
-4. If nothing meaningful to do (files don't exist, task already done), make no changes and commit with message "chore: no changes needed — <reason>". The reviewer will see the empty diff and your reasoning. This is a valid outcome."""
+4. If the requested work is ALREADY PRESENT in the current worktree, say that explicitly. Do NOT claim "no changes needed" if `git diff` still shows the task branch already contains the requested change.
+5. Use the commit message "chore: no changes needed — <reason>" ONLY when there is truly no relevant diff left in the current worktree and nothing meaningful to merge. The reviewer will see the empty diff and your reasoning. This is a valid outcome."""
+
+
+def build_agent_system_prompt(
+    *,
+    worktree_path: str,
+    allowed_dirs: list[str],
+    allowed_files: list[str] | None = None,
+    project_context: str = "",
+    conventions_json: str | None = None,
+    conventions_md: str | None = None,
+    completed_deps: list[dict] | None = None,
+    contracts_block: str = "",
+    autonomy: str = "balanced",
+    questions_remaining: int = 3,
+    agent_max_turns: int = 75,
+    lessons_block: str = "",
+    project_commands: dict[str, str] | None = None,
+) -> str:
+    """Build the shared agent system prompt for all coding providers."""
+    if allowed_dirs:
+        extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
+    else:
+        extra_dirs_clause = ""
+    conventions_block = _build_conventions_block(conventions_json, conventions_md)
+    dependency_context = _build_dependency_context(completed_deps)
+    if allowed_files:
+        files_list = "\n".join(f"- {f}" for f in allowed_files)
+        file_scope_block = (
+            "## File Scope\n\n"
+            "You may only modify these files:\n"
+            f"{files_list}\n\n"
+            "Out-of-scope changes are automatically reverted before review.\n\n"
+            "**Exception**: Test files for the source files above "
+            "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
+        )
+    else:
+        file_scope_block = ""
+    question_protocol = _build_question_protocol(autonomy, questions_remaining)
+
+    project_commands_block = ""
+    if project_commands:
+        lines = ["## Project Commands", ""]
+        if project_commands.get("test"):
+            lines.append(f"- **Run tests**: `{project_commands['test']}`")
+        if project_commands.get("build"):
+            lines.append(f"- **Build**: `{project_commands['build']}`")
+        if project_commands.get("lint"):
+            lines.append(f"- **Lint**: `{project_commands['lint']}`")
+        if project_commands.get("lint_fix"):
+            lines.append(f"- **Lint fix**: `{project_commands['lint_fix']}`")
+        if len(lines) > 2:
+            lines.append("")
+            lines.append("Always verify your work by running the test command before committing.")
+            project_commands_block = "\n".join(lines)
+
+    max_turns = agent_max_turns
+    wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
+
+    return AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+        cwd=worktree_path,
+        extra_dirs_clause=extra_dirs_clause,
+        project_context=project_context,
+        conventions_block=conventions_block,
+        contracts_block=contracts_block,
+        dependency_context=dependency_context,
+        file_scope_block=file_scope_block,
+        question_protocol=question_protocol,
+        project_commands_block=project_commands_block,
+        lessons_block=lessons_block,
+        max_turns=max_turns,
+        wrap_up_turn=wrap_up_turn,
+    )
 
 
 def _build_conventions_block(
@@ -312,6 +333,12 @@ class AgentResult:
     output_tokens: int = 0
     error: str | None = None
     session_id: str | None = None
+    # Provider protocol fields
+    resume_state: object | None = None  # ResumeState from provider result
+    provider_model: str | None = None  # 'provider:model' string
+    backend: str | None = None  # SDK backend used
+    canonical_model_id: str | None = None  # Full model identifier
+    model_history_entry: dict | None = field(default=None, repr=False)  # ModelHistoryEntry dict
 
 
 class AgentAdapter(ABC):
@@ -342,7 +369,11 @@ class AgentAdapter(ABC):
 
 
 class ClaudeAdapter(AgentAdapter):
-    """Claude Code agent via claude-code-sdk."""
+    """Claude Code agent via claude-code-sdk.
+
+    Legacy adapter that wraps sdk_query() directly. New code should use
+    ProviderProtocol via ProviderRegistry instead — see ClaudeProvider.
+    """
 
     def _build_options(
         self,
@@ -362,67 +393,26 @@ class ClaudeAdapter(AgentAdapter):
         agent_max_turns: int = 75,
         lessons_block: str = "",
         project_commands: dict[str, str] | None = None,
-    ) -> ClaudeCodeOptions:
+    ):
         """Build ClaudeCodeOptions with directory boundary enforcement."""
-        if allowed_dirs:
-            extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
-        else:
-            extra_dirs_clause = ""
-        conventions_block = _build_conventions_block(conventions_json, conventions_md)
-        dependency_context = _build_dependency_context(completed_deps)
-        if allowed_files:
-            files_list = "\n".join(f"- {f}" for f in allowed_files)
-            file_scope_block = (
-                "## File Scope\n\n"
-                "You may only modify these files:\n"
-                f"{files_list}\n\n"
-                "Out-of-scope changes are automatically reverted before review.\n\n"
-                "**Exception**: Test files for the source files above "
-                "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
-            )
-        else:
-            file_scope_block = ""
-        question_protocol = _build_question_protocol(autonomy, questions_remaining)
+        from claude_code_sdk import ClaudeCodeOptions
 
-        # CLAUDE.md is loaded automatically by the Claude Code harness when
-        # we use append_system_prompt. No manual loading needed.
-
-        # Build project commands block so agents know how to test/build/lint
-        project_commands_block = ""
-        if project_commands:
-            lines = ["## Project Commands", ""]
-            if project_commands.get("test"):
-                lines.append(f"- **Run tests**: `{project_commands['test']}`")
-            if project_commands.get("build"):
-                lines.append(f"- **Build**: `{project_commands['build']}`")
-            if project_commands.get("lint"):
-                lines.append(f"- **Lint**: `{project_commands['lint']}`")
-            if project_commands.get("lint_fix"):
-                lines.append(f"- **Lint fix**: `{project_commands['lint_fix']}`")
-            if len(lines) > 2:  # More than just header
-                lines.append("")
-                lines.append(
-                    "Always verify your work by running the test command before committing."
-                )
-                project_commands_block = "\n".join(lines)
-
-        max_turns = agent_max_turns
-        wrap_up_turn = max(max_turns - 5, max_turns * 3 // 4)
-
-        system_prompt = AGENT_SYSTEM_PROMPT_TEMPLATE.format(
-            cwd=worktree_path,
-            extra_dirs_clause=extra_dirs_clause,
+        system_prompt = build_agent_system_prompt(
+            worktree_path=worktree_path,
+            allowed_dirs=allowed_dirs,
+            allowed_files=allowed_files,
             project_context=project_context,
-            conventions_block=conventions_block,
+            conventions_json=conventions_json,
+            conventions_md=conventions_md,
+            completed_deps=completed_deps,
             contracts_block=contracts_block,
-            dependency_context=dependency_context,
-            file_scope_block=file_scope_block,
-            question_protocol=question_protocol,
-            project_commands_block=project_commands_block,
+            autonomy=autonomy,
+            questions_remaining=questions_remaining,
+            agent_max_turns=agent_max_turns,
             lessons_block=lessons_block,
-            max_turns=max_turns,
-            wrap_up_turn=wrap_up_turn,
+            project_commands=project_commands,
         )
+        max_turns = agent_max_turns
         return ClaudeCodeOptions(
             # Use append_system_prompt so the Claude Code CLI loads its full
             # harness first (skills, CLAUDE.md, memory, MCP servers, hooks)
@@ -434,7 +424,7 @@ class ClaudeAdapter(AgentAdapter):
             # bypassPermissions auto-approves all tools (Edit, Write, Bash,
             # Glob, Grep, Read, plus skills/MCP). Dangerous operations are
             # blocked via disallowed_tools below (git push, curl, sudo, etc.).
-            disallowed_tools=list(AGENT_DISALLOWED_TOOLS),
+            disallowed_tools=_translate_denied_to_sdk(AGENT_DISALLOWED_TOOLS),
             cwd=worktree_path,
             model=model,
             max_turns=max_turns,
@@ -487,6 +477,8 @@ class ClaudeAdapter(AgentAdapter):
         )
 
         try:
+            from forge.core.sdk_helpers import sdk_query
+
             result = await asyncio.wait_for(
                 sdk_query(prompt=task_prompt, options=options, on_message=on_message),
                 timeout=timeout_seconds,

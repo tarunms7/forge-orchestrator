@@ -259,6 +259,7 @@ class TestReviewGateEvents:
         mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
         mixin._template_config = None
+        mixin._registry = MagicMock(name="provider_registry")
         return mixin
 
     def _collect_events(self, mixin) -> list[tuple[str, dict]]:
@@ -415,6 +416,52 @@ class TestReviewGateEvents:
         # No gate_passed events should be emitted for the lint gate
         passed_events = [e for e in emitted_events if e[0] == "review:gate_passed"]
         assert not any(e[1]["gate"] == "gate1_lint" for e in passed_events)
+
+    @pytest.mark.asyncio
+    async def test_review_stream_announces_model(self):
+        """Review output should start with a readable reviewer model line."""
+        mixin = self._make_mixin()
+        task = _make_task_for_review()
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._settings.build_cmd = None
+        mixin._pipeline_build_cmd = None
+        mixin._settings.test_cmd = None
+        mixin._pipeline_test_cmd = None
+        mixin._settings.resolve_reasoning_effort = MagicMock(return_value="high")
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                return_value=(
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ),
+            patch("forge.core.daemon_review.select_model", return_value="openai:gpt-5.4"),
+        ):
+            await mixin._run_review(
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
+            )
+
+        emitted_events = self._collect_events(mixin)
+        llm_output_events = [e for e in emitted_events if e[0] == "review:llm_output"]
+        assert any(
+            "Starting review (GPT-5.4, high reasoning)" in data["line"]
+            for _, data in llm_output_events
+        )
 
     @pytest.mark.asyncio
     async def test_llm_feedback_event_emitted(self):
@@ -673,6 +720,27 @@ class TestMakeReviewOnMessage:
         await flush()
         assert mixin._emit.call_count == 0
 
+    @pytest.mark.asyncio
+    async def test_prefers_activity_lines_for_tool_events(self):
+        """Provider tool/status activity should stream even when there is no plain text."""
+        mixin = self._make_mixin()
+
+        with patch("forge.core.daemon_review.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.2]
+            on_msg, _flush = mixin._make_review_on_message("task-1", MagicMock(), "pipe-1")
+
+            with (
+                patch(
+                    "forge.core.daemon_review._extract_activity", return_value="📖 Reading foo.py"
+                ),
+                patch("forge.core.daemon_review._extract_text", return_value=None),
+            ):
+                await on_msg(MagicMock())
+
+        emit_calls = [(call.args[0], call.args[1]) for call in mixin._emit.call_args_list]
+        assert emit_calls[0][0] == "review:llm_output"
+        assert emit_calls[0][1]["line"] == "📖 Reading foo.py"
+
 
 class TestMakeReviewEventCallback:
     """Review progress callbacks should emit UI events and refresh health state."""
@@ -691,11 +759,17 @@ class TestMakeReviewEventCallback:
         await callback("review:chunk_started", {"chunk_index": 1})
 
         mixin._health_monitor.record_task_activity.assert_called_once_with("task-7")
-        mixin._emit.assert_awaited_once()
-        event_name, payload = mixin._emit.await_args.args[:2]
-        assert event_name == "review:chunk_started"
-        assert payload["task_id"] == "task-7"
-        assert payload["chunk_index"] == 1
+        assert mixin._emit.await_count == 2
+
+        first_name, first_payload = mixin._emit.await_args_list[0].args[:2]
+        assert first_name == "review:chunk_started"
+        assert first_payload["task_id"] == "task-7"
+        assert first_payload["chunk_index"] == 1
+
+        second_name, second_payload = mixin._emit.await_args_list[1].args[:2]
+        assert second_name == "review:llm_output"
+        assert second_payload["task_id"] == "task-7"
+        assert "Review chunk 1/" in second_payload["line"]
 
 
 class TestRunReviewPassesOnMessage:
@@ -711,6 +785,7 @@ class TestRunReviewPassesOnMessage:
         mixin._settings.lint_fix_cmd = None
         mixin._emit = AsyncMock()
         mixin._template_config = None
+        mixin._registry = MagicMock(name="provider_registry")
         return mixin
 
     @pytest.mark.asyncio
@@ -757,6 +832,78 @@ class TestRunReviewPassesOnMessage:
         # on_message should be a callable, not None
         assert call_kwargs.kwargs.get("on_message") is not None
         assert callable(call_kwargs.kwargs["on_message"])
+        assert call_kwargs.kwargs.get("registry") is mixin._registry
+        assert call_kwargs.kwargs.get("prefer_deep_review") is True
+        validation_context = call_kwargs.kwargs.get("validation_context", "")
+        assert "Validation Context" in validation_context
+        assert "Lint gate: PASSED" in validation_context
+        assert "Test gate: SKIPPED — no test command configured" in validation_context
+
+
+def test_discover_review_python_walks_up_to_repo_venv(tmp_path):
+    from forge.core.daemon_review import _discover_review_python
+
+    repo = tmp_path / "repo"
+    worktree = repo / ".forge" / "worktrees" / "task-1"
+    venv_python = repo / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
+    venv_python.write_text("")
+    worktree.mkdir(parents=True, exist_ok=True)
+
+    discovered = _discover_review_python(str(worktree))
+    assert discovered == str(venv_python)
+
+    @pytest.mark.asyncio
+    async def test_extra_review_pass_receives_registry(self):
+        """Extra review pass should reuse the active daemon registry."""
+        mixin = self._make_mixin()
+        task = _make_task_for_review()
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._settings.build_cmd = None
+        mixin._pipeline_build_cmd = None
+        mixin._settings.test_cmd = None
+        mixin._pipeline_test_cmd = None
+        mixin._template_config = {"review_config": {"extra_review_pass": True}}
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review",
+                new_callable=AsyncMock,
+            ) as mock_gate2,
+            patch("forge.core.daemon_review.select_model", return_value="openai:gpt-5.4"),
+        ):
+            mock_gate2.side_effect = [
+                (
+                    GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+                (
+                    GateResult(passed=True, gate="gate2_llm_review", details="Still LGTM"),
+                    MagicMock(cost_usd=0),
+                ),
+            ]
+
+            passed, _, _ = await mixin._run_review(
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
+            )
+
+        assert passed is True
+        assert mock_gate2.await_count == 2
+        for call in mock_gate2.await_args_list:
+            assert call.kwargs.get("registry") is mixin._registry
 
 
 class TestLintGateAutoFix:

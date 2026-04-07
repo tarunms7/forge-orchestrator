@@ -12,6 +12,10 @@ import subprocess
 import time
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from forge.providers.registry import ProviderRegistry
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -26,11 +30,19 @@ from forge.api.models.schemas import (
     TaskStatusResponse,
 )
 from forge.api.security.dependencies import get_current_user
+from forge.core import sdk_helpers
 from forge.core.async_utils import safe_create_task
 from forge.core.ci_watcher import CIFixConfig as CIFixRuntimeConfig
 from forge.core.ci_watcher import run_ci_fix_loop
 from forge.core.daemon_helpers import _get_diff_stats, _get_diff_vs_main
 from forge.core.models import Complexity, TaskDefinition, TaskGraph
+from forge.core.provider_config import (
+    build_provider_config_snapshot,
+    build_provider_registry,
+    build_settings_for_project,
+    resolve_reasoning_effort_for_stage,
+    resolve_registry_model,
+)
 from forge.core.templates import (
     BUILTIN_TEMPLATES,
     get_quality_preset,
@@ -195,18 +207,25 @@ def _sanitize_pr_title(description: str) -> str:
     return first_sentence or description[:50]
 
 
-async def _generate_pr_title(description: str, task_summaries: str) -> str:
-    """Generate a concise PR title using an LLM call, with heuristic fallback.
+async def _generate_pr_title(
+    description: str,
+    task_summaries: str,
+    registry: ProviderRegistry | None = None,
+) -> str:
+    """Generate a concise PR title using a provider call, with heuristic fallback.
 
-    Uses ``sdk_query()`` with haiku model for fast, cheap title generation.
-    Falls back to ``_sanitize_pr_title()`` if the LLM call fails.
+    Uses the configured reviewer model when a provider registry is available.
+    Falls back to ``_sanitize_pr_title()`` if the provider call fails.
 
     Returns:
         A short title string (without the ``forge: `` prefix).
     """
-    from claude_code_sdk import ClaudeCodeOptions
-
-    from forge.core.sdk_helpers import sdk_query
+    from forge.providers import (
+        ExecutionMode,
+        OutputContract,
+        ToolPolicy,
+        WorkspaceRoots,
+    )
 
     prompt = (
         "Generate a short, concise PR title for the following changes. "
@@ -220,15 +239,37 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
         prompt += f"Tasks completed:\n{task_summaries}\n"
 
     try:
-        result = await sdk_query(
-            prompt=prompt,
-            options=ClaudeCodeOptions(
+        if registry is None:
+            from claude_code_sdk import ClaudeCodeOptions
+
+            result = await sdk_helpers.sdk_query(
+                prompt=prompt,
+                options=ClaudeCodeOptions(system_prompt="", max_turns=1),
+            )
+            title = (result.result if result else "").strip().strip("\"'").strip()
+        else:
+            model_spec = resolve_registry_model(registry, "reviewer", "low")
+            provider = registry.get_for_model(model_spec)
+            catalog_entry = registry.get_catalog_entry(model_spec)
+            handle = provider.start(
+                prompt=prompt,
+                system_prompt="",
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=ToolPolicy(mode="allowlist", allowed_tools=[]),
+                output_contract=OutputContract(format="freeform"),
+                workspace=WorkspaceRoots(primary_cwd="."),
                 max_turns=1,
-                model="haiku",
-            ),
-        )
-        if result and result.result:
-            title = result.result.strip().strip("\"'").strip()
+                reasoning_effort=resolve_reasoning_effort_for_stage(
+                    registry.settings,
+                    "reviewer",
+                    "low",
+                ),
+            )
+            result = await handle.result()
+            title = (result.text if result else "").strip().strip("\"'").strip()
+
+        if title:
             # Remove any "forge: " prefix the LLM might add (we add it ourselves)
             if title.lower().startswith("forge:"):
                 title = title[6:].strip()
@@ -236,7 +277,7 @@ async def _generate_pr_title(description: str, task_summaries: str) -> str:
             if title and len(title) <= 80:
                 return title
     except Exception as e:
-        logger.warning("LLM PR title generation failed, using fallback: %s", e)
+        logger.warning("Provider PR title generation failed, using fallback: %s", e)
 
     return _sanitize_pr_title(description)
 
@@ -458,6 +499,26 @@ async def create_task(
         resolved_model_strategy = resolved_config.get("model_strategy", body.model_strategy)
         resolved_build_cmd = resolved_config.get("build_cmd", body.build_cmd)
         resolved_test_cmd = resolved_config.get("test_cmd", body.test_cmd)
+        user_settings = await forge_db.get_user_settings(user_id)
+        settings, project_config = build_settings_for_project(
+            body.project_path,
+            user_settings=user_settings,
+            model_strategy=resolved_model_strategy,
+        )
+        registry = build_provider_registry(settings, project_config)
+        config_issues = project_config.validate(registry)
+        if config_issues:
+            raise HTTPException(
+                status_code=400,
+                detail="; ".join(config_issues),
+            )
+        provider_config_json = json.dumps(
+            build_provider_config_snapshot(
+                settings,
+                registry,
+                strategy=resolved_model_strategy,
+            )
+        )
 
         await forge_db.create_pipeline(
             id=pipeline_id,
@@ -470,6 +531,7 @@ async def create_task(
             test_cmd=resolved_test_cmd,
             budget_limit_usd=body.budget_limit_usd,
             repos_json=repos_json,
+            provider_config=provider_config_json,
         )
 
         # Store resolved template config on the pipeline
@@ -497,7 +559,12 @@ async def create_task(
         # Start planning in background if daemon factory is available
         daemon_factory = getattr(request.app.state, "daemon_factory", None)
         if daemon_factory:
-            daemon, emitter = daemon_factory(body.project_path, resolved_model_strategy)
+            daemon, emitter = daemon_factory(
+                body.project_path,
+                resolved_model_strategy,
+                user_settings=user_settings,
+                provider_config=provider_config_json,
+            )
             ws_manager = request.app.state.ws_manager
             _bridge_events(emitter, ws_manager, pipeline_id)
 
@@ -1045,8 +1112,19 @@ async def create_pr(
             f"pipeline `{pipeline_id[:8]}`*"
         )
 
+        title_settings, title_project_config = build_settings_for_project(
+            project_dir,
+            model_strategy=getattr(pipeline, "model_strategy", "auto"),
+            provider_config=getattr(pipeline, "provider_config", None),
+        )
+        title_registry = build_provider_registry(title_settings, title_project_config)
+
         # Generate a proper PR title via LLM (with heuristic fallback)
-        pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
+        pr_title_body = await _generate_pr_title(
+            pipeline.description,
+            task_summary,
+            registry=title_registry,
+        )
         pr_title = f"forge: {pr_title_body}"
 
         # Create PR — base_branch from DB, head is the pipeline branch
@@ -1540,7 +1618,7 @@ async def resume_pipeline(
         reset_count = 0
         for task in tasks:
             if task.state in ("in_progress", "in_review", "merging", "cancelled"):
-                await forge_db.update_task_state(task.id, "todo")
+                await forge_db.reset_task_for_resume(task.id)
                 reset_count += 1
 
         if reset_count == 0:
@@ -1554,11 +1632,14 @@ async def resume_pipeline(
     await forge_db.update_pipeline_status(pipeline_id, "executing")
 
     # Launch execution in background
-    from forge.config.settings import ForgeSettings
     from forge.core.daemon import ForgeDaemon
     from forge.core.events import EventEmitter
 
-    settings = ForgeSettings()
+    settings, _project_config = build_settings_for_project(
+        pipeline.project_dir,
+        model_strategy=pipeline.model_strategy,
+        provider_config=getattr(pipeline, "provider_config", None),
+    )
     emitter = getattr(request.app.state, "event_emitter", None)
     if emitter is None:
         emitter = EventEmitter()
@@ -1724,7 +1805,11 @@ async def restart_pipeline(
     # Re-invoke daemon factory to start fresh planning
     daemon_factory = getattr(request.app.state, "daemon_factory", None)
     if daemon_factory:
-        daemon, emitter = daemon_factory(project_dir, model_strategy)
+        daemon, emitter = daemon_factory(
+            project_dir,
+            model_strategy,
+            provider_config=getattr(pipeline, "provider_config", None),
+        )
         if ws_manager:
             _bridge_events(emitter, ws_manager, pipeline_id)
 
@@ -1848,7 +1933,7 @@ async def retry_task(
     if task.state != "error":
         raise HTTPException(400, f"Task is in state '{task.state}', can only retry errored tasks")
 
-    await forge_db.retry_task(task_id)  # Resets to todo, increments retry_count
+    await forge_db.reset_task_for_human_retry(task_id)
 
     # Cascade-reset downstream BLOCKED tasks whose only blocking dependency
     # is this task.  They couldn't run because the parent failed; now that
@@ -1882,7 +1967,6 @@ async def retry_task(
         # Reconstruct graph and daemon to run execution loop
         graph_json = json.loads(pipeline.task_graph_json) if pipeline.task_graph_json else None
         if graph_json:
-            from forge.config.settings import ForgeSettings
             from forge.core.daemon import ForgeDaemon
             from forge.core.events import EventEmitter
 
@@ -1900,7 +1984,11 @@ async def retry_task(
                 )
             graph = TaskGraph(tasks=task_defs)
 
-            settings = ForgeSettings()
+            settings, _project_config = build_settings_for_project(
+                pipeline.project_dir,
+                model_strategy=getattr(pipeline, "model_strategy", "auto"),
+                provider_config=getattr(pipeline, "provider_config", None),
+            )
             emitter = getattr(request.app.state, "event_emitter", None)
             if emitter is None:
                 emitter = EventEmitter()
@@ -2053,6 +2141,15 @@ async def get_task_status(
                 enriched["cost_usd"] = (row.agent_cost_usd or 0) + (row.review_cost_usd or 0)
                 enriched["input_tokens"] = row.input_tokens
                 enriched["output_tokens"] = row.output_tokens
+                enriched["provider_model"] = getattr(row, "provider_model", None)
+                enriched["backend"] = getattr(row, "backend", None)
+                enriched["canonical_model_id"] = getattr(row, "canonical_model_id", None)
+                try:
+                    enriched["model_history"] = json.loads(
+                        getattr(row, "model_history", "[]") or "[]"
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    enriched["model_history"] = []
             # Add repo_id from TaskRow (defaults to "default" for single-repo)
             enriched["repo_id"] = getattr(task_row_map.get(tid), "repo_id", "default")
             enriched_tasks.append(enriched)
@@ -2074,6 +2171,11 @@ async def get_task_status(
             ci_fix_attempt=getattr(pipeline, "ci_fix_attempt", 0),
             ci_fix_max_retries=getattr(pipeline, "ci_fix_max_retries", 3),
             ci_fix_cost_usd=getattr(pipeline, "ci_fix_cost_usd", 0.0),
+            provider_config=(
+                json.loads(pipeline.provider_config)
+                if getattr(pipeline, "provider_config", None)
+                else None
+            ),
         )
 
     # Fallback: in-memory
@@ -2238,8 +2340,19 @@ async def _auto_create_pr(forge_db, pipeline_id: str, *, issue_number: int | Non
         f"pipeline `{pipeline_id[:8]}`*"
     )
 
+    title_settings, title_project_config = build_settings_for_project(
+        project_dir,
+        model_strategy=getattr(pipeline, "model_strategy", "auto"),
+        provider_config=getattr(pipeline, "provider_config", None),
+    )
+    title_registry = build_provider_registry(title_settings, title_project_config)
+
     # Generate a proper PR title via LLM (with heuristic fallback)
-    pr_title_body = await _generate_pr_title(pipeline.description, task_summary)
+    pr_title_body = await _generate_pr_title(
+        pipeline.description,
+        task_summary,
+        registry=title_registry,
+    )
     pr_title = f"forge: {pr_title_body}"
 
     pr_result = await asyncio.to_thread(

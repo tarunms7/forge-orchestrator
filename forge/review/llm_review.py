@@ -1,4 +1,4 @@
-"""Gate 2: LLM code review. A fresh Claude instance reviews changes against the task spec."""
+"""Gate 2: LLM code review. Uses provider protocol to review changes against the task spec."""
 
 from __future__ import annotations
 
@@ -7,11 +7,21 @@ import logging
 import random
 import re
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from claude_code_sdk import ClaudeCodeOptions
-
-from forge.core.sdk_helpers import sdk_query
+from forge.config.settings import ForgeSettings
+from forge.core.provider_config import ensure_provider_registry
+from forge.core.sdk_helpers import (
+    sdk_query,  # noqa: F401 - backward-compatible export for tests/mocks.
+)
+from forge.providers import (
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    WorkspaceRoots,
+)
+from forge.providers.restrictions import REVIEWER_TOOL_POLICY
 
 # ReviewCostInfo lives in pipeline.py to avoid circular imports.
 # Re-exported here for backward compatibility with existing callers.
@@ -19,6 +29,9 @@ from forge.review.pipeline import (
     GateResult,
     ReviewCostInfo,  # noqa: F401
 )
+
+if TYPE_CHECKING:
+    from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.review")
 
@@ -88,6 +101,18 @@ Do NOT use UNCERTAIN for:
 - You do NOT have live git history or branch state. Do NOT claim you ran `git`
   commands, inspected other branches, or verified repository state unless that
   evidence appears in the provided diff or files you actually read.
+- You have workspace tools available: Read, Glob, Grep, and Bash.
+- Read the current version of each changed in-scope source file before issuing a
+  PASS or FAIL verdict.
+- Use Grep/Glob/Read to inspect nearby callers, tests, and related files whenever
+  that would materially reduce uncertainty.
+- Use Bash for focused verification commands (targeted tests, linters, or grep)
+  when it helps confirm or falsify a concern. Prefer the smallest relevant
+  command instead of broad expensive suites.
+- If validation context provides a preferred Python interpreter, use it for
+  Python-based Bash checks instead of bare `python`.
+- If validation context says tests/build/lint were skipped or had infra problems,
+  treat that as reduced coverage and inspect the changed code more deeply.
 - Prior review feedback can be stale on retries. If prior feedback says an
   in-scope deliverable is missing, you MUST read the current file before
   failing for that reason.
@@ -100,14 +125,16 @@ async def gate2_llm_review(
     task_description: str,
     diff: str,
     worktree_path: str | None = None,
-    model: str = "sonnet",
+    model: str | ModelSpec = "sonnet",
     prior_feedback: str | None = None,
     prior_diff: str | None = None,
     project_context: str = "",
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
+    validation_context: str = "",
     custom_review_focus: str = "",
+    prefer_deep_review: bool = False,
     on_message: Callable[[Any], Awaitable[None]] | None = None,
     # NEW: callback for review progress events (strategy_selected, chunk_started, etc.)
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
@@ -116,6 +143,7 @@ async def gate2_llm_review(
     medium_diff_threshold: int = 400,
     large_diff_threshold: int = 2000,
     max_chunk_lines: int = 600,
+    registry: ProviderRegistry | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run LLM code review on the given diff against the task spec.
 
@@ -146,38 +174,66 @@ async def gate2_llm_review(
     # ── Strategy selection ────────────────────────────────────────────────
     from forge.review.strategy import (
         ReviewStrategy,
-        build_risk_map_header,
+        build_diff_chunks,
         count_diff_lines,
         score_files,
         select_strategy,
-    )
-    from forge.review.strategy import (
-        build_diff_chunks as build_chunks,
+        should_deepen_small_diff_review,
     )
     from forge.review.synthesizer import run_chunked_review
 
+    file_scores = score_files(diff)
     strategy = select_strategy(
         diff,
         medium_diff_threshold,
         large_diff_threshold,
         adaptive=adaptive_review,
     )
+    if adaptive_review and strategy == ReviewStrategy.TIER1:
+        if prefer_deep_review or should_deepen_small_diff_review(diff, file_scores=file_scores):
+            strategy = ReviewStrategy.TIER2
 
     # Pre-compute file scores and chunks for Tier 3 (reused for both event payload and review)
     _t3_file_scores = None
+    _t2_chunks = None
     _t3_chunks = None
+    if strategy == ReviewStrategy.TIER2:
+        _t3_file_scores = file_scores
+        _t2_chunks = build_diff_chunks(file_scores, diff, max_chunk_lines=1)
     if strategy == ReviewStrategy.TIER3:
-        _t3_file_scores = score_files(diff)
-        _t3_chunks = build_chunks(_t3_file_scores, diff, max_chunk_lines)
+        _t3_file_scores = file_scores
+        _t3_chunks = build_diff_chunks(_t3_file_scores, diff, max_chunk_lines)
 
     if on_review_event:
         payload: dict = {
             "strategy": strategy.value,
             "diff_lines": count_diff_lines(diff),
         }
+        if strategy == ReviewStrategy.TIER2:
+            payload["chunk_count"] = len(_t2_chunks)
         if strategy == ReviewStrategy.TIER3:
             payload["chunk_count"] = len(_t3_chunks)
         await on_review_event("review:strategy_selected", payload)
+
+    # ── Tier 2: per-file / paired-file chunk review + synthesis ──────────────
+    if strategy == ReviewStrategy.TIER2:
+        return await run_chunked_review(
+            _t2_chunks,
+            _t3_file_scores,
+            diff,
+            task_title,
+            task_description,
+            model=model,
+            worktree_path=worktree_path,
+            sibling_context=sibling_context,
+            prior_feedback=prior_feedback,
+            delta_diff=delta_diff,
+            validation_context=validation_context,
+            on_message=on_message,
+            on_review_event=on_review_event,
+            registry=registry,
+            strategy_label=ReviewStrategy.TIER2.value,
+        )
 
     # ── Tier 3: multi-chunk map-reduce ────────────────────────────────────
     if strategy == ReviewStrategy.TIER3:
@@ -192,15 +248,12 @@ async def gate2_llm_review(
             sibling_context=sibling_context,
             prior_feedback=prior_feedback,
             delta_diff=delta_diff,
+            validation_context=validation_context,
             on_message=on_message,
             on_review_event=on_review_event,
+            registry=registry,
+            strategy_label=ReviewStrategy.TIER3.value,
         )
-
-    # Tier 2: build risk map header (pure Python, no LLM cost)
-    risk_map = ""
-    if strategy == ReviewStrategy.TIER2:
-        file_scores_t2 = score_files(diff)
-        risk_map = build_risk_map_header(file_scores_t2)
 
     prompt = _build_review_prompt(
         task_title,
@@ -212,37 +265,180 @@ async def gate2_llm_review(
         allowed_files=allowed_files,
         delta_diff=delta_diff,
         sibling_context=sibling_context,
-        risk_map_header=risk_map,
+        validation_context=validation_context,
     )
 
     system_prompt = REVIEW_SYSTEM_PROMPT
     if custom_review_focus:
         system_prompt += "\n\n" + custom_review_focus
 
-    options = ClaudeCodeOptions(
-        system_prompt=system_prompt,
-        # Reviewers need the same power as agents.  Large diffs require
-        # many Read/Glob/Grep calls, and rate_limit_events consume turns
-        # silently.  max_turns=4 was far too tight — a single rate-limit
-        # event + a few file reads exhausted all turns before the review
-        # could even start, causing persistent empty responses.
-        max_turns=75,
-        model=model,
-        allowed_tools=["Read", "Glob", "Grep"],
-        permission_mode="bypassPermissions",
-    )
-    if worktree_path:
-        options.cwd = worktree_path
+    # Resolve provider and catalog entry
+    model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
 
-    # Retry the SDK call if the result is empty.  With max_turns=75 and
-    # 600s timeout, each attempt should succeed.  2 attempts is enough —
-    # if the first fails under these generous limits, it's a real issue.
     review_timeout_seconds = 600  # 10 min — same as agent timeout
     max_review_attempts = 2
+
+    if registry is None and model_spec.provider == "claude":
+        from claude_code_sdk import ClaudeCodeOptions
+
+        for attempt in range(1, max_review_attempts + 1):
+            try:
+                sdk_result = await asyncio.wait_for(
+                    sdk_query(
+                        prompt=prompt,
+                        options=ClaudeCodeOptions(
+                            system_prompt=system_prompt,
+                            max_turns=75,
+                            model=model_spec.model,
+                        ),
+                        on_message=on_message,
+                    ),
+                    timeout=review_timeout_seconds,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "L2 review timed out after %ds (attempt %d/%d)",
+                    review_timeout_seconds,
+                    attempt,
+                    max_review_attempts,
+                )
+                if on_review_event:
+                    await on_review_event(
+                        "review:timeout",
+                        {
+                            "timeout_seconds": review_timeout_seconds,
+                            "attempt": attempt,
+                            "max_attempts": max_review_attempts,
+                        },
+                    )
+                if attempt == max_review_attempts:
+                    return (
+                        GateResult(
+                            passed=False,
+                            gate="gate2_llm_review",
+                            details=f"Review timed out after {max_review_attempts} attempts",
+                            retriable=True,
+                            review_strategy=strategy.value,
+                        ),
+                        cost_info,
+                    )
+                if on_review_event:
+                    await on_review_event(
+                        "review:retry",
+                        {
+                            "attempt": attempt + 1,
+                            "max_attempts": max_review_attempts,
+                            "reason": "timeout",
+                        },
+                    )
+                continue
+            except Exception as exc:
+                logger.warning(
+                    "L2 review SDK call failed (attempt %d/%d): %s",
+                    attempt,
+                    max_review_attempts,
+                    exc,
+                )
+                if attempt == max_review_attempts:
+                    return (
+                        GateResult(
+                            passed=False,
+                            gate="gate2_llm_review",
+                            details=f"Provider error during review after {max_review_attempts} attempts: {exc}",
+                            retriable=True,
+                            review_strategy=strategy.value,
+                        ),
+                        cost_info,
+                    )
+                if on_review_event:
+                    await on_review_event(
+                        "review:retry",
+                        {
+                            "attempt": attempt + 1,
+                            "max_attempts": max_review_attempts,
+                            "reason": "error",
+                        },
+                    )
+                continue
+
+            if sdk_result is not None:
+                cost_info.cost_usd += sdk_result.cost_usd
+                cost_info.input_tokens += sdk_result.input_tokens
+                cost_info.output_tokens += sdk_result.output_tokens
+
+            result_text = (sdk_result.result if sdk_result else "").strip()
+            if result_text:
+                result_gate = _parse_review_result(result_text)
+                result_gate.review_strategy = strategy.value
+                return result_gate, cost_info
+
+            logger.warning(
+                "L2 review returned empty result (attempt %d/%d)",
+                attempt,
+                max_review_attempts,
+            )
+            if attempt < max_review_attempts:
+                await asyncio.sleep(2**attempt + random.uniform(0, 1))
+
+        logger.warning(
+            "L2 review returned empty after %d attempts — escalating to human",
+            max_review_attempts,
+        )
+        return (
+            GateResult(
+                passed=False,
+                gate="gate2_llm_review",
+                details=(
+                    f"Review could not complete after {max_review_attempts} attempts "
+                    "(likely transient provider issue). Human review needed."
+                ),
+                needs_human=True,
+                review_strategy=strategy.value,
+            ),
+            cost_info,
+        )
+
+    registry = ensure_provider_registry(registry, settings=ForgeSettings())
+    if registry is None:
+        logger.error("Failed to create fallback ProviderRegistry for gate2_llm_review")
+        return (
+            GateResult(
+                passed=False,
+                gate="gate2_llm_review",
+                details="Internal error: ProviderRegistry not available",
+                review_strategy=strategy.value,
+            ),
+            cost_info,
+        )
+
+    provider = registry.get_for_model(model_spec)
+    catalog_entry = registry.get_catalog_entry(model_spec)
+    workspace = WorkspaceRoots(primary_cwd=worktree_path or ".")
+
+    def _on_event(event: ProviderEvent) -> None:
+        if on_message is not None:
+            asyncio.ensure_future(on_message(event))
+
+    # Retry the provider call if the result is empty.
     for attempt in range(1, max_review_attempts + 1):
         try:
+            handle = provider.start(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=REVIEWER_TOOL_POLICY,
+                output_contract=OutputContract(format="freeform"),
+                workspace=workspace,
+                max_turns=75,
+                reasoning_effort=registry.settings.resolve_reasoning_effort(
+                    "reviewer",
+                    "medium",
+                ),
+                on_event=_on_event,
+            )
             result = await asyncio.wait_for(
-                sdk_query(prompt=prompt, options=options, on_message=on_message),
+                handle.result(),
                 timeout=review_timeout_seconds,
             )
         except TimeoutError:
@@ -252,6 +448,15 @@ async def gate2_llm_review(
                 attempt,
                 max_review_attempts,
             )
+            if on_review_event:
+                await on_review_event(
+                    "review:timeout",
+                    {
+                        "timeout_seconds": review_timeout_seconds,
+                        "attempt": attempt,
+                        "max_attempts": max_review_attempts,
+                    },
+                )
             if attempt == max_review_attempts:
                 return (
                     GateResult(
@@ -263,30 +468,52 @@ async def gate2_llm_review(
                     ),
                     cost_info,
                 )
+            if on_review_event:
+                await on_review_event(
+                    "review:retry",
+                    {
+                        "attempt": attempt + 1,
+                        "max_attempts": max_review_attempts,
+                        "reason": "timeout",
+                    },
+                )
             continue
         except Exception as e:
             logger.warning(
-                "L2 review SDK call failed (attempt %d/%d): %s", attempt, max_review_attempts, e
+                "L2 review provider call failed (attempt %d/%d): %s",
+                attempt,
+                max_review_attempts,
+                e,
             )
             if attempt == max_review_attempts:
                 return (
                     GateResult(
                         passed=False,
                         gate="gate2_llm_review",
-                        details=f"SDK error during review after {max_review_attempts} attempts: {e}",
+                        details=f"Provider error during review after {max_review_attempts} attempts: {e}",
                         retriable=True,
                         review_strategy=strategy.value,
                     ),
                     cost_info,
                 )
+            if on_review_event:
+                await on_review_event(
+                    "review:retry",
+                    {
+                        "attempt": attempt + 1,
+                        "max_attempts": max_review_attempts,
+                        "reason": "error",
+                    },
+                )
             continue
 
-        # Always accumulate cost from SDK call, even if result is None/empty
-        cost_info.cost_usd += getattr(result, "cost_usd", 0)
-        cost_info.input_tokens += getattr(result, "input_tokens", 0)
-        cost_info.output_tokens += getattr(result, "output_tokens", 0)
+        # Always accumulate cost from provider result
+        if result.provider_reported_cost_usd is not None:
+            cost_info.cost_usd += result.provider_reported_cost_usd
+        cost_info.input_tokens += result.input_tokens
+        cost_info.output_tokens += result.output_tokens
 
-        result_text = result.result if result and result.result else ""
+        result_text = result.text or ""
         if result_text:
             result_gate = _parse_review_result(result_text)
             result_gate.review_strategy = strategy.value
@@ -294,13 +521,7 @@ async def gate2_llm_review(
 
         # Log diagnostic details to help debug empty responses
         _diag_parts = [f"attempt {attempt}/{max_review_attempts}"]
-        if result is not None:
-            if hasattr(result, "num_turns"):
-                _diag_parts.append(f"turns={result.num_turns}")
-            if hasattr(result, "duration_ms"):
-                _diag_parts.append(f"duration={result.duration_ms}ms")
-            if hasattr(result, "duration_api_ms"):
-                _diag_parts.append(f"api_duration={result.duration_api_ms}ms")
+        _diag_parts.append(f"duration={result.duration_ms}ms")
         logger.warning(
             "L2 review returned empty result (%s)",
             ", ".join(_diag_parts),
@@ -308,9 +529,7 @@ async def gate2_llm_review(
         if attempt < max_review_attempts:
             await asyncio.sleep(2**attempt + random.uniform(0, 1))
 
-    # All attempts returned empty — escalate to human instead of auto-passing.
-    # Empty results are transient SDK issues, not code quality signal.
-    # Instead of shipping unreviewed code, ask the human what to do.
+    # All attempts returned empty — escalate to human
     logger.warning(
         "L2 review returned empty after %d attempts — escalating to human",
         max_review_attempts,
@@ -319,7 +538,7 @@ async def gate2_llm_review(
         GateResult(
             passed=False,
             gate="gate2_llm_review",
-            details=f"Review could not complete after {max_review_attempts} attempts (likely transient SDK issue). Human review needed.",
+            details=f"Review could not complete after {max_review_attempts} attempts (likely transient provider issue). Human review needed.",
             needs_human=True,
             review_strategy=strategy.value,
         ),
@@ -338,13 +557,16 @@ def _build_review_prompt(
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
-    risk_map_header: str = "",  # NEW: Tier 2 risk prioritisation header
+    validation_context: str = "",
+    risk_map_header: str = "",
 ) -> str:
     parts = []
     if project_context:
         parts.append(f"{project_context}\n\n")
     if sibling_context:
         parts.append(f"{sibling_context}\n\n")
+    if validation_context:
+        parts.append(f"{validation_context}\n\n")
     parts += [
         f"Task: {title}\n",
         f"Description: {description}\n\n",
@@ -377,7 +599,8 @@ def _build_review_prompt(
             )
         parts.append(
             "The developer has attempted to fix these issues.\n"
-            "Verify the specific issues above were addressed, AND do a full review of the\n"
+            "First, explicitly verify whether each issue above is fixed in the current code.\n"
+            "After that, do a full review of the\n"
             "current code. If you find new genuine issues (bugs, security, error handling),\n"
             "FAIL — regardless of whether they were in the prior feedback or not.\n"
             "Prior feedback is context, not a ceiling on what you can flag.\n"
@@ -450,6 +673,14 @@ def _extract_review_verdict(text: str) -> str | None:
         if verdict is not None:
             return verdict
 
+    verdict = _labeled_verdict(text)
+    if verdict is not None:
+        return verdict
+
+    verdict = _boundary_verdict(text)
+    if verdict is not None:
+        return verdict
+
     return None
 
 
@@ -469,4 +700,40 @@ def _leading_verdict(text: str) -> str | None:
     match = re.match(r"^(PASS|FAIL|UNCERTAIN)\b", candidate, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+    return None
+
+
+def _labeled_verdict(text: str) -> str | None:
+    """Return PASS/FAIL/UNCERTAIN for explicit final-verdict labels anywhere in text."""
+    matches = list(
+        re.finditer(
+            r"(?i)\b(?:final|overall)?\s*verdict\s*[:\-]\s*(PASS|FAIL|UNCERTAIN)\b",
+            text,
+        )
+    )
+    if matches:
+        return matches[-1].group(1).upper()
+    return None
+
+
+def _boundary_verdict(text: str) -> str | None:
+    """Return a verdict found after a strong boundary near the end of the response.
+
+    This is a last-resort salvage path for providers that concatenate exploratory
+    chatter and the final answer into a single blob like:
+        "Reviewing files first.PASS: looks good"
+
+    We only accept verdicts after the start of the text, a newline, or sentence-ending
+    punctuation to avoid matching ordinary mid-sentence prose like
+    "I think this is a FAIL because...".
+    """
+    tail = text[-4000:]
+    matches = list(
+        re.finditer(
+            r"(?im)(?:^|[\r\n]|(?<=[.!?]))\s*(PASS|FAIL|UNCERTAIN)\b(?::|$)",
+            tail,
+        )
+    )
+    if matches:
+        return matches[-1].group(1).upper()
     return None

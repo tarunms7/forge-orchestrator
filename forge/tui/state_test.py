@@ -113,6 +113,27 @@ def test_apply_agent_output_appends():
     assert state.agent_output["t1"] == ["Creating file...", "Done."]
 
 
+def test_agent_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "I have enough context."})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "I have enough context."})
+    assert state.agent_output["t1"] == ["I have enough context."]
+
+
+def test_agent_tool_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading src/foo.py"})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading src/foo.py"})
+    assert state.agent_output["t1"] == ["📖 Reading src/foo.py"]
+
+
+def test_agent_tool_output_keeps_adjacent_distinct_paths():
+    state = TuiState()
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading src/foo.py"})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "📖 Reading src/bar.py"})
+    assert state.agent_output["t1"] == ["📖 Reading src/foo.py", "📖 Reading src/bar.py"]
+
+
 def test_agent_output_ring_buffer():
     state = TuiState(max_output_lines=5)
     for i in range(10):
@@ -185,6 +206,17 @@ def test_pr_failed_returns_to_partial_success_when_failures_remain():
 
     assert state.error == "push failed"
     assert state.phase == "partial_success"
+
+
+def test_pr_created_clears_previous_pr_error():
+    state = _make_state_with_task()
+    state.error = "gh pr create failed"
+
+    state.apply_event("pipeline:pr_created", {"pr_url": "https://github.com/org/repo/pull/42"})
+
+    assert state.pr_url == "https://github.com/org/repo/pull/42"
+    assert state.error is None
+    assert state.phase == "pr_created"
 
 
 def test_on_change_callback():
@@ -632,6 +664,13 @@ def test_followup_output():
     assert state.followup_output["f1"] == ["Running...", "Done."]
 
 
+def test_followup_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "Collecting context..."})
+    state.apply_event("followup:agent_output", {"task_id": "f1", "line": "Collecting context..."})
+    assert state.followup_output["f1"] == ["Collecting context..."]
+
+
 def test_followup_output_notifies():
     state = TuiState()
     changes = []
@@ -733,10 +772,69 @@ def test_agent_output_appends_to_unified_log():
     assert state.unified_log["t1"] == [("agent", "Creating file..."), ("agent", "Done.")]
 
 
+def test_agent_output_duplicate_is_not_added_to_unified_log():
+    state = TuiState()
+    state.apply_event(
+        "task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."}
+    )
+    state.apply_event(
+        "task:agent_output", {"task_id": "t1", "line": "Reviewing the current implementation."}
+    )
+    assert state.unified_log["t1"] == [("agent", "Reviewing the current implementation.")]
+
+
+def test_planner_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event(
+        "planner:output", {"line": "I need to read the current implementation first."}
+    )
+    state.apply_event(
+        "planner:output", {"line": "I need to read the current implementation first."}
+    )
+    assert state.planner_output == ["I need to read the current implementation first."]
+
+
+def test_planner_tool_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("planner:output", {"line": "⚡ pytest forge/api/routes/settings_test.py -q"})
+    state.apply_event("planner:output", {"line": "⚡ pytest forge/api/routes/settings_test.py -q"})
+    assert state.planner_output == ["⚡ pytest forge/api/routes/settings_test.py -q"]
+
+
+def test_planner_tool_output_keeps_adjacent_distinct_commands():
+    state = TuiState()
+    state.apply_event("planner:output", {"line": "⚡ pytest forge/api/routes/settings_test.py -q"})
+    state.apply_event("planner:output", {"line": "⚡ pytest forge/tui/state_test.py -q"})
+    assert state.planner_output == [
+        "⚡ pytest forge/api/routes/settings_test.py -q",
+        "⚡ pytest forge/tui/state_test.py -q",
+    ]
+
+
 def test_review_llm_output_appends_to_unified_log():
     state = TuiState()
     state.apply_event("review:llm_output", {"task_id": "t1", "line": "Checking scope..."})
     assert state.unified_log["t1"] == [("review", "Checking scope...")]
+
+
+def test_review_llm_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event(
+        "review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."}
+    )
+    state.apply_event(
+        "review:llm_output", {"task_id": "t1", "line": "Reviewing the updated tests."}
+    )
+    assert state.review_output["t1"] == ["Reviewing the updated tests."]
+    assert state.unified_log["t1"] == [("review", "Reviewing the updated tests.")]
+
+
+def test_review_tool_output_suppresses_adjacent_duplicates():
+    state = TuiState()
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "⚡ git diff --stat"})
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "⚡ git diff --stat"})
+    assert state.review_output["t1"] == ["⚡ git diff --stat"]
+    assert state.unified_log["t1"] == [("review", "⚡ git diff --stat")]
 
 
 def test_unified_log_interleaves_agent_and_review():
@@ -749,6 +847,16 @@ def test_unified_log_interleaves_agent_and_review():
         ("review", "review line"),
         ("agent", "agent line 2"),
     ]
+
+
+def test_late_agent_output_does_not_reopen_unified_log_after_review_starts():
+    state = _make_state_with_task("t1")
+    state.tasks["t1"]["state"] = "in_review"
+    state.apply_event("review:llm_output", {"task_id": "t1", "line": "Starting review..."})
+    state.apply_event("task:agent_output", {"task_id": "t1", "line": "late agent line"})
+
+    assert state.agent_output["t1"] == ["late agent line"]
+    assert state.unified_log["t1"] == [("review", "Starting review...")]
 
 
 def test_unified_log_ring_buffer():
@@ -764,6 +872,7 @@ def test_review_gate_passed_appends_to_unified_log():
     state.apply_event(
         "review:gate_passed", {"task_id": "t1", "gate": "gate0_build", "details": "passed"}
     )
+    assert state.tasks["t1"]["review_gates"]["gate0_build"]["status"] == "passed"
     assert len(state.unified_log["t1"]) == 1
     assert state.unified_log["t1"][0][0] == "gate"
     assert "Build" in state.unified_log["t1"][0][1]
@@ -775,6 +884,7 @@ def test_review_gate_failed_appends_to_unified_log():
     state.apply_event(
         "review:gate_failed", {"task_id": "t1", "gate": "gate1_lint", "details": "3 errors"}
     )
+    assert state.tasks["t1"]["review_gates"]["gate1_lint"]["status"] == "failed"
     assert len(state.unified_log["t1"]) == 1
     assert state.unified_log["t1"][0][0] == "gate"
     assert "Lint" in state.unified_log["t1"][0][1]
@@ -1322,3 +1432,123 @@ def test_review_gate_failed_missing_gate():
     state = _make_state_with_task("t1")
     state.apply_event("review:gate_failed", {"task_id": "t1", "details": "bad"})
     assert state.review_gates == {}
+
+
+class TestReviewLifecycleVisibility:
+    """Tests for review lifecycle event handling and substatus tracking."""
+
+    def test_review_started_sets_substatus(self):
+        """review:started event sets review_substatus and adds to unified_log."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:started", {"task_id": "t1"})
+
+        assert state.review_substatus["t1"] == "Review started"
+        assert ("gate", "\u2501 Review started") in state.unified_log["t1"]
+
+    def test_review_passed_clears_substatus(self):
+        """review:passed event clears review_substatus and adds to unified_log."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:started", {"task_id": "t1"})
+        state.apply_event("review:passed", {"task_id": "t1"})
+
+        assert "t1" not in state.review_substatus
+        assert ("gate", "\u2713 Review passed") in state.unified_log["t1"]
+
+    def test_review_failed_clears_substatus(self):
+        """review:failed event clears review_substatus and adds failure info to unified_log."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:started", {"task_id": "t1"})
+        state.apply_event("review:failed", {"task_id": "t1", "gate": "gate1_lint"})
+
+        assert "t1" not in state.review_substatus
+        assert ("gate", "\u2717 Review failed at gate1_lint") in state.unified_log["t1"]
+
+    def test_review_timeout_shows_attempt_info(self):
+        """review:timeout event shows attempt info in substatus and unified_log."""
+        state = _make_state_with_task("t1")
+        state.apply_event(
+            "review:timeout",
+            {"task_id": "t1", "timeout_seconds": 300, "attempt": 2, "max_attempts": 3},
+        )
+
+        assert state.review_substatus["t1"] == "L2 timed out (2/3)"
+        assert ("gate", "L2 review timed out after 300s") in state.unified_log["t1"]
+
+    def test_review_retry_shows_attempt_info(self):
+        """review:retry event shows retry attempt info in substatus and unified_log."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:retry", {"task_id": "t1", "attempt": 3, "max_attempts": 5})
+
+        assert state.review_substatus["t1"] == "Retrying review 3/5"
+        assert ("gate", "Retrying review attempt 3/5") in state.unified_log["t1"]
+
+    def test_review_re_review_shows_attempt_info(self):
+        """review:re_review event shows re-review attempt info in substatus and unified_log."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:re_review", {"task_id": "t1", "attempt": 2, "max_attempts": 4})
+
+        assert state.review_substatus["t1"] == "Re-reviewing 2/4"
+        assert ("gate", "Re-reviewing attempt 2/4") in state.unified_log["t1"]
+
+    def test_gate_started_updates_review_substatus(self):
+        """review:gate_started updates review_substatus with gate info."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:gate_started", {"task_id": "t1", "gate": "gate1_lint"})
+
+        assert state.review_substatus["t1"] == "\U0001f4cf Lint running"
+
+    def test_gate_passed_updates_review_substatus(self):
+        """review:gate_passed updates review_substatus with passed info."""
+        state = _make_state_with_task("t1")
+        state.apply_event(
+            "review:gate_passed",
+            {"task_id": "t1", "gate": "gate1_lint", "details": "All checks passed"},
+        )
+
+        assert state.review_substatus["t1"] == "\U0001f4cf Lint passed"
+
+    def test_gate_failed_updates_review_substatus(self):
+        """review:gate_failed updates review_substatus with failed info."""
+        state = _make_state_with_task("t1")
+        state.apply_event(
+            "review:gate_failed",
+            {"task_id": "t1", "gate": "gate1_lint", "details": "Linting errors found"},
+        )
+
+        assert state.review_substatus["t1"] == "\U0001f4cf Lint failed"
+
+    def test_task_state_change_clears_review_substatus(self):
+        """Task state change to non-in_review state clears review_substatus."""
+        state = _make_state_with_task("t1")
+        state.apply_event("review:started", {"task_id": "t1"})
+        assert state.review_substatus["t1"] == "Review started"
+
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "done"})
+        assert "t1" not in state.review_substatus
+
+    def test_review_timeout_deduplication(self):
+        """Review timeout events are real events, not status chatter - both appear in log."""
+        state = _make_state_with_task("t1")
+        state.apply_event(
+            "review:timeout",
+            {"task_id": "t1", "timeout_seconds": 300, "attempt": 2, "max_attempts": 3},
+        )
+        state.apply_event(
+            "review:timeout",
+            {"task_id": "t1", "timeout_seconds": 300, "attempt": 3, "max_attempts": 3},
+        )
+
+        # Both timeout events should be in the log as they represent different attempts
+        timeout_logs = [log for log in state.unified_log["t1"] if "timed out" in log[1]]
+        assert len(timeout_logs) == 2
+
+    def test_existing_gate_passed_unified_log_preserved(self):
+        """Existing gate passed/failed events still produce correct unified_log entries."""
+        state = _make_state_with_task("t1")
+        state.apply_event(
+            "review:gate_passed",
+            {"task_id": "t1", "gate": "gate0_build", "details": "Build successful"},
+        )
+
+        # Check that the existing pattern still works
+        assert ("gate", "\U0001f528 Build: \u2713 Build successful") in state.unified_log["t1"]

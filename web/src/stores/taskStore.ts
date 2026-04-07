@@ -49,6 +49,20 @@ export interface TaskState {
   reviewCostUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Provider model string, e.g. 'claude:sonnet' */
+  providerModel?: string;
+  /** SDK backend name, e.g. 'claude-code-sdk' */
+  backend?: string;
+  /** Full canonical model ID, e.g. 'claude-sonnet-4-20250514' */
+  canonicalModelId?: string;
+  /** Model escalation history across retries */
+  modelHistory?: Array<{
+    attempt: number;
+    model: string;
+    backend: string;
+    result: string;
+    cost_usd: number;
+  }>;
 }
 
 export interface TimelineEntry {
@@ -70,6 +84,8 @@ export interface PipelineState {
   pipelineId: string | null;
   phase: "idle" | "planning" | "planned" | "contracts" | "executing" | "reviewing" | "paused" | "complete" | "cancelled" | "error";
   tasks: Record<string, TaskState>;
+  /** Resolved provider config snapshot from pipeline creation */
+  providerConfig: Record<string, string> | null;
   plannerOutput: string[];
   plannerStartedAt: number | null;
   plannerLastActivityAt: number | null;
@@ -126,6 +142,7 @@ export interface PipelineState {
     ci_fix_attempt?: number;
     ci_fix_max_retries?: number;
     ci_fix_cost_usd?: number;
+    provider_config?: Record<string, string>;
   }) => void;
   handleEvent: (event: {
     event: string;
@@ -185,6 +202,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
   pipelineId: null,
   phase: "idle",
   tasks: {},
+  providerConfig: null,
   plannerOutput: [],
   plannerStartedAt: null,
   plannerLastActivityAt: null,
@@ -337,6 +355,10 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
         reviewCostUsd: (t.review_cost_usd as number) || undefined,
         inputTokens: (t.input_tokens as number) || undefined,
         outputTokens: (t.output_tokens as number) || undefined,
+        providerModel: (t.provider_model as string) || undefined,
+        backend: (t.backend as string) || undefined,
+        canonicalModelId: (t.canonical_model_id as string) || undefined,
+        modelHistory: (t.model_history as TaskState["modelHistory"]) || undefined,
       };
     }
     const phase = (data.phase || "idle") as PipelineState["phase"];
@@ -375,6 +397,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       ciFixAttempt: (data.ci_fix_attempt as number) || 0,
       ciFixMaxRetries: (data.ci_fix_max_retries as number) || 3,
       ciFixCostUsd: (data.ci_fix_cost_usd as number) || 0,
+      providerConfig: data.provider_config ?? null,
     });
   },
   reset: () =>
@@ -382,6 +405,7 @@ export const useTaskStore = create<PipelineState>((set, get) => ({
       pipelineId: null,
       phase: "idle",
       tasks: {},
+      providerConfig: null,
       plannerOutput: [],
       plannerStartedAt: null,
       plannerLastActivityAt: null,

@@ -1,15 +1,28 @@
 """Contract Builder. Generates cross-task interface contracts from planner hints."""
 
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
 from collections.abc import Callable
-
-from claude_code_sdk import ClaudeCodeOptions
+from typing import TYPE_CHECKING
 
 from forge.core.contracts import ContractSet, IntegrationHint
 from forge.core.models import TaskGraph
 from forge.core.sanitize import extract_json_block
-from forge.core.sdk_helpers import SdkResult, sdk_query
+from forge.providers import (
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    ProviderResult,
+    WorkspaceRoots,
+)
+from forge.providers.restrictions import CONTRACT_TOOL_POLICY
+
+if TYPE_CHECKING:
+    from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.contracts")
 
@@ -77,12 +90,15 @@ class ContractBuilderLLM:
 
     def __init__(
         self,
-        model: str = "sonnet",
+        model: str | ModelSpec = "sonnet",
         cwd: str | None = None,
+        registry: ProviderRegistry | None = None,
     ) -> None:
-        self._model = model
+        self._model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
         self._cwd = cwd
-        self._last_sdk_result: SdkResult | None = None
+        self._registry = registry
+        self._last_sdk_result: ProviderResult | None = None
+        self._last_result: ProviderResult | None = None
 
     async def generate_contracts(
         self,
@@ -95,28 +111,46 @@ class ContractBuilderLLM:
         """Generate a ContractSet JSON string from integration hints."""
         prompt = self._build_prompt(graph, hints, project_context, feedback=feedback)
 
-        options = ClaudeCodeOptions(
-            system_prompt=CONTRACT_BUILDER_SYSTEM_PROMPT,
-            max_turns=10,  # Allow reading existing code for context
-            model=self._model,
-            allowed_tools=["Read", "Glob", "Grep", "Bash"],
-            permission_mode="bypassPermissions",
-        )
-        if self._cwd:
-            options.cwd = self._cwd
+        if self._registry is None:
+            logger.warning("ProviderRegistry not set on ContractBuilderLLM")
+            self._last_sdk_result = None
+            self._last_result = None
+            return ""
+
+        provider = self._registry.get_for_model(self._model_spec)
+        catalog_entry = self._registry.get_catalog_entry(self._model_spec)
+        workspace = WorkspaceRoots(primary_cwd=self._cwd or ".")
+
+        def _on_event(event: ProviderEvent) -> None:
+            if on_message is not None:
+                asyncio.ensure_future(on_message(event))
 
         try:
-            result = await sdk_query(
+            handle = provider.start(
                 prompt=prompt,
-                options=options,
-                on_message=on_message,
+                system_prompt=CONTRACT_BUILDER_SYSTEM_PROMPT,
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=CONTRACT_TOOL_POLICY,
+                output_contract=OutputContract(format="json"),
+                workspace=workspace,
+                max_turns=10,
+                reasoning_effort=self._registry.settings.resolve_reasoning_effort(
+                    "contract_builder",
+                    "high",
+                ),
+                on_event=_on_event,
             )
+            result = await handle.result()
         except Exception as e:
-            logger.warning("SDK call failed during contract generation: %s", e)
+            logger.warning("Provider call failed during contract generation: %s", e)
+            self._last_sdk_result = None
+            self._last_result = None
             return ""
 
         self._last_sdk_result = result
-        result_text = result.result if result and result.result else ""
+        self._last_result = result
+        result_text = result.text or ""
         return extract_json_block(result_text) or ""
 
     def _build_prompt(

@@ -10,16 +10,17 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.config.project_config import load_repo_configs
 from forge.config.settings import ForgeSettings
+from forge.core import model_router as _legacy_model_router
 from forge.core.budget import BudgetExceededError, check_budget
 from forge.core.claude_planner import ClaudePlannerLLM
 from forge.core.context import ProjectSnapshot, gather_project_snapshot
 from forge.core.contract_builder import ContractBuilder, ContractBuilderLLM
 from forge.core.contracts import ContractSet, IntegrationHint
 from forge.core.cost_estimator import estimate_pipeline_cost
+from forge.core.cost_registry import CostRegistry
 
 # Mixin classes providing decomposed daemon functionality
 from forge.core.daemon_executor import ExecutorMixin
@@ -34,8 +35,10 @@ from forge.core.daemon_helpers import (  # noqa: F401
     _get_current_branch,
     _get_diff_stats,
     _get_diff_vs_main,
+    _humanize_model_spec,
     _print_status_table,
     async_subprocess,
+    format_routing_summary,
     update_repos_json_branches,
 )
 from forge.core.daemon_merge import MergeMixin
@@ -43,20 +46,40 @@ from forge.core.daemon_review import ReviewMixin
 from forge.core.errors import ForgeError
 from forge.core.events import EventEmitter
 from forge.core.logging_config import make_console
-from forge.core.model_router import select_model
 from forge.core.models import AgentState, RepoConfig, TaskGraph, TaskState, row_to_record
 from forge.core.monitor import ResourceMonitor
 from forge.core.planner import Planner
+from forge.core.provider_config import (
+    build_provider_config_snapshot,
+    build_provider_registry,
+    resolve_model_for_stage,
+    resolve_reasoning_effort_for_stage,
+    resolve_registry_model,
+)
 from forge.core.sanitize import validate_task_id
 from forge.core.scheduler import Scheduler, SchedulingAnalysis
 from forge.core.state import TaskStateMachine
 from forge.learning.store import format_lessons_block, row_to_lesson
 from forge.merge.worker import MergeWorker
 from forge.merge.worktree import WorktreeManager
+from forge.providers import (
+    EventKind,
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    ToolPolicy,
+    WorkspaceRoots,
+)
+from forge.providers.registry import ProviderRegistry
 from forge.storage.db import Database
 
 logger = logging.getLogger("forge")
 console = make_console()
+
+# Backward-compatible module export for tests and call sites that still patch
+# forge.core.daemon.select_model directly.
+select_model = _legacy_model_router.select_model
 
 
 _EXCLUDE_KEYWORDS = re.compile(
@@ -139,16 +162,14 @@ def _max_dependency_wave_width(tasks: list[object]) -> int:
     if not tasks:
         return 0
 
-    task_ids = {str(getattr(task, "id")) for task in tasks}
+    task_ids = {str(task.id) for task in tasks}
     dependents: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
     remaining_deps: dict[str, int] = {}
 
     for task in tasks:
-        task_id = str(getattr(task, "id"))
+        task_id = str(task.id)
         deps = [
-            str(dep)
-            for dep in (getattr(task, "depends_on", None) or [])
-            if str(dep) in task_ids
+            str(dep) for dep in (getattr(task, "depends_on", None) or []) if str(dep) in task_ids
         ]
         remaining_deps[task_id] = len(deps)
         for dep in deps:
@@ -191,30 +212,47 @@ async def _ensure_agent_pool_size(db: Database, prefix: str, target_size: int) -
             await db.create_agent(agent_id)
 
 
-async def _generate_branch_name(description: str) -> str:
-    """Generate a short, meaningful branch name from a task description using an LLM.
+async def _generate_branch_name(
+    description: str,
+    registry: ProviderRegistry | None = None,
+) -> str:
+    """Generate a short, meaningful branch name from a task description using a provider.
 
-    Falls back to the dumb slugify approach if the LLM call fails.
+    Falls back to the dumb slugify approach if the provider call fails.
 
     Examples:
       "Fix duplicating progress log lines in mining CLI" → "forge/fix-mining-progress-duplicates"
       "We haven't updated anything in the README, can we update it?" → "forge/update-readme"
     """
-    from claude_code_sdk import ClaudeCodeOptions
-
-    from forge.core.sdk_helpers import sdk_query
+    if registry is None:
+        return _sanitize_branch_name(description)
 
     try:
-        result = await sdk_query(
+        model_spec = resolve_registry_model(registry, "planner", "low")
+        provider = registry.get_for_model(model_spec)
+        catalog_entry = registry.get_catalog_entry(model_spec)
+        handle = provider.start(
             prompt=(
                 "Generate a short git branch name (3-5 words, kebab-case) for this task. "
                 "Reply with ONLY the branch name, nothing else. No 'forge/' prefix.\n\n"
                 f"Task: {description}"
             ),
-            options=ClaudeCodeOptions(max_turns=1),
+            system_prompt="",
+            catalog_entry=catalog_entry,
+            execution_mode=ExecutionMode.INTELLIGENCE,
+            tool_policy=ToolPolicy(mode="allowlist", allowed_tools=[]),
+            output_contract=OutputContract(format="freeform"),
+            workspace=WorkspaceRoots(primary_cwd="."),
+            max_turns=1,
+            reasoning_effort=resolve_reasoning_effort_for_stage(
+                registry.settings,
+                "planner",
+                "low",
+            ),
         )
-        if result and result.result_text:
-            candidate = result.result_text.strip().strip("`\"'").strip()
+        result = await handle.result()
+        if result and result.text:
+            candidate = result.text.strip().strip("`\"'").strip()
             # Remove any prefix the LLM might add
             for prefix in ("forge/", "feature/", "fix/", "feat/"):
                 if candidate.lower().startswith(prefix):
@@ -222,10 +260,12 @@ async def _generate_branch_name(description: str) -> str:
             # Sanitize what the LLM gave us
             sanitized = _sanitize_branch_name(candidate)
             if sanitized != "forge/pipeline-task":
-                logger.debug("LLM generated branch name: %s", sanitized)
+                logger.debug("Provider generated branch name: %s", sanitized)
                 return sanitized
     except Exception:
-        logger.debug("LLM branch name generation failed, falling back to slugify", exc_info=True)
+        logger.debug(
+            "Provider branch name generation failed, falling back to slugify", exc_info=True
+        )
 
     return _sanitize_branch_name(description)
 
@@ -296,6 +336,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._active_tasks_lock = asyncio.Lock()
         self._effective_max_agents: int = self._settings.max_agents
         self._project_config = ProjectConfig.load(project_dir)
+        self._cost_registry = CostRegistry(
+            overrides=self._settings.build_cost_registry_overrides(),
+        )
         # Task list cache — avoids re-fetching from DB every poll iteration
         self._cached_tasks: list | None = None
         self._task_cache_time: float = 0.0
@@ -309,6 +352,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 "default": RepoConfig(id="default", path=project_dir, base_branch=""),
             }
 
+        # Initialize provider registry
+        self._registry = self._init_providers()
+
         # Lessons use the central DB — no separate initialization needed
 
     def _get_merge_lock(self, repo_id: str = "default") -> asyncio.Lock:
@@ -316,6 +362,27 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if repo_id not in self._merge_locks:
             self._merge_locks[repo_id] = asyncio.Lock()
         return self._merge_locks[repo_id]
+
+    def _init_providers(self) -> ProviderRegistry:
+        """Initialize provider registry. Always registers Claude, conditionally OpenAI."""
+        return build_provider_registry(self._settings, self._project_config)
+
+    def _select_model(
+        self,
+        stage: str,
+        complexity: str = "medium",
+        *,
+        retry_count: int = 0,
+    ) -> ModelSpec:
+        """Resolve a stage model using settings overrides plus the provider registry."""
+        return resolve_model_for_stage(
+            self._settings,
+            self._registry,
+            stage,
+            complexity,
+            retry_count=retry_count,
+            strategy=self._strategy,
+        )
 
     async def _emit(self, event_type: str, data: dict, *, db: Database, pipeline_id: str) -> None:
         """Emit event to WebSocket AND persist to DB.
@@ -703,7 +770,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await self._events.emit("pipeline:phase_changed", {"phase": "planning"})
 
         strategy = self._settings.model_strategy
-        planner_model = select_model(strategy, "planner", "high")
+        planner_model = self._select_model("planner", "high")
+        agent_low_model = self._select_model("agent", "low")
+        agent_medium_model = self._select_model("agent", "medium")
+        agent_high_model = self._select_model("agent", "high")
+        reviewer_model = self._select_model("reviewer", "medium")
+        reviewer_effort = self._settings.resolve_reasoning_effort("reviewer", "medium")
         console.print(f"[dim]Strategy: {strategy} | Planner: {planner_model}[/dim]")
 
         async def _planner_progress(msg: str) -> None:
@@ -713,6 +785,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             else:
                 await self._events.emit("planner:output", {"line": msg})
 
+        await _planner_progress(f"Starting planner ({_humanize_model_spec(planner_model)})…")
+        routing_line = format_routing_summary(
+            planner_model,
+            agent_low_model,
+            agent_medium_model,
+            agent_high_model,
+            reviewer_model,
+            reviewer_effort,
+        )
+        await _planner_progress(routing_line)
         await _planner_progress("Analyzing codebase structure…")
 
         # Load template config from pipeline for prompt modifiers
@@ -742,44 +824,60 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             model=planner_model,
             cwd=self._project_dir,
             system_prompt_modifier=planner_prompt_modifier,
+            registry=self._registry,
         )
         planner = Planner(planner_llm, max_retries=self._settings.max_retries)
 
         _planner_token_count = [0]
         _last_token_update = [0.0]
 
-        async def _on_planner_msg(msg):
-            text = _extract_activity(msg)
-
-            # Count tokens from ALL messages (including filtered JSON output)
-            # so we can show generation progress even when text is hidden.
-            _msg_tokens = 0
-            try:
-                from claude_code_sdk import AssistantMessage
-
-                if isinstance(msg, AssistantMessage):
-                    for block in msg.content or []:
-                        if hasattr(block, "text") and block.text:
-                            # Rough token estimate: chars / 4
-                            _msg_tokens += max(1, len(block.text) // 4)
-            except ImportError:
-                pass
-            if _msg_tokens > 0:
-                _planner_token_count[0] += _msg_tokens
-                now = time.monotonic()
-                # Emit token count update every 2 seconds (not every message)
-                if now - _last_token_update[0] >= 2.0:
-                    _last_token_update[0] = now
-                    token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+        async def _on_planner_msg(event):
+            # Handle ProviderEvent from provider protocol
+            if isinstance(event, ProviderEvent):
+                activity = _extract_activity(event)
+                if activity:
+                    _last_token_update[0] = time.monotonic()
                     if pipeline_id:
                         await self._emit(
-                            "planner:output", {"line": token_line}, db=db, pipeline_id=pipeline_id
+                            "planner:output", {"line": activity}, db=db, pipeline_id=pipeline_id
                         )
                     else:
-                        await self._events.emit("planner:output", {"line": token_line})
+                        await self._events.emit("planner:output", {"line": activity})
 
+                if event.kind == EventKind.TEXT and event.text:
+                    # Count text tokens for progress display even though planner JSON
+                    # is intentionally suppressed from the panel.
+                    _msg_tokens = event.token_count or (
+                        max(1, len(event.text) // 4) if event.text else 0
+                    )
+                    if _msg_tokens > 0:
+                        _planner_token_count[0] += _msg_tokens
+                        now = time.monotonic()
+                        if now - _last_token_update[0] >= 2.0:
+                            _last_token_update[0] = now
+                            token_line = (
+                                f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
+                            )
+                            if pipeline_id:
+                                await self._emit(
+                                    "planner:output",
+                                    {"line": token_line},
+                                    db=db,
+                                    pipeline_id=pipeline_id,
+                                )
+                            else:
+                                await self._events.emit("planner:output", {"line": token_line})
+
+                if event.kind == EventKind.USAGE:
+                    if event.input_tokens:
+                        _planner_token_count[0] += event.input_tokens
+                    if event.output_tokens:
+                        _planner_token_count[0] += event.output_tokens
+                return
+
+            # Backward compatibility: handle raw SDK messages
+            text = _extract_activity(event)
             if text:
-                # Reset token update timer so activity lines don't get buried
                 _last_token_update[0] = time.monotonic()
                 if pipeline_id:
                     await self._emit(
@@ -864,48 +962,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 autonomy=self._settings.autonomy,
                 question_limit=self._settings.question_limit,
                 repo_ids=repo_ids,
+                registry=self._registry,
             )
 
-            async def _on_unified_msg(msg):
-                """Forward SDK streaming messages as planner:output events."""
-                # Count tokens for progress display (reuses outer counters)
-                _msg_tokens = 0
-                if not isinstance(msg, str):
-                    try:
-                        from claude_code_sdk import AssistantMessage
-
-                        if isinstance(msg, AssistantMessage):
-                            for block in msg.content or []:
-                                if hasattr(block, "text") and block.text:
-                                    _msg_tokens += max(1, len(block.text) // 4)
-                    except ImportError:
-                        pass
-                if _msg_tokens > 0:
-                    _planner_token_count[0] += _msg_tokens
-                    now = time.monotonic()
-                    if now - _last_token_update[0] >= 2.0:
-                        _last_token_update[0] = now
-                        token_line = f"⚙ Planner generating… ({_planner_token_count[0]:,} tokens)"
-                        if pipeline_id:
-                            await self._emit(
-                                "planner:output",
-                                {"line": token_line},
-                                db=db,
-                                pipeline_id=pipeline_id,
-                            )
-                        else:
-                            await self._events.emit("planner:output", {"line": token_line})
-
-                text = _extract_activity(msg) if not isinstance(msg, str) else msg
-                if not text:
-                    return
-                _last_token_update[0] = time.monotonic()
-                if pipeline_id:
-                    await self._emit(
-                        "planner:output", {"line": text}, db=db, pipeline_id=pipeline_id
-                    )
-                else:
-                    await self._events.emit("planner:output", {"line": text})
+            async def _on_unified_msg(event):
+                """Forward ProviderEvent streaming events as planner:output events."""
+                # Delegate to the shared planner message handler
+                await _on_planner_msg(event)
 
             # Planning question support via asyncio.Event synchronization
             pending_planning_answer: dict[str, asyncio.Event] = {}
@@ -1045,14 +1108,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Track planner cost
             if pipeline_id and planner_llm._last_sdk_result:
                 sdk_result = planner_llm._last_sdk_result
-                if sdk_result.cost_usd > 0:
-                    await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
-                    await db.set_pipeline_planner_cost(pipeline_id, sdk_result.cost_usd)
+                cost_usd = sdk_result.provider_reported_cost_usd or 0.0
+                if cost_usd > 0:
+                    await db.add_pipeline_cost(pipeline_id, cost_usd)
+                    await db.set_pipeline_planner_cost(pipeline_id, cost_usd)
                     total_cost = await db.get_pipeline_cost(pipeline_id)
                     await self._emit(
                         "pipeline:cost_update",
                         {
-                            "planner_cost_usd": sdk_result.cost_usd,
+                            "planner_cost_usd": cost_usd,
                             "total_cost_usd": total_cost,
                         },
                         db=db,
@@ -1065,13 +1129,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         if pipeline_id and graph.tasks:
             estimated = await estimate_pipeline_cost(
                 len(graph.tasks),
-                self._settings,
-                strategy,
+                strategy=strategy,
+                cost_registry=self._cost_registry,
+                overrides=self._settings.build_routing_overrides(),
+                registry=self._registry,
             )
             await self._emit(
                 "pipeline:cost_estimate",
                 {
-                    "estimated_cost_usd": estimated,
+                    "estimated_cost": estimated.total_cost_usd,
+                    "estimated_cost_usd": estimated.total_cost_usd,
                     "task_count": len(graph.tasks),
                 },
                 db=db,
@@ -1142,12 +1209,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         )
         await db.update_pipeline_status(pipeline_id, "contracts")
 
-        contract_model = select_model(self._strategy, "contract_builder", "high")
-        builder_llm = ContractBuilderLLM(model=contract_model, cwd=self._project_dir)
+        contract_model = self._select_model("contract_builder", "high")
+        builder_llm = ContractBuilderLLM(
+            model=contract_model, cwd=self._project_dir, registry=self._registry
+        )
         builder = ContractBuilder(builder_llm)
 
         async def _on_contract_msg(msg):
-            text = _extract_text(msg)
+            text = _extract_activity(msg) or _extract_text(msg)
             if text:
                 await self._emit(
                     "contracts:output",
@@ -1181,8 +1250,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Track cost
         if builder_llm._last_sdk_result:
             sdk_result = builder_llm._last_sdk_result
-            if sdk_result.cost_usd > 0:
-                await db.add_pipeline_cost(pipeline_id, sdk_result.cost_usd)
+            cost_usd = sdk_result.provider_reported_cost_usd or 0.0
+            if cost_usd > 0:
+                await db.add_pipeline_cost(pipeline_id, cost_usd)
 
         # Persist contracts
         if contract_set.has_contracts():
@@ -1327,8 +1397,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             memory_threshold_pct=self._settings.memory_threshold_pct,
             disk_threshold_gb=self._settings.disk_threshold_gb,
         )
-        adapter = ClaudeAdapter()
-        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
+        runtime = AgentRuntime(
+            timeout_seconds=self._settings.agent_timeout_seconds,
+            registry=self._registry,
+            cost_registry=self._cost_registry,
+        )
 
         # Initialize lesson stores
         # Determine pipeline branch name: use user-supplied name, or auto-generate from description
@@ -1348,7 +1421,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         else:
             description = pipeline_record.description if pipeline_record else ""
             pipeline_branch = (
-                (await _generate_branch_name(description))
+                (await _generate_branch_name(description, registry=self._registry))
                 if description
                 else f"forge/pipeline-{pid[:8]}"
             )
@@ -1755,6 +1828,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 budget_limit_usd=self._settings.budget_limit_usd,
                 project_path=self._project_dir,
                 project_name=os.path.basename(self._project_dir),
+                provider_config=json.dumps(
+                    build_provider_config_snapshot(
+                        self._settings,
+                        self._registry,
+                        strategy=self._strategy,
+                    )
+                ),
             )
             graph = await self.plan(
                 user_input,
@@ -1809,6 +1889,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 budget_limit_usd=self._settings.budget_limit_usd,
                 project_path=self._project_dir,
                 project_name=os.path.basename(self._project_dir),
+                provider_config=json.dumps(
+                    build_provider_config_snapshot(
+                        self._settings,
+                        self._registry,
+                        strategy=self._strategy,
+                    )
+                ),
             )
             graph = await self.plan(
                 user_input,
@@ -1817,14 +1904,20 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 spec_path=spec_path,
                 deep_plan=deep_plan,
             )
-            cost = await estimate_pipeline_cost(len(graph.tasks), self._settings, self._strategy)
+            cost = await estimate_pipeline_cost(
+                len(graph.tasks),
+                strategy=self._strategy,
+                cost_registry=self._cost_registry,
+                overrides=self._settings.build_routing_overrides(),
+                registry=self._registry,
+            )
             model_assignments = {
-                t.id: select_model(self._strategy, "agent", t.complexity.value) for t in graph.tasks
+                t.id: self._select_model("agent", t.complexity.value) for t in graph.tasks
             }
             await db.update_pipeline_status(self._pipeline_id, "dry_run")
             return {
                 "graph": graph,
-                "cost_estimate": cost,
+                "cost_estimate": cost.total_cost_usd,
                 "model_assignments": model_assignments,
             }
         finally:
@@ -2328,6 +2421,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 else:
                     console.print(f"\n[bold red]Failed: all {error_count} tasks errored[/bold red]")
 
+                if self._active_tasks:
+                    await asyncio.wait(
+                        self._active_tasks.values(),
+                        timeout=self._settings.scheduler_poll_interval,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    continue
+
                 if pipeline_id:
                     # If we were tracking a pause window, close it out now
                     if _all_paused_since is not None:
@@ -2455,6 +2556,40 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             if not dispatch_plan and not has_in_review:
                 if not self._active_tasks:
+                    orphaned_live_tasks = [
+                        t
+                        for t in tasks
+                        if t.state in (TaskState.IN_PROGRESS.value, TaskState.MERGING.value)
+                    ]
+                    if orphaned_live_tasks:
+                        logger.warning(
+                            "Recovering %d orphaned running task(s) in pipeline %s: %s",
+                            len(orphaned_live_tasks),
+                            pipeline_id or "<none>",
+                            ", ".join(t.id for t in orphaned_live_tasks),
+                        )
+                        for task in orphaned_live_tasks:
+                            assigned_agent = getattr(task, "assigned_agent", None)
+                            if assigned_agent:
+                                try:
+                                    await db.release_agent(assigned_agent)
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to release stale agent %s for %s",
+                                        assigned_agent,
+                                        task.id,
+                                        exc_info=True,
+                                    )
+                            await db.reset_task_for_resume(task.id)
+                            await self._emit(
+                                "task:state_changed",
+                                {"task_id": task.id, "state": "todo"},
+                                db=db,
+                                pipeline_id=pipeline_id or "",
+                            )
+                        self._cached_tasks = None
+                        await asyncio.sleep(0)
+                        continue
                     if any(
                         t.state
                         in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value)

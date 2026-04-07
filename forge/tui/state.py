@@ -20,6 +20,31 @@ _GATE_LABELS = {
     "gate2_llm_review": "\U0001f916 LLM Review",
 }
 
+_EPHEMERAL_ACTIVITY_LINES = frozenset({"Initializing…", "Thinking…", "Typing…"})
+
+
+def _is_adjacent_duplicate(existing: list[str], new_line: str) -> bool:
+    """Return True when *new_line* is an immediate duplicate of the prior line."""
+    if not existing:
+        return False
+    prev = existing[-1].strip()
+    curr = new_line.strip()
+    if not curr:
+        return False
+    return bool(prev and curr and prev == curr)
+
+
+def _task_has_entered_review(task: dict | None) -> bool:
+    if not task:
+        return False
+    return task.get("state") in {
+        "in_review",
+        "awaiting_approval",
+        "merging",
+        "done",
+        "error",
+    }
+
 
 class TuiState:
     """Single source of truth for TUI data."""
@@ -70,6 +95,11 @@ class TuiState:
         self.planning_stage: str = ""
         self.last_auto_decided: dict | None = None
 
+        # Planner progress tracking
+        self.planner_status: str = ""
+        self.planner_files_examined: int = 0
+        self.planner_candidate_tasks: int = 0
+
         # Task diffs: computed by the daemon from the worktree, stored here
         # so the TUI can display them immediately without running git commands.
         self.task_diffs: dict[str, str] = {}  # task_id → diff text
@@ -83,6 +113,8 @@ class TuiState:
 
         # Merge progress substatus (task_id → step label)
         self.merge_substatus: dict[str, str] = {}
+        # Review progress substatus (task_id → stage label)
+        self.review_substatus: dict[str, str] = {}
         self.scheduling: dict | None = None
 
         # Multi-repo state
@@ -121,7 +153,9 @@ class TuiState:
         self.repos = data.get("repos", [])
         self.tasks.clear()
         self.task_order.clear()
-        for t in data.get("tasks", []):
+        tasks_list = data.get("tasks", [])
+
+        for t in tasks_list:
             tid = t.get("id")
             if not tid:
                 logger.warning("Skipping task without id in plan_ready: %s", t)
@@ -139,6 +173,14 @@ class TuiState:
                 "repo": t.get("repo"),
             }
             self.task_order.append(tid)
+
+        # Set planner completion status and count candidate tasks
+        old_status = self.planner_status
+        self.planner_status = "planning complete"
+        self.planner_candidate_tasks = len(tasks_list)
+        if old_status != self.planner_status:
+            self._notify("planner_status")
+
         if self.task_order:
             # Always reset — IDs may change after daemon remaps them
             self.selected_task_id = self.task_order[0]
@@ -163,6 +205,9 @@ class TuiState:
         # Clear merge substatus when task leaves MERGING
         if new_state != "merging":
             self.merge_substatus.pop(tid, None)
+        # Clear review substatus when task leaves in_review
+        if new_state not in ("in_review",):
+            self.review_substatus.pop(tid, None)
         if tid in self.tasks:
             self.tasks[tid]["state"] = data.get("state", self.tasks[tid]["state"])
             if "error" in data:
@@ -189,23 +234,60 @@ class TuiState:
     def _on_agent_output(self, data: dict) -> None:
         tid = data.get("task_id", "")
         line = data.get("line", "")
+        if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+            if tid:
+                self.streaming_task_ids.add(tid)
+            self._notify("agent_output")
+            return
         lines = self.agent_output[tid]
+        if _is_adjacent_duplicate(lines, line):
+            if tid:
+                self.streaming_task_ids.add(tid)
+            self._notify("agent_output")
+            return
         if len(lines) >= self._max_output_lines:
             del lines[: len(lines) - self._max_output_lines + 10]
         lines.append(line)
-        # Unified log
-        ulog = self.unified_log[tid]
-        if len(ulog) >= self._max_output_lines:
-            del ulog[: len(ulog) - self._max_output_lines + 10]
-        ulog.append(("agent", line))
+        # Unified log: once review has started, keep late-arriving agent lines out of
+        # the merged stream so delayed execution chatter cannot split review sections
+        # into confusing AGENT → REVIEW 2 oscillations.
+        if not (self.review_output.get(tid) and _task_has_entered_review(self.tasks.get(tid))):
+            ulog = self.unified_log[tid]
+            if len(ulog) >= self._max_output_lines:
+                del ulog[: len(ulog) - self._max_output_lines + 10]
+            ulog.append(("agent", line))
         if tid:
             self.streaming_task_ids.add(tid)
         self._notify("agent_output")
 
     def _on_planner_output(self, data: dict) -> None:
+        line = data.get("line", "")
+        if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+            self._notify("planner_output")
+            return
+        if _is_adjacent_duplicate(self.planner_output, line):
+            self._notify("planner_output")
+            return
+
+        # Infer planner status from line content
+        old_status = self.planner_status
+        if line.startswith("📖 Reading"):
+            self.planner_status = "reading files"
+            self.planner_files_examined += 1
+        elif line.startswith("🔍 Searching") or line.startswith("🔍 Grep"):
+            self.planner_status = "scanning codebase"
+        elif "Planner generating" in line and "⚙" in line:
+            self.planner_status = "building task graph"
+        elif "Analyzing codebase" in line or "Starting planner" in line:
+            self.planner_status = "scanning codebase"
+
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
-        self.planner_output.append(data.get("line", ""))
+        self.planner_output.append(line)
+
+        # Notify status change if it changed
+        if old_status != self.planner_status:
+            self._notify("planner_status")
         self._notify("planner_output")
 
     def _on_cost_update(self, data: dict) -> None:
@@ -308,6 +390,9 @@ class TuiState:
         gate = data.get("gate")
         if task_id and gate:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "running"}
+            if task_id in self.tasks:
+                self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
+            self.review_substatus[task_id] = f"{_GATE_LABELS.get(gate, gate)} running"
             self._notify("tasks")
 
     def _on_review_gate_passed(self, data: dict) -> None:
@@ -318,11 +403,14 @@ class TuiState:
                 "status": "passed",
                 "details": data.get("details"),
             }
+            if task_id in self.tasks:
+                self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
             self.unified_log[task_id].append(
                 ("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}")
             )
+            self.review_substatus[task_id] = f"{_GATE_LABELS.get(gate, gate)} passed"
             self._notify("tasks")
 
     def _on_review_gate_failed(self, data: dict) -> None:
@@ -333,22 +421,83 @@ class TuiState:
                 "status": "failed",
                 "details": data.get("details"),
             }
+            if task_id in self.tasks:
+                self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
             # Unified log
             gate_label = _GATE_LABELS.get(gate, gate)
             self.unified_log[task_id].append(
                 ("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}")
             )
+            self.review_substatus[task_id] = f"{_GATE_LABELS.get(gate, gate)} failed"
+            self._notify("tasks")
+
+    def _on_review_started(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            self.review_substatus[tid] = "Review started"
+            self.unified_log[tid].append(("gate", "\u2501 Review started"))
+            self._notify("tasks")
+
+    def _on_review_passed(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            self.review_substatus.pop(tid, None)
+            self.unified_log[tid].append(("gate", "\u2713 Review passed"))
+            self._notify("tasks")
+
+    def _on_review_failed(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            gate = data.get("gate", "unknown")
+            self.review_substatus.pop(tid, None)
+            self.unified_log[tid].append(("gate", f"\u2717 Review failed at {gate}"))
+            self._notify("tasks")
+
+    def _on_review_timeout(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            secs = data.get("timeout_seconds", "?")
+            attempt = data.get("attempt", "?")
+            max_a = data.get("max_attempts", "?")
+            self.review_substatus[tid] = f"L2 timed out ({attempt}/{max_a})"
+            self.unified_log[tid].append(("gate", f"L2 review timed out after {secs}s"))
+            self._notify("tasks")
+
+    def _on_review_retry(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            attempt = data.get("attempt", "?")
+            max_a = data.get("max_attempts", "?")
+            self.review_substatus[tid] = f"Retrying review {attempt}/{max_a}"
+            self.unified_log[tid].append(("gate", f"Retrying review attempt {attempt}/{max_a}"))
+            self._notify("tasks")
+
+    def _on_review_re_review(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            attempt = data.get("attempt", "?")
+            max_a = data.get("max_attempts", "?")
+            self.review_substatus[tid] = f"Re-reviewing {attempt}/{max_a}"
+            self.unified_log[tid].append(("gate", f"Re-reviewing attempt {attempt}/{max_a}"))
             self._notify("tasks")
 
     def _on_review_llm_output(self, data: dict) -> None:
         task_id = data.get("task_id")
         line = data.get("line", "")
         if task_id:
+            if line.strip() in _EPHEMERAL_ACTIVITY_LINES:
+                self.streaming_task_ids.add(task_id)
+                self._notify("review_output")
+                return
             if task_id not in self.review_output:
                 if task_id not in self.tasks:
                     logger.warning("review_llm_output for unexpected task_id=%r", task_id)
                 self.review_output[task_id] = []
             lines = self.review_output[task_id]
+            if _is_adjacent_duplicate(lines, line):
+                self.streaming_task_ids.add(task_id)
+                self._notify("review_output")
+                return
             if len(lines) >= self._max_output_lines:
                 del lines[: len(lines) - self._max_output_lines + 10]
             lines.append(line)
@@ -463,6 +612,14 @@ class TuiState:
         self.total_cost_usd = 0.0
         self.planning_stage = ""
         self.scheduling = None
+        self.merge_substatus.clear()
+        self.review_substatus.clear()
+
+        # Clear planner progress fields
+        self.planner_status = ""
+        self.planner_files_examined = 0
+        self.planner_candidate_tasks = 0
+
         self.phase = "planning"
         self._notify("phase")
 
@@ -496,9 +653,13 @@ class TuiState:
         tid = data.get("task_id")
         if tid:
             lines = self.followup_output[tid]
+            line = data.get("line", "")
+            if _is_adjacent_duplicate(lines, line):
+                self._notify("followup_output")
+                return
             if len(lines) >= self._max_output_lines:
                 del lines[: len(lines) - self._max_output_lines + 10]
-            lines.append(data.get("line", ""))
+            lines.append(line)
             self._notify("followup_output")
 
     def _on_slot_acquired(self, data: dict) -> None:
@@ -517,6 +678,13 @@ class TuiState:
         if question_id:
             question["question_id"] = question_id
         self.pending_questions["__planning__"] = question
+
+        # Set planner status to waiting for input
+        old_status = self.planner_status
+        self.planner_status = "waiting for human input"
+        if old_status != self.planner_status:
+            self._notify("planner_status")
+
         self._notify("planning")
 
     def _on_planning_answer(self, data: dict) -> None:
@@ -525,6 +693,13 @@ class TuiState:
         if q:
             history = self.question_history.setdefault("__planning__", [])
             history.append({"question": q, "answer": data.get("answer")})
+
+        # Resume planner status after answering question
+        old_status = self.planner_status
+        self.planner_status = "reading files"
+        if old_status != self.planner_status:
+            self._notify("planner_status")
+
         self._notify("planning")
 
     def _handle_planning_output(self, stage: str, data: dict) -> None:
@@ -540,9 +715,29 @@ class TuiState:
                 self.planner_output.append(f"─── {stage} ───")
             self._notify("planning_stage")
         line = data.get("line", "")
+        if _is_adjacent_duplicate(self.planner_output, line):
+            self._notify("planner_output")
+            return
+
+        # Infer planner status from line content
+        old_status = self.planner_status
+        if line.startswith("📖 Reading"):
+            self.planner_status = "reading files"
+            self.planner_files_examined += 1
+        elif line.startswith("🔍 Searching") or line.startswith("🔍 Grep"):
+            self.planner_status = "scanning codebase"
+        elif "Planner generating" in line and "⚙" in line:
+            self.planner_status = "building task graph"
+        elif "Analyzing codebase" in line or "Starting planner" in line:
+            self.planner_status = "scanning codebase"
+
         if len(self.planner_output) >= self._max_output_lines:
             del self.planner_output[: len(self.planner_output) - self._max_output_lines + 10]
         self.planner_output.append(line)
+
+        # Notify status change if it changed
+        if old_status != self.planner_status:
+            self._notify("planner_status")
         self._notify("planner_output")
 
     # ── Integration health check handlers ──────────────────────────
@@ -631,6 +826,7 @@ class TuiState:
 
     def _on_pr_created(self, data: dict) -> None:
         self.pr_url = data.get("pr_url")
+        self.error = None
         repo_id = data.get("repo_id")
         if repo_id and self.pr_url:
             self.per_repo_pr_urls[repo_id] = self.pr_url
@@ -660,6 +856,7 @@ class TuiState:
         self.review_gates.clear()
         self.streaming_task_ids.clear()
         self.merge_substatus.clear()
+        self.review_substatus.clear()
         self.error = None
         self.elapsed_seconds = 0.0
         self.total_cost_usd = 0.0
@@ -669,6 +866,11 @@ class TuiState:
         self.pending_questions.clear()
         self.pr_url = None
         self._pending_state_updates.clear()
+
+        # Clear planner progress fields
+        self.planner_status = ""
+        self.planner_files_examined = 0
+        self.planner_candidate_tasks = 0
         self.error_history.clear()
         self.planning_stage = ""
         self.task_diffs.clear()
@@ -714,6 +916,57 @@ class TuiState:
     def is_multi_repo(self) -> bool:
         return len(self.repos) > 1
 
+    @property
+    def planner_collapsed_output(self) -> list[str]:
+        """Return a collapsed view of planner_output where consecutive runs of 3+
+        lines sharing the same emoji prefix are replaced with first line, summary, last line."""
+        if not self.planner_output:
+            return []
+
+        collapsed = []
+        collapsible_prefixes = ["📖 Reading", "🔍 Searching", "🔍 Grep"]
+        i = 0
+
+        while i < len(self.planner_output):
+            line = self.planner_output[i]
+
+            # Check if this line matches any collapsible prefix
+            matching_prefix = None
+            for prefix in collapsible_prefixes:
+                if line.startswith(prefix):
+                    matching_prefix = prefix
+                    break
+
+            if matching_prefix is None:
+                # Not a collapsible line, add as-is
+                collapsed.append(line)
+                i += 1
+                continue
+
+            # Found a collapsible line, look for consecutive matches
+            run_start = i
+            run_end = i
+            while run_end < len(self.planner_output) and self.planner_output[run_end].startswith(
+                matching_prefix
+            ):
+                run_end += 1
+
+            run_length = run_end - run_start
+
+            if run_length < 3:
+                # Run is too short to collapse, add all lines
+                for j in range(run_start, run_end):
+                    collapsed.append(self.planner_output[j])
+            else:
+                # Collapse the run: first line, summary, last line
+                collapsed.append(self.planner_output[run_start])
+                collapsed.append(f"  ... and {run_length - 2} more")
+                collapsed.append(self.planner_output[run_end - 1])
+
+            i = run_end
+
+        return collapsed
+
     _EVENT_MAP: dict[str, Callable[[TuiState, dict], None]] = {
         "pipeline:phase_changed": _on_phase_changed,
         "pipeline:plan_ready": _on_plan_ready,
@@ -740,6 +993,12 @@ class TuiState:
         "review:gate_started": _on_review_gate_started,
         "review:gate_passed": _on_review_gate_passed,
         "review:gate_failed": _on_review_gate_failed,
+        "review:started": _on_review_started,
+        "review:passed": _on_review_passed,
+        "review:failed": _on_review_failed,
+        "review:timeout": _on_review_timeout,
+        "review:retry": _on_review_retry,
+        "review:re_review": _on_review_re_review,
         "review:llm_feedback": _on_review_llm_feedback,
         "review:llm_output": _on_review_llm_output,
         "review:strategy_selected": _on_review_strategy_selected,

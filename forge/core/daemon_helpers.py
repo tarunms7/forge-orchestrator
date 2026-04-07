@@ -24,6 +24,15 @@ console = make_console()
 _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
 _FORGE_LEARNING_MARKER = "FORGE_LEARNING:"
 _REVIEW_DIFF_EXCLUDES = (".claude/", ".forge/")
+_PLAINTEXT_QUESTION_LINE = re.compile(
+    r"^\s*Question(?:\s+\d+)?\s*:\s*(.+\?)\s*$",
+    re.IGNORECASE,
+)
+_PLAINTEXT_QUESTION_LABEL = re.compile(
+    r"^\s*Question(?:\s+\d+)?\s*:\s*(.*\S)?\s*$",
+    re.IGNORECASE,
+)
+_PLAINTEXT_QUESTION_BULLET = re.compile(r"^\s*(?:[-*]|\d+[.)]|[A-Za-z][.)])\s+(.*\S)\s*$")
 
 
 async def async_subprocess(
@@ -80,6 +89,66 @@ def _parse_forge_question(text: str | None) -> dict | None:
 
     marker_idx = text.rfind(_FORGE_QUESTION_MARKER)
     if marker_idx == -1:
+        lines = text.splitlines()
+        for idx, raw_line in enumerate(lines):
+            normalized_line = raw_line.strip().replace("**", "")
+            match = _PLAINTEXT_QUESTION_LINE.match(normalized_line)
+            question = match.group(1).strip() if match else ""
+            if not question:
+                label_match = _PLAINTEXT_QUESTION_LABEL.match(normalized_line)
+                if not label_match:
+                    continue
+                inline_text = (label_match.group(1) or "").strip()
+                if inline_text.endswith("?"):
+                    question = inline_text
+                else:
+                    forward_question = idx + 1
+                    while forward_question < len(lines):
+                        candidate = lines[forward_question].strip()
+                        if not candidate:
+                            forward_question += 1
+                            continue
+                        if _PLAINTEXT_QUESTION_BULLET.match(candidate):
+                            forward_question += 1
+                            continue
+                        if candidate.endswith("?"):
+                            question = candidate
+                        break
+            if not question:
+                continue
+
+            context_lines: list[str] = []
+            back = idx - 1
+            while back >= 0 and lines[back].strip():
+                context_lines.append(lines[back].strip())
+                back -= 1
+            context = " ".join(reversed(context_lines)).strip()
+
+            suggestions: list[str] = []
+            forward = idx + 1
+            while forward < len(lines):
+                candidate = lines[forward].strip()
+                if not candidate:
+                    if suggestions:
+                        break
+                    forward += 1
+                    continue
+                bullet_match = _PLAINTEXT_QUESTION_BULLET.match(candidate)
+                if not bullet_match:
+                    break
+                suggestions.append(bullet_match.group(1).strip())
+                forward += 1
+
+            logger.info(
+                "Recovered plain-text question without FORGE_QUESTION marker: %s",
+                question[:200],
+            )
+            return {
+                "question": question,
+                "context": context or None,
+                "suggestions": suggestions,
+                "source": "plaintext_fallback",
+            }
         return None
 
     after_marker = text[marker_idx + len(_FORGE_QUESTION_MARKER) :].strip()
@@ -209,7 +278,26 @@ def _parse_forge_learning(text: str | None) -> dict | None:
 
 
 def _extract_text(message) -> str | None:
-    """Extract human-readable text from a claude-code-sdk message."""
+    """Extract human-readable text from a claude-code-sdk message or ProviderEvent.
+
+    Accepts both legacy SDK messages (AssistantMessage/ResultMessage) and
+    normalized ProviderEvent objects from the provider protocol.
+    """
+    # ── Provider protocol path: ProviderEvent ──
+    from forge.providers.base import EventKind, ProviderEvent
+
+    if isinstance(message, ProviderEvent):
+        if message.kind == EventKind.TEXT and message.text:
+            text = message.text.strip()
+            if not text:
+                return None
+            # Skip JSON blobs (planner output, etc.)
+            if text.startswith("{") or text.startswith("["):
+                return None
+            return text
+        return None
+
+    # ── Legacy SDK path ──
     try:
         from claude_code_sdk import AssistantMessage, ResultMessage
     except ImportError:
@@ -227,21 +315,38 @@ def _extract_text(message) -> str | None:
                 parts.append(text)
         return "\n".join(parts) if parts else None
     if isinstance(message, ResultMessage):
-        # ResultMessage.result is the final plan JSON — not human-readable.
-        # Don't stream it to the TUI; the plan is consumed by the planner's parser.
         return None
     return None
 
 
 def _extract_activity(message) -> str | None:
-    """Extract human-readable activity from a claude-code-sdk message.
+    """Extract human-readable activity from a claude-code-sdk message or ProviderEvent.
 
     Unlike ``_extract_text`` which only returns TextBlock content, this
     also formats ToolUseBlock messages as short activity descriptions
-    (e.g. "📖 Reading src/models/user.py").  This makes planner and agent
-    progress visible in the TUI even during tool-heavy exploration phases
-    where no text is produced.
+    (e.g. "📖 Reading src/models/user.py").
+
+    Accepts both legacy SDK messages and normalized ProviderEvent objects.
     """
+    # ── Provider protocol path: ProviderEvent ──
+    from forge.providers.base import EventKind, ProviderEvent
+
+    if isinstance(message, ProviderEvent):
+        if message.kind == EventKind.TEXT and message.text:
+            text = message.text.strip()
+            if not text or text.startswith("{") or text.startswith("["):
+                return None
+            return text
+        if message.kind == EventKind.TOOL_USE and message.tool_name:
+            inp = _coerce_tool_input(message.tool_name, message.tool_input)
+            label = _format_tool_activity(message.tool_name, inp)
+            return label
+        if message.kind == EventKind.TOOL_RESULT and message.tool_name and message.is_tool_error:
+            tool_label = _humanize_tool_name(message.tool_name)
+            return f"⚠️ {tool_label} failed"
+        return None
+
+    # ── Legacy SDK path ──
     try:
         from claude_code_sdk import AssistantMessage, ResultMessage
     except ImportError:
@@ -268,48 +373,251 @@ def _extract_activity(message) -> str | None:
         return "\n".join(parts) if parts else None
 
     if isinstance(message, ResultMessage):
-        # ResultMessage.result is the final plan JSON — not human-readable.
         return None
     return None
 
 
 _TOOL_ICONS = {
-    "Read": "📖",
-    "Glob": "🔍",
-    "Grep": "🔎",
-    "Bash": "⚡",
-    "Write": "✏️",
-    "Edit": "✏️",
+    "read": "📖",
+    "glob": "🔍",
+    "grep": "🔎",
+    "bash": "⚡",
+    "write": "✏️",
+    "edit": "✏️",
+    "mcp_tool": "🧩",
 }
+
+_PATH_KEYS = (
+    "file_path",
+    "path",
+    "target_path",
+    "new_path",
+    "old_path",
+    "source_path",
+    "destination_path",
+)
+_COMMAND_KEYS = ("command", "cmd")
+
+
+def _normalize_tool_activity_name(tool: str) -> str:
+    """Normalize legacy and provider tool names to Forge's lowercase form."""
+    normalized = (tool or "").strip()
+    if not normalized:
+        return ""
+    legacy_map = {
+        "Bash": "bash",
+        "Read": "read",
+        "Write": "write",
+        "Edit": "edit",
+        "Glob": "glob",
+        "Grep": "grep",
+        "McpTool": "mcp_tool",
+        "MCPTool": "mcp_tool",
+    }
+    if normalized in legacy_map:
+        return legacy_map[normalized]
+    return normalized.lower()
+
+
+def _humanize_tool_name(tool: str) -> str:
+    normalized = _normalize_tool_activity_name(tool)
+    labels = {
+        "bash": "command",
+        "read": "file read",
+        "write": "file write",
+        "edit": "file edit",
+        "glob": "file search",
+        "grep": "code search",
+        "mcp_tool": "MCP tool",
+    }
+    return labels.get(normalized, normalized.replace("_", " "))
+
+
+def _coerce_tool_input(tool: str, raw_input: str | dict | None) -> dict:
+    """Parse provider tool input, falling back to sensible raw-string adapters."""
+    normalized = _normalize_tool_activity_name(tool)
+
+    def _extract_path(value: object) -> str | None:
+        if isinstance(value, dict):
+            for key in _PATH_KEYS:
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate
+            for candidate in value.values():
+                path = _extract_path(candidate)
+                if path:
+                    return path
+            return None
+        if isinstance(value, list):
+            for item in value:
+                path = _extract_path(item)
+                if path:
+                    return path
+        return None
+
+    def _extract_command(value: object) -> str | list[str] | None:
+        if isinstance(value, dict):
+            for key in _COMMAND_KEYS:
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate
+                if isinstance(candidate, list) and candidate:
+                    return [str(part) for part in candidate]
+            return None
+        return None
+
+    if isinstance(raw_input, dict):
+        path = _extract_path(raw_input)
+        command = _extract_command(raw_input)
+        if normalized == "bash" and command:
+            return {"command": command}
+        if normalized in {"read", "write", "edit"} and path:
+            enriched = dict(raw_input)
+            enriched.setdefault("file_path", path)
+            return enriched
+        return raw_input
+    if not raw_input:
+        return {}
+    if isinstance(raw_input, str):
+        try:
+            parsed = _json.loads(raw_input)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            path = _extract_path(parsed)
+            command = _extract_command(parsed)
+            if normalized == "bash" and command:
+                return {"command": command}
+            if normalized in {"read", "write", "edit"} and path:
+                enriched = dict(parsed)
+                enriched.setdefault("file_path", path)
+                return enriched
+            return parsed
+        if isinstance(parsed, list):
+            path = _extract_path(parsed)
+            if normalized in {"read", "write", "edit"} and path:
+                return {"file_path": path, "changes": parsed}
+        if normalized == "bash":
+            return {"command": raw_input}
+        if normalized in {"read", "write", "edit"}:
+            return {"file_path": raw_input}
+        if normalized in {"glob", "grep"}:
+            return {"pattern": raw_input}
+        if normalized == "mcp_tool":
+            return {"tool": raw_input}
+    return {}
 
 
 def _format_tool_activity(tool: str, inp: dict) -> str | None:
     """Format a tool use block as a short human-readable string."""
-    icon = _TOOL_ICONS.get(tool, "🔧")
-    if tool == "Read":
+    normalized = _normalize_tool_activity_name(tool)
+    icon = _TOOL_ICONS.get(normalized, "🔧")
+    if normalized == "read":
         path = inp.get("file_path") or inp.get("path", "")
         if path:
             # Show just filename and parent dir for brevity
             short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
             return f"{icon} Reading {short}"
         return f"{icon} Reading file"
-    if tool == "Glob":
+    if normalized == "glob":
         pattern = inp.get("pattern", "")
         return f"{icon} Searching: {pattern}" if pattern else f"{icon} Searching files"
-    if tool == "Grep":
+    if normalized == "grep":
         pattern = inp.get("pattern", "")
         return f"{icon} Grep: {pattern[:60]}" if pattern else f"{icon} Searching code"
-    if tool == "Bash":
+    if normalized == "bash":
         cmd = inp.get("command", "")
+        if isinstance(cmd, list):
+            cmd = " ".join(str(part) for part in cmd)
         if cmd:
             short = cmd[:80] + ("..." if len(cmd) > 80 else "")
             return f"{icon} {short}"
         return f"{icon} Running command"
-    if tool in ("Write", "Edit"):
-        path = inp.get("file_path", "")
+    if normalized == "write":
+        path = inp.get("file_path") or inp.get("path", "")
+        short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
+        return f"{icon} Writing {short}" if path else f"{icon} Writing file"
+    if normalized == "edit":
+        path = inp.get("file_path") or inp.get("path", "")
         short = "/".join(path.rsplit("/", 2)[-2:]) if "/" in path else path
         return f"{icon} Editing {short}" if path else f"{icon} Editing file"
-    return f"🔧 {tool}"
+    if normalized == "mcp_tool":
+        server = inp.get("server", "")
+        tool_name = inp.get("tool", "")
+        if server and tool_name:
+            return f"{icon} Calling {server}.{tool_name}"
+        if tool_name:
+            return f"{icon} Calling {tool_name}"
+        return f"{icon} Calling MCP tool"
+    return f"🔧 {_humanize_tool_name(tool)}"
+
+
+def _humanize_model_spec(model: object) -> str:
+    """Render provider:model values as clean user-facing labels."""
+    from forge.providers.base import ModelSpec
+
+    raw = str(model).strip()
+    if not raw:
+        return raw
+    try:
+        spec = model if isinstance(model, ModelSpec) else ModelSpec.parse(raw)
+    except Exception:
+        return raw
+
+    if spec.provider == "claude":
+        labels = {
+            "opus": "Claude Opus",
+            "sonnet": "Claude Sonnet",
+            "haiku": "Claude Haiku",
+        }
+        return labels.get(spec.model, f"Claude {spec.model.replace('-', ' ').title()}")
+
+    if spec.provider == "openai":
+        labels = {
+            "gpt-5.4": "GPT-5.4",
+            "gpt-5.4-mini": "GPT-5.4 Mini",
+            "gpt-5.3-codex": "GPT-5.3 Codex",
+            "o3": "o3",
+        }
+        return labels.get(spec.model, spec.model)
+
+    return raw
+
+
+def format_routing_summary(
+    planner_model: object,
+    agent_low_model: object,
+    agent_medium_model: object,
+    agent_high_model: object,
+    reviewer_model: object,
+    reviewer_effort: str | None = None,
+) -> str:
+    """Create a human-readable routing summary for the pipeline configuration.
+
+    Args:
+        planner_model: Model used for planning phase
+        agent_low_model: Model used for low-complexity agent tasks
+        agent_medium_model: Model used for medium-complexity agent tasks
+        agent_high_model: Model used for high-complexity agent tasks
+        reviewer_model: Model used for review phase
+        reviewer_effort: Optional reasoning effort level (e.g. 'high', 'medium')
+
+    Returns:
+        Formatted routing string like:
+        'Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet'
+        with optional ' (high reasoning)' suffix when reviewer_effort is provided.
+    """
+    routing_line = (
+        "Routing: "
+        f"Planner {_humanize_model_spec(planner_model)} | "
+        f"Agent (L/M/H) {_humanize_model_spec(agent_low_model)}/"
+        f"{_humanize_model_spec(agent_medium_model)}/"
+        f"{_humanize_model_spec(agent_high_model)} | "
+        f"Review {_humanize_model_spec(reviewer_model)}"
+    )
+    if reviewer_effort:
+        routing_line += f" ({reviewer_effort} reasoning)"
+    return routing_line
 
 
 def _is_review_excluded_path(path: str) -> bool:
@@ -541,11 +849,22 @@ async def _get_diff_vs_main(worktree_path: str, *, base_ref: str | None = None) 
             cwd=worktree_path,
         )
         if verify.returncode == 0:
-            result = await async_subprocess(
-                ["git", "diff", base_ref, "HEAD"],
+            merge_base = await async_subprocess(
+                ["git", "merge-base", base_ref, "HEAD"],
                 cwd=worktree_path,
             )
-            return _filter_review_diff(result.stdout)
+            if merge_base.returncode == 0 and merge_base.stdout.strip():
+                result = await async_subprocess(
+                    ["git", "diff", merge_base.stdout.strip(), "HEAD"],
+                    cwd=worktree_path,
+                )
+                return _filter_review_diff(result.stdout)
+            logger.warning(
+                "_get_diff_vs_main: merge-base for %r in %s could not be resolved "
+                "— falling back to commit-count heuristic",
+                base_ref,
+                worktree_path,
+            )
         logger.warning(
             "_get_diff_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",
@@ -610,11 +929,10 @@ async def _resolve_ref(repo_path: str, ref: str) -> str | None:
 async def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None) -> dict[str, int]:
     """Get lines added/removed for this task's commits in its worktree.
 
-    When ``pipeline_branch`` is provided the diff is computed as
-    ``git diff --shortstat <pipeline_branch> HEAD``, which returns only the
-    delta between the pipeline branch tip and this task's HEAD — i.e. only
-    this task's own changes, not the cumulative total of all previously merged
-    tasks.
+    When ``pipeline_branch`` is provided the diff is computed from the
+    merge-base of ``pipeline_branch`` and ``HEAD``. This isolates only the
+    task branch's unique commits even after earlier sibling tasks have already
+    advanced the pipeline branch.
 
     Falls back to the commit-count heuristic (``HEAD~N``) when the pipeline
     branch ref cannot be resolved, logging a warning so the degradation is
@@ -627,22 +945,33 @@ async def _get_diff_stats(worktree_path: str, pipeline_branch: str | None = None
             cwd=worktree_path,
         )
         if verify.returncode == 0:
-            result = await async_subprocess(
-                ["git", "diff", "--shortstat", pipeline_branch, "HEAD"],
+            merge_base = await async_subprocess(
+                ["git", "merge-base", pipeline_branch, "HEAD"],
                 cwd=worktree_path,
             )
-            added, removed, files = 0, 0, 0
-            if result.returncode == 0 and result.stdout.strip():
-                m_files = re.search(r"(\d+) file", result.stdout)
-                m_add = re.search(r"(\d+) insertion", result.stdout)
-                m_del = re.search(r"(\d+) deletion", result.stdout)
-                if m_files:
-                    files = int(m_files.group(1))
-                if m_add:
-                    added = int(m_add.group(1))
-                if m_del:
-                    removed = int(m_del.group(1))
-            return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
+            if merge_base.returncode == 0 and merge_base.stdout.strip():
+                result = await async_subprocess(
+                    ["git", "diff", "--shortstat", merge_base.stdout.strip(), "HEAD"],
+                    cwd=worktree_path,
+                )
+                added, removed, files = 0, 0, 0
+                if result.returncode == 0 and result.stdout.strip():
+                    m_files = re.search(r"(\d+) file", result.stdout)
+                    m_add = re.search(r"(\d+) insertion", result.stdout)
+                    m_del = re.search(r"(\d+) deletion", result.stdout)
+                    if m_files:
+                        files = int(m_files.group(1))
+                    if m_add:
+                        added = int(m_add.group(1))
+                    if m_del:
+                        removed = int(m_del.group(1))
+                return {"linesAdded": added, "linesRemoved": removed, "filesChanged": files}
+            logger.warning(
+                "_get_diff_stats: merge-base for %r not found in %s — "
+                "falling back to commit-count heuristic",
+                pipeline_branch,
+                worktree_path,
+            )
         else:
             logger.warning(
                 "_get_diff_stats: pipeline branch %r not found in %s — "
@@ -718,11 +1047,22 @@ async def _get_changed_files_vs_main(
             cwd=worktree_path,
         )
         if verify.returncode == 0:
-            result = await async_subprocess(
-                ["git", "diff", "--name-only", base_ref, "HEAD"],
+            merge_base = await async_subprocess(
+                ["git", "merge-base", base_ref, "HEAD"],
                 cwd=worktree_path,
             )
-            return [f for f in result.stdout.strip().split("\n") if f.strip()]
+            if merge_base.returncode == 0 and merge_base.stdout.strip():
+                result = await async_subprocess(
+                    ["git", "diff", "--name-only", merge_base.stdout.strip(), "HEAD"],
+                    cwd=worktree_path,
+                )
+                return [f for f in result.stdout.strip().split("\n") if f.strip()]
+            logger.warning(
+                "_get_changed_files_vs_main: merge-base for %r not found in %s — "
+                "falling back to commit-count heuristic",
+                base_ref,
+                worktree_path,
+            )
         logger.warning(
             "_get_changed_files_vs_main: base_ref %r not found in %s — "
             "falling back to commit-count heuristic",

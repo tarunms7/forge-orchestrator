@@ -86,6 +86,22 @@ export default function TaskDetailPanel({
           </div>
           <h2 className="detail-title">{task.title}</h2>
           <div className="detail-branch">{task.id}</div>
+          {/* Provider metadata */}
+          {task.providerModel && (
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "6px" }}>
+              <span>Model: {task.providerModel}</span>
+              {task.backend && (
+                <span style={{ color: "var(--text-dim)" }}> (via {task.backend})</span>
+              )}
+            </div>
+          )}
+          {/* Escalation history */}
+          {task.modelHistory && task.modelHistory.length > 1 && (
+            <div style={{ fontSize: "12px", color: "var(--amber, #f59e0b)", marginTop: "4px" }}>
+              Escalation: {task.modelHistory.map((h) => h.model).join(" \u2192 ")}{" "}
+              <span style={{ color: "var(--text-dim)" }}>(retry {task.modelHistory[task.modelHistory.length - 1].attempt})</span>
+            </div>
+          )}
         </div>
 
         {/* Tabs */}

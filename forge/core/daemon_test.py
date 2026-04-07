@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,6 +14,7 @@ from forge.core.daemon import (
     ForgeDaemon,
     _classify_pipeline_result,
     _detect_excluded_repos,
+    _generate_branch_name,
     _max_dependency_wave_width,
 )
 from forge.core.errors import ForgeError
@@ -50,6 +52,30 @@ def _make_question(q_id: str, task_id: str, pipeline_id: str) -> MagicMock:
     q.task_id = task_id
     q.pipeline_id = pipeline_id
     return q
+
+
+@pytest.mark.asyncio
+async def test_generate_branch_name_uses_planner_model_selection() -> None:
+    """Branch-name generation should honor the configured planner model."""
+    from forge.providers.base import ModelSpec
+
+    registry = MagicMock()
+    provider = MagicMock()
+    handle = MagicMock()
+    handle.result = AsyncMock(return_value=MagicMock(text="fix-provider-routing"))
+    provider.start.return_value = handle
+    registry.get_for_model.return_value = provider
+    registry.get_catalog_entry.return_value = MagicMock()
+
+    with patch(
+        "forge.core.daemon.resolve_registry_model",
+        return_value=ModelSpec("openai", "gpt-5.4-mini"),
+    ) as mock_resolve:
+        branch = await _generate_branch_name("Route review through OpenAI", registry=registry)
+
+    assert branch == "forge/fix-provider-routing"
+    mock_resolve.assert_called_once_with(registry, "planner", "low")
+    provider.start.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +293,55 @@ class TestAllTasksDoneEvent:
         assert summary["cancelled"] == 1
         assert summary["total"] == 3
 
+    async def test_waits_for_active_task_cleanup_before_all_tasks_done(self, tmp_path):
+        """Do not finalize the pipeline while a task coroutine is still cleaning up."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        tasks = [
+            _make_task(TaskState.DONE.value, "task-1"),
+            _make_task(TaskState.DONE.value, "task-2"),
+        ]
+        db, monitor, worktree_mgr, merge_worker, runtime = _make_minimal_execution_loop_mocks(tasks)
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        task_cancelled = False
+        pending_at_shutdown: bool | None = None
+
+        async def finishing_task():
+            nonlocal task_cancelled
+            try:
+                await asyncio.sleep(0.02)
+            except asyncio.CancelledError:
+                task_cancelled = True
+                raise
+
+        daemon._active_tasks["task-2"] = asyncio.create_task(finishing_task())
+        original_shutdown = daemon._shutdown_active_tasks
+
+        async def wrapped_shutdown():
+            nonlocal pending_at_shutdown
+            pending_at_shutdown = any(not atask.done() for atask in daemon._active_tasks.values())
+            await original_shutdown()
+
+        daemon._shutdown_active_tasks = wrapped_shutdown
+
+        with patch("forge.core.daemon._print_status_table"):
+            with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
+                await daemon._execution_loop(
+                    db, runtime, worktree_mgr, merge_worker, monitor, pipeline_id="pipe-abc"
+                )
+
+        assert pending_at_shutdown is False
+        assert task_cancelled is False
+        assert daemon._active_tasks == {}
+        assert any(event_type == "pipeline:all_tasks_done" for event_type, _ in emitted)
+
     async def test_no_all_tasks_done_without_pipeline_id(self, tmp_path):
         """pipeline:all_tasks_done is not emitted when pipeline_id is None."""
         daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
@@ -298,6 +373,56 @@ class TestAllTasksDoneEvent:
 
         event_types = [e[0] for e in emitted]
         assert "pipeline:all_tasks_done" not in event_types
+
+    async def test_recovers_orphaned_in_progress_task_before_stopping(self, tmp_path):
+        """A stale in_progress row with no active coroutine should be reset and retried."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        orphaned = _make_task(TaskState.IN_PROGRESS.value, "task-1")
+        orphaned.assigned_agent = "agent-1"
+        done = _make_task(TaskState.DONE.value, "task-1")
+
+        call_count = 0
+
+        async def list_tasks_side_effect(_pipeline_id):
+            nonlocal call_count
+            call_count += 1
+            return [orphaned] if call_count == 1 else [done]
+
+        db = MagicMock()
+        db.list_tasks_by_pipeline = AsyncMock(side_effect=list_tasks_side_effect)
+        db.list_agents = AsyncMock(return_value=[])
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
+        db.get_expired_questions = AsyncMock(return_value=[])
+        db.update_pipeline_status = AsyncMock()
+        db.set_executor_info = AsyncMock()
+        db.clear_executor_info = AsyncMock()
+        db.release_agent = AsyncMock()
+        db.reset_task_for_resume = AsyncMock()
+        db.finalize_pipeline_metrics = AsyncMock()
+
+        monitor = MagicMock()
+        snapshot = MagicMock()
+        monitor.take_snapshot = AsyncMock(return_value=snapshot)
+        monitor.can_dispatch = MagicMock(return_value=True)
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        with patch("forge.core.daemon._print_status_table"):
+            with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
+                await daemon._execution_loop(
+                    db, MagicMock(), MagicMock(), MagicMock(), monitor, pipeline_id="pipe-abc"
+                )
+
+        db.release_agent.assert_awaited_once_with("agent-1")
+        db.reset_task_for_resume.assert_awaited_once_with("task-1")
+        assert ("task:state_changed", {"task_id": "task-1", "state": "todo"}) in emitted
+        assert any(evt == "pipeline:all_tasks_done" for evt, _ in emitted)
 
 
 # ---------------------------------------------------------------------------
@@ -424,14 +549,14 @@ class TestPipelinePauseTracking:
 
         Scenario:
           Iteration 1: all tasks are awaiting_input → pause window starts
-          Iteration 2: task transitions to in_progress → pause window ends (resume detected)
+          Iteration 2: task transitions to todo → pause window ends (resume detected)
           Iteration 3: task is done → exit
         """
         daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.001)
 
         awaiting_tasks = [_make_task(TaskState.AWAITING_INPUT.value, "task-1")]
-        # Task resumes to in_progress (answered question, restarted)
-        inprogress_tasks = [_make_task(TaskState.IN_PROGRESS.value, "task-1")]
+        # Task becomes dispatchable again, which should end the pause window.
+        resumed_tasks = [_make_task(TaskState.TODO.value, "task-1")]
         done_tasks = [_make_task(TaskState.DONE.value, "task-1")]
 
         call_count = 0
@@ -442,7 +567,7 @@ class TestPipelinePauseTracking:
             if call_count == 1:
                 return awaiting_tasks
             elif call_count == 2:
-                return inprogress_tasks
+                return resumed_tasks
             else:
                 return done_tasks
 
@@ -522,10 +647,10 @@ class TestPipelinePauseTracking:
         """pipeline:paused is NOT emitted when only some tasks are awaiting_input."""
         daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.001)
 
-        # One awaiting_input, one in_progress — should NOT trigger pause
+        # One awaiting_input, one todo — should NOT trigger pause
         mixed_tasks = [
             _make_task(TaskState.AWAITING_INPUT.value, "task-1"),
-            _make_task(TaskState.IN_PROGRESS.value, "task-2"),
+            _make_task(TaskState.TODO.value, "task-2"),
         ]
         done_tasks = [
             _make_task(TaskState.DONE.value, "task-1"),
@@ -1849,6 +1974,52 @@ class TestExecuteAgentPoolSizing:
             await daemon.generate_contracts(graph, db, "pipe-1")
 
         db.update_pipeline_status.assert_called_once_with("pipe-1", "contracts")
+
+    async def test_contracts_track_provider_reported_cost(self, tmp_path):
+        from forge.core.contracts import ContractSet
+        from forge.providers.base import ProviderResult
+
+        daemon = _make_daemon(tmp_path)
+        daemon._emit = AsyncMock()
+        daemon._snapshot = MagicMock()
+        daemon._snapshot.format_for_planner.return_value = ""
+        daemon._strategy = "balanced"
+        daemon._settings = ForgeSettings(contracts_required=False)
+
+        from forge.core.models import TaskGraph
+
+        hint = {
+            "producer_task_id": "task-1",
+            "consumer_task_ids": ["task-2"],
+            "interface_type": "api_endpoint",
+            "description": "test",
+        }
+        graph = TaskGraph(tasks=[_make_task_def()], integration_hints=[hint])
+
+        db = AsyncMock()
+        db.log_event = AsyncMock()
+        db.add_pipeline_cost = AsyncMock()
+        db.set_pipeline_contracts = AsyncMock()
+
+        with (
+            patch("forge.core.daemon.ContractBuilder") as MockBuilder,
+            patch("forge.core.daemon.ContractBuilderLLM") as MockBuilderLLM,
+        ):
+            MockBuilderLLM.return_value._last_sdk_result = ProviderResult(
+                text="",
+                is_error=False,
+                input_tokens=10,
+                output_tokens=20,
+                resume_state=None,
+                duration_ms=100,
+                provider_reported_cost_usd=2.5,
+                model_canonical_id="claude-opus",
+            )
+            mock_builder = MockBuilder.return_value
+            mock_builder.build = AsyncMock(return_value=ContractSet())
+            await daemon.generate_contracts(graph, db, "pipe-1")
+
+        db.add_pipeline_cost.assert_awaited_once_with("pipe-1", 2.5)
 
 
 @pytest.mark.asyncio

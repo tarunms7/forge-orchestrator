@@ -14,6 +14,7 @@ from textual.binding import Binding
 from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
+from forge.core.models import TaskState
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
@@ -29,6 +30,14 @@ from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteActi
 from forge.tui.widgets.pipeline_list import PipelineList
 
 logger = logging.getLogger("forge.tui.app")
+
+_FAILED_PR_TASK_STATES = frozenset(
+    {
+        TaskState.ERROR.value,
+        TaskState.BLOCKED.value,
+        TaskState.CANCELLED.value,
+    }
+)
 
 
 def _escape_markup(text: str) -> str:
@@ -60,15 +69,27 @@ def _recent_pipeline_pr_counts(row: dict) -> tuple[int, int]:
     return pr_count, repo_count
 
 
-def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
+def _build_task_summaries(
+    tasks_list: list[dict],
+    error_history: dict[str, list[str]] | None = None,
+    review_substatus: dict[str, str] | None = None,
+    merge_substatus: dict[str, str] | None = None,
+    review_gates: dict[str, dict] | None = None,
+) -> list[dict]:
     """Convert raw TUI state task dicts into PR-ready summary dicts.
 
     Raw state dicts have 'files' as a list of paths and diff stats nested
     inside 'merge_result'.  This helper normalises them into the flat shape
     that generate_pr_body and FinalApprovalScreen expect.
     """
+    error_history = error_history or {}
+    review_substatus = review_substatus or {}
+    merge_substatus = merge_substatus or {}
+    review_gates = review_gates or {}
+
     summaries = []
     for t in tasks_list:
+        tid = t.get("id", "")
         mr = t.get("merge_result") or {}
         summaries.append(
             {
@@ -87,9 +108,24 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
                 "tests_total": t.get("tests_total", 0),
                 "review": "passed" if t.get("state") == "done" else "failed",
                 "error": t.get("error", ""),
+                # New enrichment fields
+                "retry_count": len(error_history.get(tid, [])),
+                "blocked_reason": t.get("error", "") if t.get("state") == "blocked" else "",
+                "review_substatus": review_substatus.get(tid, ""),
+                "merge_substatus": merge_substatus.get(tid, ""),
+                "review_gates": review_gates.get(tid, {}),
             }
         )
     return summaries
+
+
+def _partition_pr_task_summaries(
+    task_summaries: list[dict],
+) -> tuple[list[dict], list[dict] | None]:
+    """Split task summaries into completed tasks and terminal failed tasks for PR creation."""
+    done_tasks = [t for t in task_summaries if t.get("state") == TaskState.DONE.value]
+    failed_tasks = [t for t in task_summaries if t.get("state") in _FAILED_PR_TASK_STATES]
+    return done_tasks, failed_tasks or None
 
 
 def _is_multi_repo_configs(repos: list) -> bool:
@@ -356,6 +392,19 @@ class ForgeApp(App):
         if callback is not None:
             self._state.on_change(callback)
 
+    def _queue_state_event(self, event_type: str, data: dict) -> None:
+        """Queue state application onto the Textual UI loop.
+
+        Embedded daemon tasks can emit events very quickly. Applying state
+        synchronously inside the event callback starves the UI repaint loop
+        and makes output appear in a burst at the end. Queueing the mutation
+        back onto Textual's message pump keeps planner/agent/review streaming live.
+        """
+        try:
+            self.call_next(self._state.apply_event, event_type, data)
+        except Exception:
+            self._state.apply_event(event_type, data)
+
     # Fields that change frequently and don't need a full screen refresh
     _HIGH_FREQ_FIELDS = frozenset(
         {"agent_output", "review_output", "cost", "elapsed", "followup_output"}
@@ -422,6 +471,11 @@ class ForgeApp(App):
                 total_removed += mr.get("linesRemoved", 0)
                 total_files += mr.get("filesChanged", 0)
 
+        # Calculate additional stats
+        total_retries = sum(len(v) for v in state.error_history.values())
+        blocked_count = sum(1 for t in tasks_list if t.get("state") == "blocked")
+        skipped_count = sum(1 for t in tasks_list if t.get("state") == "cancelled")
+
         stats: dict = {
             "added": total_added,
             "removed": total_removed,
@@ -429,11 +483,20 @@ class ForgeApp(App):
             "elapsed": elapsed_str,
             "cost": state.total_cost_usd,
             "questions": total_questions,
+            "total_retries": total_retries,
+            "blocked_count": blocked_count,
+            "skipped_count": skipped_count,
         }
         if state.is_multi_repo:
             stats["repo_count"] = len(state.repos)
             stats["task_count"] = len(tasks_list)
-        task_summaries = _build_task_summaries(tasks_list)
+        task_summaries = _build_task_summaries(
+            tasks_list,
+            error_history=state.error_history,
+            review_substatus=state.review_substatus,
+            merge_substatus=state.merge_substatus,
+            review_gates=state.review_gates,
+        )
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = self._cached_pipeline_branch or ""
@@ -702,10 +765,7 @@ class ForgeApp(App):
         elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
         raw_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
         task_summaries = _build_task_summaries(raw_tasks)
-        done_tasks = [t for t in task_summaries if t["state"] == "done"]
-        failed_tasks = [
-            t for t in task_summaries if t["state"] not in ("done", "todo", "pending")
-        ] or None
+        done_tasks, failed_tasks = _partition_pr_task_summaries(task_summaries)
 
         # Determine the base branch for the PR target and detect multi-repo
         base_branch = "main"
@@ -962,10 +1022,30 @@ class ForgeApp(App):
         reset_ids: list[str] = []
         for task in tasks:
             if task.state == "error":
-                await self._db.retry_task(task.id)
+                await self._db.reset_task_for_human_retry(task.id)
                 reset_ids.append(task.id)
             elif task.state == "blocked":
                 await self._db.update_task_state(task.id, "todo")
+                reset_ids.append(task.id)
+
+        if reset_ids:
+            for task_id in reset_ids:
+                if task_id in self._state.tasks:
+                    self._state.tasks[task_id]["state"] = "todo"
+                    self._state.tasks[task_id].pop("error", None)
+            self._state._notify("tasks")
+        return len(reset_ids)
+
+    async def _reset_interrupted_tasks_for_resume(self, pipeline_id: str) -> int:
+        """Reset orphaned live tasks before resuming a dead local pipeline."""
+        if not self._db:
+            return 0
+
+        tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+        reset_ids: list[str] = []
+        for task in tasks:
+            if task.state in ("in_progress", "in_review", "merging", "cancelled"):
+                await self._db.reset_task_for_resume(task.id)
                 reset_ids.append(task.id)
 
         if reset_ids:
@@ -1220,10 +1300,24 @@ class ForgeApp(App):
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
         from forge.core.preflight import run_preflight
+        from forge.core.provider_config import (
+            build_provider_config_snapshot,
+            build_provider_registry,
+            resolve_pipeline_models,
+        )
 
         settings = self._settings or ForgeSettings()
         project_config = ProjectConfig.load(self._project_dir)
         apply_project_config(settings, project_config)
+        registry = build_provider_registry(settings, project_config)
+        config_issues = project_config.validate(registry)
+        if config_issues:
+            self._state.apply_event(
+                "pipeline:error",
+                {"error": "Project config invalid:\n" + "\n".join(config_issues)},
+            )
+            logger.error("Project config validation failed: %s", "; ".join(config_issues))
+            return
 
         # Pre-flight checks: catch issues before wasting time on planning
         repos_dict = {rc.id: rc for rc in self._repos} if self._repos else None
@@ -1231,6 +1325,12 @@ class ForgeApp(App):
             self._project_dir,
             base_branch=base_branch,
             repos=repos_dict,
+            registry=registry,
+            resolved_models=resolve_pipeline_models(
+                settings,
+                registry,
+                strategy=settings.model_strategy,
+            ),
         )
         if not preflight.passed:
             errors = "\n".join(
@@ -1255,7 +1355,7 @@ class ForgeApp(App):
         for evt_type in TUI_EVENT_TYPES:
 
             async def _handler(data, _type=evt_type):
-                self._state.apply_event(_type, data)
+                self._queue_state_event(_type, data)
 
             self._bus.subscribe(evt_type, _handler)
 
@@ -1285,6 +1385,13 @@ class ForgeApp(App):
             project_path=self._project_dir,
             project_name=os.path.basename(self._project_dir),
             repos_json=_build_pipeline_repos_json(repos),
+            provider_config=json.dumps(
+                build_provider_config_snapshot(
+                    settings,
+                    registry,
+                    strategy=settings.model_strategy,
+                )
+            ),
         )
 
         self._pipeline_start_time = asyncio.get_running_loop().time()
@@ -1312,18 +1419,21 @@ class ForgeApp(App):
             ]
             if self._dry_run_mode:
                 from forge.core.cost_estimator import estimate_pipeline_cost
-                from forge.core.model_router import select_model
 
                 settings = self._settings or ForgeSettings()
-                cost_float = await estimate_pipeline_cost(
-                    len(self._graph.tasks), settings, settings.model_strategy
+                cost_estimate_result = await estimate_pipeline_cost(
+                    len(self._graph.tasks),
+                    strategy=settings.model_strategy,
+                    overrides=settings.build_routing_overrides(),
+                    registry=getattr(self._daemon, "_registry", None),
                 )
-                cost_estimate = {"estimated_cost": cost_float}
+                cost_estimate = {"estimated_cost": cost_estimate_result.total_cost_usd}
                 model_assignments = {
-                    t.id: select_model(
-                        settings.model_strategy,
-                        "agent",
-                        t.complexity.value if hasattr(t.complexity, "value") else t.complexity,
+                    t.id: str(
+                        self._daemon._select_model(
+                            "agent",
+                            t.complexity.value if hasattr(t.complexity, "value") else t.complexity,
+                        )
                     )
                     for t in self._graph.tasks
                 }
@@ -1451,7 +1561,9 @@ class ForgeApp(App):
             from forge.core.models import TaskDefinition, TaskGraph
 
             conventions = getattr(self._graph, "conventions", None) if self._graph else None
-            integration_hints = getattr(self._graph, "integration_hints", None) if self._graph else None
+            integration_hints = (
+                getattr(self._graph, "integration_hints", None) if self._graph else None
+            )
             self._graph = TaskGraph(
                 tasks=[TaskDefinition.model_validate(task) for task in tasks],
                 conventions=conventions,
@@ -1698,7 +1810,7 @@ class ForgeApp(App):
         for evt_type in TUI_EVENT_TYPES:
 
             async def _handler(data, _type=evt_type):
-                self._state.apply_event(_type, data)
+                self._queue_state_event(_type, data)
 
             self._bus.subscribe(evt_type, _handler)
 
@@ -1911,11 +2023,17 @@ class ForgeApp(App):
                 self.push_screen(PipelineScreen(self._state))
 
                 tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+                reset_count = await self._reset_interrupted_tasks_for_resume(pipeline_id)
                 await self._db.update_pipeline_status(pipeline_id, "executing")
                 await self._resume_execution()
                 done = sum(1 for t in tasks if t.state == "done")
+                recovered = (
+                    f" Recovered {reset_count} interrupted task{'s' if reset_count != 1 else ''}."
+                    if reset_count
+                    else ""
+                )
                 self.notify(
-                    f"Resumed pipeline — {done}/{len(tasks)} tasks done",
+                    f"Resumed pipeline — {done}/{len(tasks)} tasks done.{recovered}",
                     severity="information",
                 )
                 return

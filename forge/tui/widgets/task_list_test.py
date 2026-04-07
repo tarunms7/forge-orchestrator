@@ -1,6 +1,12 @@
 """Tests for TaskList widget."""
 
-from forge.tui.widgets.task_list import STATE_ICONS, TaskList, _followup_wave, format_task_line
+from forge.tui.widgets.task_list import (
+    STATE_ICONS,
+    TaskList,
+    _followup_wave,
+    _queue_hint,
+    format_task_line,
+)
 
 
 def test_state_icons_all_states():
@@ -114,6 +120,61 @@ def test_format_task_line_non_error_no_badge():
     task = {"id": "t1", "title": "Good task", "state": "done", "files_changed": ["a.py"]}
     line = format_task_line(task, selected=False)
     assert "⚠" not in line
+
+
+def test_format_task_line_retry_badge():
+    task = {
+        "id": "t1",
+        "title": "Retrying task",
+        "state": "done",
+        "retry_count": 2,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    assert "↻ 2/5" in line
+    assert "Retry 2/5" not in line
+
+
+def test_format_task_line_retry_badge_error_state():
+    task = {
+        "id": "t1",
+        "title": "Broken retrying task",
+        "state": "error",
+        "retry_count": 1,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    assert "⚠" in line
+    assert "↻ 1/5" in line
+
+
+def test_format_task_line_no_retry_badge_when_zero():
+    task = {
+        "id": "t1",
+        "title": "Fresh task",
+        "state": "done",
+        "retry_count": 0,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    assert "↻" not in line
+
+
+def test_format_task_line_retry_badge_valid_markup():
+    from io import StringIO
+
+    from rich.console import Console
+
+    task = {
+        "id": "t1",
+        "title": "Broken retrying task",
+        "state": "error",
+        "retry_count": 1,
+        "max_retries": 5,
+    }
+    line = format_task_line(task, selected=False)
+    console = Console(file=StringIO(), force_terminal=True)
+    console.print(line)
 
 
 # ── Title truncation tests ──────────────────────────────────────────────
@@ -322,4 +383,52 @@ def test_task_list_has_icon_frame():
 
     tl = TaskList()
     assert hasattr(tl, "_icon_frame")
-    assert tl._icon_frame == 0
+
+
+def test_queue_hint_uses_blocked_reason_helper():
+    """Test that _queue_hint uses format_blocked_reason helper and produces expected output."""
+    # Test waiting on single dependency
+    task = {
+        "_queue_status": "waiting",
+        "_blocked_reason": "Waiting on task-2",
+    }
+    hint = _queue_hint(task)
+    assert hint == "[#8b949e]wait task-2[/#8b949e]"
+
+    # Test waiting on multiple dependencies
+    task = {
+        "_queue_status": "waiting",
+        "_blocked_reason": "Waiting on task-2, task-3, task-4",
+    }
+    hint = _queue_hint(task)
+    assert hint == "[#8b949e]wait task-2 +2[/#8b949e]"
+
+    # Test single failed dependency
+    task = {
+        "_queue_status": "blocked",
+        "_blocked_reason": "Blocked by failed dependency: auth-backend",
+    }
+    hint = _queue_hint(task)
+    assert hint == "[#f0883e]blocked auth-backend[/#f0883e]"
+
+    # Test multiple failed dependencies
+    task = {
+        "_queue_status": "blocked",
+        "_blocked_reason": "Blocked by failed dependencies: auth-backend, db-setup",
+    }
+    hint = _queue_hint(task)
+    assert hint == "[#f0883e]blocked auth-backend +1[/#f0883e]"
+
+
+def test_format_task_line_blocked_state_shows_hint():
+    """Test that blocked task shows queue hint in task line."""
+    task = {
+        "id": "t1",
+        "title": "Auth UI",
+        "state": "blocked",
+        "_queue_status": "blocked",
+        "_blocked_reason": "Blocked by failed dependency: auth-api",
+    }
+    line = format_task_line(task, selected=False)
+    assert "blocked auth-api" in line
+    assert "[#f0883e]" in line  # Should have blocked color

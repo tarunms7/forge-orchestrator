@@ -71,6 +71,18 @@ enabled = true
 max_retries = 3             # How many times to retry on review rejection
 
 
+# ── Model Routing ──────────────────────────────────────────────────────
+# Override models per stage. Any stage not listed here keeps strategy defaults.
+# Reasoning effort overrides are only used by providers that support them
+# (for example, Codex-backed OpenAI review).
+#
+# [routing]
+# planner = "claude:opus"
+# agent_medium = "claude:sonnet"
+# reviewer = "openai:gpt-5.4"
+# reviewer_reasoning_effort = "high"   # "low" | "medium" | "high"
+
+
 # ── Agents ─────────────────────────────────────────────────────────────
 
 [agents]
@@ -203,8 +215,15 @@ class AgentConfig:
     timeout_seconds: int = 600
 
     def __post_init__(self):
-        if self.model not in ("sonnet", "opus", "haiku"):
-            raise ValueError("model must be 'sonnet', 'opus', or 'haiku'")
+        # Backward compat: accept bare aliases and 'provider:model' format.
+        # Validation is deferred to ProjectConfig.validate() with a registry.
+        from forge.providers.base import ModelSpec
+
+        try:
+            spec = ModelSpec.parse(self.model)
+            self.model = str(spec)
+        except ValueError:
+            raise ValueError(f"model must be a valid model spec, got {self.model!r}")
         if self.autonomy not in ("full", "balanced", "supervised"):
             logger.warning("Invalid autonomy value %r — defaulting to 'full'", self.autonomy)
             self.autonomy = "full"
@@ -245,6 +264,96 @@ class IntegrationConfig:
 
 
 @dataclass
+class RoutingConfig:
+    """Configuration for per-stage model routing from [routing] section."""
+
+    planner: str | None = None
+    agent_low: str | None = None
+    agent_medium: str | None = None
+    agent_high: str | None = None
+    reviewer: str | None = None
+    contract_builder: str | None = None
+    ci_fix: str | None = None
+    planner_reasoning_effort: str | None = None
+    agent_low_reasoning_effort: str | None = None
+    agent_medium_reasoning_effort: str | None = None
+    agent_high_reasoning_effort: str | None = None
+    reviewer_reasoning_effort: str | None = None
+    contract_builder_reasoning_effort: str | None = None
+    ci_fix_reasoning_effort: str | None = None
+
+    def __post_init__(self):
+        valid_efforts = {"low", "medium", "high", None}
+        fields = (
+            "planner_reasoning_effort",
+            "agent_low_reasoning_effort",
+            "agent_medium_reasoning_effort",
+            "agent_high_reasoning_effort",
+            "reviewer_reasoning_effort",
+            "contract_builder_reasoning_effort",
+            "ci_fix_reasoning_effort",
+        )
+        for field_name in fields:
+            value = getattr(self, field_name)
+            if value not in valid_efforts:
+                raise ValueError(f"{field_name} must be 'low', 'medium', or 'high', got {value!r}")
+
+    def to_overrides(self) -> dict[str, str]:
+        """Convert to the overrides dict format expected by select_model()."""
+        result: dict[str, str] = {}
+        if self.planner is not None:
+            result["planner_model"] = self.planner
+        if self.agent_low is not None:
+            result["agent_model_low"] = self.agent_low
+        if self.agent_medium is not None:
+            result["agent_model_medium"] = self.agent_medium
+        if self.agent_high is not None:
+            result["agent_model_high"] = self.agent_high
+        if self.reviewer is not None:
+            result["reviewer_model"] = self.reviewer
+        if self.contract_builder is not None:
+            result["contract_builder_model"] = self.contract_builder
+        if self.ci_fix is not None:
+            result["ci_fix_model"] = self.ci_fix
+        return result
+
+    def to_reasoning_overrides(self) -> dict[str, str]:
+        """Convert reasoning-effort fields into ForgeSettings attr names."""
+        result: dict[str, str] = {}
+        if self.planner_reasoning_effort is not None:
+            result["planner_reasoning_effort"] = self.planner_reasoning_effort
+        if self.agent_low_reasoning_effort is not None:
+            result["agent_model_low_reasoning_effort"] = self.agent_low_reasoning_effort
+        if self.agent_medium_reasoning_effort is not None:
+            result["agent_model_medium_reasoning_effort"] = self.agent_medium_reasoning_effort
+        if self.agent_high_reasoning_effort is not None:
+            result["agent_model_high_reasoning_effort"] = self.agent_high_reasoning_effort
+        if self.reviewer_reasoning_effort is not None:
+            result["reviewer_reasoning_effort"] = self.reviewer_reasoning_effort
+        if self.contract_builder_reasoning_effort is not None:
+            result["contract_builder_reasoning_effort"] = self.contract_builder_reasoning_effort
+        if self.ci_fix_reasoning_effort is not None:
+            result["ci_fix_reasoning_effort"] = self.ci_fix_reasoning_effort
+        return result
+
+
+@dataclass
+class CustomModelConfig:
+    """Configuration for a user-provided experimental model from [[custom_models]]."""
+
+    alias: str = ""
+    provider: str = ""
+    canonical_id: str = ""
+    backend: str = ""
+
+    def __post_init__(self):
+        if not self.alias:
+            raise ValueError("custom_models entry must have an 'alias'")
+        if not self.provider:
+            raise ValueError("custom_models entry must have a 'provider'")
+
+
+@dataclass
 class CIFixConfig:
     """Configuration for CI auto-fix after PR creation."""
 
@@ -275,6 +384,67 @@ class ProjectConfig:
     instructions: str = ""
     integration: IntegrationConfig = field(default_factory=IntegrationConfig)
     ci_fix: CIFixConfig = field(default_factory=CIFixConfig)
+    routing: RoutingConfig = field(default_factory=RoutingConfig)
+    custom_models: list[CustomModelConfig] = field(default_factory=list)
+
+    def validate(self, registry: object) -> list[str]:
+        """Validate all model references against a ProviderRegistry.
+
+        Args:
+            registry: A ProviderRegistry instance with validate_model() method.
+
+        Returns:
+            List of validation error/warning strings. Empty = all valid.
+        """
+        from forge.providers.base import ModelSpec
+
+        issues: list[str] = []
+        provider_names = {
+            provider.name for provider in getattr(registry, "all_providers", lambda: [])()
+        }
+
+        seen_custom_specs: set[str] = set()
+        for custom_model in self.custom_models:
+            spec = f"{custom_model.provider}:{custom_model.alias}"
+            if spec in seen_custom_specs:
+                issues.append(f"custom_models duplicate alias '{spec}'")
+            seen_custom_specs.add(spec)
+            if provider_names and custom_model.provider not in provider_names:
+                issues.append(f"custom_models entry '{spec}' uses unregistered provider")
+            if not custom_model.canonical_id:
+                issues.append(f"custom_models entry '{spec}' missing canonical_id")
+            if not custom_model.backend:
+                issues.append(f"custom_models entry '{spec}' missing backend")
+
+        # Validate agents.model
+        try:
+            spec = ModelSpec.parse(self.agents.model)
+            if not registry.validate_model(spec):
+                issues.append(f"agents.model '{self.agents.model}' not found in catalog")
+        except ValueError as e:
+            issues.append(f"agents.model invalid: {e}")
+
+        # Validate routing section
+        routing_fields = {
+            "routing.planner": self.routing.planner,
+            "routing.agent_low": self.routing.agent_low,
+            "routing.agent_medium": self.routing.agent_medium,
+            "routing.agent_high": self.routing.agent_high,
+            "routing.reviewer": self.routing.reviewer,
+            "routing.contract_builder": self.routing.contract_builder,
+            "routing.ci_fix": self.routing.ci_fix,
+        }
+        for field_name, value in routing_fields.items():
+            if value is None:
+                continue
+            try:
+                spec = ModelSpec.parse(value)
+                if not registry.validate_model(spec):
+                    issues.append(f"{field_name} '{value}' not found in catalog")
+            except ValueError as e:
+                issues.append(f"{field_name} invalid: {e}")
+
+        return issues
 
     @classmethod
     def from_toml(cls, path: str) -> ProjectConfig:
@@ -301,6 +471,8 @@ class ProjectConfig:
         post_merge_raw = integration_raw.get("post_merge", {})
         final_gate_raw = integration_raw.get("final_gate", {})
         ci_fix_raw = data.get("ci_fix", {})
+        routing_raw = data.get("routing", {})
+        custom_models_raw = data.get("custom_models", [])
 
         return cls(
             lint=CheckConfig(
@@ -356,6 +528,33 @@ class ProjectConfig:
                 budget_usd=ci_fix_raw.get("budget_usd", 0.0),
                 model=ci_fix_raw.get("model", "sonnet"),
             ),
+            routing=RoutingConfig(
+                planner=routing_raw.get("planner"),
+                agent_low=routing_raw.get("agent_low"),
+                agent_medium=routing_raw.get("agent_medium"),
+                agent_high=routing_raw.get("agent_high"),
+                reviewer=routing_raw.get("reviewer"),
+                contract_builder=routing_raw.get("contract_builder"),
+                ci_fix=routing_raw.get("ci_fix"),
+                planner_reasoning_effort=routing_raw.get("planner_reasoning_effort"),
+                agent_low_reasoning_effort=routing_raw.get("agent_low_reasoning_effort"),
+                agent_medium_reasoning_effort=routing_raw.get("agent_medium_reasoning_effort"),
+                agent_high_reasoning_effort=routing_raw.get("agent_high_reasoning_effort"),
+                reviewer_reasoning_effort=routing_raw.get("reviewer_reasoning_effort"),
+                contract_builder_reasoning_effort=routing_raw.get(
+                    "contract_builder_reasoning_effort"
+                ),
+                ci_fix_reasoning_effort=routing_raw.get("ci_fix_reasoning_effort"),
+            ),
+            custom_models=[
+                CustomModelConfig(
+                    alias=cm.get("alias", ""),
+                    provider=cm.get("provider", ""),
+                    canonical_id=cm.get("canonical_id", ""),
+                    backend=cm.get("backend", ""),
+                )
+                for cm in custom_models_raw
+            ],
         )
 
     @classmethod
@@ -405,6 +604,30 @@ def apply_project_config(settings: object, config: ProjectConfig) -> None:
         settings.ci_fix_max_retries = config.ci_fix.max_retries
     if "FORGE_CI_FIX_BUDGET_USD" not in env:
         settings.ci_fix_budget_usd = config.ci_fix.budget_usd
+
+    # Stage routing from forge.toml
+    routing_env_map = {
+        "planner_model": "FORGE_PLANNER_MODEL",
+        "agent_model_low": "FORGE_AGENT_MODEL_LOW",
+        "agent_model_medium": "FORGE_AGENT_MODEL_MEDIUM",
+        "agent_model_high": "FORGE_AGENT_MODEL_HIGH",
+        "reviewer_model": "FORGE_REVIEWER_MODEL",
+        "contract_builder_model": "FORGE_CONTRACT_BUILDER_MODEL",
+        "ci_fix_model": "FORGE_CI_FIX_MODEL",
+        "planner_reasoning_effort": "FORGE_PLANNER_REASONING_EFFORT",
+        "agent_model_low_reasoning_effort": "FORGE_AGENT_MODEL_LOW_REASONING_EFFORT",
+        "agent_model_medium_reasoning_effort": "FORGE_AGENT_MODEL_MEDIUM_REASONING_EFFORT",
+        "agent_model_high_reasoning_effort": "FORGE_AGENT_MODEL_HIGH_REASONING_EFFORT",
+        "reviewer_reasoning_effort": "FORGE_REVIEWER_REASONING_EFFORT",
+        "contract_builder_reasoning_effort": "FORGE_CONTRACT_BUILDER_REASONING_EFFORT",
+        "ci_fix_reasoning_effort": "FORGE_CI_FIX_REASONING_EFFORT",
+    }
+    for attr_name, value in config.routing.to_overrides().items():
+        if routing_env_map[attr_name] not in env:
+            setattr(settings, attr_name, value)
+    for attr_name, value in config.routing.to_reasoning_overrides().items():
+        if routing_env_map[attr_name] not in env:
+            setattr(settings, attr_name, value)
 
     # Disabled checks → set command to None (skip the gate)
     if not config.lint.enabled:

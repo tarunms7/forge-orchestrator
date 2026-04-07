@@ -18,6 +18,7 @@ from forge.core.followup import (
     classify_questions,
     execute_followups,
 )
+from forge.providers.base import ModelSpec
 
 # ── classify_questions tests ──────────────────────────────────────────
 
@@ -51,7 +52,7 @@ class TestClassifyQuestions:
 
         assert result == {0: "task-abc", 1: "task-abc", 2: "task-abc"}
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_classification_parses_response(self, mock_sdk):
         """LLM returns valid JSON -> parsed correctly."""
         mock_result = MagicMock()
@@ -72,7 +73,7 @@ class TestClassifyQuestions:
         assert result == {0: "task-1", 1: "task-2"}
         mock_sdk.assert_called_once()
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_classification_handles_code_block(self, mock_sdk):
         """LLM wraps JSON in markdown code block -> still parsed."""
         mock_result = MagicMock()
@@ -88,7 +89,7 @@ class TestClassifyQuestions:
         result = await classify_questions(questions, tasks)
         assert result == {0: "task-1", 1: "task-1"}
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_classification_invalid_task_id_falls_back(self, mock_sdk):
         """LLM returns invalid task ID -> falls back to first task."""
         mock_result = MagicMock()
@@ -105,7 +106,7 @@ class TestClassifyQuestions:
         assert result[0] == "task-1"
         assert result[1] == "task-1"
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_failure_falls_back_to_first_task(self, mock_sdk):
         """When LLM call fails, all questions fall back to first task."""
         mock_sdk.side_effect = Exception("LLM unavailable")
@@ -119,7 +120,7 @@ class TestClassifyQuestions:
         result = await classify_questions(questions, tasks)
         assert result == {0: "task-1", 1: "task-1"}
 
-    @patch("forge.core.followup.sdk_query")
+    @patch("forge.core.sdk_helpers.sdk_query")
     async def test_llm_returns_none_falls_back(self, mock_sdk):
         """When LLM returns None, fall back to first task."""
         mock_sdk.return_value = None
@@ -132,6 +133,32 @@ class TestClassifyQuestions:
 
         result = await classify_questions(questions, tasks)
         assert result == {0: "task-1"}
+
+    async def test_registry_path_uses_planner_model_selection(self):
+        """Provider-backed classification should resolve the planner stage model, not hardcode Claude."""
+        registry = MagicMock()
+        provider = MagicMock()
+        handle = MagicMock()
+        handle.result = AsyncMock(return_value=MagicMock(text='{"0": "task-2"}'))
+        provider.start.return_value = handle
+        registry.get_for_model.return_value = provider
+        registry.get_catalog_entry.return_value = MagicMock()
+
+        questions = [FollowUpQuestion(text="Which task owns providers?")]
+        tasks = [
+            {"id": "task-1", "title": "T1", "description": "D1", "files": ["a.py"]},
+            {"id": "task-2", "title": "T2", "description": "D2", "files": ["b.py"]},
+        ]
+
+        with patch(
+            "forge.core.followup.resolve_registry_model",
+            return_value=ModelSpec("openai", "gpt-5.4-mini"),
+        ) as mock_resolve:
+            result = await classify_questions(questions, tasks, registry=registry)
+
+        assert result == {0: "task-2"}
+        mock_resolve.assert_called_once_with(registry, "planner", "low")
+        provider.start.assert_called_once()
 
 
 # ── _build_followup_prompt tests ─────────────────────────────────────

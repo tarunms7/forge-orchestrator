@@ -8,12 +8,15 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from forge.core.daemon_helpers import (
+    _extract_activity,
     _extract_implementation_summary,
+    _extract_text,
     _filter_review_diff,
     _find_related_test_files,
     _get_changed_files_vs_main,
     _get_diff_stats,
     _get_diff_vs_main,
+    _humanize_model_spec,
     _is_pytest_cmd,
     _is_review_excluded_path,
     _load_conventions_md,
@@ -22,7 +25,9 @@ from forge.core.daemon_helpers import (
     _run_git,
     async_subprocess,
     compute_worktree_path,
+    format_routing_summary,
 )
+from forge.providers.base import EventKind, ProviderEvent
 
 
 def _make_proc(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
@@ -101,27 +106,32 @@ class TestGetDiffVsMainBaseRef:
 
     @pytest.mark.asyncio
     async def test_uses_base_ref_when_provided(self):
-        """Should diff base_ref..HEAD directly, no rev-list call."""
+        """Should diff merge-base(base_ref, HEAD)..HEAD, no rev-list call."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         diff_proc = _make_proc("diff --git a/foo.py b/foo.py\n+new line\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, diff_proc],
+            side_effect=[verify_ok, merge_base, diff_proc],
         ) as mock_sub:
             result = await _get_diff_vs_main(
                 "/repo/worktrees/task-1", base_ref="forge/pipeline-abc"
             )
 
         assert "new line" in result
-        assert mock_sub.call_count == 2
+        assert mock_sub.call_count == 3
         assert mock_sub.call_args_list[0] == call(
             ["git", "rev-parse", "--verify", "forge/pipeline-abc"],
             cwd="/repo/worktrees/task-1",
         )
         assert mock_sub.call_args_list[1] == call(
-            ["git", "diff", "forge/pipeline-abc", "HEAD"],
+            ["git", "merge-base", "forge/pipeline-abc", "HEAD"],
+            cwd="/repo/worktrees/task-1",
+        )
+        assert mock_sub.call_args_list[2] == call(
+            ["git", "diff", "mergebase123", "HEAD"],
             cwd="/repo/worktrees/task-1",
         )
 
@@ -217,20 +227,21 @@ class TestGetChangedFilesVsMainBaseRef:
 
     @pytest.mark.asyncio
     async def test_uses_base_ref_when_provided(self):
-        """Should use git diff --name-only base_ref HEAD."""
+        """Should use git diff --name-only merge-base(base_ref, HEAD) HEAD."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         name_only_proc = _make_proc("foo.py\nbar.py\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, name_only_proc],
+            side_effect=[verify_ok, merge_base, name_only_proc],
         ) as mock_sub:
             result = await _get_changed_files_vs_main("/repo/wt", base_ref="forge/pipeline-abc")
 
         assert result == ["foo.py", "bar.py"]
-        assert mock_sub.call_args_list[1] == call(
-            ["git", "diff", "--name-only", "forge/pipeline-abc", "HEAD"],
+        assert mock_sub.call_args_list[2] == call(
+            ["git", "diff", "--name-only", "mergebase123", "HEAD"],
             cwd="/repo/wt",
         )
 
@@ -273,24 +284,25 @@ class TestGetDiffStatsPipelineBranch:
 
     @pytest.mark.asyncio
     async def test_uses_pipeline_branch_when_ref_resolves(self):
-        """Should return per-task stats from `git diff --shortstat <branch> HEAD`."""
+        """Should return per-task stats from `git diff --shortstat <merge-base> HEAD`."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc(" 3 files changed, 42 insertions(+), 7 deletions(-)\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ) as mock_sub:
             result = await _get_diff_stats(
                 "/repo/worktrees/task-1", pipeline_branch="forge/pipeline-abc"
             )
 
         assert result == {"linesAdded": 42, "linesRemoved": 7, "filesChanged": 3}
-        assert mock_sub.call_count == 2
-        shortstat_call = mock_sub.call_args_list[1]
+        assert mock_sub.call_count == 3
+        shortstat_call = mock_sub.call_args_list[2]
         assert shortstat_call == call(
-            ["git", "diff", "--shortstat", "forge/pipeline-abc", "HEAD"],
+            ["git", "diff", "--shortstat", "mergebase123", "HEAD"],
             cwd="/repo/worktrees/task-1",
         )
 
@@ -298,12 +310,13 @@ class TestGetDiffStatsPipelineBranch:
     async def test_insertions_only(self):
         """Handles a diff with insertions but no deletions."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc(" 1 file changed, 10 insertions(+)\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
@@ -313,12 +326,13 @@ class TestGetDiffStatsPipelineBranch:
     async def test_deletions_only(self):
         """Handles a diff with deletions but no insertions."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc(" 2 files changed, 5 deletions(-)\n")
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
@@ -328,12 +342,13 @@ class TestGetDiffStatsPipelineBranch:
     async def test_empty_shortstat_returns_zeros(self):
         """When the diff is empty (no changes), returns zeros."""
         verify_ok = _make_proc("abc123\n", returncode=0)
+        merge_base = _make_proc("mergebase123\n", returncode=0)
         shortstat = _make_proc("")  # empty = no diff
 
         with patch(
             "forge.core.daemon_helpers.async_subprocess",
             new_callable=AsyncMock,
-            side_effect=[verify_ok, shortstat],
+            side_effect=[verify_ok, merge_base, shortstat],
         ):
             result = await _get_diff_stats("/repo", pipeline_branch="forge/pipeline-abc")
 
@@ -868,6 +883,52 @@ class TestParseForgeQuestion:
         assert result is not None
         assert "quoted" in result["question"]
 
+    def test_plaintext_question_line_is_recovered(self):
+        text = (
+            "I found the blocked detail panel pattern in the TUI.\n"
+            "Let me ask a clarifying question before I implement it.\n"
+            "**Question 1:** Should the blocked detail replace the normal output view?\n"
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Should the blocked detail replace the normal output view?"
+        assert "clarifying question" in (result["context"] or "")
+        assert result["source"] == "plaintext_fallback"
+
+    def test_plaintext_question_collects_following_suggestions(self):
+        text = (
+            "I need your input before I continue.\n"
+            "Question: Which layout should I use?\n"
+            "- Replace the output view entirely\n"
+            "- Show the detail above recent logs\n"
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert result["question"] == "Which layout should I use?"
+        assert result["suggestions"] == [
+            "Replace the output view entirely",
+            "Show the detail above recent logs",
+        ]
+
+    def test_plaintext_question_recovers_multiline_labelled_question(self):
+        text = (
+            "## 2. Clarifying Questions\n"
+            "Based on my exploration of the codebase, I can see the current TuiState structure.\n"
+            "The task specification is quite detailed, but I have one key question about the smart deduplication approach:\n"
+            "**Question**: For the smart deduplication of Reading/Searching lines, I see two possible approaches:\n"
+            "A) **Consecutive collapsing**: Only collapse consecutive lines with the same verb prefix\n"
+            "B) **Session-wide collapsing**: Track all Reading/Searching activity in the current planning session and always show a running counter\n"
+            "Which approach would you prefer, and should the collapsed format show the current file/query being processed or the last one in the sequence?\n"
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert (
+            result["question"]
+            == "Which approach would you prefer, and should the collapsed format show the current file/query being processed or the last one in the sequence?"
+        )
+        assert "smart deduplication approach" in (result["context"] or "")
+        assert result["source"] == "plaintext_fallback"
+
 
 class TestRunGit:
     """_run_git() wraps async_subprocess with logging and error handling."""
@@ -1171,3 +1232,209 @@ class TestParseForgeLearning:
         result = _parse_forge_learning(text)
         assert result is not None
         assert result["trigger"] == "bad import"
+
+
+# ── ProviderEvent-based helper tests ──────────────────────────────────
+
+
+class TestExtractTextProviderEvent:
+    """Test _extract_text with ProviderEvent input."""
+
+    def test_text_event_returns_text(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text="Hello world")
+        assert _extract_text(event) == "Hello world"
+
+    def test_text_event_skips_json(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text='{"key": "value"}')
+        assert _extract_text(event) is None
+
+    def test_text_event_skips_empty(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text="   ")
+        assert _extract_text(event) is None
+
+    def test_tool_use_event_returns_none(self):
+        event = ProviderEvent(kind=EventKind.TOOL_USE, tool_name="Read")
+        assert _extract_text(event) is None
+
+    def test_error_event_returns_none(self):
+        event = ProviderEvent(kind=EventKind.ERROR, text="something broke")
+        assert _extract_text(event) is None
+
+
+class TestExtractActivityProviderEvent:
+    """Test _extract_activity with ProviderEvent input."""
+
+    def test_text_event_returns_text(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text="Analyzing code")
+        assert _extract_activity(event) == "Analyzing code"
+
+    def test_text_event_skips_json(self):
+        event = ProviderEvent(kind=EventKind.TEXT, text='[{"items": []}]')
+        assert _extract_activity(event) is None
+
+    def test_tool_use_returns_formatted_activity(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="Read",
+            tool_input=json.dumps({"file_path": "/src/models/user.py"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "Reading" in result
+        assert "user.py" in result
+
+    def test_tool_use_bash_returns_activity(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="Bash",
+            tool_input=json.dumps({"command": "pytest tests/ -x"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "pytest" in result
+
+    def test_tool_use_grep_returns_activity(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="Grep",
+            tool_input=json.dumps({"pattern": "def main"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "def main" in result
+
+    def test_status_event_is_transient_not_persistent_activity(self):
+        event = ProviderEvent(kind=EventKind.STATUS, status="thinking")
+        assert _extract_activity(event) is None
+
+    def test_tool_use_accepts_normalized_lowercase_names(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="read",
+            tool_input=json.dumps({"file_path": "/src/models/user.py"}),
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "Reading" in result
+        assert "user.py" in result
+
+    def test_tool_use_accepts_raw_command_strings(self):
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="bash",
+            tool_input="pytest forge/core/daemon_helpers_test.py -q",
+        )
+        result = _extract_activity(event)
+        assert result is not None
+        assert "pytest" in result
+
+    def test_tool_use_extracts_file_path_from_change_list(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="edit",
+            tool_input=json.dumps([{"path": "/workspace/backend/src/app.py", "kind": "replace"}]),
+        )
+        result = _extract_activity(event)
+        assert result == "✏️ Editing src/app.py"
+
+    def test_tool_use_write_uses_writing_label(self):
+        import json
+
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="write",
+            tool_input=json.dumps({"path": "/workspace/backend/src/new_file.py"}),
+        )
+        result = _extract_activity(event)
+        assert result == "✏️ Writing src/new_file.py"
+
+
+class TestHumanizeModelSpec:
+    def test_claude_model_is_humanized(self):
+        assert _humanize_model_spec("claude:sonnet") == "Claude Sonnet"
+
+    def test_openai_model_is_humanized(self):
+        assert _humanize_model_spec("openai:gpt-5.4-mini") == "GPT-5.4 Mini"
+
+    def test_claude_opus(self):
+        assert _humanize_model_spec("claude:opus") == "Claude Opus"
+
+    def test_claude_haiku(self):
+        assert _humanize_model_spec("claude:haiku") == "Claude Haiku"
+
+    def test_openai_gpt54(self):
+        assert _humanize_model_spec("openai:gpt-5.4") == "GPT-5.4"
+
+    def test_openai_codex(self):
+        assert _humanize_model_spec("openai:gpt-5.3-codex") == "GPT-5.3 Codex"
+
+    def test_openai_o3(self):
+        assert _humanize_model_spec("openai:o3") == "o3"
+
+    def test_bare_alias_sonnet(self):
+        # bare 'sonnet' is parsed via ModelSpec.parse() into claude:sonnet
+        assert _humanize_model_spec("sonnet") == "Claude Sonnet"
+
+    def test_empty_string(self):
+        assert _humanize_model_spec("") == ""
+
+    def test_model_spec_object(self):
+        # accepts ModelSpec directly
+        from forge.providers.base import ModelSpec
+
+        spec = ModelSpec(provider="claude", model="opus")
+        assert _humanize_model_spec(spec) == "Claude Opus"
+
+
+class TestFormatRoutingSummary:
+    def test_all_claude_default(self):
+        # full Claude routing string
+        result = format_routing_summary(
+            "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "claude:sonnet"
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet"
+        assert result == expected
+
+    def test_mixed_providers(self):
+        # Claude planner + OpenAI reviewer
+        result = format_routing_summary(
+            "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "openai:gpt-5.4"
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review GPT-5.4"
+        assert result == expected
+
+    def test_with_reasoning_effort(self):
+        # appends '(high reasoning)'
+        result = format_routing_summary(
+            "claude:opus",
+            "claude:haiku",
+            "claude:sonnet",
+            "claude:opus",
+            "claude:sonnet",
+            reviewer_effort="high",
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet (high reasoning)"
+        assert result == expected
+
+    def test_without_reasoning_effort(self):
+        # no suffix
+        result = format_routing_summary(
+            "claude:opus",
+            "claude:haiku",
+            "claude:sonnet",
+            "claude:opus",
+            "claude:sonnet",
+            reviewer_effort=None,
+        )
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Claude Sonnet"
+        assert result == expected

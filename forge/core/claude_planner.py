@@ -1,17 +1,35 @@
-"""Claude-backed planner. Uses claude-code-sdk to decompose tasks into TaskGraph JSON."""
+"""Claude-backed planner. Uses provider protocol to decompose tasks into TaskGraph JSON."""
 
+from __future__ import annotations
+
+import asyncio
 import logging
 import os
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from claude_code_sdk import ClaudeCodeOptions
 
+from forge.core import sdk_helpers
 from forge.core.errors import SdkCallError
 from forge.core.planner import PlannerLLM
 from forge.core.sanitize import extract_json_block
-from forge.core.sdk_helpers import SdkResult, sdk_query
+from forge.providers import (
+    ExecutionMode,
+    ModelSpec,
+    OutputContract,
+    ProviderEvent,
+    ProviderResult,
+    WorkspaceRoots,
+)
+from forge.providers.restrictions import PLANNER_TOOL_POLICY
+
+if TYPE_CHECKING:
+    from forge.core.cost_registry import CostRegistry
+    from forge.providers.registry import ProviderRegistry
 
 logger = logging.getLogger("forge.planner")
+sdk_query = sdk_helpers.sdk_query  # Backward-compat alias for legacy tests/mocks.
 
 PLANNER_SYSTEM_PROMPT = """You are a task decomposition engine for a multi-agent coding system called Forge.
 
@@ -117,15 +135,22 @@ Output ONLY valid JSON. No markdown fences, no explanation, no commentary. Just 
 
 
 class ClaudePlannerLLM(PlannerLLM):
-    """Concrete planner that calls Claude via claude-code-sdk."""
+    """Concrete planner using provider protocol."""
 
     def __init__(
-        self, model: str = "sonnet", cwd: str | None = None, system_prompt_modifier: str = ""
+        self,
+        model: str | ModelSpec = "sonnet",
+        cwd: str | None = None,
+        system_prompt_modifier: str = "",
+        registry: ProviderRegistry | None = None,
+        cost_registry: CostRegistry | None = None,
     ) -> None:
-        self._model = model
+        self._model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
         self._cwd = cwd
         self._system_prompt_modifier = system_prompt_modifier
-        self._last_sdk_result: SdkResult | None = None
+        self._registry = registry
+        self._cost_registry = cost_registry
+        self._last_result: ProviderResult | None = None
 
     async def generate_plan(
         self,
@@ -140,38 +165,66 @@ class ClaudePlannerLLM(PlannerLLM):
         if self._system_prompt_modifier:
             system_prompt += self._system_prompt_modifier
 
-        options = ClaudeCodeOptions(
-            system_prompt=system_prompt,
-            # Give the planner plenty of room for large tasks.  Complex
-            # implementation plans may reference 15+ source files — the
-            # planner needs enough turns to read them all before producing
-            # JSON.  The anti-loop prompt rules prevent wasted turns.
-            max_turns=30,
-            model=self._model,
-            # Read-only tools: planner explores the codebase but must NOT
-            # write files — its only output is the TaskGraph JSON in the
-            # result text. Use bypassPermissions so read-only tool use stays
-            # unattended while the allowed_tools list still prevents writes.
-            allowed_tools=["Read", "Glob", "Grep", "Bash"],
-            permission_mode="bypassPermissions",
-        )
-        if self._cwd:
-            options.cwd = self._cwd
+        if self._registry is None:
+            try:
+                result = await sdk_query(
+                    prompt=prompt,
+                    options=ClaudeCodeOptions(
+                        system_prompt=system_prompt,
+                        max_turns=30,
+                        cwd=self._cwd or ".",
+                        model=self._model_spec.model,
+                    ),
+                    on_message=on_message,
+                )
+            except Exception as e:
+                raise SdkCallError(f"SDK call failed: {e}", original_error=e) from e
+
+            result_text = (
+                getattr(result, "result", None) or getattr(result, "result_text", None) or ""
+            )
+            extracted = extract_json_block(result_text) or result_text
+            return extracted
+
+        provider = self._registry.get_for_model(self._model_spec)
+        catalog_entry = self._registry.get_catalog_entry(self._model_spec)
+
+        workspace = WorkspaceRoots(primary_cwd=self._cwd or ".")
+
+        # Bridge async on_message callback from sync on_event
+        def _on_event(event: ProviderEvent) -> None:
+            if on_message is not None:
+                asyncio.ensure_future(on_message(event))
 
         try:
-            result = await sdk_query(prompt=prompt, options=options, on_message=on_message)
+            handle = provider.start(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                catalog_entry=catalog_entry,
+                execution_mode=ExecutionMode.INTELLIGENCE,
+                tool_policy=PLANNER_TOOL_POLICY,
+                output_contract=OutputContract(format="freeform"),
+                workspace=workspace,
+                max_turns=30,
+                reasoning_effort=self._registry.settings.resolve_reasoning_effort(
+                    "planner",
+                    "high",
+                ),
+                on_event=_on_event,
+            )
+            result = await handle.result()
         except Exception as e:
-            logger.warning("SDK call failed during planning: %s", e)
-            raise SdkCallError(f"SDK call failed: {e}", original_error=e) from e
+            logger.warning("Provider call failed during planning: %s", e)
+            raise SdkCallError(f"Provider call failed: {e}", original_error=e) from e
 
-        self._last_sdk_result = result
-        logger.info("SDK result type: %s", type(result).__name__ if result else "None")
+        self._last_result = result
+        logger.info("Provider result is_error: %s", result.is_error)
         logger.info(
-            "SDK result.result: %s",
-            (result.result[:300] if result.result else "<None>") if result else "<no result obj>",
+            "Provider result text: %s",
+            result.text[:300] if result.text else "<empty>",
         )
 
-        result_text = result.result if result and result.result else ""
+        result_text = result.text or ""
         extracted = extract_json_block(result_text) or result_text
         logger.info(
             "Extracted JSON (%d chars): %s",

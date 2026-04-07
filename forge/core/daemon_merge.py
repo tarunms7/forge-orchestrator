@@ -6,7 +6,6 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from forge.agents.adapter import ClaudeAdapter
 from forge.agents.runtime import AgentRuntime
 from forge.core.logging_config import make_console
 from forge.core.models import TaskState
@@ -29,7 +28,7 @@ class MergeMixin:
     """
 
     # ------------------------------------------------------------------
-    # Tier 2: conflict resolution via Claude
+    # Tier 2: conflict resolution via provider-backed agent execution
     # ------------------------------------------------------------------
 
     async def _resolve_conflicts(
@@ -40,12 +39,12 @@ class MergeMixin:
         agent_model: str,
         db: Database,
     ) -> bool:
-        """Tier 2: Use a targeted Claude call to resolve merge conflicts."""
+        """Tier 2: Use a targeted coding-model call to resolve merge conflicts."""
         if not conflicting_files:
             return False
 
         console.print(
-            f"[yellow]{task_id}: Tier 2 — asking Claude to resolve "
+            f"[yellow]{task_id}: Tier 2 — asking the resolver model to resolve "
             f"{len(conflicting_files)} conflicts[/yellow]"
         )
 
@@ -81,8 +80,11 @@ class MergeMixin:
             f"7. Repeat until the rebase completes successfully.\n"
         )
 
-        adapter = ClaudeAdapter()
-        runtime = AgentRuntime(adapter, self._settings.agent_timeout_seconds)
+        runtime = AgentRuntime(
+            timeout_seconds=self._settings.agent_timeout_seconds,
+            registry=self._registry,
+            cost_registry=self._cost_registry,
+        )
         result = await runtime.run_task(
             agent_id=f"resolver-{task_id}",
             task_prompt=conflict_prompt,

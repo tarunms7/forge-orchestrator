@@ -7,6 +7,7 @@ import re
 from textual.message import Message
 from textual.widget import Widget
 
+from forge.core.retry_summary import retry_summary_from_task
 from forge.tui.theme import STATE_COLORS, STATE_ICONS
 
 MAX_WIDTH = 40
@@ -29,6 +30,8 @@ def _escape(text: str | None) -> str:
 
 def _queue_hint(task: dict) -> str:
     """Return a compact queue hint derived from scheduler insight."""
+    from forge.core.blocked_reason import format_blocked_reason
+
     status = task.get("_queue_status", "")
     priority_rank = task.get("_priority_rank")
     reason = str(task.get("_blocked_reason", "") or "").strip()
@@ -44,26 +47,26 @@ def _queue_hint(task: dict) -> str:
         return "[#d29922]needs input[/#d29922]"
 
     if reason.startswith("Waiting on "):
-        deps = [
-            part.strip() for part in reason.removeprefix("Waiting on ").split(",") if part.strip()
-        ]
-        if deps:
-            suffix = f" +{len(deps) - 1}" if len(deps) > 1 else ""
-            return f"[#8b949e]wait {deps[0]}{suffix}[/#8b949e]"
+        formatted = format_blocked_reason(reason, status)
+        if formatted:
+            # Convert "Waiting on task-2 + 1 other" -> "wait task-2 +1"
+            text = formatted.lower()
+            if text.startswith("waiting on "):
+                text = text[11:]  # Remove "waiting on " prefix
+                text = text.replace(" + ", " +").replace(" others", "").replace(" other", "")
+                return f"[#8b949e]wait {text}[/#8b949e]"
 
-    if reason.startswith("Blocked by failed dependency: "):
-        dep = reason.removeprefix("Blocked by failed dependency: ").strip()
-        return f"[#f0883e]blocked {dep}[/#f0883e]"
-
-    if reason.startswith("Blocked by failed dependencies: "):
-        deps = [
-            part.strip()
-            for part in reason.removeprefix("Blocked by failed dependencies: ").split(",")
-            if part.strip()
-        ]
-        if deps:
-            suffix = f" +{len(deps) - 1}" if len(deps) > 1 else ""
-            return f"[#f0883e]blocked {deps[0]}{suffix}[/#f0883e]"
+    if reason.startswith("Blocked by failed dependenc"):
+        formatted = format_blocked_reason(reason, status)
+        if formatted:
+            # Convert "Blocked: dep + 1 other failed" -> "blocked dep +1"
+            text = formatted.lower()
+            if text.startswith("blocked: "):
+                text = text[9:]  # Remove "blocked: " prefix
+            if text.endswith(" failed"):
+                text = text[:-7]  # Remove " failed" suffix
+            text = text.replace(" + ", " +").replace(" others", "").replace(" other", "")
+            return f"[#f0883e]blocked {text}[/#f0883e]"
 
     return ""
 
@@ -116,8 +119,16 @@ def format_task_line(
 
     if task.get("_preparing") and state == "todo":
         suffix_parts.append("[#a371f7]⚙ PREP[/#a371f7]")
-    elif state == "error":
-        suffix_parts.append("⚠")
+    summary = retry_summary_from_task(task)
+    if state == "error":
+        if summary.retry_count > 0:
+            suffix_parts.append(
+                f"⚠ [#d29922]↻ {summary.retry_count}/{summary.max_retries}[/#d29922]"
+            )
+        else:
+            suffix_parts.append("⚠")
+    elif summary.retry_count > 0:
+        suffix_parts.append(f"[#d29922]↻ {summary.retry_count}/{summary.max_retries}[/#d29922]")
     elif state == "merging":
         _MERGE_STEP_LABELS = {
             "rebasing": "Rebasing",

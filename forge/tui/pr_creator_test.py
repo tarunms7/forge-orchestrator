@@ -5,6 +5,7 @@ import pytest
 from forge.tui.pr_creator import (
     MultiRepoPrResult,
     _add_related_prs_comment,
+    create_pr,
     create_prs_multi_repo,
     generate_pr_body,
 )
@@ -83,6 +84,65 @@ def test_pr_body_zero_stats_no_stats_shown():
     body = generate_pr_body(tasks=tasks, time="1m", cost=0.05, questions=[])
     assert "Config change" in body
     assert "+0/-0" not in body
+
+
+class TestCreatePr:
+    @pytest.mark.asyncio
+    async def test_reuses_existing_pr_for_branch(self):
+        existing_view = AsyncMock()
+        existing_view.communicate = AsyncMock(
+            return_value=(b"https://github.com/org/repo/pull/321\n", b"")
+        )
+        existing_view.returncode = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=existing_view,
+        ) as mock_exec:
+            pr_url = await create_pr(
+                "/tmp/repo",
+                "Forge: Test",
+                "body",
+                base="main",
+                head="forge/test-branch",
+            )
+
+        assert pr_url == "https://github.com/org/repo/pull/321"
+        mock_exec.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_parses_existing_pr_url_from_create_error(self):
+        existing_view = AsyncMock()
+        existing_view.communicate = AsyncMock(return_value=(b"", b""))
+        existing_view.returncode = 1
+
+        create_proc = AsyncMock()
+        create_proc.communicate = AsyncMock(
+            return_value=(
+                b"",
+                (
+                    b'a pull request for branch "forge/test-branch" into branch "main" '
+                    b"already exists:\nhttps://github.com/org/repo/pull/321\n"
+                ),
+            )
+        )
+        create_proc.returncode = 1
+
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            side_effect=[existing_view, create_proc],
+        ):
+            pr_url = await create_pr(
+                "/tmp/repo",
+                "Forge: Test",
+                "body",
+                base="main",
+                head="forge/test-branch",
+            )
+
+        assert pr_url == "https://github.com/org/repo/pull/321"
 
 
 # ---------- Chunk 2: generate_pr_body multi-repo tests ----------

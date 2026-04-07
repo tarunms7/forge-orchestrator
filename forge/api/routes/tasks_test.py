@@ -433,6 +433,49 @@ class TestRetryTaskEndpoint:
         )
         assert resp.status_code == 404
 
+    async def test_retry_refunds_one_consumed_attempt(self, client_with_app):
+        """Manual retry should give back one consumed retry slot."""
+        from forge.api.security.jwt import decode_token
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="retry-refund@example.com")
+        headers = _auth_header(token)
+        user_id = decode_token(token, secret="test-secret-for-stats")["sub"]
+
+        db = app.state.db
+        await db.create_pipeline(
+            id="pipe-retry-refund",
+            description="Retry refund",
+            project_dir="/tmp/retry-refund",
+            model_strategy="auto",
+            user_id=user_id,
+        )
+        await db.create_task(
+            id="task-retry-refund",
+            title="Retry me",
+            description="D",
+            files=["a.py"],
+            depends_on=[],
+            complexity="medium",
+            pipeline_id="pipe-retry-refund",
+        )
+        await db.update_task_state("task-retry-refund", "error")
+        await db.retry_task("task-retry-refund")
+        await db.update_task_state("task-retry-refund", "error")
+
+        task = await db.get_task("task-retry-refund")
+        assert task.retry_count == 1
+
+        resp = await client.post(
+            "/api/tasks/pipe-retry-refund/task-retry-refund/retry",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+        task = await db.get_task("task-retry-refund")
+        assert task.state == "todo"
+        assert task.retry_count == 0
+
 
 # ── Stats endpoint tests ─────────────────────────────────────────────
 
@@ -987,6 +1030,29 @@ class TestGeneratePrTitle:
         ):
             title = await _generate_pr_title("Fix the login button", "")
         assert title == "fix the login button"
+
+    async def test_registry_path_uses_reviewer_model_selection(self):
+        """Provider-backed PR title generation should honor the configured reviewer model."""
+        from forge.api.routes.tasks import _generate_pr_title
+        from forge.providers.base import ModelSpec
+
+        registry = MagicMock()
+        provider = MagicMock()
+        handle = MagicMock()
+        handle.result = AsyncMock(return_value=MagicMock(text="fix: provider routing"))
+        provider.start.return_value = handle
+        registry.get_for_model.return_value = provider
+        registry.get_catalog_entry.return_value = MagicMock()
+
+        with patch(
+            "forge.api.routes.tasks.resolve_registry_model",
+            return_value=ModelSpec("openai", "gpt-5.4-mini"),
+        ) as mock_resolve:
+            title = await _generate_pr_title("Route review through OpenAI", "", registry=registry)
+
+        assert title == "fix: provider routing"
+        mock_resolve.assert_called_once_with(registry, "reviewer", "low")
+        provider.start.assert_called_once()
 
 
 # ── Execute with edited task graph tests ─────────────────────────────

@@ -15,6 +15,46 @@ interface Settings {
   agent_model_medium: string;
   agent_model_high: string;
   reviewer_model: string;
+  contract_builder_model: string;
+  ci_fix_model: string;
+}
+
+interface CatalogCapabilities {
+  can_use_tools: boolean;
+  can_stream: boolean;
+  can_resume_session: boolean;
+  can_run_shell: boolean;
+  can_edit_files: boolean;
+  supports_mcp_servers: boolean;
+  max_context_tokens: number;
+  supports_structured_output: boolean;
+  supports_reasoning: boolean;
+}
+
+interface CatalogModel {
+  alias: string;
+  canonical_id: string;
+  backend: string;
+  tier: string;
+  capabilities: CatalogCapabilities;
+  validated_stages: string[];
+}
+
+interface ProviderSummary {
+  name: string;
+  models: CatalogModel[];
+}
+
+interface ObservedHealthEntry {
+  spec: string;
+  last_checked: string;
+  stages_passing: string[];
+  stages_failing: string[];
+}
+
+interface ProvidersResponse {
+  providers: ProviderSummary[];
+  observed_health: ObservedHealthEntry[];
 }
 
 interface PipelineTemplate {
@@ -60,37 +100,133 @@ const DEFAULT_SETTINGS: Settings = {
   agent_model_medium: "opus",
   agent_model_high: "opus",
   reviewer_model: "sonnet",
+  contract_builder_model: "opus",
+  ci_fix_model: "sonnet",
 };
 
-const MODEL_OPTIONS = ["opus", "sonnet", "haiku"] as const;
 const STRATEGY_OPTIONS = ["auto", "fast", "quality"] as const;
 
-function ModelSelect({
+/** Agent stages require can_edit_files capability */
+const AGENT_STAGES = new Set(["agent_model_low", "agent_model_medium", "agent_model_high", "ci_fix_model"]);
+
+const TIER_COLORS: Record<string, string> = {
+  primary: "var(--green, #22c55e)",
+  supported: "var(--accent, #6366f1)",
+  experimental: "var(--amber, #f59e0b)",
+};
+
+/** Parse a "provider:model" or bare "model" string into [provider, model]. */
+function parseModelSpec(val: string): [string, string] {
+  if (val.includes(":")) {
+    const [p, ...rest] = val.split(":");
+    return [p, rest.join(":")];
+  }
+  return ["claude", val];
+}
+
+function ProviderModelSelect({
   label,
   value,
+  stageKey,
+  providers,
+  health,
   onChange,
 }: {
   label: string;
   value: string;
+  stageKey: string;
+  providers: ProviderSummary[];
+  health: ObservedHealthEntry[];
   onChange: (v: string) => void;
 }) {
+  const [selectedProvider, selectedModel] = parseModelSpec(value);
+  const isAgentStage = AGENT_STAGES.has(stageKey);
+
+  const currentProviderData = providers.find((p) => p.name === selectedProvider);
+  const models = currentProviderData?.models ?? [];
+
+  const handleProviderChange = (newProvider: string) => {
+    const providerData = providers.find((p) => p.name === newProvider);
+    const firstModel = providerData?.models?.[0]?.alias ?? "";
+    onChange(`${newProvider}:${firstModel}`);
+  };
+
+  const handleModelChange = (newModel: string) => {
+    onChange(`${selectedProvider}:${newModel}`);
+  };
+
+  // Find health entry for currently selected model
+  const healthEntry = health.find((h) => h.spec === `${selectedProvider}:${selectedModel}`);
+  const isDegraded = healthEntry && healthEntry.stages_failing.length > 0;
+
   return (
     <div className="setting-row">
       <div className="setting-label-group">
-        <div className="setting-label">{label}</div>
+        <div className="setting-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {label}
+          {isDegraded && (
+            <span
+              title={`Failing stages: ${healthEntry.stages_failing.join(", ")}`}
+              style={{ color: "var(--amber, #f59e0b)", cursor: "help", fontSize: "14px" }}
+            >
+              &#9888;
+            </span>
+          )}
+        </div>
       </div>
-      <div className="setting-control">
+      <div className="setting-control" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+        {/* Provider dropdown */}
         <select
           className="settings-select"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          value={selectedProvider}
+          onChange={(e) => handleProviderChange(e.target.value)}
+          style={{ minWidth: "100px" }}
         >
-          {MODEL_OPTIONS.map((m) => (
-            <option key={m} value={m}>
-              {m.charAt(0).toUpperCase() + m.slice(1)}
+          {providers.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
             </option>
           ))}
         </select>
+        {/* Model dropdown */}
+        <select
+          className="settings-select"
+          value={selectedModel}
+          onChange={(e) => handleModelChange(e.target.value)}
+          style={{ minWidth: "120px" }}
+        >
+          {models.map((m) => {
+            const disabled = isAgentStage && !m.capabilities.can_edit_files;
+            return (
+              <option key={m.alias} value={m.alias} disabled={disabled}>
+                {m.alias.charAt(0).toUpperCase() + m.alias.slice(1)}
+                {disabled ? " (no file edit)" : ""}
+              </option>
+            );
+          })}
+        </select>
+        {/* Tier badge */}
+        {(() => {
+          const model = models.find((m) => m.alias === selectedModel);
+          if (!model) return null;
+          return (
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 600,
+                padding: "2px 6px",
+                borderRadius: "var(--radius-sm)",
+                background: `${TIER_COLORS[model.tier] || "var(--text-dim)"}20`,
+                color: TIER_COLORS[model.tier] || "var(--text-dim)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {model.tier}
+            </span>
+          );
+        })()}
       </div>
     </div>
   );
@@ -492,6 +628,10 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [cliStatus, setCliStatus] = useState<string>("checking");
 
+  // Provider state
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [health, setHealth] = useState<ObservedHealthEntry[]>([]);
+
   // Template state
   const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
   const [editingTemplate, setEditingTemplate] =
@@ -519,8 +659,18 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!token) return;
 
-    apiGet("/settings", token)
-      .then((data) => setSettings(data))
+    Promise.all([
+      apiGet("/settings", token),
+      apiGet("/providers", token).catch(() => null),
+    ])
+      .then(([settingsData, providersData]) => {
+        setSettings(settingsData);
+        if (providersData) {
+          const resp = providersData as ProvidersResponse;
+          setProviders(resp.providers || []);
+          setHealth(resp.observed_health || []);
+        }
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
 
@@ -1042,41 +1192,70 @@ export default function SettingsPage() {
               Per-role model assignments
             </span>
           </div>
-          <ModelSelect
-            label="Planner Model"
-            value={settings.planner_model}
-            onChange={(v) =>
-              setSettings((s) => ({ ...s, planner_model: v }))
-            }
-          />
-          <ModelSelect
-            label="Agent — Low Complexity"
-            value={settings.agent_model_low}
-            onChange={(v) =>
-              setSettings((s) => ({ ...s, agent_model_low: v }))
-            }
-          />
-          <ModelSelect
-            label="Agent — Medium Complexity"
-            value={settings.agent_model_medium}
-            onChange={(v) =>
-              setSettings((s) => ({ ...s, agent_model_medium: v }))
-            }
-          />
-          <ModelSelect
-            label="Agent — High Complexity"
-            value={settings.agent_model_high}
-            onChange={(v) =>
-              setSettings((s) => ({ ...s, agent_model_high: v }))
-            }
-          />
-          <ModelSelect
-            label="Reviewer Model"
-            value={settings.reviewer_model}
-            onChange={(v) =>
-              setSettings((s) => ({ ...s, reviewer_model: v }))
-            }
-          />
+          {providers.length > 0 ? (
+            <>
+              <ProviderModelSelect
+                label="Planner Model"
+                value={settings.planner_model}
+                stageKey="planner_model"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, planner_model: v }))}
+              />
+              <ProviderModelSelect
+                label="Contract Builder"
+                value={settings.contract_builder_model}
+                stageKey="contract_builder_model"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, contract_builder_model: v }))}
+              />
+              <ProviderModelSelect
+                label="Agent — Low Complexity"
+                value={settings.agent_model_low}
+                stageKey="agent_model_low"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, agent_model_low: v }))}
+              />
+              <ProviderModelSelect
+                label="Agent — Medium Complexity"
+                value={settings.agent_model_medium}
+                stageKey="agent_model_medium"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, agent_model_medium: v }))}
+              />
+              <ProviderModelSelect
+                label="Agent — High Complexity"
+                value={settings.agent_model_high}
+                stageKey="agent_model_high"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, agent_model_high: v }))}
+              />
+              <ProviderModelSelect
+                label="Reviewer Model"
+                value={settings.reviewer_model}
+                stageKey="reviewer_model"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, reviewer_model: v }))}
+              />
+              <ProviderModelSelect
+                label="CI Fix Model"
+                value={settings.ci_fix_model}
+                stageKey="ci_fix_model"
+                providers={providers}
+                health={health}
+                onChange={(v) => setSettings((s) => ({ ...s, ci_fix_model: v }))}
+              />
+            </>
+          ) : (
+            <div style={{ padding: "12px 0", fontSize: "13px", color: "var(--text-dim)" }}>
+              Loading provider catalog...
+            </div>
+          )}
         </div>
 
         {/* Claude SDK */}

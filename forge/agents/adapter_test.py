@@ -9,6 +9,7 @@ from forge.agents.adapter import (
     _build_conventions_block,
     _build_dependency_context,
     _build_question_protocol,
+    build_agent_system_prompt,
 )
 
 # --- AgentResult tests ---
@@ -118,6 +119,17 @@ def test_conventions_block_json_string_list():
     result = _build_conventions_block(json.dumps(data), None)
     assert "Use type hints everywhere" in result
     assert "No global state" in result
+
+
+def test_agent_system_prompt_explains_existing_diff_vs_true_noop():
+    prompt = build_agent_system_prompt(
+        worktree_path="/tmp/worktree",
+        allowed_dirs=[],
+        allowed_files=["forge/api/routes/providers_test.py"],
+    )
+
+    assert "ALREADY PRESENT in the current worktree" in prompt
+    assert 'Do NOT claim "no changes needed" if `git diff` still shows' in prompt
 
 
 # --- _build_dependency_context tests ---
@@ -283,7 +295,7 @@ async def test_claude_adapter_passes_on_message_to_sdk_query():
     mock_result.total_cost_usd = 0.01
     mock_result.is_error = False
 
-    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+    with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
         with patch("forge.agents.adapter._get_changed_files", return_value=["a.py"]):
             adapter = ClaudeAdapter()
@@ -324,7 +336,7 @@ async def test_claude_adapter_run_passes_conventions_and_deps():
         }
     ]
 
-    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+    with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
         with patch("forge.agents.adapter._get_changed_files", return_value=[]):
             adapter = ClaudeAdapter()
@@ -385,7 +397,7 @@ async def test_claude_adapter_run_forwards_autonomy():
     mock_result.input_tokens = 100
     mock_result.output_tokens = 50
 
-    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+    with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
         with patch("forge.agents.adapter._get_changed_files", return_value=[]):
             adapter = ClaudeAdapter()
@@ -414,7 +426,7 @@ async def test_claude_adapter_error_includes_cost():
     mock_result.input_tokens = 500
     mock_result.output_tokens = 200
 
-    with patch("forge.agents.adapter.sdk_query", new_callable=AsyncMock) as mock_query:
+    with patch("forge.core.sdk_helpers.sdk_query", new_callable=AsyncMock) as mock_query:
         mock_query.return_value = mock_result
         with patch("forge.agents.adapter._get_changed_files", return_value=[]):
             adapter = ClaudeAdapter()
@@ -544,24 +556,24 @@ class TestAgentPermissions:
     """Permissions are passed via SDK options, not written to disk."""
 
     def test_disallowed_tools_blocks_network(self):
-        """Network commands are blocked."""
-        assert "Bash(curl *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(wget *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(ssh *)" in AGENT_DISALLOWED_TOOLS
+        """Network commands are blocked (now using Forge denied-ops syntax)."""
+        assert "net:curl" in AGENT_DISALLOWED_TOOLS
+        assert "net:wget" in AGENT_DISALLOWED_TOOLS
+        assert "net:ssh" in AGENT_DISALLOWED_TOOLS
 
     def test_disallowed_tools_blocks_privilege_escalation(self):
         """sudo and friends are blocked."""
-        assert "Bash(sudo *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(chmod *)" in AGENT_DISALLOWED_TOOLS
+        assert "priv:sudo" in AGENT_DISALLOWED_TOOLS
+        assert "perm:chmod" in AGENT_DISALLOWED_TOOLS
 
     def test_disallowed_tools_blocks_dangerous_git(self):
         """Destructive git commands are in the disallowed tools list."""
-        assert "Bash(git push *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(git rebase *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(git checkout *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(git reset --hard *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(git branch -D *)" in AGENT_DISALLOWED_TOOLS
-        assert "Bash(git merge *)" in AGENT_DISALLOWED_TOOLS
+        assert "git:push" in AGENT_DISALLOWED_TOOLS
+        assert "git:rebase" in AGENT_DISALLOWED_TOOLS
+        assert "git:checkout" in AGENT_DISALLOWED_TOOLS
+        assert "git:reset_hard" in AGENT_DISALLOWED_TOOLS
+        assert "git:branch_delete" in AGENT_DISALLOWED_TOOLS
+        assert "git:merge" in AGENT_DISALLOWED_TOOLS
 
     def test_no_settings_file_written(self, tmp_path):
         """Permissions are NOT written to disk — no file pollution."""
@@ -575,7 +587,8 @@ class TestAgentPermissions:
         assert not (tmp_path / ".claude" / "settings.json").exists()
         # Agents get all tools now (no whitelist), only a denylist
         assert not options.allowed_tools  # empty list = full access
-        assert options.disallowed_tools == list(AGENT_DISALLOWED_TOOLS)
+        # disallowed_tools are translated from Forge syntax to Claude SDK format
+        assert len(options.disallowed_tools) > 0
 
     def test_build_options_passes_permissions(self):
         """_build_options includes disallowed_tools and empty allowed_tools."""
@@ -588,6 +601,55 @@ class TestAgentPermissions:
         )
         # Agents get all tools (no whitelist)
         assert not options.allowed_tools  # empty list = full access
-        # Denylist includes network and dangerous git commands
+        # Denylist includes network and dangerous git commands (translated to SDK format)
         assert "Bash(curl *)" in options.disallowed_tools
         assert "Bash(git push *)" in options.disallowed_tools
+
+
+# --- Provider protocol migration tests ---
+
+
+def test_agent_disallowed_tools_uses_restrictions():
+    """AGENT_DISALLOWED_TOOLS should now be sourced from restrictions module."""
+    from forge.providers.restrictions import AGENT_DENIED_OPERATIONS
+
+    assert AGENT_DISALLOWED_TOOLS is AGENT_DENIED_OPERATIONS
+
+
+def test_agent_result_has_provider_fields():
+    """AgentResult should have new provider protocol fields."""
+    result = AgentResult(
+        success=True,
+        files_changed=["a.py"],
+        summary="Done",
+        resume_state=None,
+        provider_model="claude:sonnet",
+        backend="claude-code-sdk",
+        canonical_model_id="claude-sonnet-4-20250514",
+        model_history_entry={
+            "attempt": 0,
+            "model": "claude:sonnet",
+            "backend": "claude-code-sdk",
+            "result": "success",
+            "cost_usd": 0.01,
+        },
+    )
+    assert result.provider_model == "claude:sonnet"
+    assert result.backend == "claude-code-sdk"
+    assert result.canonical_model_id == "claude-sonnet-4-20250514"
+    assert result.model_history_entry["attempt"] == 0
+    assert result.resume_state is None
+
+
+def test_agent_result_defaults_provider_fields():
+    """Provider fields should default to None for backward compat."""
+    result = AgentResult(
+        success=True,
+        files_changed=[],
+        summary="Done",
+    )
+    assert result.resume_state is None
+    assert result.provider_model is None
+    assert result.backend is None
+    assert result.canonical_model_id is None
+    assert result.model_history_entry is None

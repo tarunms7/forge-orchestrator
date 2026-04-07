@@ -1,6 +1,7 @@
 import importlib
+import os
 from importlib.metadata import PackageNotFoundError
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -96,6 +97,36 @@ def test_run_help_shows_deep_plan_option():
     result = runner.invoke(cli, ["run", "--help"])
     assert result.exit_code == 0
     assert "--deep-plan" in result.output
+
+
+def test_tui_defaults_to_project_local_data_dir(tmp_path, monkeypatch):
+    """tui should isolate project runs under <project>/.forge/data when env is unset."""
+    runner = CliRunner()
+    monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
+
+    seen: dict[str, str] = {}
+
+    class DummyApp:
+        def __init__(self, project_dir: str = ".", settings=None, **kwargs):
+            seen["project_dir"] = project_dir
+            seen["data_dir"] = os.environ.get("FORGE_DATA_DIR", "")
+
+        def run(self):
+            return None
+
+    with (
+        patch("forge.core.logging_config.configure_tui_logging"),
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+        patch("forge.config.project_config.ProjectConfig.load", return_value=MagicMock()),
+        patch("forge.config.project_config.apply_project_config"),
+        patch("forge.tui.app.ForgeApp", DummyApp),
+    ):
+        result = runner.invoke(cli, ["tui", "--project-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert seen["project_dir"] == str(tmp_path)
+    assert seen["data_dir"] == str(tmp_path / ".forge" / "data")
 
 
 def test_run_passes_spec_and_deep_plan(tmp_path):
@@ -387,6 +418,88 @@ def test_run_dry_run_output_shows_cost(tmp_path):
     assert "$1.50" in result.output
     assert "2 tasks" in result.output
     assert "Run without --dry-run to execute" in result.output
+
+
+def test_run_help_shows_provider_flags():
+    """Provider override flags must appear in run --help."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--provider" in result.output
+    assert "--planner" in result.output
+    assert "--agent" in result.output
+    assert "--reviewer" in result.output
+    assert "--contract-builder" in result.output
+    assert "--ci-fix" in result.output
+
+
+def test_providers_list_registered():
+    """providers command must be registered in the CLI group."""
+    assert "providers" in cli.commands
+
+
+def test_providers_list_help():
+    """providers list --help should work."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["providers", "list", "--help"])
+    assert result.exit_code == 0
+    assert "catalog" in result.output.lower() or "tier" in result.output.lower()
+
+
+def test_providers_test_stub():
+    """providers test should print 'not yet implemented'."""
+    runner = CliRunner()
+    result = runner.invoke(cli, ["providers", "test", "claude:sonnet"])
+    assert result.exit_code == 0
+    assert "not yet implemented" in result.output
+
+
+def test_run_agent_flag_sets_all_tiers(tmp_path):
+    """--agent flag should set all agent complexity tiers."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_daemon = MagicMock()
+    mock_daemon.run = AsyncMock(return_value=None)
+
+    mock_preflight_report = MagicMock()
+    mock_preflight_report.passed = True
+    mock_preflight_report.warnings = []
+
+    captured_settings = {}
+
+    def _capture_daemon(project_path, settings=None, **kwargs):
+        if settings:
+            captured_settings["agent_model_low"] = settings.agent_model_low
+            captured_settings["agent_model_medium"] = settings.agent_model_medium
+            captured_settings["agent_model_high"] = settings.agent_model_high
+        return mock_daemon
+
+    with (
+        patch("forge.core.daemon.ForgeDaemon", side_effect=_capture_daemon),
+        patch(
+            "forge.core.preflight.run_preflight",
+            new_callable=AsyncMock,
+            return_value=mock_preflight_report,
+        ),
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+    ):
+        runner = CliRunner()
+        runner.invoke(
+            cli,
+            [
+                "run",
+                "Build it",
+                "--agent",
+                "claude:haiku",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+
+    assert captured_settings.get("agent_model_low") == "claude:haiku"
+    assert captured_settings.get("agent_model_medium") == "claude:haiku"
+    assert captured_settings.get("agent_model_high") == "claude:haiku"
 
 
 def test_serve_uses_central_db_url_by_default():

@@ -15,6 +15,7 @@ from forge.core.daemon import ForgeDaemon
 from forge.core.events import EventEmitter
 from forge.core.models import TaskGraph
 from forge.merge.worktree import WorktreeManager
+from forge.providers.base import EventKind, ProviderEvent, ProviderResult
 from forge.storage.db import Database
 
 # -- Shared test data -------------------------------------------------------
@@ -124,6 +125,11 @@ async def test_plan_emits_events_in_correct_order():
     assert event_types[0] == "pipeline:phase_changed"
     assert emitted_events[0][1] == {"phase": "planning"}
 
+    planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
+    assert any(line.startswith("Starting planner (") for line in planner_lines)
+    assert any(line.startswith("Routing: ") for line in planner_lines)
+    assert any("Planner Claude" in line for line in planner_lines if line.startswith("Routing: "))
+
     # plan_ready must appear before phase_changed:planned
     plan_ready_idx = next(
         i for i, (evt, _) in enumerate(emitted_events) if evt == "pipeline:plan_ready"
@@ -142,6 +148,45 @@ async def test_plan_emits_events_in_correct_order():
         (i, data) for i, (evt, data) in enumerate(emitted_events) if evt == "pipeline:phase_changed"
     ]
     assert phase_events[-1][1] == {"phase": "planned"}
+
+
+async def test_plan_tracks_provider_reported_cost_for_simple_planner():
+    emitter = EventEmitter()
+    daemon = _make_daemon(event_emitter=emitter)
+    db = _make_mock_db()
+
+    mock_planner_instance = AsyncMock()
+    mock_planner_instance.plan = AsyncMock(return_value=VALID_GRAPH)
+
+    mock_planner_llm = MagicMock()
+    mock_planner_llm._last_sdk_result = ProviderResult(
+        text="",
+        is_error=False,
+        input_tokens=100,
+        output_tokens=50,
+        resume_state=None,
+        duration_ms=250,
+        provider_reported_cost_usd=1.25,
+        model_canonical_id="claude-opus",
+    )
+
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
+        mock_snapshot.return_value = MagicMock()
+        mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
+
+        await daemon.plan(
+            "Build a REST API",
+            db,
+            emit_plan_ready=True,
+            pipeline_id="pipe-123",
+        )
+
+    db.add_pipeline_cost.assert_any_call("pipe-123", 1.25)
+    db.set_pipeline_planner_cost.assert_any_call("pipe-123", 1.25)
 
 
 # -- Test: emit_plan_ready=False skips plan_ready but emits planned ----------
@@ -357,6 +402,55 @@ async def test_plan_ready_data_has_tasks_but_no_phase():
         assert "complexity" in task
 
 
+async def test_plan_cost_estimate_event_uses_serializable_total_cost():
+    """plan() should emit a plain numeric cost estimate, not a settings object or dataclass."""
+    emitted_events: list[tuple[str, dict]] = []
+
+    emitter = EventEmitter()
+
+    for evt in (
+        "pipeline:phase_changed",
+        "planner:output",
+        "pipeline:plan_ready",
+        "pipeline:cost_update",
+        "pipeline:cost_estimate",
+    ):
+        handler = AsyncMock(side_effect=lambda data, evt=evt: emitted_events.append((evt, data)))
+        emitter.on(evt, handler)
+
+    daemon = _make_daemon(event_emitter=emitter)
+    db = _make_mock_db()
+
+    mock_planner_instance = AsyncMock()
+    mock_planner_instance.plan = AsyncMock(return_value=VALID_GRAPH)
+    mock_planner_llm = MagicMock()
+    mock_planner_llm._last_sdk_result = None
+
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
+        mock_snapshot.return_value = MagicMock()
+        mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
+
+        await daemon.plan(
+            "Build something",
+            db,
+            emit_plan_ready=True,
+            pipeline_id="pipe-cost",
+        )
+
+    cost_events = [(evt, data) for evt, data in emitted_events if evt == "pipeline:cost_estimate"]
+    assert len(cost_events) == 1
+
+    payload = cost_events[0][1]
+    assert isinstance(payload["estimated_cost"], float)
+    assert payload["estimated_cost"] > 0
+    assert payload["estimated_cost_usd"] == payload["estimated_cost"]
+    assert payload["task_count"] == 2
+
+
 # -- Test: events emitted without pipeline_id use _events.emit directly -----
 
 
@@ -400,3 +494,46 @@ async def test_plan_without_pipeline_id_uses_events_emit():
 
     # db.log_event should NOT have been called (no pipeline_id means no DB logging)
     db.log_event.assert_not_called()
+
+
+async def test_plan_surfaces_provider_status_activity_in_planner_output():
+    """Planner status events should be visible in the planning panel."""
+    emitted_events: list[tuple[str, dict]] = []
+
+    emitter = EventEmitter()
+
+    for evt in ("pipeline:phase_changed", "planner:output", "pipeline:plan_ready"):
+        handler = AsyncMock(side_effect=lambda data, evt=evt: emitted_events.append((evt, data)))
+        emitter.on(evt, handler)
+
+    daemon = _make_daemon(event_emitter=emitter)
+    db = _make_mock_db()
+
+    async def _plan_side_effect(*args, **kwargs):
+        on_message = kwargs.get("on_message")
+        assert on_message is not None
+        await on_message(ProviderEvent(kind=EventKind.STATUS, status="thinking"))
+        return VALID_GRAPH
+
+    mock_planner_instance = AsyncMock()
+    mock_planner_instance.plan = AsyncMock(side_effect=_plan_side_effect)
+    mock_planner_llm = MagicMock()
+    mock_planner_llm._last_sdk_result = None
+
+    with (
+        patch("forge.core.daemon.ClaudePlannerLLM", return_value=mock_planner_llm),
+        patch("forge.core.daemon.Planner", return_value=mock_planner_instance),
+        patch("forge.core.daemon.gather_project_snapshot") as mock_snapshot,
+    ):
+        mock_snapshot.return_value = MagicMock()
+        mock_snapshot.return_value.format_for_planner.return_value = "snapshot"
+
+        await daemon.plan(
+            "Build something",
+            db,
+            emit_plan_ready=True,
+            pipeline_id="pipe-status",
+        )
+
+    planner_lines = [data["line"] for evt, data in emitted_events if evt == "planner:output"]
+    assert "Thinking…" not in planner_lines

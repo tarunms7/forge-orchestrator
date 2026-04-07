@@ -16,6 +16,7 @@ from forge.review.strategy import (
     extract_interface_context,
     parse_diff_files,
     select_strategy,
+    should_deepen_small_diff_review,
 )
 
 # ---------------------------------------------------------------------------
@@ -267,6 +268,40 @@ def test_select_strategy_boundary_large():
     lines_1999 = "".join(f"+line{i}\n" for i in range(1999))
     diff_1999 = f"diff --git a/big.py b/big.py\n--- a/big.py\n+++ b/big.py\n@@ -1,1 +1,1999 @@\n{lines_1999}"
     assert select_strategy(diff_1999, 400, 2000) == ReviewStrategy.TIER2
+
+
+def test_should_deepen_small_diff_review_for_high_risk_file():
+    lines = "".join(f"+line{i}\n" for i in range(40))
+    diff = (
+        "diff --git a/auth/session.py b/auth/session.py\n"
+        "--- a/auth/session.py\n"
+        "+++ b/auth/session.py\n"
+        "@@ -1,1 +1,40 @@\n"
+        f"{lines}"
+    )
+    assert should_deepen_small_diff_review(diff) is True
+
+
+def test_should_not_deepen_tiny_low_risk_diff():
+    diff = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n+line\n"
+    assert should_deepen_small_diff_review(diff) is False
+
+
+def test_should_deepen_small_diff_review_for_multi_file_source_change():
+    lines = "".join(f"+line{i}\n" for i in range(60))
+    diff = (
+        "diff --git a/forge/a.py b/forge/a.py\n"
+        "--- a/forge/a.py\n"
+        "+++ b/forge/a.py\n"
+        "@@ -1,1 +1,60 @@\n"
+        f"{lines}\n"
+        "diff --git a/forge/b.py b/forge/b.py\n"
+        "--- a/forge/b.py\n"
+        "+++ b/forge/b.py\n"
+        "@@ -1,1 +1,60 @@\n"
+        f"{lines}"
+    )
+    assert should_deepen_small_diff_review(diff) is True
 
 
 # ---------------------------------------------------------------------------

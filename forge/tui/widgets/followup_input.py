@@ -6,8 +6,9 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Static, TextArea
+from textual.widgets import Static
 
+from forge.tui.widgets.sanitized_text_area import SanitizedTextArea
 from forge.tui.widgets.suggestion_chips import SuggestionChips
 
 DEFAULT_SUGGESTIONS = ["Add tests", "Fix linting", "Add docs", "Refactor"]
@@ -35,7 +36,7 @@ def format_followup_history(history: list[str]) -> str:
     return "\n".join(lines)
 
 
-class FollowUpTextArea(TextArea):
+class FollowUpTextArea(SanitizedTextArea):
     """TextArea subclass with escape-to-unfocus and clear-input bindings."""
 
     BINDINGS = [
