@@ -47,7 +47,7 @@ def _queue_hint(task: dict) -> str:
         return "[#d29922]needs input[/#d29922]"
 
     if reason.startswith("Waiting on "):
-        formatted = format_blocked_reason(reason, status)
+        formatted = format_blocked_reason(reason)
         if formatted:
             # Convert "Waiting on task-2 + 1 other" -> "wait task-2 +1"
             text = formatted.lower()
@@ -57,7 +57,7 @@ def _queue_hint(task: dict) -> str:
                 return f"[#8b949e]wait {text}[/#8b949e]"
 
     if reason.startswith("Blocked by failed dependenc"):
-        formatted = format_blocked_reason(reason, status)
+        formatted = format_blocked_reason(reason)
         if formatted:
             # Convert "Blocked: dep + 1 other failed" -> "blocked dep +1"
             text = formatted.lower()

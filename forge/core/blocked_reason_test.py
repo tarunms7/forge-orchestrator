@@ -90,10 +90,10 @@ class TestFormatBlockedReason:
         result = format_blocked_reason(reason)
         assert result == "Some unexpected reason format"
 
-    def test_format_with_status_parameter(self):
-        """Status parameter should be accepted but not change output."""
+    def test_format_without_status_parameter(self):
+        """Ensure function works without status parameter."""
         reason = "Waiting on task-2"
-        result = format_blocked_reason(reason, status="waiting")
+        result = format_blocked_reason(reason)
         assert result == "Waiting on task-2"
 
 
@@ -103,28 +103,28 @@ class TestFormatBlockedDetail:
     def test_detail_waiting_single_dep(self):
         """Single waiting dependency should list the dependency."""
         reason = "Waiting on task-2"
-        result = format_blocked_detail(reason, "waiting")
+        result = format_blocked_detail(reason)
         expected = "Waiting for dependencies to complete:\n  - task-2"
         assert result == expected
 
     def test_detail_waiting_multiple_deps(self):
         """Multiple waiting dependencies should list all dependencies."""
         reason = "Waiting on task-2, task-3, auth-backend"
-        result = format_blocked_detail(reason, "waiting")
+        result = format_blocked_detail(reason)
         expected = "Waiting for dependencies to complete:\n  - task-2\n  - task-3\n  - auth-backend"
         assert result == expected
 
     def test_detail_blocked_single_failed(self):
         """Single failed dependency should list it as failed."""
         reason = "Blocked by failed dependency: auth-backend"
-        result = format_blocked_detail(reason, "blocked")
+        result = format_blocked_detail(reason)
         expected = "Blocked by failed dependency:\n  - auth-backend (failed)"
         assert result == expected
 
     def test_detail_blocked_multiple_failed(self):
         """Multiple failed dependencies should list all as failed."""
         reason = "Blocked by failed dependencies: auth-backend, db-setup"
-        result = format_blocked_detail(reason, "blocked")
+        result = format_blocked_detail(reason)
         expected = (
             "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
         )
@@ -133,55 +133,55 @@ class TestFormatBlockedDetail:
     def test_detail_human_decision_input(self):
         """Human decision should explain input needed."""
         reason = "Human decision required before resume"
-        result = format_blocked_detail(reason, "human_wait")
+        result = format_blocked_detail(reason)
         expected = "This task needs human input before it can continue."
         assert result == expected
 
     def test_detail_human_approval_input(self):
         """Human approval should explain input needed."""
         reason = "Human approval required before merge"
-        result = format_blocked_detail(reason, "human_wait")
+        result = format_blocked_detail(reason)
         expected = "This task needs human input before it can continue."
         assert result == expected
 
     def test_detail_manual_intervention(self):
         """Manual intervention should explain the blocking."""
         reason = "Blocked - waiting for manual intervention"
-        result = format_blocked_detail(reason, "blocked")
+        result = format_blocked_detail(reason)
         expected = "This task is blocked and needs manual intervention."
         assert result == expected
 
     def test_detail_task_failed(self):
         """Task failed should explain the failure."""
         reason = "Task failed and needs retry or skip"
-        result = format_blocked_detail(reason, "error")
+        result = format_blocked_detail(reason)
         expected = "This task failed and needs to be retried or skipped."
         assert result == expected
 
     def test_detail_empty_reason(self):
         """Empty reason should return empty string."""
         reason = ""
-        result = format_blocked_detail(reason, "ready")
+        result = format_blocked_detail(reason)
         assert result == ""
 
     def test_detail_none_reason(self):
         """None reason should return empty string."""
         reason = None
-        result = format_blocked_detail(reason, "ready")
+        result = format_blocked_detail(reason)
         assert result == ""
 
     def test_detail_with_blocking_task_ids(self):
         """Blocking task IDs parameter should be accepted."""
         reason = "Waiting on task-2, task-3"
         blocking_ids = ["task-2", "task-3"]
-        result = format_blocked_detail(reason, "waiting", blocking_ids)
+        result = format_blocked_detail(reason)
         expected = "Waiting for dependencies to complete:\n  - task-2\n  - task-3"
         assert result == expected
 
     def test_detail_unknown_reason(self):
         """Unknown reason should pass through unchanged."""
         reason = "Some unexpected reason format"
-        result = format_blocked_detail(reason, "unknown")
+        result = format_blocked_detail(reason)
         assert result == "Some unexpected reason format"
 
 
