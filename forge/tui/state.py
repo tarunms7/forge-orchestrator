@@ -108,6 +108,8 @@ class TuiState:
 
         # Merge progress substatus (task_id → step label)
         self.merge_substatus: dict[str, str] = {}
+        # Review progress substatus (task_id → stage label)
+        self.review_substatus: dict[str, str] = {}
         self.scheduling: dict | None = None
 
         # Multi-repo state
@@ -188,6 +190,9 @@ class TuiState:
         # Clear merge substatus when task leaves MERGING
         if new_state != "merging":
             self.merge_substatus.pop(tid, None)
+        # Clear review substatus when task leaves in_review
+        if new_state not in ("in_review",):
+            self.review_substatus.pop(tid, None)
         if tid in self.tasks:
             self.tasks[tid]["state"] = data.get("state", self.tasks[tid]["state"])
             if "error" in data:
@@ -355,6 +360,7 @@ class TuiState:
             self.review_gates.setdefault(task_id, {})[gate] = {"status": "running"}
             if task_id in self.tasks:
                 self.tasks[task_id]["review_gates"] = dict(self.review_gates[task_id])
+            self.review_substatus[task_id] = f"{_GATE_LABELS.get(gate, gate)} running"
             self._notify("tasks")
 
     def _on_review_gate_passed(self, data: dict) -> None:
@@ -372,6 +378,7 @@ class TuiState:
             self.unified_log[task_id].append(
                 ("gate", f"{gate_label}: \u2713 {data.get('details', 'passed')}")
             )
+            self.review_substatus[task_id] = f"{_GATE_LABELS.get(gate, gate)} passed"
             self._notify("tasks")
 
     def _on_review_gate_failed(self, data: dict) -> None:
@@ -389,6 +396,57 @@ class TuiState:
             self.unified_log[task_id].append(
                 ("gate", f"{gate_label}: \u2717 {data.get('details', 'failed')}")
             )
+            self.review_substatus[task_id] = f"{_GATE_LABELS.get(gate, gate)} failed"
+            self._notify("tasks")
+
+    def _on_review_started(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            self.review_substatus[tid] = "Review started"
+            self.unified_log[tid].append(("gate", "\u2501 Review started"))
+            self._notify("tasks")
+
+    def _on_review_passed(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            self.review_substatus.pop(tid, None)
+            self.unified_log[tid].append(("gate", "\u2713 Review passed"))
+            self._notify("tasks")
+
+    def _on_review_failed(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            gate = data.get("gate", "unknown")
+            self.review_substatus.pop(tid, None)
+            self.unified_log[tid].append(("gate", f"\u2717 Review failed at {gate}"))
+            self._notify("tasks")
+
+    def _on_review_timeout(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            secs = data.get("timeout_seconds", "?")
+            attempt = data.get("attempt", "?")
+            max_a = data.get("max_attempts", "?")
+            self.review_substatus[tid] = f"L2 timed out ({attempt}/{max_a})"
+            self.unified_log[tid].append(("gate", f"L2 review timed out after {secs}s"))
+            self._notify("tasks")
+
+    def _on_review_retry(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            attempt = data.get("attempt", "?")
+            max_a = data.get("max_attempts", "?")
+            self.review_substatus[tid] = f"Retrying review {attempt}/{max_a}"
+            self.unified_log[tid].append(("gate", f"Retrying review attempt {attempt}/{max_a}"))
+            self._notify("tasks")
+
+    def _on_review_re_review(self, data: dict) -> None:
+        tid = data.get("task_id")
+        if tid:
+            attempt = data.get("attempt", "?")
+            max_a = data.get("max_attempts", "?")
+            self.review_substatus[tid] = f"Re-reviewing {attempt}/{max_a}"
+            self.unified_log[tid].append(("gate", f"Re-reviewing attempt {attempt}/{max_a}"))
             self._notify("tasks")
 
     def _on_review_llm_output(self, data: dict) -> None:
@@ -727,6 +785,7 @@ class TuiState:
         self.review_gates.clear()
         self.streaming_task_ids.clear()
         self.merge_substatus.clear()
+        self.review_substatus.clear()
         self.error = None
         self.elapsed_seconds = 0.0
         self.total_cost_usd = 0.0
@@ -807,6 +866,12 @@ class TuiState:
         "review:gate_started": _on_review_gate_started,
         "review:gate_passed": _on_review_gate_passed,
         "review:gate_failed": _on_review_gate_failed,
+        "review:started": _on_review_started,
+        "review:passed": _on_review_passed,
+        "review:failed": _on_review_failed,
+        "review:timeout": _on_review_timeout,
+        "review:retry": _on_review_retry,
+        "review:re_review": _on_review_re_review,
         "review:llm_feedback": _on_review_llm_feedback,
         "review:llm_output": _on_review_llm_output,
         "review:strategy_selected": _on_review_strategy_selected,
