@@ -252,7 +252,7 @@ class AgentRuntime:
             try:
                 result = on_message(event)
                 if inspect.isawaitable(result):
-                    safe_create_task(result, logger=logger, name=f'agent-event-{agent_id}')
+                    safe_create_task(result, logger=logger, name=f"agent-event-{agent_id}")
             except Exception:
                 logger.warning("Agent event callback failed for %s", agent_id, exc_info=True)
 

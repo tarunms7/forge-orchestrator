@@ -139,7 +139,7 @@ class UnifiedPlanner:
         # Bridge async on_message callback from sync on_event
         def _on_event(event: ProviderEvent) -> None:
             if on_message is not None:
-                safe_create_task(on_message(event), logger=logger, name='unified-planner-event')
+                safe_create_task(on_message(event), logger=logger, name="unified-planner-event")
 
         for attempt in range(self._max_retries):
             logger.info("UnifiedPlanner attempt %d/%d", attempt + 1, self._max_retries)

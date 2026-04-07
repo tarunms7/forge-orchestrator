@@ -418,7 +418,7 @@ async def gate2_llm_review(
 
     def _on_event(event: ProviderEvent) -> None:
         if on_message is not None:
-            safe_create_task(on_message(event), logger=logger, name='llm-review-event')
+            safe_create_task(on_message(event), logger=logger, name="llm-review-event")
 
     # Retry the provider call if the result is empty.
     for attempt in range(1, max_review_attempts + 1):

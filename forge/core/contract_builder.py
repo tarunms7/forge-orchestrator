@@ -123,7 +123,7 @@ class ContractBuilderLLM:
 
         def _on_event(event: ProviderEvent) -> None:
             if on_message is not None:
-                safe_create_task(on_message(event), logger=logger, name='contract-event')
+                safe_create_task(on_message(event), logger=logger, name="contract-event")
 
         try:
             handle = provider.start(

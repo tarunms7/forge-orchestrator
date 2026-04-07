@@ -194,7 +194,7 @@ class ClaudePlannerLLM(PlannerLLM):
         # Bridge async on_message callback from sync on_event
         def _on_event(event: ProviderEvent) -> None:
             if on_message is not None:
-                safe_create_task(on_message(event), logger=logger, name='planner-event')
+                safe_create_task(on_message(event), logger=logger, name="planner-event")
 
         try:
             handle = provider.start(

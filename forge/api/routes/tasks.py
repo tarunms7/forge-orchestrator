@@ -641,6 +641,7 @@ async def create_task(
                     )
                     # Store graph for later execution (lock protects concurrent access)
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
+
                     def _store_graph():
                         request.app.state.pending_graphs[pipeline_id] = (
                             graph,

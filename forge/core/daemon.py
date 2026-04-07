@@ -2247,7 +2247,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 try:
                     await db.clear_executor_info(pipeline_id)
                 except Exception:
-                    logger.debug("Failed to clear executor info for pipeline %s", pipeline_id, exc_info=True)
+                    logger.debug(
+                        "Failed to clear executor info for pipeline %s", pipeline_id, exc_info=True
+                    )
 
     def _cleanup_answer_handler(self) -> None:
         """Remove the task:answer listener to prevent accumulation on re-entry."""

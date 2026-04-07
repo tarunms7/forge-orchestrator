@@ -396,7 +396,7 @@ async def review_chunk(
 
     def _on_event(event: ProviderEvent) -> None:
         if on_message is not None:
-            safe_create_task(on_message(event), logger=logger, name='review-synth-event')
+            safe_create_task(on_message(event), logger=logger, name="review-synth-event")
 
     cost_info = ReviewCostInfo()
     max_attempts = 2
