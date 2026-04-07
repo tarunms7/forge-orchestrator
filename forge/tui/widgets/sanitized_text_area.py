@@ -7,11 +7,16 @@ import re
 from textual.widgets import TextArea
 
 _MOUSE_REPORT_RE = re.compile(r"(?:\x1b\[)?<\d+;\d+;\d+[Mm]")
+_RAW_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|[@-_])")
+_CARET_ESCAPE_RE = re.compile(r"(?:\^\[)+(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|<\d+;\d+;\d+[Mm]?|[0-9;?]*[A-Za-z~]?)")
 
 
 def strip_terminal_input_noise(text: str) -> str:
-    """Remove raw terminal mouse-report sequences accidentally inserted as text."""
-    return _MOUSE_REPORT_RE.sub("", text)
+    """Remove terminal control sequences accidentally inserted as editable text."""
+    text = _MOUSE_REPORT_RE.sub("", text)
+    text = _RAW_ESCAPE_RE.sub("", text)
+    text = _CARET_ESCAPE_RE.sub("", text)
+    return text.replace("\x1b", "")
 
 
 def _location_to_offset(text: str, location: tuple[int, int]) -> int:

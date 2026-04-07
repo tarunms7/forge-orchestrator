@@ -251,3 +251,14 @@ def test_followup_text_area_changed_strips_terminal_noise():
 
     assert ta.text == "Add tests please"
     assert ta.cursor_location == (0, len("Add tests please"))
+
+
+def test_followup_text_area_changed_strips_caret_escape_noise():
+    ta = FollowUpTextArea()
+    ta.load_text("Add tests ^[[A please")
+    ta.move_cursor((0, len("Add tests ^[[A please")))
+
+    ta.on_text_area_changed(FollowUpTextArea.Changed(ta))
+
+    assert ta.text == "Add tests  please"
+    assert ta.cursor_location == (0, len("Add tests  please"))

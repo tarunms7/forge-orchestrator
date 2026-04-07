@@ -113,6 +113,11 @@ def test_strip_terminal_input_noise_removes_mouse_packets():
     assert strip_terminal_input_noise(raw) == "hello world done"
 
 
+def test_strip_terminal_input_noise_removes_caret_ansi_sequences():
+    raw = "ship it ^[[200~please^[[201~ now ^[[A"
+    assert strip_terminal_input_noise(raw) == "ship it please now "
+
+
 def test_prompt_text_area_changed_strips_terminal_noise_and_preserves_cursor():
     prompt = PromptTextArea()
     prompt.load_text("Ship it<35;40;23M now")
@@ -122,6 +127,17 @@ def test_prompt_text_area_changed_strips_terminal_noise_and_preserves_cursor():
 
     assert prompt.text == "Ship it now"
     assert prompt.cursor_location == (0, len("Ship it now"))
+
+
+def test_prompt_text_area_changed_strips_caret_notation_escape_noise():
+    prompt = PromptTextArea()
+    prompt.load_text("Build it ^[[200~now^[[201~")
+    prompt.move_cursor((0, len("Build it ^[[200~now^[[201~")))
+
+    prompt.on_text_area_changed(PromptTextArea.Changed(prompt))
+
+    assert prompt.text == "Build it now"
+    assert prompt.cursor_location == (0, len("Build it now"))
 
 
 def test_format_recent_pipelines_flattens_multiline_description():
