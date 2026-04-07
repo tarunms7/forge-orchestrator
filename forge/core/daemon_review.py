@@ -793,6 +793,17 @@ class ReviewMixin:
         if event_name == "review:synthesis_started":
             return "Review synthesis started"
 
+        if event_name == "review:timeout":
+            timeout_seconds = payload.get('timeout_seconds', '?')
+            attempt = payload['attempt']
+            max_attempts = payload['max_attempts']
+            return f"L2 review timed out after {timeout_seconds}s (attempt {attempt}/{max_attempts})"
+
+        if event_name == "review:retry":
+            attempt = payload['attempt']
+            max_attempts = payload['max_attempts']
+            return f"Retrying review attempt {attempt}/{max_attempts}"
+
         return None
 
     # -- main review pipeline ----------------------------------------------
@@ -893,6 +904,8 @@ class ReviewMixin:
         gate_timeout = self._settings.agent_timeout_seconds // 2
         review_t0 = time.monotonic()
 
+        await self._emit("review:started", {"task_id": task.id}, db=db, pipeline_id=pipeline_id)
+
         # Gate 0: Build gate (skip silently if no command configured)
         build_cmd = self._resolve_build_cmd(repo_id=repo_id)
         if build_cmd:
@@ -950,6 +963,7 @@ class ReviewMixin:
                         )
                     except Exception:
                         pass
+                    await self._emit("review:failed", {"task_id": task.id, "gate": "gate0_build", "details": build_result.details}, db=db, pipeline_id=pipeline_id)
                     return False, "\n\n".join(feedback_parts), False
             else:
                 console.print("[green]  Gate 0 (build) passed[/green]")
@@ -1035,6 +1049,7 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
+                await self._emit("review:failed", {"task_id": task.id, "gate": "gate1_lint", "details": gate1_result.details}, db=db, pipeline_id=pipeline_id)
                 return False, "\n\n".join(feedback_parts), False
         else:
             console.print("[green]  L1 passed[/green]")
@@ -1112,6 +1127,7 @@ class ReviewMixin:
                         )
                     except Exception:
                         pass
+                    await self._emit("review:failed", {"task_id": task.id, "gate": "gate1_5_test", "details": test_result.details}, db=db, pipeline_id=pipeline_id)
                     return False, "\n\n".join(feedback_parts), False
             console.print("[green]  Gate 1.5 (test) passed[/green]")
         else:
@@ -1305,6 +1321,7 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
+                await self._emit("review:failed", {"task_id": task.id, "gate": "gate2_llm_review", "details": gate2_result.details}, db=db, pipeline_id=pipeline_id)
                 return False, gate2_result.details, True
             if not gate2_result.passed:
                 console.print(f"[red]  L2 failed: {gate2_result.details}[/red]")
@@ -1318,6 +1335,7 @@ class ReviewMixin:
                     )
                 except Exception:
                     pass
+                await self._emit("review:failed", {"task_id": task.id, "gate": "gate2_llm_review", "details": gate2_result.details}, db=db, pipeline_id=pipeline_id)
                 return False, "\n\n".join(feedback_parts), False
             console.print("[green]  L2 passed[/green]")
 
@@ -1422,6 +1440,7 @@ class ReviewMixin:
                             )
                         except Exception:
                             pass
+                        await self._emit("review:failed", {"task_id": task.id, "gate": "gate2_llm_review_extra", "details": gate2_extra.details}, db=db, pipeline_id=pipeline_id)
                         return False, "\n\n".join(feedback_parts), False
                 else:
                     console.print("[green]  L2 (extra pass) passed[/green]")
@@ -1434,6 +1453,7 @@ class ReviewMixin:
             await db.set_task_timing(task.id, review_duration_s=review_elapsed)
         except Exception:
             logger.debug("Failed to record review_duration_s for %s", task.id, exc_info=True)
+        await self._emit("review:passed", {"task_id": task.id}, db=db, pipeline_id=pipeline_id)
         return True, None, False
 
     async def _run_lint_gate(

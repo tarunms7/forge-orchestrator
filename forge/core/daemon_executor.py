@@ -1939,6 +1939,12 @@ class ExecutorMixin:
                     console.print(
                         f"[yellow]{task_id}: transient review failure, re-reviewing ({re_review_attempt + 1}/{max_re_reviews})...[/yellow]"
                     )
+                    await self._emit("review:re_review", {
+                        "task_id": task_id,
+                        "attempt": re_review_attempt + 2,
+                        "max_attempts": max_re_reviews + 1,
+                        "reason": "transient_failure",
+                    }, db=db, pipeline_id=pid)
                     continue
                 break
             if needs_human:

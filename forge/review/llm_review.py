@@ -264,6 +264,12 @@ async def gate2_llm_review(
                     attempt,
                     max_review_attempts,
                 )
+                if on_review_event:
+                    await on_review_event("review:timeout", {
+                        "timeout_seconds": review_timeout_seconds,
+                        "attempt": attempt,
+                        "max_attempts": max_review_attempts,
+                    })
                 if attempt == max_review_attempts:
                     return (
                         GateResult(
@@ -275,6 +281,12 @@ async def gate2_llm_review(
                         ),
                         cost_info,
                     )
+                if on_review_event:
+                    await on_review_event("review:retry", {
+                        "attempt": attempt + 1,
+                        "max_attempts": max_review_attempts,
+                        "reason": "timeout",
+                    })
                 continue
             except Exception as exc:
                 logger.warning(
@@ -294,6 +306,12 @@ async def gate2_llm_review(
                         ),
                         cost_info,
                     )
+                if on_review_event:
+                    await on_review_event("review:retry", {
+                        "attempt": attempt + 1,
+                        "max_attempts": max_review_attempts,
+                        "reason": "error",
+                    })
                 continue
 
             if sdk_result is not None:
@@ -383,6 +401,12 @@ async def gate2_llm_review(
                 attempt,
                 max_review_attempts,
             )
+            if on_review_event:
+                await on_review_event("review:timeout", {
+                    "timeout_seconds": review_timeout_seconds,
+                    "attempt": attempt,
+                    "max_attempts": max_review_attempts,
+                })
             if attempt == max_review_attempts:
                 return (
                     GateResult(
@@ -394,6 +418,12 @@ async def gate2_llm_review(
                     ),
                     cost_info,
                 )
+            if on_review_event:
+                await on_review_event("review:retry", {
+                    "attempt": attempt + 1,
+                    "max_attempts": max_review_attempts,
+                    "reason": "timeout",
+                })
             continue
         except Exception as e:
             logger.warning(
@@ -413,6 +443,12 @@ async def gate2_llm_review(
                     ),
                     cost_info,
                 )
+            if on_review_event:
+                await on_review_event("review:retry", {
+                    "attempt": attempt + 1,
+                    "max_attempts": max_review_attempts,
+                    "reason": "error",
+                })
             continue
 
         # Always accumulate cost from provider result
