@@ -1,8 +1,7 @@
 """Tests for blocked reason formatting utilities."""
 
-import pytest
 
-from forge.core.blocked_reason import format_blocked_reason, format_blocked_detail
+from forge.core.blocked_reason import format_blocked_detail, format_blocked_reason
 
 
 class TestFormatBlockedReason:

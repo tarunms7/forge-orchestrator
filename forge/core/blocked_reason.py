@@ -1,7 +1,6 @@
 """Pure function utilities for formatting scheduler blocking/waiting reasons into human-readable text."""
 
 import re
-from typing import Optional
 
 
 def format_blocked_reason(reason: str, status: str = '') -> str:
@@ -71,7 +70,7 @@ def format_blocked_reason(reason: str, status: str = '') -> str:
     return reason
 
 
-def format_blocked_detail(reason: str, status: str, blocking_task_ids: Optional[list[str]] = None) -> str:
+def format_blocked_detail(reason: str, status: str, blocking_task_ids: list[str] | None = None) -> str:
     """
     Convert raw scheduler reason into multi-line detail explanation.
 
