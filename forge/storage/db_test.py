@@ -613,6 +613,51 @@ async def test_reset_task_for_human_retry_refunds_one_retry(db: Database):
     assert task.retry_count == 0
 
 
+async def test_retry_task_clears_stale_error_and_completion(db: Database):
+    """Automatic retries should not carry stale error/completion metadata forward."""
+    await db.create_task(
+        id="t-auto-retry",
+        title="Retry",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-r1",
+    )
+    await db.set_task_error("t-auto-retry", "Agent produced no changes")
+    await db.set_task_timing("t-auto-retry", completed_at="2026-04-06T21:56:52+00:00")
+
+    await db.retry_task("t-auto-retry")
+
+    task = await db.get_task("t-auto-retry")
+    assert task.state == "todo"
+    assert task.error_message is None
+    assert task.completed_at is None
+
+
+async def test_reset_task_for_resume_clears_stale_runtime_metadata(db: Database):
+    """Interrupted tasks should rewind cleanly before a local resume."""
+    await db.create_task(
+        id="t-resume",
+        title="Resume",
+        description="D",
+        files=["a.py"],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-r1",
+    )
+    await db.update_task_state("t-resume", "in_progress")
+    await db.set_task_error("t-resume", "stale failure")
+    await db.set_task_timing("t-resume", completed_at="2026-04-06T21:59:12+00:00")
+
+    await db.reset_task_for_resume("t-resume")
+
+    task = await db.get_task("t-resume")
+    assert task.state == "todo"
+    assert task.error_message is None
+    assert task.completed_at is None
+
+
 # ── cancel_pipeline_hard tests ──────────────────────────────────────
 
 

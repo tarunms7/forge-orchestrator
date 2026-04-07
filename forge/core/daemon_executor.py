@@ -162,6 +162,26 @@ class ExecutorMixin:
         if health:
             health.record_task_activity(task_id)
 
+    async def _record_task_completion_if_terminal(self, db, task_id: str) -> None:
+        """Persist completed_at only once a task reaches a terminal state."""
+        try:
+            task = await db.get_task(task_id)
+        except Exception:
+            logger.debug("Failed to load %s before recording completion", task_id, exc_info=True)
+            return
+
+        if not task or task.state not in (
+            TaskState.DONE.value,
+            TaskState.ERROR.value,
+            TaskState.CANCELLED.value,
+        ):
+            return
+
+        try:
+            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+        except Exception:
+            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+
     def _select_model(
         self,
         stage: str,
@@ -378,11 +398,7 @@ class ExecutorMixin:
             agent_summary=agent_result.summary if agent_result else "",
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        # Record task completion time
-        try:
-            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
-        except Exception:
-            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+        await self._record_task_completion_if_terminal(db, task_id)
 
     # -- merge-only fast path -------------------------------------------
 
@@ -453,11 +469,7 @@ class ExecutorMixin:
                 pre_merge_ref=pre_merge_ref,
             )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        # Record task completion time for merge-only fast path
-        try:
-            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
-        except Exception:
-            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+        await self._record_task_completion_if_terminal(db, task_id)
 
     # -- review-only path for resume -------------------------------------
 
@@ -540,10 +552,7 @@ class ExecutorMixin:
             pipeline_branch=pipeline_branch,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        try:
-            await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
-        except Exception:
-            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
+        await self._record_task_completion_if_terminal(db, task_id)
 
     # -- worktree creation ----------------------------------------------
 

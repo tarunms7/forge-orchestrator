@@ -989,6 +989,26 @@ class ForgeApp(App):
             self._state._notify("tasks")
         return len(reset_ids)
 
+    async def _reset_interrupted_tasks_for_resume(self, pipeline_id: str) -> int:
+        """Reset orphaned live tasks before resuming a dead local pipeline."""
+        if not self._db:
+            return 0
+
+        tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+        reset_ids: list[str] = []
+        for task in tasks:
+            if task.state in ("in_progress", "in_review", "merging", "cancelled"):
+                await self._db.reset_task_for_resume(task.id)
+                reset_ids.append(task.id)
+
+        if reset_ids:
+            for task_id in reset_ids:
+                if task_id in self._state.tasks:
+                    self._state.tasks[task_id]["state"] = "todo"
+                    self._state.tasks[task_id].pop("error", None)
+            self._state._notify("tasks")
+        return len(reset_ids)
+
     async def _retry_failed_pipeline(self, *, push_pipeline_screen: bool = False) -> bool:
         """Retry failed tasks and re-enter normal pipeline execution."""
         if not self._db or not self._pipeline_id:
@@ -1956,11 +1976,17 @@ class ForgeApp(App):
                 self.push_screen(PipelineScreen(self._state))
 
                 tasks = await self._db.list_tasks_by_pipeline(pipeline_id)
+                reset_count = await self._reset_interrupted_tasks_for_resume(pipeline_id)
                 await self._db.update_pipeline_status(pipeline_id, "executing")
                 await self._resume_execution()
                 done = sum(1 for t in tasks if t.state == "done")
+                recovered = (
+                    f" Recovered {reset_count} interrupted task{'s' if reset_count != 1 else ''}."
+                    if reset_count
+                    else ""
+                )
                 self.notify(
-                    f"Resumed pipeline — {done}/{len(tasks)} tasks done",
+                    f"Resumed pipeline — {done}/{len(tasks)} tasks done.{recovered}",
                     severity="information",
                 )
                 return

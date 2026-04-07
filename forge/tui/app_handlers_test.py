@@ -519,6 +519,93 @@ async def test_history_resume_interrupted_planning_restarts_from_scratch():
 
 
 @pytest.mark.asyncio
+async def test_history_resume_interrupted_execution_resets_orphaned_tasks():
+    """Interrupted execution should rewind orphaned live tasks before resuming."""
+    from forge.tui.app import ForgeApp
+    from forge.tui.screens.pipeline import PipelineScreen
+    from forge.tui.state import TuiState
+
+    pipeline = MagicMock(id="pipe-exec", project_dir="/tmp", task_graph_json='{"tasks":[]}')
+    ctx = {
+        "status": "interrupted",
+        "quit_phase": None,
+        "task_graph_json": pipeline.task_graph_json,
+        "contracts_json": None,
+        "pr_url": None,
+        "project_dir": "/tmp",
+        "base_branch": "main",
+        "branch_name": "forge/exec-branch",
+        "description": "Resume execution",
+        "executor_pid": None,
+        "total_tasks": 2,
+        "tasks_done": 1,
+        "tasks_error": 0,
+        "tasks_in_review": 1,
+        "tasks_blocked": 0,
+    }
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._db = AsyncMock()
+    app._db.get_pipeline_resume_context = AsyncMock(return_value=ctx)
+    app._db.get_pipeline = AsyncMock(return_value=pipeline)
+    app._db.list_tasks_by_pipeline = AsyncMock(
+        side_effect=[
+            [
+                MagicMock(id="t-done", state="done"),
+                MagicMock(id="t-live", state="in_progress"),
+            ],
+            [
+                MagicMock(id="t-done", state="done"),
+                MagicMock(id="t-live", state="in_progress"),
+            ],
+        ]
+    )
+    app._db.reset_task_for_resume = AsyncMock()
+    app._db.update_pipeline_status = AsyncMock()
+    app._project_dir = "/tmp"
+    app._repos = []
+    app._source = None
+    app._bus = MagicMock()
+    app._daemon = object()
+    app._daemon_task = None
+    app._graph = object()
+    app._pipeline_id = "old-pipeline"
+    app._final_approval_pushed = False
+    app._cached_pipeline_branch = ""
+    app._cached_base_branch = "main"
+    app._state = TuiState()
+    app._state.tasks = {
+        "t-done": {"id": "t-done", "state": "done"},
+        "t-live": {"id": "t-live", "state": "in_progress", "error": "stale"},
+    }
+    app._resolve_repos = MagicMock(return_value=[])
+    app.push_screen = MagicMock()
+    app.notify = MagicMock()
+    app._on_daemon_done = MagicMock()
+    app._check_orphan_executor = MagicMock(return_value=False)
+    app._replay_state_for_pipeline = AsyncMock()
+    app._setup_daemon_for_resume = AsyncMock()
+    app._load_task_graph = MagicMock(return_value=True)
+    app._resume_execution = AsyncMock()
+
+    event = MagicMock()
+    event.pipeline_id = "pipe-exec"
+
+    await app.on_pipeline_list_resume_requested(event)
+
+    app._db.reset_task_for_resume.assert_awaited_once_with("t-live")
+    app._db.update_pipeline_status.assert_awaited_once_with("pipe-exec", "executing")
+    app._resume_execution.assert_awaited_once()
+    app.push_screen.assert_called_once()
+    pushed_screen = app.push_screen.call_args[0][0]
+    assert isinstance(pushed_screen, PipelineScreen)
+    assert app._state.tasks["t-live"]["state"] == "todo"
+    assert "error" not in app._state.tasks["t-live"]
+    app.notify.assert_called_once()
+    assert "recovered 1 interrupted task" in app.notify.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
 async def test_answer_submission_emits_to_daemon_events():
     """Answering a question should emit task:answer on the daemon's EventEmitter."""
     from forge.tui.app import ForgeApp

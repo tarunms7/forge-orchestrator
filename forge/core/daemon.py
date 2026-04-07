@@ -2548,6 +2548,40 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
             if not dispatch_plan and not has_in_review:
                 if not self._active_tasks:
+                    orphaned_live_tasks = [
+                        t
+                        for t in tasks
+                        if t.state in (TaskState.IN_PROGRESS.value, TaskState.MERGING.value)
+                    ]
+                    if orphaned_live_tasks:
+                        logger.warning(
+                            "Recovering %d orphaned running task(s) in pipeline %s: %s",
+                            len(orphaned_live_tasks),
+                            pipeline_id or "<none>",
+                            ", ".join(t.id for t in orphaned_live_tasks),
+                        )
+                        for task in orphaned_live_tasks:
+                            assigned_agent = getattr(task, "assigned_agent", None)
+                            if assigned_agent:
+                                try:
+                                    await db.release_agent(assigned_agent)
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to release stale agent %s for %s",
+                                        assigned_agent,
+                                        task.id,
+                                        exc_info=True,
+                                    )
+                            await db.reset_task_for_resume(task.id)
+                            await self._emit(
+                                "task:state_changed",
+                                {"task_id": task.id, "state": "todo"},
+                                db=db,
+                                pipeline_id=pipeline_id or "",
+                            )
+                        self._cached_tasks = None
+                        await asyncio.sleep(0)
+                        continue
                     if any(
                         t.state
                         in (TaskState.AWAITING_APPROVAL.value, TaskState.AWAITING_INPUT.value)

@@ -1618,7 +1618,7 @@ async def resume_pipeline(
         reset_count = 0
         for task in tasks:
             if task.state in ("in_progress", "in_review", "merging", "cancelled"):
-                await forge_db.update_task_state(task.id, "todo")
+                await forge_db.reset_task_for_resume(task.id)
                 reset_count += 1
 
         if reset_count == 0:

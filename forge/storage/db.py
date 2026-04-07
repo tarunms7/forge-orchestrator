@@ -860,9 +860,31 @@ class Database:
                 task.retry_count += 1
                 task.state = "todo"
                 task.assigned_agent = None
+                task.error_message = None
+                task.completed_at = None
+                task.approval_context = None
                 task.retry_reason = None  # Clear merge flag — this is a full retry
                 if review_feedback is not None:
                     task.review_feedback = review_feedback
+                await session.commit()
+
+    async def reset_task_for_resume(
+        self,
+        task_id: str,
+        *,
+        preserve_retry_reason: bool = True,
+    ) -> None:
+        """Reset an interrupted task so execution can safely re-dispatch it."""
+        async with self._session_factory() as session:
+            task = await session.get(TaskRow, task_id)
+            if task:
+                task.state = "todo"
+                task.assigned_agent = None
+                task.error_message = None
+                task.completed_at = None
+                task.approval_context = None
+                if not preserve_retry_reason:
+                    task.retry_reason = None
                 await session.commit()
 
     async def reset_task_for_human_retry(
@@ -887,6 +909,8 @@ class Database:
                 task.assigned_agent = None
                 task.retry_reason = None
                 task.error_message = None
+                task.completed_at = None
+                task.approval_context = None
                 if review_feedback is not None:
                     task.review_feedback = review_feedback
                 await session.commit()
@@ -903,6 +927,9 @@ class Database:
                 task.retry_count += 1
                 task.state = "todo"
                 task.assigned_agent = None
+                task.error_message = None
+                task.completed_at = None
+                task.approval_context = None
                 task.retry_reason = "merge_failed"
                 await session.commit()
 

@@ -324,6 +324,56 @@ class TestAllTasksDoneEvent:
         event_types = [e[0] for e in emitted]
         assert "pipeline:all_tasks_done" not in event_types
 
+    async def test_recovers_orphaned_in_progress_task_before_stopping(self, tmp_path):
+        """A stale in_progress row with no active coroutine should be reset and retried."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        orphaned = _make_task(TaskState.IN_PROGRESS.value, "task-1")
+        orphaned.assigned_agent = "agent-1"
+        done = _make_task(TaskState.DONE.value, "task-1")
+
+        call_count = 0
+
+        async def list_tasks_side_effect(_pipeline_id):
+            nonlocal call_count
+            call_count += 1
+            return [orphaned] if call_count == 1 else [done]
+
+        db = MagicMock()
+        db.list_tasks_by_pipeline = AsyncMock(side_effect=list_tasks_side_effect)
+        db.list_agents = AsyncMock(return_value=[])
+        db.get_pipeline = AsyncMock(return_value=MagicMock(paused=False, executor_token=None))
+        db.get_expired_questions = AsyncMock(return_value=[])
+        db.update_pipeline_status = AsyncMock()
+        db.set_executor_info = AsyncMock()
+        db.clear_executor_info = AsyncMock()
+        db.release_agent = AsyncMock()
+        db.reset_task_for_resume = AsyncMock()
+        db.finalize_pipeline_metrics = AsyncMock()
+
+        monitor = MagicMock()
+        snapshot = MagicMock()
+        monitor.take_snapshot = AsyncMock(return_value=snapshot)
+        monitor.can_dispatch = MagicMock(return_value=True)
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        with patch("forge.core.daemon._print_status_table"):
+            with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
+                await daemon._execution_loop(
+                    db, MagicMock(), MagicMock(), MagicMock(), monitor, pipeline_id="pipe-abc"
+                )
+
+        db.release_agent.assert_awaited_once_with("agent-1")
+        db.reset_task_for_resume.assert_awaited_once_with("task-1")
+        assert ("task:state_changed", {"task_id": "task-1", "state": "todo"}) in emitted
+        assert any(evt == "pipeline:all_tasks_done" for evt, _ in emitted)
+
 
 # ---------------------------------------------------------------------------
 # Tests for pipeline pause tracking
@@ -449,14 +499,14 @@ class TestPipelinePauseTracking:
 
         Scenario:
           Iteration 1: all tasks are awaiting_input → pause window starts
-          Iteration 2: task transitions to in_progress → pause window ends (resume detected)
+          Iteration 2: task transitions to todo → pause window ends (resume detected)
           Iteration 3: task is done → exit
         """
         daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.001)
 
         awaiting_tasks = [_make_task(TaskState.AWAITING_INPUT.value, "task-1")]
-        # Task resumes to in_progress (answered question, restarted)
-        inprogress_tasks = [_make_task(TaskState.IN_PROGRESS.value, "task-1")]
+        # Task becomes dispatchable again, which should end the pause window.
+        resumed_tasks = [_make_task(TaskState.TODO.value, "task-1")]
         done_tasks = [_make_task(TaskState.DONE.value, "task-1")]
 
         call_count = 0
@@ -467,7 +517,7 @@ class TestPipelinePauseTracking:
             if call_count == 1:
                 return awaiting_tasks
             elif call_count == 2:
-                return inprogress_tasks
+                return resumed_tasks
             else:
                 return done_tasks
 
@@ -547,10 +597,10 @@ class TestPipelinePauseTracking:
         """pipeline:paused is NOT emitted when only some tasks are awaiting_input."""
         daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.001)
 
-        # One awaiting_input, one in_progress — should NOT trigger pause
+        # One awaiting_input, one todo — should NOT trigger pause
         mixed_tasks = [
             _make_task(TaskState.AWAITING_INPUT.value, "task-1"),
-            _make_task(TaskState.IN_PROGRESS.value, "task-2"),
+            _make_task(TaskState.TODO.value, "task-2"),
         ]
         done_tasks = [
             _make_task(TaskState.DONE.value, "task-1"),
