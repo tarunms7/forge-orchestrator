@@ -804,10 +804,7 @@ class PipelineScreen(Screen):
                 if task.get("_blocked_reason") and task.get("state") in ("todo", "blocked"):
                     from forge.core.blocked_reason import format_blocked_detail
 
-                    blocking_ids = task.get("_blocking_task_ids", [])
-                    blocked_detail = format_blocked_detail(
-                        task["_blocked_reason"], task.get("_queue_status", ""), blocking_ids
-                    )
+                    blocked_detail = format_blocked_detail(task["_blocked_reason"])
 
                 agent_output.update_unified(
                     tid,

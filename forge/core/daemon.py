@@ -2235,8 +2235,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 health_task.cancel()
                 try:
                     await health_task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
                     pass
+                except Exception:
+                    logger.warning("Health monitor task failed during shutdown", exc_info=True)
             self._health_monitor = None
 
             self._cleanup_answer_handler()
@@ -2245,7 +2247,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 try:
                     await db.clear_executor_info(pipeline_id)
                 except Exception:
-                    logger.debug("Failed to clear executor info for pipeline %s", pipeline_id)
+                    logger.debug(
+                        "Failed to clear executor info for pipeline %s", pipeline_id, exc_info=True
+                    )
 
     def _cleanup_answer_handler(self) -> None:
         """Remove the task:answer listener to prevent accumulation on re-entry."""

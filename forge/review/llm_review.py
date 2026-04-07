@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from forge.config.settings import ForgeSettings
+from forge.core.async_utils import safe_create_task
 from forge.core.provider_config import ensure_provider_registry
 from forge.core.sdk_helpers import (
     sdk_query,  # noqa: F401 - backward-compatible export for tests/mocks.
@@ -417,7 +418,7 @@ async def gate2_llm_review(
 
     def _on_event(event: ProviderEvent) -> None:
         if on_message is not None:
-            asyncio.ensure_future(on_message(event))
+            safe_create_task(on_message(event), logger=logger, name="llm-review-event")
 
     # Retry the provider call if the result is empty.
     for attempt in range(1, max_review_attempts + 1):
