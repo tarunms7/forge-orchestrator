@@ -1,6 +1,12 @@
 """Tests for TaskList widget."""
 
-from forge.tui.widgets.task_list import STATE_ICONS, TaskList, _followup_wave, _queue_hint, format_task_line
+from forge.tui.widgets.task_list import (
+    STATE_ICONS,
+    TaskList,
+    _followup_wave,
+    _queue_hint,
+    format_task_line,
+)
 
 
 def test_state_icons_all_states():
