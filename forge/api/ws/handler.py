@@ -96,6 +96,7 @@ async def websocket_endpoint(
                 try:
                     await websocket.send_json({"type": "ping"})
                 except Exception:
+                    logger.debug("Failed to send WebSocket ping", exc_info=True)
                     break  # Connection dead — can't even send
                 missed_heartbeats += 1
                 if missed_heartbeats >= max_missed:
@@ -105,6 +106,6 @@ async def websocket_endpoint(
                 break
     except Exception:
         # Catch any unexpected transport errors
-        pass
+        logger.debug("WebSocket transport error for pipeline %s", pipeline_id, exc_info=True)
     finally:
         manager.disconnect(websocket, pipeline_id=pipeline_id, user_id=user_id)
