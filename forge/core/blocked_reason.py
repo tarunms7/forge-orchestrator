@@ -3,13 +3,12 @@
 import re
 
 
-def format_blocked_reason(reason: str, status: str = "") -> str:
+def format_blocked_reason(reason: str) -> str:
     """
     Convert raw scheduler reason into short human-friendly explanation.
 
     Args:
         reason: Raw reason string from TaskSchedulingInsight.reason
-        status: Status string from TaskSchedulingInsight.status (optional)
 
     Returns:
         Short human-friendly string, or empty string for empty/None input
@@ -70,16 +69,12 @@ def format_blocked_reason(reason: str, status: str = "") -> str:
     return reason
 
 
-def format_blocked_detail(
-    reason: str, status: str, blocking_task_ids: list[str] | None = None
-) -> str:
+def format_blocked_detail(reason: str) -> str:
     """
     Convert raw scheduler reason into multi-line detail explanation.
 
     Args:
         reason: Raw reason string from TaskSchedulingInsight.reason
-        status: Status string from TaskSchedulingInsight.status
-        blocking_task_ids: List of blocking task IDs (optional)
 
     Returns:
         Multi-line string for detail panel, or empty string for empty/None reason

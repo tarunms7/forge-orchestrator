@@ -63,6 +63,14 @@ router = APIRouter(tags=["tasks"])
 _STORE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
 
+async def _with_lock(lock: asyncio.Lock | None, fn):
+    """Run fn() under lock if lock exists, otherwise run directly."""
+    if lock:
+        async with lock:
+            return fn()
+    return fn()
+
+
 def _prune_stale_pipeline_images(app_state: object) -> None:
     """Remove pipeline_images entries older than TTL on access."""
     images: dict = getattr(app_state, "pipeline_images", {})
@@ -81,21 +89,15 @@ async def _prune_stale_pending_graphs(app_state: object) -> None:
         return
     cutoff = time.monotonic() - _STORE_TTL_SECONDS
     lock = getattr(app_state, "pending_graphs_lock", None)
-    if lock:
-        async with lock:
-            stale = [
-                k
-                for k, v in pending.items()
-                if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff
-            ]
-            for k in stale:
-                pending.pop(k, None)
-    else:
+
+    def _do_prune():
         stale = [
             k for k, v in pending.items() if isinstance(v, tuple) and len(v) == 3 and v[2] < cutoff
         ]
         for k in stale:
             pending.pop(k, None)
+
+    await _with_lock(lock, _do_prune)
 
 
 # ---------------------------------------------------------------------------
@@ -639,19 +641,15 @@ async def create_task(
                     )
                     # Store graph for later execution (lock protects concurrent access)
                     lock = getattr(request.app.state, "pending_graphs_lock", None)
-                    if lock:
-                        async with lock:
-                            request.app.state.pending_graphs[pipeline_id] = (
-                                graph,
-                                daemon,
-                                time.monotonic(),
-                            )
-                    else:
+
+                    def _store_graph():
                         request.app.state.pending_graphs[pipeline_id] = (
                             graph,
                             daemon,
                             time.monotonic(),
                         )
+
+                    await _with_lock(lock, _store_graph)
                 except Exception:
                     logger.exception("Planning failed for pipeline %s", pipeline_id)
                     await forge_db.update_pipeline_status(pipeline_id, "error")
@@ -771,11 +769,7 @@ async def execute_pipeline(
     lock = getattr(request.app.state, "pending_graphs_lock", None)
     pending_graphs = getattr(request.app.state, "pending_graphs", {})
 
-    if lock:
-        async with lock:
-            entry = pending_graphs.get(pipeline_id)
-    else:
-        entry = pending_graphs.get(pipeline_id)
+    entry = await _with_lock(lock, lambda: pending_graphs.get(pipeline_id))
 
     if entry is None:
         raise HTTPException(status_code=404, detail="No pending plan found for this pipeline")
@@ -808,11 +802,10 @@ async def execute_pipeline(
             raise HTTPException(status_code=422, detail=f"Invalid task graph: {e}")
 
         # Replace the pending graph (keep the daemon)
-        if lock:
-            async with lock:
-                request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
-        else:
+        def _replace_graph():
             request.app.state.pending_graphs[pipeline_id] = (graph, daemon, time.monotonic())
+
+        await _with_lock(lock, _replace_graph)
 
         # Update stored plan in DB
         await forge_db.set_pipeline_plan(
@@ -910,11 +903,7 @@ async def execute_pipeline(
     safe_create_task(_run_execute(), logger=logger, name="execute-pipeline")
 
     # Remove from pending_graphs under lock (use app.state directly, not local var)
-    if lock:
-        async with lock:
-            request.app.state.pending_graphs.pop(pipeline_id, None)
-    else:
-        request.app.state.pending_graphs.pop(pipeline_id, None)
+    await _with_lock(lock, lambda: request.app.state.pending_graphs.pop(pipeline_id, None))
 
     return {"status": "executing", "pipeline_id": pipeline_id}
 
@@ -1708,12 +1697,9 @@ async def cancel_pipeline(
     # If pipeline was in planning phase, remove from pending_graphs
     if pipeline.status == "planning":
         lock = getattr(request.app.state, "pending_graphs_lock", None)
-        if lock:
-            async with lock:
-                request.app.state.pending_graphs.pop(pipeline_id, None)
-        else:
-            pending = getattr(request.app.state, "pending_graphs", {})
-            pending.pop(pipeline_id, None)
+        await _with_lock(
+            lock, lambda: getattr(request.app.state, "pending_graphs", {}).pop(pipeline_id, None)
+        )
 
     # Emit WebSocket event so frontend updates immediately
     ws_manager = getattr(request.app.state, "ws_manager", None)
@@ -1781,12 +1767,9 @@ async def restart_pipeline(
 
     # Remove from pending_graphs if present
     lock = getattr(request.app.state, "pending_graphs_lock", None)
-    if lock:
-        async with lock:
-            request.app.state.pending_graphs.pop(pipeline_id, None)
-    else:
-        pending = getattr(request.app.state, "pending_graphs", {})
-        pending.pop(pipeline_id, None)
+    await _with_lock(
+        lock, lambda: getattr(request.app.state, "pending_graphs", {}).pop(pipeline_id, None)
+    )
 
     # Set pipeline back to planning status
     await forge_db.update_pipeline_status(pipeline_id, "planning")
