@@ -173,7 +173,6 @@ class TestFormatBlockedDetail:
     def test_detail_with_blocking_task_ids(self):
         """Blocking task IDs parameter should be accepted."""
         reason = "Waiting on task-2, task-3"
-        blocking_ids = ["task-2", "task-3"]
         result = format_blocked_detail(reason)
         expected = "Waiting for dependencies to complete:\n  - task-2\n  - task-3"
         assert result == expected
