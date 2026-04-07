@@ -817,12 +817,7 @@ class AgentOutput(Widget):
             if self._streaming:
                 base += f"\n{_render_forging_shimmer(self._typing_frame)}"
         elif self._unified_entries:
-            base = format_unified_output(
-                self._unified_entries,
-                self._spinner_frame,
-                streaming=self._streaming,
-                typing_frame=self._typing_frame,
-            )
+            base = self._format_content_with_blocked_detail()
         else:
             base = format_output(
                 self._lines,
