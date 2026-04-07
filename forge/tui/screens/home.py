@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Static, TextArea
+from textual.widgets import Static
 
 from forge.tui.theme import PIPELINE_STATUS_ICONS as _PIPELINE_STATUS_ICONS
 from forge.tui.widgets.branch_selector import BranchInput, BranchSelector
@@ -17,10 +17,11 @@ from forge.tui.widgets.pipeline_list import (
     _single_line_summary,
     is_pipeline_resumable,
 )
+from forge.tui.widgets.sanitized_text_area import SanitizedTextArea
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 
-class PromptTextArea(TextArea):
+class PromptTextArea(SanitizedTextArea):
     """TextArea that emits Submitted on Ctrl+S instead of inserting a newline.
 
     Note: Terminals cannot distinguish Ctrl+Enter from Enter, so we use
