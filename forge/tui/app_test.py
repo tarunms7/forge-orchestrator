@@ -84,7 +84,12 @@ class TestBuildTaskSummariesRepoId:
                 "id": "task1",
                 "title": "Retry task",
                 "state": "done",
-                "merge_result": {"success": True, "linesAdded": 5, "linesRemoved": 1, "filesChanged": 1},
+                "merge_result": {
+                    "success": True,
+                    "linesAdded": 5,
+                    "linesRemoved": 1,
+                    "filesChanged": 1,
+                },
             },
             {
                 "id": "task2",

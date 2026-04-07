@@ -225,9 +225,7 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
             # Add retry count for error tasks if retries were attempted
             if retry_count > 0:
                 retry_text = "retry" if retry_count == 1 else "retries"
-                lines.append(
-                    f"{indent}     [{TEXT_MUTED}]{retry_count} {retry_text} attempted[/]"
-                )
+                lines.append(f"{indent}     [{TEXT_MUTED}]{retry_count} {retry_text} attempted[/]")
         elif state == "blocked":
             error = _escape(t.get("error", "blocked by dependency"))
             lines.append(

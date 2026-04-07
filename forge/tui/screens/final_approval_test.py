@@ -727,7 +727,7 @@ def test_compact_successful_task_single_line():
         },
     ]
     result = format_task_table(tasks)
-    lines = result.split('\n')
+    lines = result.split("\n")
     # Should have exactly one line (no detail line for successful task with no retries)
     assert len(lines) == 1
     assert "Auth middleware" in result
@@ -746,7 +746,7 @@ def test_successful_task_with_retries_shows_detail():
         },
     ]
     result = format_task_table(tasks)
-    lines = result.split('\n')
+    lines = result.split("\n")
     # Should have two lines (main + detail)
     assert len(lines) == 2
     assert "Cache layer" in result
@@ -764,7 +764,7 @@ def test_blocked_task_no_duplicate_detail():
         },
     ]
     result = format_task_table(tasks)
-    lines = result.split('\n')
+    lines = result.split("\n")
     # Should have exactly one line (no detail line for blocked)
     assert len(lines) == 1
     assert "API endpoints" in result
@@ -783,7 +783,7 @@ def test_in_review_task_shows_substatus():
         },
     ]
     result = format_task_table(tasks)
-    lines = result.split('\n')
+    lines = result.split("\n")
     # Should have two lines (main + substatus detail)
     assert len(lines) == 2
     assert "Database schema" in result
@@ -803,7 +803,7 @@ def test_merging_task_shows_substatus():
         },
     ]
     result = format_task_table(tasks)
-    lines = result.split('\n')
+    lines = result.split("\n")
     # Should have two lines (main + substatus detail)
     assert len(lines) == 2
     assert "Test framework" in result
@@ -821,7 +821,7 @@ def test_error_task_with_retries_shows_count():
         },
     ]
     result = format_task_table(tasks)
-    lines = result.split('\n')
+    lines = result.split("\n")
     # Should have two lines (main + retry detail)
     assert len(lines) == 2
     assert "Config parser" in result
