@@ -2421,6 +2421,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 else:
                     console.print(f"\n[bold red]Failed: all {error_count} tasks errored[/bold red]")
 
+                if self._active_tasks:
+                    await asyncio.wait(
+                        self._active_tasks.values(),
+                        timeout=self._settings.scheduler_poll_interval,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    continue
+
                 if pipeline_id:
                     # If we were tracking a pause window, close it out now
                     if _all_paused_since is not None:

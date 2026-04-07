@@ -1,6 +1,6 @@
-"""Tests for _build_task_summaries multi-repo fields and multi-repo wiring."""
+"""Tests for PR task summaries and multi-repo wiring."""
 
-from forge.tui.app import _build_task_summaries
+from forge.tui.app import _build_task_summaries, _partition_pr_task_summaries
 from forge.tui.state import TuiState
 
 
@@ -68,6 +68,21 @@ class TestBuildTaskSummariesRepoId:
         # Task C — defaults
         assert summaries[2]["repo_id"] == "default"
         assert summaries[2]["cost_usd"] == 0
+
+    def test_partition_pr_task_summaries_excludes_transient_states(self):
+        summaries = [
+            {"title": "Done", "state": "done"},
+            {"title": "Merging", "state": "merging", "error": ""},
+            {"title": "Reviewing", "state": "in_review", "error": ""},
+            {"title": "Failed", "state": "error", "error": "review failed"},
+            {"title": "Blocked", "state": "blocked", "error": "dep failed"},
+        ]
+
+        done_tasks, failed_tasks = _partition_pr_task_summaries(summaries)
+
+        assert [task["title"] for task in done_tasks] == ["Done"]
+        assert failed_tasks is not None
+        assert [task["title"] for task in failed_tasks] == ["Failed", "Blocked"]
 
 
 class TestMultiRepoPrCreationEvents:

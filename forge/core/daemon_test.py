@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -291,6 +292,55 @@ class TestAllTasksDoneEvent:
         assert summary["error"] == 1
         assert summary["cancelled"] == 1
         assert summary["total"] == 3
+
+    async def test_waits_for_active_task_cleanup_before_all_tasks_done(self, tmp_path):
+        """Do not finalize the pipeline while a task coroutine is still cleaning up."""
+        daemon = _make_daemon(tmp_path, pipeline_timeout_seconds=0, scheduler_poll_interval=0.01)
+
+        tasks = [
+            _make_task(TaskState.DONE.value, "task-1"),
+            _make_task(TaskState.DONE.value, "task-2"),
+        ]
+        db, monitor, worktree_mgr, merge_worker, runtime = _make_minimal_execution_loop_mocks(tasks)
+
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
+
+        task_cancelled = False
+        pending_at_shutdown: bool | None = None
+
+        async def finishing_task():
+            nonlocal task_cancelled
+            try:
+                await asyncio.sleep(0.02)
+            except asyncio.CancelledError:
+                task_cancelled = True
+                raise
+
+        daemon._active_tasks["task-2"] = asyncio.create_task(finishing_task())
+        original_shutdown = daemon._shutdown_active_tasks
+
+        async def wrapped_shutdown():
+            nonlocal pending_at_shutdown
+            pending_at_shutdown = any(not atask.done() for atask in daemon._active_tasks.values())
+            await original_shutdown()
+
+        daemon._shutdown_active_tasks = wrapped_shutdown
+
+        with patch("forge.core.daemon._print_status_table"):
+            with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
+                await daemon._execution_loop(
+                    db, runtime, worktree_mgr, merge_worker, monitor, pipeline_id="pipe-abc"
+                )
+
+        assert pending_at_shutdown is False
+        assert task_cancelled is False
+        assert daemon._active_tasks == {}
+        assert any(event_type == "pipeline:all_tasks_done" for event_type, _ in emitted)
 
     async def test_no_all_tasks_done_without_pipeline_id(self, tmp_path):
         """pipeline:all_tasks_done is not emitted when pipeline_id is None."""

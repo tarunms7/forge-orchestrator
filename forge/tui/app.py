@@ -14,6 +14,7 @@ from textual.binding import Binding
 from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
+from forge.core.models import TaskState
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
@@ -29,6 +30,14 @@ from forge.tui.widgets.command_palette import CommandPalette, CommandPaletteActi
 from forge.tui.widgets.pipeline_list import PipelineList
 
 logger = logging.getLogger("forge.tui.app")
+
+_FAILED_PR_TASK_STATES = frozenset(
+    {
+        TaskState.ERROR.value,
+        TaskState.BLOCKED.value,
+        TaskState.CANCELLED.value,
+    }
+)
 
 
 def _escape_markup(text: str) -> str:
@@ -90,6 +99,13 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
             }
         )
     return summaries
+
+
+def _partition_pr_task_summaries(task_summaries: list[dict]) -> tuple[list[dict], list[dict] | None]:
+    """Split task summaries into completed tasks and terminal failed tasks for PR creation."""
+    done_tasks = [t for t in task_summaries if t.get("state") == TaskState.DONE.value]
+    failed_tasks = [t for t in task_summaries if t.get("state") in _FAILED_PR_TASK_STATES]
+    return done_tasks, failed_tasks or None
 
 
 def _is_multi_repo_configs(repos: list) -> bool:
@@ -715,10 +731,7 @@ class ForgeApp(App):
         elapsed_str = f"{elapsed_secs // 60}m {elapsed_secs % 60}s"
         raw_tasks = [state.tasks[tid] for tid in state.task_order if tid in state.tasks]
         task_summaries = _build_task_summaries(raw_tasks)
-        done_tasks = [t for t in task_summaries if t["state"] == "done"]
-        failed_tasks = [
-            t for t in task_summaries if t["state"] not in ("done", "todo", "pending")
-        ] or None
+        done_tasks, failed_tasks = _partition_pr_task_summaries(task_summaries)
 
         # Determine the base branch for the PR target and detect multi-repo
         base_branch = "main"
