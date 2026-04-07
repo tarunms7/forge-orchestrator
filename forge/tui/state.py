@@ -580,6 +580,8 @@ class TuiState:
         self.total_cost_usd = 0.0
         self.planning_stage = ""
         self.scheduling = None
+        self.merge_substatus.clear()
+        self.review_substatus.clear()
         self.phase = "planning"
         self._notify("phase")
 
