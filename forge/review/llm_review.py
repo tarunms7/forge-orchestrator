@@ -101,6 +101,16 @@ Do NOT use UNCERTAIN for:
 - You do NOT have live git history or branch state. Do NOT claim you ran `git`
   commands, inspected other branches, or verified repository state unless that
   evidence appears in the provided diff or files you actually read.
+- You have workspace tools available: Read, Glob, Grep, and Bash.
+- Read the current version of each changed in-scope source file before issuing a
+  PASS or FAIL verdict.
+- Use Grep/Glob/Read to inspect nearby callers, tests, and related files whenever
+  that would materially reduce uncertainty.
+- Use Bash for focused verification commands (targeted tests, linters, or grep)
+  when it helps confirm or falsify a concern. Prefer the smallest relevant
+  command instead of broad expensive suites.
+- If validation context says tests/build/lint were skipped or had infra problems,
+  treat that as reduced coverage and inspect the changed code more deeply.
 - Prior review feedback can be stale on retries. If prior feedback says an
   in-scope deliverable is missing, you MUST read the current file before
   failing for that reason.
@@ -120,7 +130,9 @@ async def gate2_llm_review(
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
+    validation_context: str = "",
     custom_review_focus: str = "",
+    prefer_deep_review: bool = False,
     on_message: Callable[[Any], Awaitable[None]] | None = None,
     # NEW: callback for review progress events (strategy_selected, chunk_started, etc.)
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
@@ -160,38 +172,66 @@ async def gate2_llm_review(
     # ── Strategy selection ────────────────────────────────────────────────
     from forge.review.strategy import (
         ReviewStrategy,
-        build_risk_map_header,
+        build_diff_chunks,
         count_diff_lines,
         score_files,
         select_strategy,
-    )
-    from forge.review.strategy import (
-        build_diff_chunks as build_chunks,
+        should_deepen_small_diff_review,
     )
     from forge.review.synthesizer import run_chunked_review
 
+    file_scores = score_files(diff)
     strategy = select_strategy(
         diff,
         medium_diff_threshold,
         large_diff_threshold,
         adaptive=adaptive_review,
     )
+    if adaptive_review and strategy == ReviewStrategy.TIER1:
+        if prefer_deep_review or should_deepen_small_diff_review(diff, file_scores=file_scores):
+            strategy = ReviewStrategy.TIER2
 
     # Pre-compute file scores and chunks for Tier 3 (reused for both event payload and review)
     _t3_file_scores = None
+    _t2_chunks = None
     _t3_chunks = None
+    if strategy == ReviewStrategy.TIER2:
+        _t3_file_scores = file_scores
+        _t2_chunks = build_diff_chunks(file_scores, diff, max_chunk_lines=1)
     if strategy == ReviewStrategy.TIER3:
-        _t3_file_scores = score_files(diff)
-        _t3_chunks = build_chunks(_t3_file_scores, diff, max_chunk_lines)
+        _t3_file_scores = file_scores
+        _t3_chunks = build_diff_chunks(_t3_file_scores, diff, max_chunk_lines)
 
     if on_review_event:
         payload: dict = {
             "strategy": strategy.value,
             "diff_lines": count_diff_lines(diff),
         }
+        if strategy == ReviewStrategy.TIER2:
+            payload["chunk_count"] = len(_t2_chunks)
         if strategy == ReviewStrategy.TIER3:
             payload["chunk_count"] = len(_t3_chunks)
         await on_review_event("review:strategy_selected", payload)
+
+    # ── Tier 2: per-file / paired-file chunk review + synthesis ──────────────
+    if strategy == ReviewStrategy.TIER2:
+        return await run_chunked_review(
+            _t2_chunks,
+            _t3_file_scores,
+            diff,
+            task_title,
+            task_description,
+            model=model,
+            worktree_path=worktree_path,
+            sibling_context=sibling_context,
+            prior_feedback=prior_feedback,
+            delta_diff=delta_diff,
+            validation_context=validation_context,
+            on_message=on_message,
+            on_review_event=on_review_event,
+            registry=registry,
+            strategy_label=ReviewStrategy.TIER2.value,
+        )
 
     # ── Tier 3: multi-chunk map-reduce ────────────────────────────────────
     if strategy == ReviewStrategy.TIER3:
@@ -206,16 +246,12 @@ async def gate2_llm_review(
             sibling_context=sibling_context,
             prior_feedback=prior_feedback,
             delta_diff=delta_diff,
+            validation_context=validation_context,
             on_message=on_message,
             on_review_event=on_review_event,
             registry=registry,
+            strategy_label=ReviewStrategy.TIER3.value,
         )
-
-    # Tier 2: build risk map header (pure Python, no LLM cost)
-    risk_map = ""
-    if strategy == ReviewStrategy.TIER2:
-        file_scores_t2 = score_files(diff)
-        risk_map = build_risk_map_header(file_scores_t2)
 
     prompt = _build_review_prompt(
         task_title,
@@ -227,7 +263,7 @@ async def gate2_llm_review(
         allowed_files=allowed_files,
         delta_diff=delta_diff,
         sibling_context=sibling_context,
-        risk_map_header=risk_map,
+        validation_context=validation_context,
     )
 
     system_prompt = REVIEW_SYSTEM_PROMPT
@@ -519,13 +555,16 @@ def _build_review_prompt(
     allowed_files: list[str] | None = None,
     delta_diff: str | None = None,
     sibling_context: str | None = None,
-    risk_map_header: str = "",  # NEW: Tier 2 risk prioritisation header
+    validation_context: str = "",
+    risk_map_header: str = "",
 ) -> str:
     parts = []
     if project_context:
         parts.append(f"{project_context}\n\n")
     if sibling_context:
         parts.append(f"{sibling_context}\n\n")
+    if validation_context:
+        parts.append(f"{validation_context}\n\n")
     parts += [
         f"Task: {title}\n",
         f"Description: {description}\n\n",
@@ -558,7 +597,8 @@ def _build_review_prompt(
             )
         parts.append(
             "The developer has attempted to fix these issues.\n"
-            "Verify the specific issues above were addressed, AND do a full review of the\n"
+            "First, explicitly verify whether each issue above is fixed in the current code.\n"
+            "After that, do a full review of the\n"
             "current code. If you find new genuine issues (bugs, security, error handling),\n"
             "FAIL — regardless of whether they were in the prior feedback or not.\n"
             "Prior feedback is context, not a ceiling on what you can flag.\n"

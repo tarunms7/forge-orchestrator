@@ -905,6 +905,10 @@ class ReviewMixin:
         feedback_parts: list[str] = []
         gate_timeout = self._settings.agent_timeout_seconds // 2
         review_t0 = time.monotonic()
+        build_validation_line = "- Build gate: SKIPPED — no build command configured"
+        lint_validation_line = "- Lint gate: SKIPPED — lint gate not run"
+        test_validation_line = "- Test gate: SKIPPED — no test command configured"
+        prefer_deep_review = False
 
         await self._emit("review:started", {"task_id": task.id}, db=db, pipeline_id=pipeline_id)
 
@@ -941,6 +945,10 @@ class ReviewMixin:
             )
             if not build_result.passed:
                 if build_result.infra_error:
+                    build_validation_line = (
+                        f"- Build gate: SKIPPED (infra error) — {build_result.details[:200]}"
+                    )
+                    prefer_deep_review = True
                     console.print(
                         f"[yellow]  Gate 0 (build) skipped — environment error: {build_result.details[:200]}[/yellow]"
                     )
@@ -977,8 +985,10 @@ class ReviewMixin:
                     )
                     return False, "\n\n".join(feedback_parts), False
             else:
+                build_validation_line = f"- Build gate: PASSED — {build_result.details}"
                 console.print("[green]  Gate 0 (build) passed[/green]")
         else:
+            build_validation_line = "- Build gate: SKIPPED — no build command configured"
             console.print("[dim]  Gate 0 (build): skipped — no build command configured[/dim]")
             await self._emit(
                 "task:review_update",
@@ -1035,6 +1045,10 @@ class ReviewMixin:
         )
         if not gate1_result.passed:
             if gate1_result.infra_error:
+                lint_validation_line = (
+                    f"- Lint gate: SKIPPED (infra error) — {gate1_result.details[:200]}"
+                )
+                prefer_deep_review = True
                 console.print(
                     f"[yellow]  L1 (lint) skipped — environment error: {gate1_result.details[:200]}[/yellow]"
                 )
@@ -1068,6 +1082,7 @@ class ReviewMixin:
                 )
                 return False, "\n\n".join(feedback_parts), False
         else:
+            lint_validation_line = f"- Lint gate: PASSED — {gate1_result.details}"
             console.print("[green]  L1 passed[/green]")
 
         # L1 may have auto-fixed lint issues (unused imports, etc.) and
@@ -1119,6 +1134,10 @@ class ReviewMixin:
             )
             if not test_result.passed:
                 if test_result.infra_error:
+                    test_validation_line = (
+                        f"- Test gate: SKIPPED (infra error) — {test_result.details[:200]}"
+                    )
+                    prefer_deep_review = True
                     console.print(
                         f"[yellow]  Gate 1.5 (test) skipped — environment error: {test_result.details[:200]}[/yellow]"
                     )
@@ -1154,8 +1173,12 @@ class ReviewMixin:
                         pipeline_id=pipeline_id,
                     )
                     return False, "\n\n".join(feedback_parts), False
+            else:
+                test_validation_line = f"- Test gate: PASSED — {test_result.details}"
             console.print("[green]  Gate 1.5 (test) passed[/green]")
         else:
+            test_validation_line = "- Test gate: SKIPPED — no test command configured"
+            prefer_deep_review = True
             console.print("[dim]  Gate 1.5 (test): skipped — no test command configured[/dim]")
             await self._emit(
                 "task:review_update",
@@ -1194,6 +1217,14 @@ class ReviewMixin:
                 getattr(task, "review_feedback", None) if task.retry_count > 0 else None
             )
             prior_diff = getattr(task, "prior_diff", None) if task.retry_count > 0 else None
+            validation_context = (
+                "## Validation Context\n"
+                f"{build_validation_line}\n"
+                f"{lint_validation_line}\n"
+                f"{test_validation_line}\n\n"
+                "Treat skipped or infra-errored validation as reduced coverage: inspect the current code"
+                " more deeply and use focused tools/commands where that helps confirm correctness."
+            )
             console.print(
                 f"[blue]  L2 (LLM): Code review for {task.id}"
                 f"{'  (re-review)' if prior_feedback else ''}...[/blue]"
@@ -1275,7 +1306,9 @@ class ReviewMixin:
                 allowed_files=task.files,
                 delta_diff=delta_diff,
                 sibling_context=sibling_context,
+                validation_context=validation_context,
                 custom_review_focus=custom_review_focus,
+                prefer_deep_review=prefer_deep_review or bool(prior_feedback),
                 on_message=on_message,
                 on_review_event=on_review_event,
                 adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
@@ -1411,7 +1444,9 @@ class ReviewMixin:
                     project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
                     allowed_files=task.files,
                     sibling_context=sibling_context,
+                    validation_context=validation_context,
                     custom_review_focus=extra_focus,
+                    prefer_deep_review=True,
                     on_review_event=on_review_event,
                     adaptive_review=_review_cfg.adaptive_review if _review_cfg else True,
                     medium_diff_threshold=_review_cfg.medium_diff_threshold if _review_cfg else 400,

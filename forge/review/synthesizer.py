@@ -296,6 +296,7 @@ async def review_chunk(
     worktree_path: str | None = None,
     sibling_context: str | None = None,
     prior_feedback: str | None = None,
+    validation_context: str = "",
     on_message: Callable[[Any], Awaitable[None]] | None = None,
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
     registry: ProviderRegistry | None = None,
@@ -322,6 +323,8 @@ async def review_chunk(
     parts = []
     if sibling_context:
         parts.append(f"{sibling_context}\n\n")
+    if validation_context:
+        parts.append(f"{validation_context}\n\n")
     parts.append(f"Task: {task_title}\nDescription: {task_description}\n\n")
     if interface_ctx:
         parts.append(f"{interface_ctx}\n\n")
@@ -505,8 +508,10 @@ async def synthesize_results(
     worktree_path: str | None = None,
     prior_feedback: str | None = None,
     delta_diff: str | None = None,
+    validation_context: str = "",
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
     registry: ProviderRegistry | None = None,
+    strategy_label: str = "tier3",
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Aggregate chunk review results into a final GateResult.
 
@@ -536,7 +541,7 @@ async def synthesize_results(
                 gate="gate2_llm_review",
                 details=details,
                 needs_human=True,
-                review_strategy="tier3",
+                review_strategy=strategy_label,
                 chunk_count=len(chunks),
                 chunk_verdicts=[r.verdict for r in chunk_results],
             ),
@@ -562,6 +567,8 @@ async def synthesize_results(
         f"Task: {task_title}\nDescription: {task_description}\n\n",
         chunk_summary,
     ]
+    if validation_context:
+        parts.insert(1, f"{validation_context}\n\n")
     if all_cross:
         parts.append("## Cross-Chunk Concerns\n" + "\n".join(f"- {c}" for c in all_cross) + "\n\n")
     if prior_feedback:
@@ -584,7 +591,7 @@ async def synthesize_results(
 
     registry = ensure_provider_registry(registry, settings=ForgeSettings())
     if registry is None:
-        return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
+        return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
 
     model_spec = ModelSpec.parse(model) if isinstance(model, str) else model
     provider = registry.get_for_model(model_spec)
@@ -615,7 +622,7 @@ async def synthesize_results(
         except (TimeoutError, Exception) as exc:
             logger.warning("Synthesis attempt %d/%d failed: %s", attempt, max_attempts, exc)
             if attempt == max_attempts:
-                return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
+                return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
             await asyncio.sleep(2**attempt)
             continue
 
@@ -631,7 +638,7 @@ async def synthesize_results(
         raw = result.text or ""
         if not raw:
             if attempt == max_attempts:
-                return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
+                return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
             await asyncio.sleep(2**attempt)
             continue
 
@@ -639,12 +646,12 @@ async def synthesize_results(
         # Override needs_human: UNCERTAIN from synthesis always goes to human
         if pre_verdict == "UNCERTAIN" or gate_result.needs_human:
             gate_result.needs_human = True
-        gate_result.review_strategy = "tier3"
+        gate_result.review_strategy = strategy_label
         gate_result.chunk_count = len(chunks)
         gate_result.chunk_verdicts = [r.verdict for r in chunk_results]
         return gate_result, total_cost
 
-    return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost)
+    return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
 
 
 def _synthesis_fallback(
@@ -652,6 +659,7 @@ def _synthesis_fallback(
     chunks: list[DiffChunk],
     pre_verdict: str,
     total_cost: ReviewCostInfo,
+    strategy_label: str = "tier3",
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Fallback when synthesis LLM call fails: use rule-based verdict."""
     summaries = "\n".join(
@@ -670,7 +678,7 @@ def _synthesis_fallback(
             gate="gate2_llm_review",
             details=details,
             needs_human=needs_human,
-            review_strategy="tier3",
+            review_strategy=strategy_label,
             chunk_count=len(chunks),
             chunk_verdicts=[r.verdict for r in chunk_results],
         ),
@@ -693,9 +701,11 @@ async def run_chunked_review(
     sibling_context: str | None = None,
     prior_feedback: str | None = None,
     delta_diff: str | None = None,
+    validation_context: str = "",
     on_message: Callable[[Any], Awaitable[None]] | None = None,
     on_review_event: Callable[[str, dict], Awaitable[None]] | None = None,
     registry: ProviderRegistry | None = None,
+    strategy_label: str = "tier3",
 ) -> tuple[GateResult, ReviewCostInfo]:
     """Run all chunk reviews sequentially then synthesize.
 
@@ -714,6 +724,7 @@ async def run_chunked_review(
             worktree_path=worktree_path,
             sibling_context=sibling_context,
             prior_feedback=prior_feedback,
+            validation_context=validation_context,
             on_message=on_message,
             on_review_event=on_review_event,
             registry=registry,
@@ -746,6 +757,8 @@ async def run_chunked_review(
         worktree_path=worktree_path,
         prior_feedback=prior_feedback,
         delta_diff=delta_diff,
+        validation_context=validation_context,
         on_review_event=on_review_event,
         registry=registry,
+        strategy_label=strategy_label,
     )

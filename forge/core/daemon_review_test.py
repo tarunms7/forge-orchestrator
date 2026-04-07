@@ -833,6 +833,11 @@ class TestRunReviewPassesOnMessage:
         assert call_kwargs.kwargs.get("on_message") is not None
         assert callable(call_kwargs.kwargs["on_message"])
         assert call_kwargs.kwargs.get("registry") is mixin._registry
+        assert call_kwargs.kwargs.get("prefer_deep_review") is True
+        validation_context = call_kwargs.kwargs.get("validation_context", "")
+        assert "Validation Context" in validation_context
+        assert "Lint gate: PASSED" in validation_context
+        assert "Test gate: SKIPPED — no test command configured" in validation_context
 
     @pytest.mark.asyncio
     async def test_extra_review_pass_receives_registry(self):
