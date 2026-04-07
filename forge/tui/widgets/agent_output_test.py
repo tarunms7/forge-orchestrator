@@ -810,7 +810,9 @@ def test_format_content_with_blocked_detail_failed_deps():
     widget._typing_frame = 0
 
     # Test failed dependencies get orange color
-    blocked_detail = "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
+    blocked_detail = (
+        "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
+    )
     widget._blocked_detail = blocked_detail
 
     content = widget._format_content_with_blocked_detail()

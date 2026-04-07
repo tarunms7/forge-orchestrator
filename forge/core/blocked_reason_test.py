@@ -1,6 +1,5 @@
 """Tests for blocked reason formatting utilities."""
 
-
 from forge.core.blocked_reason import format_blocked_detail, format_blocked_reason
 
 
@@ -126,7 +125,9 @@ class TestFormatBlockedDetail:
         """Multiple failed dependencies should list all as failed."""
         reason = "Blocked by failed dependencies: auth-backend, db-setup"
         result = format_blocked_detail(reason, "blocked")
-        expected = "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
+        expected = (
+            "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
+        )
         assert result == expected
 
     def test_detail_human_decision_input(self):
@@ -194,23 +195,43 @@ class TestInterfaceContracts:
 
         # Multi waiting
         assert format_blocked_reason("Waiting on task-2, task-3") == "Waiting on task-2 + 1 other"
-        assert format_blocked_reason("Waiting on task-2, task-3, task-4") == "Waiting on task-2 + 2 others"
+        assert (
+            format_blocked_reason("Waiting on task-2, task-3, task-4")
+            == "Waiting on task-2 + 2 others"
+        )
 
         # Single failed dep
-        assert format_blocked_reason("Blocked by failed dependency: auth-backend") == "Blocked: auth-backend failed"
+        assert (
+            format_blocked_reason("Blocked by failed dependency: auth-backend")
+            == "Blocked: auth-backend failed"
+        )
 
         # Multi failed deps
-        assert format_blocked_reason("Blocked by failed dependencies: auth-backend, db-setup") == "Blocked: auth-backend + 1 other failed"
+        assert (
+            format_blocked_reason("Blocked by failed dependencies: auth-backend, db-setup")
+            == "Blocked: auth-backend + 1 other failed"
+        )
 
         # Human decision/approval
-        assert format_blocked_reason("Human decision required before resume") == "Needs human input before retry"
-        assert format_blocked_reason("Human approval required before merge") == "Waiting for approval"
+        assert (
+            format_blocked_reason("Human decision required before resume")
+            == "Needs human input before retry"
+        )
+        assert (
+            format_blocked_reason("Human approval required before merge") == "Waiting for approval"
+        )
 
         # Manual intervention
-        assert format_blocked_reason("Blocked - waiting for manual intervention") == "Blocked: needs manual intervention"
+        assert (
+            format_blocked_reason("Blocked - waiting for manual intervention")
+            == "Blocked: needs manual intervention"
+        )
 
         # Task failed
-        assert format_blocked_reason("Task failed and needs retry or skip") == "Failed: needs retry or skip"
+        assert (
+            format_blocked_reason("Task failed and needs retry or skip")
+            == "Failed: needs retry or skip"
+        )
 
         # Empty/None
         assert format_blocked_reason("") == ""

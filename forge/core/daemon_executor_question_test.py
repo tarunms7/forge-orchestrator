@@ -269,7 +269,9 @@ class TestExecuteTaskQuestionDetection:
         db.update_task_state = AsyncMock()
         db.release_agent = AsyncMock()
         db.create_task_question = AsyncMock(
-            return_value=MagicMock(id="q-1", question="Should the blocked detail replace the output view?")
+            return_value=MagicMock(
+                id="q-1", question="Should the blocked detail replace the output view?"
+            )
         )
         db.update_task_field = AsyncMock()
         db.get_pipeline = AsyncMock(return_value=None)

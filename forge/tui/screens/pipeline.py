@@ -768,14 +768,19 @@ class PipelineScreen(Screen):
                 blocked_detail = None
                 if task.get("_blocked_reason") and task.get("state") in ("todo", "blocked"):
                     from forge.core.blocked_reason import format_blocked_detail
+
                     blocking_ids = task.get("_blocking_task_ids", [])
                     blocked_detail = format_blocked_detail(
-                        task["_blocked_reason"],
-                        task.get("_queue_status", ""),
-                        blocking_ids
+                        task["_blocked_reason"], task.get("_queue_status", ""), blocking_ids
                     )
 
-                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified, blocked_detail=blocked_detail)
+                agent_output.update_unified(
+                    tid,
+                    task.get("title"),
+                    task.get("state"),
+                    unified,
+                    blocked_detail=blocked_detail,
+                )
 
                 # Auto-switch to chat view when the selected task is awaiting input
                 if task.get("state") == "awaiting_input":

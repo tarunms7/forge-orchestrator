@@ -678,7 +678,9 @@ class AgentOutput(Widget):
         self._title = title
         self._state = state
         self._unified_entries = list(entries)
-        self._blocked_detail = None  # Clear blocked detail in sync mode (streaming doesn't show blocked detail)
+        self._blocked_detail = (
+            None  # Clear blocked detail in sync mode (streaming doesn't show blocked detail)
+        )
         self._lines = []
         # Reset fade animation
         self._fade_step = len(_FADE_STEPS)
@@ -745,7 +747,9 @@ class AgentOutput(Widget):
         self.set_streaming(False)
         try:
             self.query_one("#agent-header", Static).update(format_header(task_id, title, state))
-            self.query_one("#agent-content", Static).update(self._format_content_with_blocked_detail())
+            self.query_one("#agent-content", Static).update(
+                self._format_content_with_blocked_detail()
+            )
             if entries and self._is_near_bottom():
                 self._request_scroll()
         except Exception:
@@ -757,17 +761,17 @@ class AgentOutput(Widget):
             self._unified_entries,
             self._spinner_frame,
             streaming=self._streaming,
-            typing_frame=self._typing_frame
+            typing_frame=self._typing_frame,
         )
 
         if not self._blocked_detail:
             return unified_output
 
         # Determine color based on blocked reason content
-        detail_lines = self._blocked_detail.split('\n')
+        detail_lines = self._blocked_detail.split("\n")
         if detail_lines:
             first_line = detail_lines[0].lower()
-            if 'blocked' in first_line and 'failed' in first_line:
+            if "blocked" in first_line and "failed" in first_line:
                 color = "#f0883e"  # Orange for blocked-by-failure
             else:
                 color = "#8b949e"  # Gray for waiting-on-deps
@@ -782,7 +786,7 @@ class AgentOutput(Widget):
             else:
                 header_lines.append("")
 
-        header = '\n'.join(header_lines)
+        header = "\n".join(header_lines)
         separator = "[#30363d]─────────────────────────────────────────[/#30363d]"
 
         if unified_output.strip():
@@ -890,7 +894,9 @@ class AgentOutput(Widget):
                 format_header(self._task_id, self._title, self._state)
             )
             if self._unified_entries:
-                self.query_one("#agent-content", Static).update(self._format_content_with_blocked_detail())
+                self.query_one("#agent-content", Static).update(
+                    self._format_content_with_blocked_detail()
+                )
             else:
                 self.query_one("#agent-content", Static).update(
                     format_output(self._lines, self._spinner_frame)

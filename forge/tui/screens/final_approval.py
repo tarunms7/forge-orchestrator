@@ -272,9 +272,7 @@ def format_task_table(tasks: list[dict], multi_repo: bool = False) -> str:
         # Aggregate stats for repo header
         total_added = sum(t.get("added", 0) for t in repo_tasks)
         total_removed = sum(t.get("removed", 0) for t in repo_tasks)
-        lines.append(
-            f"[bold {ACCENT_BLUE}]{_escape(repo_id)}[/]  +{total_added}/-{total_removed}"
-        )
+        lines.append(f"[bold {ACCENT_BLUE}]{_escape(repo_id)}[/]  +{total_added}/-{total_removed}")
         lines.extend(_format_task_list(repo_tasks, indent="    "))
     return "\n".join(lines)
 
