@@ -69,15 +69,27 @@ def _recent_pipeline_pr_counts(row: dict) -> tuple[int, int]:
     return pr_count, repo_count
 
 
-def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
+def _build_task_summaries(
+    tasks_list: list[dict],
+    error_history: dict[str, list[str]] | None = None,
+    review_substatus: dict[str, str] | None = None,
+    merge_substatus: dict[str, str] | None = None,
+    review_gates: dict[str, dict] | None = None,
+) -> list[dict]:
     """Convert raw TUI state task dicts into PR-ready summary dicts.
 
     Raw state dicts have 'files' as a list of paths and diff stats nested
     inside 'merge_result'.  This helper normalises them into the flat shape
     that generate_pr_body and FinalApprovalScreen expect.
     """
+    error_history = error_history or {}
+    review_substatus = review_substatus or {}
+    merge_substatus = merge_substatus or {}
+    review_gates = review_gates or {}
+
     summaries = []
     for t in tasks_list:
+        tid = t.get("id", "")
         mr = t.get("merge_result") or {}
         summaries.append(
             {
@@ -96,6 +108,12 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
                 "tests_total": t.get("tests_total", 0),
                 "review": "passed" if t.get("state") == "done" else "failed",
                 "error": t.get("error", ""),
+                # New enrichment fields
+                "retry_count": len(error_history.get(tid, [])),
+                "blocked_reason": t.get("error", "") if t.get("state") == "blocked" else "",
+                "review_substatus": review_substatus.get(tid, ""),
+                "merge_substatus": merge_substatus.get(tid, ""),
+                "review_gates": review_gates.get(tid, {}),
             }
         )
     return summaries
@@ -453,6 +471,11 @@ class ForgeApp(App):
                 total_removed += mr.get("linesRemoved", 0)
                 total_files += mr.get("filesChanged", 0)
 
+        # Calculate additional stats
+        total_retries = sum(len(v) for v in state.error_history.values())
+        blocked_count = sum(1 for t in tasks_list if t.get("state") == "blocked")
+        skipped_count = sum(1 for t in tasks_list if t.get("state") == "cancelled")
+
         stats: dict = {
             "added": total_added,
             "removed": total_removed,
@@ -460,11 +483,20 @@ class ForgeApp(App):
             "elapsed": elapsed_str,
             "cost": state.total_cost_usd,
             "questions": total_questions,
+            "total_retries": total_retries,
+            "blocked_count": blocked_count,
+            "skipped_count": skipped_count,
         }
         if state.is_multi_repo:
             stats["repo_count"] = len(state.repos)
             stats["task_count"] = len(tasks_list)
-        task_summaries = _build_task_summaries(tasks_list)
+        task_summaries = _build_task_summaries(
+            tasks_list,
+            error_history=state.error_history,
+            review_substatus=state.review_substatus,
+            merge_substatus=state.merge_substatus,
+            review_gates=state.review_gates,
+        )
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = self._cached_pipeline_branch or ""

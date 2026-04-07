@@ -159,15 +159,30 @@ def format_summary_stats(stats: dict, multi_repo: bool = False) -> str:
     elapsed = stats.get("elapsed", "?")
     cost = stats.get("cost", 0)
     questions = stats.get("questions", 0)
+    total_retries = stats.get("total_retries", 0)
+    blocked_count = stats.get("blocked_count", 0)
+    skipped_count = stats.get("skipped_count", 0)
+
     lines: list[str] = []
     if multi_repo:
         repo_count = stats.get("repo_count", 0)
         task_count = stats.get("task_count", 0)
         lines.append(f"{repo_count} repos, {task_count} tasks")
+
+    # Build the cost line with optional stat chips
+    cost_parts = [f"${cost:.2f} cost", f"{questions} questions answered"]
+    if total_retries > 0:
+        retry_text = "retry" if total_retries == 1 else "retries"
+        cost_parts.append(f"{total_retries} {retry_text}")
+    if blocked_count > 0:
+        cost_parts.append(f"{blocked_count} blocked")
+    if skipped_count > 0:
+        cost_parts.append(f"{skipped_count} skipped")
+
     lines.extend(
         [
             f"[bold {ACCENT_GREEN}]+{added}[/] / [bold {ACCENT_RED}]-{removed}[/]  •  {files} files  •  {elapsed}",
-            f"[{TEXT_SECONDARY}]${cost:.2f} cost  •  {questions} questions answered[/]",
+            f"[{TEXT_SECONDARY}]{'  •  '.join(cost_parts)}[/]",
         ]
     )
     return "\n".join(lines)
@@ -180,6 +195,9 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
         title = _escape(t.get("title", "?"))
         state = str(t.get("state", t.get("review", "?")))
         escaped_state = _escape(state)
+        retry_count = t.get("retry_count", 0)
+        review_substatus = t.get("review_substatus", "")
+        merge_substatus = t.get("merge_substatus", "")
 
         if state == "done":
             added = t.get("added", 0)
@@ -195,14 +213,27 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
             lines.append(
                 f"{indent}[{ACCENT_GREEN}]✅[/] [bold]{title}[/]  [{TEXT_SECONDARY}]{stats}[/]"
             )
+            # Add detail line for successful tasks with retries
+            if retry_count > 0:
+                retry_text = "retry" if retry_count == 1 else "retries"
+                lines.append(
+                    f"{indent}     [{TEXT_MUTED}]succeeded after {retry_count} {retry_text}[/]"
+                )
         elif state == "error":
             error = _escape(t.get("error", "failed"))
             lines.append(f"{indent}[{ACCENT_RED}]❌[/] [bold]{title}[/]  [{ACCENT_RED}]{error}[/]")
+            # Add retry count for error tasks if retries were attempted
+            if retry_count > 0:
+                retry_text = "retry" if retry_count == 1 else "retries"
+                lines.append(
+                    f"{indent}     [{TEXT_MUTED}]{retry_count} {retry_text} attempted[/]"
+                )
         elif state == "blocked":
             error = _escape(t.get("error", "blocked by dependency"))
             lines.append(
                 f"{indent}[{ACCENT_YELLOW}]⚠️[/] [bold]{title}[/]  [{ACCENT_YELLOW}]{error}[/]"
             )
+            # No additional detail line for blocked (error reason already on line 1)
         elif state == "cancelled":
             lines.append(
                 f"{indent}[{TEXT_SECONDARY}]✘[/] [bold]{title}[/]  [{TEXT_SECONDARY}]cancelled[/]"
@@ -233,14 +264,21 @@ def _format_task_list(tasks: list[dict], indent: str = "  ") -> list[str]:
                         f"{indent}[{ACCENT_YELLOW}]⏳[/] [bold]{title}[/]  "
                         f"[{TEXT_SECONDARY}]{escaped_state}  {stats}[/]"
                     )
+                # Add detail line for merge substatus
+                if merge_substatus:
+                    lines.append(f"{indent}     [{TEXT_MUTED}]{_escape(merge_substatus)}[/]")
             elif state == "in_review":
                 lines.append(
                     f"{indent}[{ACCENT_YELLOW}]⏳[/] [bold]{title}[/]  [{TEXT_SECONDARY}]reviewing  {stats}[/]"
                 )
+                # Add detail line for review substatus
+                if review_substatus:
+                    lines.append(f"{indent}     [{TEXT_MUTED}]{_escape(review_substatus)}[/]")
             elif state == "in_progress":
                 lines.append(
                     f"{indent}[{ACCENT_BLUE}]⚙[/] [bold]{title}[/]  [{TEXT_SECONDARY}]running  {stats}[/]"
                 )
+                # No detail line for in_progress (already shows 'running')
             else:
                 # Fallback for unknown states (todo, etc.)
                 lines.append(

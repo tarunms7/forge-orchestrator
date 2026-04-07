@@ -710,3 +710,171 @@ class TestFinalApprovalShortcutBar:
         assert screen._pr_created is False
         screen.show_pr_url("https://github.com/org/repo/pull/42")
         assert screen._pr_created is True
+
+
+# --- Task enrichment tests ---
+
+
+def test_compact_successful_task_single_line():
+    """Done task with retry_count=0 should have exactly one line per task."""
+    tasks = [
+        {
+            "title": "Auth middleware",
+            "state": "done",
+            "added": 89,
+            "removed": 4,
+            "retry_count": 0,
+        },
+    ]
+    result = format_task_table(tasks)
+    lines = result.split('\n')
+    # Should have exactly one line (no detail line for successful task with no retries)
+    assert len(lines) == 1
+    assert "Auth middleware" in result
+    assert "succeeded after" not in result
+
+
+def test_successful_task_with_retries_shows_detail():
+    """Done task with retry_count > 0 should show retry detail line."""
+    tasks = [
+        {
+            "title": "Cache layer",
+            "state": "done",
+            "added": 45,
+            "removed": 2,
+            "retry_count": 2,
+        },
+    ]
+    result = format_task_table(tasks)
+    lines = result.split('\n')
+    # Should have two lines (main + detail)
+    assert len(lines) == 2
+    assert "Cache layer" in result
+    assert "succeeded after 2 retries" in result
+
+
+def test_blocked_task_no_duplicate_detail():
+    """Blocked task should show blocked reason but no duplicate second line."""
+    tasks = [
+        {
+            "title": "API endpoints",
+            "state": "blocked",
+            "error": "dependency failed",
+            "retry_count": 1,
+        },
+    ]
+    result = format_task_table(tasks)
+    lines = result.split('\n')
+    # Should have exactly one line (no detail line for blocked)
+    assert len(lines) == 1
+    assert "API endpoints" in result
+    assert "dependency failed" in result
+
+
+def test_in_review_task_shows_substatus():
+    """in_review task with review_substatus should show substatus detail line."""
+    tasks = [
+        {
+            "title": "Database schema",
+            "state": "in_review",
+            "added": 23,
+            "removed": 1,
+            "review_substatus": "🔨 Build running",
+        },
+    ]
+    result = format_task_table(tasks)
+    lines = result.split('\n')
+    # Should have two lines (main + substatus detail)
+    assert len(lines) == 2
+    assert "Database schema" in result
+    assert "🔨 Build running" in result
+
+
+def test_merging_task_shows_substatus():
+    """merging task with merge_substatus should show substatus detail line."""
+    tasks = [
+        {
+            "title": "Test framework",
+            "state": "merging",
+            "added": 78,
+            "removed": 5,
+            "merge_substatus": "rebasing",
+            "review_gates": {},
+        },
+    ]
+    result = format_task_table(tasks)
+    lines = result.split('\n')
+    # Should have two lines (main + substatus detail)
+    assert len(lines) == 2
+    assert "Test framework" in result
+    assert "rebasing" in result
+
+
+def test_error_task_with_retries_shows_count():
+    """Error task with retry_count > 0 should show retry count detail line."""
+    tasks = [
+        {
+            "title": "Config parser",
+            "state": "error",
+            "error": "validation failed",
+            "retry_count": 3,
+        },
+    ]
+    result = format_task_table(tasks)
+    lines = result.split('\n')
+    # Should have two lines (main + retry detail)
+    assert len(lines) == 2
+    assert "Config parser" in result
+    assert "validation failed" in result
+    assert "3 retries attempted" in result
+
+
+def test_summary_stats_with_retries():
+    """Stats with total_retries > 0 should show retries in cost line."""
+    stats = {
+        "added": 100,
+        "removed": 20,
+        "files": 8,
+        "elapsed": "5m 30s",
+        "cost": 0.25,
+        "questions": 1,
+        "total_retries": 5,
+    }
+    result = format_summary_stats(stats)
+    assert "5 retries" in result
+    assert "$0.25 cost" in result
+
+
+def test_summary_stats_with_blocked():
+    """Stats with blocked_count > 0 should show blocked in cost line."""
+    stats = {
+        "added": 50,
+        "removed": 10,
+        "files": 3,
+        "elapsed": "3m 15s",
+        "cost": 0.15,
+        "questions": 0,
+        "blocked_count": 2,
+    }
+    result = format_summary_stats(stats)
+    assert "2 blocked" in result
+
+
+def test_summary_stats_clean_no_extra_chips():
+    """Stats with no retries/blocked should not show those stats."""
+    stats = {
+        "added": 75,
+        "removed": 5,
+        "files": 4,
+        "elapsed": "2m 45s",
+        "cost": 0.10,
+        "questions": 2,
+        "total_retries": 0,
+        "blocked_count": 0,
+        "skipped_count": 0,
+    }
+    result = format_summary_stats(stats)
+    assert "retries" not in result
+    assert "blocked" not in result
+    assert "skipped" not in result
+    assert "$0.10 cost" in result
