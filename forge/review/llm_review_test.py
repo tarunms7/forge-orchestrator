@@ -370,7 +370,9 @@ class TestReviewSystemPrompt:
         from forge.review.llm_review import REVIEW_SYSTEM_PROMPT
 
         assert "Read, Glob, Grep, and Bash" in REVIEW_SYSTEM_PROMPT
-        assert "Read the current version of each changed in-scope source file" in REVIEW_SYSTEM_PROMPT
+        assert (
+            "Read the current version of each changed in-scope source file" in REVIEW_SYSTEM_PROMPT
+        )
         assert "preferred Python interpreter" in REVIEW_SYSTEM_PROMPT
 
 
@@ -558,7 +560,9 @@ class TestAdaptiveReviewDispatch:
             review_strategy="tier2",
         )
         with (
-            patch("forge.review.synthesizer.run_chunked_review", new_callable=AsyncMock) as mock_chunked,
+            patch(
+                "forge.review.synthesizer.run_chunked_review", new_callable=AsyncMock
+            ) as mock_chunked,
             patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk,
         ):
             mock_chunked.return_value = (expected, ReviewCostInfo())
@@ -592,7 +596,9 @@ class TestAdaptiveReviewDispatch:
             review_strategy="tier2",
         )
         with (
-            patch("forge.review.synthesizer.run_chunked_review", new_callable=AsyncMock) as mock_chunked,
+            patch(
+                "forge.review.synthesizer.run_chunked_review", new_callable=AsyncMock
+            ) as mock_chunked,
             patch("forge.review.llm_review.sdk_query", new_callable=AsyncMock) as mock_sdk,
         ):
             mock_chunked.return_value = (expected, ReviewCostInfo())

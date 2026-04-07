@@ -77,6 +77,7 @@ class PhaseBanner(Widget):
         super().__init__()
         self._phase = "idle"
         self._read_only_banner: str | None = None
+        self._planner_detail: str = ""
         # Scramble-resolve animation state
         self._target_text: str = ""
         self._target_colour: str = "#8b949e"
@@ -94,6 +95,9 @@ class PhaseBanner(Widget):
         if old_phase == phase:
             self.refresh()
             return
+        # Clear planner detail when phase changes away from planning
+        if old_phase == "planning" and phase != "planning":
+            self._planner_detail = ""
         # Start scramble-resolve animation
         label, colour = _PHASE_BANNER.get(phase, ("Unknown", "#8b949e"))
         icon, _, text = label.partition(" ")
@@ -139,6 +143,21 @@ class PhaseBanner(Widget):
 
     def set_read_only_banner(self, text: str | None) -> None:
         self._read_only_banner = text
+        self.refresh()
+
+    def update_planner_detail(self, status: str, files_examined: int, candidate_tasks: int) -> None:
+        """Update the planner detail summary line."""
+        if status == "waiting for human input":
+            self._planner_detail = "⏳ waiting for your answer"
+        elif status:
+            parts = [status]
+            if files_examined > 0:
+                parts.append(f"{files_examined} files examined")
+            if candidate_tasks > 0:
+                parts.append(f"{candidate_tasks} tasks")
+            self._planner_detail = " · ".join(parts)
+        else:
+            self._planner_detail = ""
         self.refresh()
 
     def stop_countdown(self) -> None:
@@ -191,6 +210,8 @@ class PhaseBanner(Widget):
             display = f"[bold {self._target_colour}]{self._target_icon}{resolved}[/][#484f58]{scrambled}[/]"
             if self._read_only_banner:
                 display += f"\n[dim]{self._read_only_banner}[/]"
+            elif self._phase == "planning" and self._planner_detail:
+                display += f"\n[dim]{self._planner_detail}[/]"
             return _vertically_center(display)
 
         # Normal static render
@@ -205,6 +226,8 @@ class PhaseBanner(Widget):
         banner = f"[bold {colour}]{icon_prefix}{spaced}[/]"
         if self._read_only_banner:
             banner += f"\n[dim]{self._read_only_banner}[/]"
+        elif self._phase == "planning" and self._planner_detail:
+            banner += f"\n[dim]{self._planner_detail}[/]"
         return _vertically_center(banner)
 
 
@@ -500,6 +523,18 @@ class PipelineScreen(Screen):
             except Exception:
                 pass
             return
+        if field == "planner_status":
+            # Update planner detail banner
+            try:
+                state = self._state
+                self.query_one(PhaseBanner).update_planner_detail(
+                    state.planner_status,
+                    state.planner_files_examined,
+                    state.planner_candidate_tasks,
+                )
+            except Exception:
+                pass
+            return
         if field in (
             "tasks",
             "phase",
@@ -787,7 +822,9 @@ class PipelineScreen(Screen):
                     self._auto_switch_chat(tid, task)
         elif state.phase == "planning" and state.planner_output:
             agent_output.clear_error_detail()
-            agent_output.update_output("planner", "Planning", "planning", state.planner_output)
+            agent_output.update_output(
+                "planner", "Planning", "planning", state.planner_collapsed_output
+            )
             agent_output.set_streaming(True)
             # Auto-switch to chat view when a planning question is pending
             planning_q = state.pending_questions.get("__planning__")
@@ -810,7 +847,7 @@ class PipelineScreen(Screen):
                     "planner",
                     "Planning",
                     "planning",
-                    state.planner_output or ["⚙ Initializing planner..."],
+                    state.planner_collapsed_output or ["⚙ Initializing planner..."],
                 )
                 agent_output.set_streaming(state.phase == "planning")
             else:
