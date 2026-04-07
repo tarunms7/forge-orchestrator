@@ -371,6 +371,7 @@ class TestReviewSystemPrompt:
 
         assert "Read, Glob, Grep, and Bash" in REVIEW_SYSTEM_PROMPT
         assert "Read the current version of each changed in-scope source file" in REVIEW_SYSTEM_PROMPT
+        assert "preferred Python interpreter" in REVIEW_SYSTEM_PROMPT
 
 
 class TestRetryPromptNoSuppression:

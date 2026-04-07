@@ -25,10 +25,14 @@ _FORGE_QUESTION_MARKER = "FORGE_QUESTION:"
 _FORGE_LEARNING_MARKER = "FORGE_LEARNING:"
 _REVIEW_DIFF_EXCLUDES = (".claude/", ".forge/")
 _PLAINTEXT_QUESTION_LINE = re.compile(
-    r"^\s*\*{0,2}Question(?:\s+\d+)?\s*:\*{0,2}\s*(.+\?)\s*$",
+    r"^\s*Question(?:\s+\d+)?\s*:\s*(.+\?)\s*$",
     re.IGNORECASE,
 )
-_PLAINTEXT_QUESTION_BULLET = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+(.*\S)\s*$")
+_PLAINTEXT_QUESTION_LABEL = re.compile(
+    r"^\s*Question(?:\s+\d+)?\s*:\s*(.*\S)?\s*$",
+    re.IGNORECASE,
+)
+_PLAINTEXT_QUESTION_BULLET = re.compile(r"^\s*(?:[-*]|\d+[.)]|[A-Za-z][.)])\s+(.*\S)\s*$")
 
 
 async def async_subprocess(
@@ -87,11 +91,29 @@ def _parse_forge_question(text: str | None) -> dict | None:
     if marker_idx == -1:
         lines = text.splitlines()
         for idx, raw_line in enumerate(lines):
-            match = _PLAINTEXT_QUESTION_LINE.match(raw_line.strip())
-            if not match:
-                continue
-
-            question = match.group(1).strip()
+            normalized_line = raw_line.strip().replace("**", "")
+            match = _PLAINTEXT_QUESTION_LINE.match(normalized_line)
+            question = match.group(1).strip() if match else ""
+            if not question:
+                label_match = _PLAINTEXT_QUESTION_LABEL.match(normalized_line)
+                if not label_match:
+                    continue
+                inline_text = (label_match.group(1) or "").strip()
+                if inline_text.endswith("?"):
+                    question = inline_text
+                else:
+                    forward_question = idx + 1
+                    while forward_question < len(lines):
+                        candidate = lines[forward_question].strip()
+                        if not candidate:
+                            forward_question += 1
+                            continue
+                        if _PLAINTEXT_QUESTION_BULLET.match(candidate):
+                            forward_question += 1
+                            continue
+                        if candidate.endswith("?"):
+                            question = candidate
+                        break
             if not question:
                 continue
 

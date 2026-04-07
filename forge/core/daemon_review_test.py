@@ -839,6 +839,20 @@ class TestRunReviewPassesOnMessage:
         assert "Lint gate: PASSED" in validation_context
         assert "Test gate: SKIPPED — no test command configured" in validation_context
 
+
+def test_discover_review_python_walks_up_to_repo_venv(tmp_path):
+    from forge.core.daemon_review import _discover_review_python
+
+    repo = tmp_path / "repo"
+    worktree = repo / ".forge" / "worktrees" / "task-1"
+    venv_python = repo / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
+    venv_python.write_text("")
+    worktree.mkdir(parents=True, exist_ok=True)
+
+    discovered = _discover_review_python(str(worktree))
+    assert discovered == str(venv_python)
+
     @pytest.mark.asyncio
     async def test_extra_review_pass_receives_registry(self):
         """Extra review pass should reuse the active daemon registry."""

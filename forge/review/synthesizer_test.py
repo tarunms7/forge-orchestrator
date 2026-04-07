@@ -69,6 +69,18 @@ def test_parse_chunk_json_fallback_pass():
     assert result.verdict == "PASS"
 
 
+def test_parse_chunk_json_recovers_plaintext_issue_objects():
+    raw = (
+        "I found a concrete regression.\n"
+        "forge/tui/state.py:308 validation notification is never emitted for repeated updates.\n"
+    )
+    result = _parse_chunk_json(raw, chunk_index=1)
+    assert result.verdict == "FAIL"
+    assert len(result.issues) == 1
+    assert result.issues[0]["file"] == "forge/tui/state.py"
+    assert result.issues[0]["line_hint"] == "~308"
+
+
 def test_parse_chunk_json_uncertain():
     raw = json.dumps(
         {

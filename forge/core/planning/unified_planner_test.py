@@ -156,6 +156,59 @@ async def test_unified_planner_detects_plaintext_question_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_unified_planner_detects_multiline_plaintext_question_fallback(monkeypatch):
+    question_response = (
+        "## 2. Clarifying Questions\n"
+        "The task specification is quite detailed, but I have one key question about the smart deduplication approach:\n"
+        "**Question**: For the smart deduplication of Reading/Searching lines, I see two possible approaches:\n"
+        "A) **Consecutive collapsing**: Only collapse consecutive lines with the same verb prefix\n"
+        "B) **Session-wide collapsing**: Track all Reading/Searching activity in the current planning session and always show a running counter\n"
+        "Which approach would you prefer, and should the collapsed format show the current file/query being processed or the last one in the sequence?\n"
+    )
+    call_count = 0
+
+    async def mock_sdk_query(prompt, options, on_message=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return FakeSdkResult(question_response, session_id="sess-q2")
+        return FakeSdkResult(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "t1",
+                            "title": "T",
+                            "description": "Detailed description for task with planner progress implementation",
+                            "files": ["state.py"],
+                        }
+                    ]
+                }
+            )
+        )
+
+    monkeypatch.setattr("forge.core.planning.unified_planner.sdk_query", mock_sdk_query)
+
+    questions_received = []
+
+    async def on_question(q):
+        questions_received.append(q)
+        return "Use consecutive collapsing."
+
+    planner = UnifiedPlanner(model="opus", cwd="/tmp")
+    result = await planner.run(
+        user_input="Improve planner progress",
+        spec_text="",
+        snapshot_text="",
+        on_question=on_question,
+    )
+    assert len(questions_received) == 1
+    assert questions_received[0]["source"] == "plaintext_fallback"
+    assert questions_received[0]["question"].startswith("Which approach would you prefer")
+    assert result.task_graph is not None
+
+
+@pytest.mark.asyncio
 async def test_unified_planner_retries_on_invalid_json(monkeypatch):
     call_count = 0
 

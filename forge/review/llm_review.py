@@ -109,6 +109,8 @@ Do NOT use UNCERTAIN for:
 - Use Bash for focused verification commands (targeted tests, linters, or grep)
   when it helps confirm or falsify a concern. Prefer the smallest relevant
   command instead of broad expensive suites.
+- If validation context provides a preferred Python interpreter, use it for
+  Python-based Bash checks instead of bare `python`.
 - If validation context says tests/build/lint were skipped or had infra problems,
   treat that as reduced coverage and inspect the changed code more deeply.
 - Prior review feedback can be stale on retries. If prior feedback says an

@@ -76,6 +76,22 @@ async def _async_shell(
     )
 
 
+def _discover_review_python(worktree_path: str) -> str | None:
+    """Return a repo-local Python interpreter path for reviewer Bash commands if present."""
+    current = os.path.abspath(worktree_path)
+    visited: set[str] = set()
+    while current not in visited:
+        visited.add(current)
+        candidate = os.path.join(current, ".venv", "bin", "python")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return None
+
+
 # ---------------------------------------------------------------------------
 # LintStrategy — language-agnostic lint gate
 # ---------------------------------------------------------------------------
@@ -1217,12 +1233,20 @@ class ReviewMixin:
                 getattr(task, "review_feedback", None) if task.retry_count > 0 else None
             )
             prior_diff = getattr(task, "prior_diff", None) if task.retry_count > 0 else None
+            reviewer_python = _discover_review_python(worktree_path)
             validation_context = (
                 "## Validation Context\n"
                 f"{build_validation_line}\n"
                 f"{lint_validation_line}\n"
                 f"{test_validation_line}\n\n"
-                "Treat skipped or infra-errored validation as reduced coverage: inspect the current code"
+                + (
+                    f"Preferred Python for verification commands: {reviewer_python}\n"
+                    "If you run Python-based Bash checks, use that interpreter (for example,"
+                    f" `{reviewer_python} -m pytest ...`) instead of bare `python`.\n\n"
+                    if reviewer_python
+                    else ""
+                )
+                + "Treat skipped or infra-errored validation as reduced coverage: inspect the current code"
                 " more deeply and use focused tools/commands where that helps confirm correctness."
             )
             console.print(

@@ -146,36 +146,64 @@ def _parse_chunk_json(raw_text: str, chunk_index: int) -> ChunkReviewResult:
         )
     except (json.JSONDecodeError, ValueError, TypeError):
         # Fallback: plain-text verdict detection
-        upper = text.upper()
-        if upper.startswith("PASS"):
-            verdict = "PASS"
-        elif upper.startswith("FAIL"):
-            verdict = "FAIL"
-        elif upper.startswith("UNCERTAIN"):
-            verdict = "UNCERTAIN"
-        else:
-            # Check line-by-line
-            verdict = "UNCERTAIN"
-            for line in text.splitlines():
-                lu = line.strip().upper()
-                if lu.startswith("PASS"):
-                    verdict = "PASS"
-                    break
-                if lu.startswith("FAIL"):
-                    verdict = "FAIL"
-                    break
-                if lu.startswith("UNCERTAIN"):
-                    verdict = "UNCERTAIN"
-                    break
+        verdict = _recover_plaintext_chunk_verdict(text)
+        issues = _recover_plaintext_chunk_issues(text)
         return ChunkReviewResult(
             chunk_index=chunk_index,
             verdict=verdict,
             confidence=3,
-            issues=[],
+            issues=issues,
             cross_chunk_concerns=[],
             summary=text[:200],
             raw_text=raw_text,
         )
+
+
+_PLAINTEXT_ISSUE_LINE = re.compile(
+    r"(?P<file>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+):(?P<line>\d+(?:-\d+)?)\s+(?P<desc>.+)"
+)
+_PLAINTEXT_FINDING_CUE = re.compile(
+    r"\b(bug|issue|regression|incorrect|wrong|mismatch|data-loss|failure|defect)\b",
+    re.IGNORECASE,
+)
+
+
+def _recover_plaintext_chunk_verdict(text: str) -> str:
+    """Recover a chunk verdict from non-JSON reviewer output."""
+    from forge.review.llm_review import _extract_review_verdict
+
+    verdict = _extract_review_verdict(text)
+    if verdict is not None:
+        return verdict
+    if _recover_plaintext_chunk_issues(text):
+        return "FAIL"
+    if _PLAINTEXT_FINDING_CUE.search(text):
+        return "FAIL"
+    return "UNCERTAIN"
+
+
+def _recover_plaintext_chunk_issues(text: str) -> list[dict]:
+    """Extract rough issue objects from plain-text chunk output."""
+    issues: list[dict] = []
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("-* ")
+        if not stripped:
+            continue
+        match = _PLAINTEXT_ISSUE_LINE.search(stripped)
+        if not match:
+            continue
+        description = match.group("desc").strip()
+        if not description:
+            continue
+        issues.append(
+            {
+                "severity": "MEDIUM",
+                "file": match.group("file"),
+                "line_hint": f"~{match.group('line')}",
+                "description": description,
+            }
+        )
+    return _deduplicate_issues(issues)
 
 
 # ── Synthesis helpers ─────────────────────────────────────────────────────

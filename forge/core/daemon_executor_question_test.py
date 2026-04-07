@@ -77,6 +77,23 @@ class TestQuestionDetection:
         assert q["question"] == "Should the blocked detail replace the output view?"
         assert q["source"] == "plaintext_fallback"
 
+    def test_detects_multiline_plaintext_question_fallback(self):
+        result_text = (
+            "## 2. Clarifying Questions\n"
+            "The task specification is quite detailed, but I have one key question about the smart deduplication approach:\n"
+            "**Question**: For the smart deduplication of Reading/Searching lines, I see two possible approaches:\n"
+            "A) **Consecutive collapsing**: Only collapse consecutive lines with the same verb prefix\n"
+            "B) **Session-wide collapsing**: Track all Reading/Searching activity in the current planning session and always show a running counter\n"
+            "Which approach would you prefer, and should the collapsed format show the current file/query being processed or the last one in the sequence?\n"
+        )
+        q = _parse_forge_question(result_text)
+        assert q is not None
+        assert (
+            q["question"]
+            == "Which approach would you prefer, and should the collapsed format show the current file/query being processed or the last one in the sequence?"
+        )
+        assert q["source"] == "plaintext_fallback"
+
 
 class TestResumeTaskSdkOptions:
     """Verify _resume_task passes resume=session_id to the SDK."""
