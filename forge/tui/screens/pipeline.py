@@ -738,10 +738,12 @@ class PipelineScreen(Screen):
                 t["_queue_status"] = scheduling_info.get("status", "")
                 t["_priority_rank"] = scheduling_info.get("priority_rank")
                 t["_blocked_reason"] = scheduling_info.get("reason", "")
+                t["_blocking_task_ids"] = scheduling_info.get("blocking_task_ids", [])
             else:
                 t.pop("_queue_status", None)
                 t.pop("_priority_rank", None)
                 t.pop("_blocked_reason", None)
+                t.pop("_blocking_task_ids", None)
         task_list.update_tasks(
             ordered_tasks, state.selected_task_id, phase=state.phase, multi_repo=state.is_multi_repo
         )
@@ -761,7 +763,19 @@ class PipelineScreen(Screen):
                 agent_output.sync_streaming(tid, task.get("title"), task.get("state"), unified)
             else:
                 agent_output._error_mode = False  # Exit error mode without double-render
-                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified)
+
+                # Generate blocked detail if task is blocked/waiting
+                blocked_detail = None
+                if task.get("_blocked_reason") and task.get("state") in ("todo", "blocked"):
+                    from forge.core.blocked_reason import format_blocked_detail
+                    blocking_ids = task.get("_blocking_task_ids", [])
+                    blocked_detail = format_blocked_detail(
+                        task["_blocked_reason"],
+                        task.get("_queue_status", ""),
+                        blocking_ids
+                    )
+
+                agent_output.update_unified(tid, task.get("title"), task.get("state"), unified, blocked_detail=blocked_detail)
 
                 # Auto-switch to chat view when the selected task is awaiting input
                 if task.get("state") == "awaiting_input":

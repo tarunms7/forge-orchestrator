@@ -762,3 +762,58 @@ def test_append_unified_starts_fade():
     # Before compose, set_interval fails so fade is skipped
     assert widget._fade_step == len(_FADE_STEPS)
     assert widget._fade_timer is None
+
+
+def test_update_unified_with_blocked_detail_prepends_header():
+    """Test that blocked detail is prepended as styled header above unified content."""
+    widget = AgentOutput()
+    entries = [("agent", "Some agent output")]
+    blocked_detail = "Waiting for dependencies to complete:\n  - task-2\n  - task-3"
+
+    widget.update_unified("task-1", "Test Task", "blocked", entries, blocked_detail=blocked_detail)
+
+    # Should store the blocked detail
+    assert widget._blocked_detail == blocked_detail
+
+    # Test the formatted content includes blocked detail
+    content = widget._format_content_with_blocked_detail()
+    assert "Waiting for dependencies to complete:" in content
+    assert "task-2" in content
+    assert "task-3" in content
+    assert "#8b949e" in content  # Gray color for waiting
+    assert "─────────────────────────────────────────" in content  # Separator
+
+
+def test_update_unified_without_blocked_detail_no_header():
+    """Test that update_unified without blocked_detail works normally."""
+    widget = AgentOutput()
+    entries = [("agent", "Some agent output")]
+
+    widget.update_unified("task-1", "Test Task", "in_progress", entries)
+
+    # Should not have blocked detail
+    assert widget._blocked_detail is None
+
+    # Test the formatted content doesn't include blocked detail header
+    content = widget._format_content_with_blocked_detail()
+    assert "Waiting for dependencies" not in content
+    assert "[#30363d]─────────────────────────────────────────[/#30363d]" not in content
+
+
+def test_format_content_with_blocked_detail_failed_deps():
+    """Test blocked detail formatting for failed dependencies uses correct color."""
+    widget = AgentOutput()
+    entries = [("agent", "Some output")]
+    widget._unified_entries = entries
+    widget._spinner_frame = 0
+    widget._streaming = False
+    widget._typing_frame = 0
+
+    # Test failed dependencies get orange color
+    blocked_detail = "Blocked by failed dependencies:\n  - auth-backend (failed)\n  - db-setup (failed)"
+    widget._blocked_detail = blocked_detail
+
+    content = widget._format_content_with_blocked_detail()
+    assert "#f0883e" in content  # Orange color for failed deps
+    assert "auth-backend (failed)" in content
+    assert "db-setup (failed)" in content

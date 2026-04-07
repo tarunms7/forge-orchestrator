@@ -523,6 +523,7 @@ web/             # Next.js frontend — TypeScript, Tailwind, Zustand
 | Claude CLI not authenticated | `claude login` |
 | `gh: command not found` | Install [GitHub CLI](https://cli.github.com) and `gh auth login` |
 | Pipeline stuck | Forge auto-detects stuck tasks. Check `.forge/forge.log` |
+| Task shows as blocked or waiting | **Waiting for dependencies** — task will run automatically once upstream tasks finish. **Blocked by failed task** — a dependency failed; retry or skip the failed task to unblock. **Waiting for human input** — answer the pending question in the TUI (select the task, press Enter). |
 | Task exhausted retry budget | Forge allows up to 5 retries per task (configurable via `FORGE_MAX_RETRIES`). Automatic failures (timeouts, review rejections) consume a slot. Manual reruns via the TUI refund one slot first, so a human-triggered recovery always has room for at least one more automatic retry. Check `.forge/forge.log` for the failure category. |
 | Database issues | `forge doctor` |
 | Upgrade fails | `forge upgrade` auto-handles Python 3.12 installation |
