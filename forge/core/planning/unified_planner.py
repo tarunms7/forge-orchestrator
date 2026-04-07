@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("forge.planning.unified")
 sdk_query = sdk_helpers.sdk_query  # Backward-compat alias for legacy tests/mocks.
 
+
 @dataclass
 class UnifiedPlannerResult:
     """Output of the unified planning stage."""
@@ -227,7 +228,9 @@ class UnifiedPlanner:
                 questions_asked += 1
                 answer = await on_question(q_data)
                 if answer:
-                    resume_state = provider_result.resume_state if provider_result is not None else None
+                    resume_state = (
+                        provider_result.resume_state if provider_result is not None else None
+                    )
                     feedback = answer
                     continue
 

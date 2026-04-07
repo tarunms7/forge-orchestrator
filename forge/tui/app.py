@@ -101,7 +101,9 @@ def _build_task_summaries(tasks_list: list[dict]) -> list[dict]:
     return summaries
 
 
-def _partition_pr_task_summaries(task_summaries: list[dict]) -> tuple[list[dict], list[dict] | None]:
+def _partition_pr_task_summaries(
+    task_summaries: list[dict],
+) -> tuple[list[dict], list[dict] | None]:
     """Split task summaries into completed tasks and terminal failed tasks for PR creation."""
     done_tasks = [t for t in task_summaries if t.get("state") == TaskState.DONE.value]
     failed_tasks = [t for t in task_summaries if t.get("state") in _FAILED_PR_TASK_STATES]

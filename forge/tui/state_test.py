@@ -1466,12 +1466,10 @@ class TestReviewLifecycleVisibility:
     def test_review_timeout_shows_attempt_info(self):
         """review:timeout event shows attempt info in substatus and unified_log."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:timeout", {
-            "task_id": "t1",
-            "timeout_seconds": 300,
-            "attempt": 2,
-            "max_attempts": 3
-        })
+        state.apply_event(
+            "review:timeout",
+            {"task_id": "t1", "timeout_seconds": 300, "attempt": 2, "max_attempts": 3},
+        )
 
         assert state.review_substatus["t1"] == "L2 timed out (2/3)"
         assert ("gate", "L2 review timed out after 300s") in state.unified_log["t1"]
@@ -1479,11 +1477,7 @@ class TestReviewLifecycleVisibility:
     def test_review_retry_shows_attempt_info(self):
         """review:retry event shows retry attempt info in substatus and unified_log."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:retry", {
-            "task_id": "t1",
-            "attempt": 3,
-            "max_attempts": 5
-        })
+        state.apply_event("review:retry", {"task_id": "t1", "attempt": 3, "max_attempts": 5})
 
         assert state.review_substatus["t1"] == "Retrying review 3/5"
         assert ("gate", "Retrying review attempt 3/5") in state.unified_log["t1"]
@@ -1491,11 +1485,7 @@ class TestReviewLifecycleVisibility:
     def test_review_re_review_shows_attempt_info(self):
         """review:re_review event shows re-review attempt info in substatus and unified_log."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:re_review", {
-            "task_id": "t1",
-            "attempt": 2,
-            "max_attempts": 4
-        })
+        state.apply_event("review:re_review", {"task_id": "t1", "attempt": 2, "max_attempts": 4})
 
         assert state.review_substatus["t1"] == "Re-reviewing 2/4"
         assert ("gate", "Re-reviewing attempt 2/4") in state.unified_log["t1"]
@@ -1510,22 +1500,20 @@ class TestReviewLifecycleVisibility:
     def test_gate_passed_updates_review_substatus(self):
         """review:gate_passed updates review_substatus with passed info."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:gate_passed", {
-            "task_id": "t1",
-            "gate": "gate1_lint",
-            "details": "All checks passed"
-        })
+        state.apply_event(
+            "review:gate_passed",
+            {"task_id": "t1", "gate": "gate1_lint", "details": "All checks passed"},
+        )
 
         assert state.review_substatus["t1"] == "\U0001f4cf Lint passed"
 
     def test_gate_failed_updates_review_substatus(self):
         """review:gate_failed updates review_substatus with failed info."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:gate_failed", {
-            "task_id": "t1",
-            "gate": "gate1_lint",
-            "details": "Linting errors found"
-        })
+        state.apply_event(
+            "review:gate_failed",
+            {"task_id": "t1", "gate": "gate1_lint", "details": "Linting errors found"},
+        )
 
         assert state.review_substatus["t1"] == "\U0001f4cf Lint failed"
 
@@ -1541,18 +1529,14 @@ class TestReviewLifecycleVisibility:
     def test_review_timeout_deduplication(self):
         """Review timeout events are real events, not status chatter - both appear in log."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:timeout", {
-            "task_id": "t1",
-            "timeout_seconds": 300,
-            "attempt": 2,
-            "max_attempts": 3
-        })
-        state.apply_event("review:timeout", {
-            "task_id": "t1",
-            "timeout_seconds": 300,
-            "attempt": 3,
-            "max_attempts": 3
-        })
+        state.apply_event(
+            "review:timeout",
+            {"task_id": "t1", "timeout_seconds": 300, "attempt": 2, "max_attempts": 3},
+        )
+        state.apply_event(
+            "review:timeout",
+            {"task_id": "t1", "timeout_seconds": 300, "attempt": 3, "max_attempts": 3},
+        )
 
         # Both timeout events should be in the log as they represent different attempts
         timeout_logs = [log for log in state.unified_log["t1"] if "timed out" in log[1]]
@@ -1561,11 +1545,10 @@ class TestReviewLifecycleVisibility:
     def test_existing_gate_passed_unified_log_preserved(self):
         """Existing gate passed/failed events still produce correct unified_log entries."""
         state = _make_state_with_task("t1")
-        state.apply_event("review:gate_passed", {
-            "task_id": "t1",
-            "gate": "gate0_build",
-            "details": "Build successful"
-        })
+        state.apply_event(
+            "review:gate_passed",
+            {"task_id": "t1", "gate": "gate0_build", "details": "Build successful"},
+        )
 
         # Check that the existing pattern still works
         assert ("gate", "\U0001f528 Build: \u2713 Build successful") in state.unified_log["t1"]
