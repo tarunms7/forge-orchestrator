@@ -6,9 +6,12 @@ import re
 
 from textual.widgets import TextArea
 
-_MOUSE_REPORT_RE = re.compile(r"(?:\x1b\[)?<\d+;\d+;\d+[Mm]")
+_MOUSE_REPORT_RE = re.compile(r"(?:\x1b)?\[*<\d+;\d+;\d+[Mm]?")
 _RAW_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|[@-_])")
 _CARET_ESCAPE_RE = re.compile(r"(?:\^\[)+(?:\[[0-?]*[ -/]*[@-~]?|O[@-~]?|<\d+;\d+;\d+[Mm]?|[0-9;?]*[A-Za-z~]?)")
+_PARTIAL_BRACKETED_PASTE_RE = re.compile(r"\[+20[01]~")
+_BRACKET_STUTTER_RE = re.compile(r"\[{3,}(?:M\[?)?")
+_PARTIAL_CSI_KEY_RE = re.compile(r"\[+(?:[0-9;?]*[ABCDHFMP~])")
 
 
 def strip_terminal_input_noise(text: str) -> str:
@@ -16,6 +19,9 @@ def strip_terminal_input_noise(text: str) -> str:
     text = _MOUSE_REPORT_RE.sub("", text)
     text = _RAW_ESCAPE_RE.sub("", text)
     text = _CARET_ESCAPE_RE.sub("", text)
+    text = _PARTIAL_BRACKETED_PASTE_RE.sub("", text)
+    text = _BRACKET_STUTTER_RE.sub("", text)
+    text = _PARTIAL_CSI_KEY_RE.sub("", text)
     return text.replace("\x1b", "")
 
 
