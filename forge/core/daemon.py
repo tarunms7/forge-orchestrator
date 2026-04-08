@@ -484,13 +484,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         multi = len(self._repos) > 1
 
+        # All worktrees go to <workspace_root>/.forge/worktrees/ — one visible
+        # place for all tasks.  WorktreeManager uses rc.path as the git repo
+        # root so git commands still run in the correct repo.
+        wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
+
         for repo_id, rc in self._repos.items():
-            if multi:
-                # Each repo gets worktrees in its own .forge/ directory
-                # so git push/pull use the correct remote
-                wt_dir = os.path.join(rc.path, ".forge", "worktrees")
-            else:
-                wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
 
             self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
             self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=pipeline_branch)
@@ -520,22 +519,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     def _worktree_path(self, repo_id: str, task_id: str) -> str:
         """Compute the filesystem path for a task's git worktree.
 
-        Single default repo: <project_dir>/.forge/worktrees/<task_id> (flat, backward compat).
-        Multi-repo: <repo_path>/.forge/worktrees/<task_id> (inside each repo).
+        All worktrees live at <workspace_dir>/.forge/worktrees/<task_id>
+        regardless of single- or multi-repo mode.
         """
-        if len(self._repos) > 1:
-            rc = self._repos.get(repo_id)
-            if rc is None:
-                logger.error(
-                    "repo_id '%s' not found in configured repos: %s",
-                    repo_id,
-                    sorted(self._repos.keys()),
-                )
-                raise ValueError(
-                    f"repo_id '{repo_id}' not found in configured repos: "
-                    f"{sorted(self._repos.keys())}"
-                )
-            return os.path.join(rc.path, ".forge", "worktrees", validate_task_id(task_id))
         return os.path.join(self._workspace_dir, ".forge", "worktrees", validate_task_id(task_id))
 
     def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:
@@ -558,12 +544,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             self._pipeline_branches[repo_id],
         )
 
-    def _build_allowed_dirs(self) -> list[str]:
-        """Return union of settings.allowed_dirs + all repo paths."""
+    def _build_allowed_dirs(self, repo_id: str | None = None) -> list[str]:
+        """Return settings.allowed_dirs + repo path(s).
+
+        When *repo_id* is given, include ONLY that repo's path so the agent
+        is scoped to its own repo.  When None, include all repos (backward
+        compat for single-repo and planner).
+        """
         dirs = list(self._settings.allowed_dirs or [])
-        for rc in self._repos.values():
-            if rc.path not in dirs:
-                dirs.append(rc.path)
+        if repo_id and repo_id in self._repos:
+            path = self._repos[repo_id].path
+            if path not in dirs:
+                dirs.append(path)
+        else:
+            for rc in self._repos.values():
+                if rc.path not in dirs:
+                    dirs.append(rc.path)
         return dirs
 
     def _build_repos_json(self) -> str | None:
@@ -945,6 +941,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             snapshot_text = format_multi_repo_snapshot(snapshots, planning_repos)
             repo_ids = set(planning_repos.keys())
             self._snapshot = next(iter(snapshots.values())) if snapshots else None
+            self._snapshots = snapshots if snapshots else {}
 
         # Decide planning mode
         spec_text = ""
@@ -2666,21 +2663,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 # Route to the correct repo's infrastructure
                 task_row = await db.get_task(task_id)
                 repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
-
-                # Fallback: if repo_id is "default" but we're in workspace mode,
-                # use the first non-excluded repo as the target
-                if repo_id == "default" and len(self._repos) > 1 and "default" not in self._repos:
-                    repo_id = next(iter(self._repos.keys()))
-                    logger.warning(
-                        "Task %s has repo_id='default' in workspace mode, falling back to '%s'",
-                        task_id,
-                        repo_id,
-                    )
+                repo_id = self._resolve_repo_id(repo_id, task_id)
 
                 try:
                     wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
-                except ForgeError:
-                    wt_mgr, mw = worktree_mgr, merge_worker
+                except ForgeError as exc:
+                    logger.error("Task %s: unknown repo '%s': %s", task_id, repo_id, exc)
+                    await db.set_task_error(task_id, f"Unknown repo_id '{repo_id}'")
+                    await db.update_task_state(task_id, TaskState.ERROR.value)
+                    await self._emit(
+                        "task:state_changed",
+                        {"task_id": task_id, "state": "error"},
+                        db=db,
+                        pipeline_id=pipeline_id or "",
+                    )
+                    await db.release_agent(agent_id)
+                    continue
 
                 atask = asyncio.create_task(
                     self._safe_execute_task(
@@ -2713,13 +2711,16 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
                 task_row = await db.get_task(ir_task.id)
                 repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
-                if repo_id == "default" and len(self._repos) > 1 and "default" not in self._repos:
-                    repo_id = next(iter(self._repos.keys()))
+                repo_id = self._resolve_repo_id(repo_id, ir_task.id)
 
                 try:
                     wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
-                except ForgeError:
-                    wt_mgr, mw = worktree_mgr, merge_worker
+                except ForgeError as exc:
+                    logger.error("Task %s: unknown repo '%s': %s", ir_task.id, repo_id, exc)
+                    await db.set_task_error(ir_task.id, f"Unknown repo_id '{repo_id}'")
+                    await db.update_task_state(ir_task.id, TaskState.ERROR.value)
+                    await db.release_agent(ir_agent.id)
+                    continue
 
                 atask = asyncio.create_task(
                     self._execute_task_review_only(

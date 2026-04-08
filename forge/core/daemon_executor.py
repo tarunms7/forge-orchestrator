@@ -189,11 +189,17 @@ class ExecutorMixin:
         result = {k: v for k, v in cmds.items() if v}
         return result or None
 
-    def _build_project_context(self) -> str:
-        """Build project context string from snapshot + forge.toml instructions."""
+    def _build_project_context(self, repo_id: str | None = None) -> str:
+        """Build project context string from snapshot + forge.toml instructions.
+
+        In multi-repo mode, uses the snapshot for *repo_id* so each agent
+        sees its own repo's file tree, not another repo's.
+        """
         parts = []
-        if self._snapshot:
-            parts.append(self._snapshot.format_for_agent())
+        snapshots = getattr(self, "_snapshots", {})
+        snapshot = snapshots.get(repo_id) if repo_id and snapshots else self._snapshot
+        if snapshot:
+            parts.append(snapshot.format_for_agent())
         # Inject user instructions from .forge/forge.toml
         instructions = getattr(getattr(self, "_project_config", None), "instructions", "")
         if instructions:
@@ -441,6 +447,7 @@ class ExecutorMixin:
             pipeline_branch=pipeline_branch,
             pre_retry_ref=pre_retry_ref,
             agent_summary=agent_result.summary if agent_result else "",
+            repo_id=repo_id,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
         await self._record_task_completion_if_terminal(db, task_id)
@@ -513,6 +520,7 @@ class ExecutorMixin:
                 agent_model,
                 pid,
                 pre_merge_ref=pre_merge_ref,
+                repo_id=repo_id,
             )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
         await self._record_task_completion_if_terminal(db, task_id)
@@ -597,6 +605,7 @@ class ExecutorMixin:
             agent_model,
             pid,
             pipeline_branch=pipeline_branch,
+            repo_id=repo_id,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
         await self._record_task_completion_if_terminal(db, task_id)
@@ -1496,6 +1505,7 @@ class ExecutorMixin:
             pid,
             pipeline_branch=pipeline_branch,
             agent_summary=agent_result.summary if agent_result else "",
+            repo_id=repo_id,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
 
@@ -1898,6 +1908,7 @@ class ExecutorMixin:
         pipeline_branch: str | None = None,
         pre_retry_ref: str | None = None,
         agent_summary: str = "",
+        repo_id: str = "default",
     ) -> None:
         """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
         diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
@@ -2175,7 +2186,7 @@ class ExecutorMixin:
         # Hold the lock for the entire first-attempt + retry sequence so no
         # other task's merge can interleave between the two attempts.
         merge_t0 = time.monotonic()
-        async with self._get_merge_lock():
+        async with self._get_merge_lock(repo_id):
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
             if not merge_result.success:
                 console.print(
@@ -2213,6 +2224,7 @@ class ExecutorMixin:
             agent_model,
             pid,
             pre_merge_ref=pre_merge_ref,
+            repo_id=repo_id,
         )
 
     # -- Tier 2 conflict resolution -------------------------------------
@@ -2229,12 +2241,13 @@ class ExecutorMixin:
         agent_model: str,
         pid: str,
         pre_merge_ref: str | None = None,
+        repo_id: str = "default",
     ) -> None:
         """Tier 2: agent-based conflict resolution."""
         if not retry_result.conflicting_files:
             await self._handle_merge_retry(db, task_id, worktree_mgr, pipeline_id=pid)
             return
-        async with self._get_merge_lock():
+        async with self._get_merge_lock(repo_id):
             prep = await merge_worker.prepare_for_resolution(branch, worktree_path=worktree_path)
         if prep.success:
             await self._try_race_resolved_merge(
@@ -2246,13 +2259,14 @@ class ExecutorMixin:
                 branch,
                 pid,
                 pre_merge_ref=pre_merge_ref,
+                repo_id=repo_id,
             )
             return
         resolved = await self._resolve_conflicts(
             task_id, worktree_path, prep.conflicting_files, agent_model, db=db
         )
         if resolved:
-            async with self._get_merge_lock():
+            async with self._get_merge_lock(repo_id):
                 final = await merge_worker.merge(branch, worktree_path=worktree_path)
             if final.success:
                 await self._emit_merge_success(
@@ -2281,6 +2295,7 @@ class ExecutorMixin:
         agent_model: str,
         pid: str,
         pre_merge_ref: str | None = None,
+        repo_id: str = "default",
     ) -> None:
         """Tier 2 for the merge-only fast path."""
         if not merge_result.conflicting_files:
@@ -2482,9 +2497,12 @@ class ExecutorMixin:
             logger.warning("Failed to load lessons: %s", exc)
 
         allowed_dirs = self._settings.allowed_dirs
+        task_repo_id = getattr(task, "repo_id", None) or "default"
         build_allowed_dirs = getattr(self, "_build_allowed_dirs", None)
         if callable(build_allowed_dirs):
             try:
+                allowed_dirs = build_allowed_dirs(repo_id=task_repo_id)
+            except TypeError:
                 allowed_dirs = build_allowed_dirs()
             except Exception:
                 logger.warning("Falling back to settings.allowed_dirs", exc_info=True)
@@ -2498,7 +2516,7 @@ class ExecutorMixin:
                 allowed_dirs=allowed_dirs,
                 model=agent_model,
                 on_message=_on_msg,
-                project_context=self._build_project_context(),
+                project_context=self._build_project_context(repo_id=task_repo_id),
                 conventions_json=conventions_json,
                 conventions_md=conventions_md,
                 completed_deps=completed_deps if completed_deps else None,
@@ -2579,10 +2597,11 @@ class ExecutorMixin:
         branch: str,
         pid: str,
         pre_merge_ref: str | None = None,
+        repo_id: str = "default",
     ) -> None:
         """Rebase completed cleanly (race resolved) — attempt final merge."""
         self._record_health_activity(task_id)
-        async with self._get_merge_lock():
+        async with self._get_merge_lock(repo_id):
             ff_result = await merge_worker.merge(branch, worktree_path=worktree_path)
         if ff_result.success:
             await self._emit_merge_success(
