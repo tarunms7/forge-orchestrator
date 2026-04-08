@@ -164,6 +164,31 @@ class ExecutorMixin:
             return resolved
         return repo_id
 
+    def _resolve_project_commands(self, repo_id: str) -> dict[str, str] | None:
+        """Resolve build/test/lint commands for a task, preferring per-repo config.
+
+        Uses _resolve_*_cmd(repo_id=...) from ReviewMixin when available (the
+        full ForgeDaemon has both mixins). Falls back to global settings when
+        running in isolation (e.g. unit tests on ExecutorMixin alone).
+        """
+        resolve_build = getattr(self, "_resolve_build_cmd", None)
+        if callable(resolve_build):
+            cmds = {
+                "test": self._resolve_test_cmd(repo_id=repo_id),
+                "build": self._resolve_build_cmd(repo_id=repo_id),
+                "lint": self._resolve_lint_cmd(repo_id=repo_id),
+                "lint_fix": self._resolve_lint_fix_cmd(repo_id=repo_id),
+            }
+        else:
+            cmds = {
+                "test": self._settings.test_cmd,
+                "build": self._settings.build_cmd,
+                "lint": self._settings.lint_cmd,
+                "lint_fix": self._settings.lint_fix_cmd,
+            }
+        result = {k: v for k, v in cmds.items() if v}
+        return result or None
+
     def _build_project_context(self) -> str:
         """Build project context string from snapshot + forge.toml instructions."""
         parts = []
@@ -2489,17 +2514,9 @@ class ExecutorMixin:
                     "agent",
                     getattr(task, "complexity", None) or "medium",
                 ),
-                project_commands={
-                    k: v
-                    for k, v in {
-                        "test": self._settings.test_cmd,
-                        "build": self._settings.build_cmd,
-                        "lint": self._settings.lint_cmd,
-                        "lint_fix": self._settings.lint_fix_cmd,
-                    }.items()
-                    if v
-                }
-                or None,
+                project_commands=self._resolve_project_commands(
+                    getattr(task, "repo_id", None) or "default"
+                ),
             )
         except GuardTriggered as exc:
             logger.warning("RuntimeGuard triggered for task %s: %s", task_id, exc)

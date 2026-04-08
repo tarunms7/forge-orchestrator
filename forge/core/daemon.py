@@ -630,11 +630,22 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         Only sets values that are ``None`` — an empty string means the user
         explicitly wants to skip, so it is never overridden.
+
+        In workspace mode (multiple repos), skip global auto-detection entirely.
+        Per-repo commands are resolved at execution time via _resolve_*_cmd(repo_id=...)
+        which reads each repo's .forge/forge.toml. Setting a global command here
+        would incorrectly apply one repo's build command to all tasks.
         """
-        # For multi-repo, check each repo. For single-repo, check project_dir.
-        dirs_to_scan = (
-            [rc.path for rc in self._repos.values()] if len(self._repos) > 1 else [project_dir]
-        )
+        if len(self._repos) > 1:
+            logger.debug(
+                "Skipping global command auto-detection in workspace mode "
+                "(%d repos); per-repo configs used instead",
+                len(self._repos),
+            )
+            return
+
+        # Single-repo mode: auto-detect from project_dir
+        dirs_to_scan = [project_dir]
 
         # --- build_cmd ---
         if self._settings.build_cmd is None:
