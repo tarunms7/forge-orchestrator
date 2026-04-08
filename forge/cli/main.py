@@ -121,6 +121,12 @@ def init(project_dir: str) -> None:
 @click.option("--reviewer", default=None, help="Model for reviewer stage")
 @click.option("--contract-builder", default=None, help="Model for contract builder stage")
 @click.option("--ci-fix", default=None, help="Model for CI fix stage")
+@click.option(
+    "--dev",
+    is_flag=True,
+    default=False,
+    help="Dev mode: use project-local DB (.forge/data/) instead of central DB.",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -137,12 +143,18 @@ def run(
     reviewer: str | None,
     contract_builder: str | None,
     ci_fix: str | None,
+    dev: bool,
 ) -> None:
     """Run Forge to execute a task.
 
     TASK is the description of what to build, e.g. "Build a REST API with auth"
     """
     project_dir = os.path.abspath(project_dir)
+
+    if dev and "FORGE_DATA_DIR" not in os.environ:
+        forge_data = os.path.join(project_dir, ".forge", "data")
+        os.environ["FORGE_DATA_DIR"] = forge_data
+        click.echo(f"[dev mode] Using local DB: {os.path.join(forge_data, 'forge.db')}")
 
     from forge.config.project_config import DEFAULT_FORGE_TOML, ProjectConfig, apply_project_config
 
@@ -285,14 +297,28 @@ def run(
     multiple=True,
     help="Repo in name=path format (repeatable). E.g. --repo backend=./backend",
 )
-def tui(project_dir: str, strategy: str | None, dry_run: bool, repo: tuple[str, ...]) -> None:
+@click.option(
+    "--dev",
+    is_flag=True,
+    default=False,
+    help="Dev mode: use project-local DB (.forge/data/) instead of central DB. "
+    "Use when testing local Forge changes to avoid polluting the production database.",
+)
+def tui(
+    project_dir: str,
+    strategy: str | None,
+    dry_run: bool,
+    repo: tuple[str, ...],
+    dev: bool,
+) -> None:
     """Launch the Forge terminal UI."""
     project_dir = os.path.abspath(project_dir)
     forge_dir = os.path.join(project_dir, ".forge")
     if not os.path.isdir(forge_dir):
         os.makedirs(forge_dir, exist_ok=True)
-    if "FORGE_DATA_DIR" not in os.environ:
+    if dev and "FORGE_DATA_DIR" not in os.environ:
         os.environ["FORGE_DATA_DIR"] = os.path.join(forge_dir, "data")
+        click.echo(f"[dev mode] Using local DB: {os.path.join(forge_dir, 'data', 'forge.db')}")
 
     from forge.config.project_config import (
         ProjectConfig,
