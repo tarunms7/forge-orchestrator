@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
-from forge.core.models import TaskState
+from forge.core.models import RepoConfig, TaskState
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
@@ -1814,10 +1814,38 @@ class ForgeApp(App):
 
             self._bus.subscribe(evt_type, _handler)
 
+        # Resume must rebuild the original repo config from the persisted pipeline
+        # metadata; otherwise multi-repo workspaces fall back to a bogus single
+        # "default" repo rooted at the workspace directory.
+        self._project_dir = pipeline.project_dir
+        repos: list[RepoConfig] = []
+        try:
+            for entry in pipeline.get_repos():
+                repo_id = entry.get("id") or entry.get("repo_id", "default")
+                raw_path = entry.get("path") or entry.get("project_dir") or pipeline.project_dir
+                repo_path = (
+                    os.path.realpath(os.path.join(pipeline.project_dir, raw_path))
+                    if raw_path and not os.path.isabs(raw_path)
+                    else os.path.realpath(raw_path or pipeline.project_dir)
+                )
+                base_branch = entry.get("base_branch") or getattr(pipeline, "base_branch", None) or ""
+                repos.append(RepoConfig(id=repo_id, path=repo_path, base_branch=base_branch))
+        except Exception:
+            logger.warning(
+                "Failed to reconstruct repo config for resumed pipeline %s",
+                getattr(pipeline, "id", "<unknown>"),
+                exc_info=True,
+            )
+            repos = []
+
+        if repos:
+            self._repos = repos
+
         self._daemon = ForgeDaemon(
             project_dir=pipeline.project_dir,
             settings=settings,
             event_emitter=emitter,
+            repos=repos if len(repos) > 1 or (repos and repos[0].id != "default") else None,
         )
 
     def _check_orphan_executor(self, executor_pid: int | None) -> bool:
