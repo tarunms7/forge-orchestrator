@@ -99,8 +99,8 @@ def test_run_help_shows_deep_plan_option():
     assert "--deep-plan" in result.output
 
 
-def test_tui_defaults_to_project_local_data_dir(tmp_path, monkeypatch):
-    """tui should isolate project runs under <project>/.forge/data when env is unset."""
+def test_tui_uses_central_db_by_default(tmp_path, monkeypatch):
+    """tui should use the central DB by default (not per-project)."""
     runner = CliRunner()
     monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
 
@@ -123,6 +123,37 @@ def test_tui_defaults_to_project_local_data_dir(tmp_path, monkeypatch):
         patch("forge.tui.app.ForgeApp", DummyApp),
     ):
         result = runner.invoke(cli, ["tui", "--project-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert seen["project_dir"] == str(tmp_path)
+    # Central DB: FORGE_DATA_DIR should NOT be set to per-project path
+    assert seen["data_dir"] == ""
+
+
+def test_tui_dev_flag_uses_project_local_db(tmp_path, monkeypatch):
+    """tui --dev should set FORGE_DATA_DIR to per-project .forge/data."""
+    runner = CliRunner()
+    monkeypatch.delenv("FORGE_DATA_DIR", raising=False)
+
+    seen: dict[str, str] = {}
+
+    class DummyApp:
+        def __init__(self, project_dir: str = ".", settings=None, **kwargs):
+            seen["project_dir"] = project_dir
+            seen["data_dir"] = os.environ.get("FORGE_DATA_DIR", "")
+
+        def run(self):
+            return None
+
+    with (
+        patch("forge.core.logging_config.configure_tui_logging"),
+        patch("forge.config.project_config.resolve_repos", return_value=[]),
+        patch("forge.config.project_config.validate_repos_startup"),
+        patch("forge.config.project_config.ProjectConfig.load", return_value=MagicMock()),
+        patch("forge.config.project_config.apply_project_config"),
+        patch("forge.tui.app.ForgeApp", DummyApp),
+    ):
+        result = runner.invoke(cli, ["tui", "--dev", "--project-dir", str(tmp_path)])
 
     assert result.exit_code == 0
     assert seen["project_dir"] == str(tmp_path)
