@@ -38,6 +38,7 @@ from forge.core.daemon_helpers import (  # noqa: F401
     _humanize_model_spec,
     _print_status_table,
     async_subprocess,
+    compute_worktree_path,
     format_routing_summary,
     update_repos_json_branches,
 )
@@ -56,7 +57,6 @@ from forge.core.provider_config import (
     resolve_reasoning_effort_for_stage,
     resolve_registry_model,
 )
-from forge.core.sanitize import validate_task_id
 from forge.core.scheduler import Scheduler, SchedulingAnalysis
 from forge.core.state import TaskStateMachine
 from forge.learning.store import format_lessons_block, row_to_lesson
@@ -480,8 +480,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         """Create per-repo WorktreeManager, MergeWorker, and pipeline branch names.
 
         Single default repo uses flat layout (<project_dir>/.forge/worktrees/).
-        Multi-repo creates worktrees inside each repo's own directory
-        (<repo_path>/.forge/worktrees/) so git operations use the correct remote.
+        Multi-repo keeps a shared worktree root at
+        <workspace_dir>/.forge/worktrees/ and prefixes basenames with repo_id.
 
         Args:
             pipeline_branch: The resolved pipeline branch name (e.g. 'forge/pipeline-abc12345').
@@ -491,13 +491,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._pipeline_branches: dict[str, str] = {}
 
         # All worktrees go to <workspace_root>/.forge/worktrees/ — one visible
-        # place for all tasks.  WorktreeManager uses rc.path as the git repo
-        # root so git commands still run in the correct repo.
+        # place for all tasks. In multi-repo mode, the basename is prefixed
+        # with repo_id so the directory itself stays self-describing.
         wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
+        repo_count = len(self._repos)
 
         for repo_id, rc in self._repos.items():
-
-            self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
+            self._worktree_managers[repo_id] = WorktreeManager(
+                rc.path,
+                wt_dir,
+                repo_id=repo_id,
+                repo_count=repo_count,
+            )
             self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=pipeline_branch)
             self._pipeline_branches[repo_id] = pipeline_branch
 
@@ -525,10 +530,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
     def _worktree_path(self, repo_id: str, task_id: str) -> str:
         """Compute the filesystem path for a task's git worktree.
 
-        All worktrees live at <workspace_dir>/.forge/worktrees/<task_id>
-        regardless of single- or multi-repo mode.
+        All worktrees live at the shared workspace root. In multi-repo mode
+        the basename is prefixed with repo_id for clarity.
         """
-        return os.path.join(self._workspace_dir, ".forge", "worktrees", validate_task_id(task_id))
+        return compute_worktree_path(
+            self._workspace_dir,
+            repo_id,
+            task_id,
+            repo_count=len(self._repos),
+        )
 
     def _get_repo_infra(self, repo_id: str) -> tuple[WorktreeManager, MergeWorker, str]:
         """Return the per-repo infrastructure tuple for *repo_id*.
@@ -552,7 +562,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 repo_id,
                 pipeline_branch,
             )
-            self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
+            self._worktree_managers[repo_id] = WorktreeManager(
+                rc.path,
+                wt_dir,
+                repo_id=repo_id,
+                repo_count=len(self._repos),
+            )
             self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=pipeline_branch)
             self._pipeline_branches[repo_id] = pipeline_branch
 
@@ -1688,7 +1703,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 wt_mgr, _, _ = self._get_repo_infra(repo_id)
             else:
                 worktree_base = os.path.join(self._project_dir, ".forge", "worktrees")
-                wt_mgr = WorktreeManager(self._project_dir, worktree_base)
+                wt_mgr = WorktreeManager(
+                    self._project_dir,
+                    worktree_base,
+                    repo_id=repo_id,
+                    repo_count=len(getattr(self, "_repos", {"default": None})),
+                )
             wt_mgr.remove(task_id)
         except Exception:
             logger.debug("No worktree to clean for task %s (or already removed)", task_id)

@@ -360,7 +360,9 @@ class TestWorktreePathThreading:
         # _worktree_path is provided by ForgeDaemon at runtime; mock it here
         mixin._worktree_path = MagicMock(
             side_effect=lambda repo_id, task_id: (
-                f"/fake/project/.forge/worktrees/{repo_id}/{task_id}"
+                f"/fake/project/.forge/worktrees/{task_id}"
+                if repo_id == "default"
+                else f"/fake/project/.forge/worktrees/{repo_id}-{task_id}"
             ),
         )
         return mixin
@@ -393,7 +395,7 @@ class TestWorktreePathThreading:
                         repo_id="backend",
                     )
 
-        assert result == "/fake/project/.forge/worktrees/backend/task-1"
+        assert result == "/fake/project/.forge/worktrees/backend-task-1"
         mixin._worktree_path.assert_called_once_with("backend", "task-1")
 
     async def test_handle_merge_fast_path_uses_worktree_path(self):
@@ -599,7 +601,9 @@ class TestAttemptMergeLockBehavior:
         mixin._get_merge_lock = MagicMock(return_value=mock_lock)
         mixin._worktree_path = MagicMock(
             side_effect=lambda repo_id, task_id: (
-                f"/fake/project/.forge/worktrees/{repo_id}/{task_id}"
+                f"/fake/project/.forge/worktrees/{task_id}"
+                if repo_id == "default"
+                else f"/fake/project/.forge/worktrees/{repo_id}-{task_id}"
             ),
         )
         return mixin
@@ -1130,7 +1134,7 @@ class TestStreamAgentAllowedDirs:
             runtime,
             "agent-1",
             "test prompt",
-            "/workspace/root/.forge/worktrees/backend/task-1",
+            "/workspace/root/.forge/worktrees/backend-task-1",
             task,
             "task-1",
             "pipe-1",

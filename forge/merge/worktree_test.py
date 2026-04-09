@@ -47,6 +47,21 @@ def test_create_worktree_branch_name(manager, git_repo):
     assert result.stdout.strip() == "forge/task-1"
 
 
+def test_create_multi_repo_worktree_uses_repo_prefixed_dir_name(git_repo):
+    worktrees_dir = git_repo.parent / "worktrees"
+    manager = WorktreeManager(
+        repo_path=str(git_repo),
+        worktrees_dir=str(worktrees_dir),
+        repo_id="backend",
+        repo_count=2,
+    )
+
+    path = manager.create("task-1")
+
+    assert path == os.path.join(str(worktrees_dir), "backend-task-1")
+    assert os.path.isdir(path)
+
+
 def test_remove_worktree(manager):
     path = manager.create("task-2")
     assert os.path.isdir(path)
