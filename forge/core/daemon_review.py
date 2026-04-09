@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -223,6 +224,64 @@ def _detect_makefile_target(makefile_path: str, target: str) -> bool:
     except OSError:
         pass
     return False
+
+
+def _normalize_lint_path_fragment(path: str) -> str:
+    """Normalize relative paths and linter output fragments for matching."""
+    normalized = path.replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _line_contains_path_suffix(line: str, path_fragment: str) -> bool:
+    """Return True when *line* mentions *path_fragment* as an exact file token."""
+    normalized_line = _normalize_lint_path_fragment(line)
+    normalized_fragment = _normalize_lint_path_fragment(path_fragment)
+    if not normalized_fragment:
+        return False
+    escaped_fragment = re.escape(normalized_fragment)
+    return bool(
+        re.search(
+            rf"(?:^|[/\\]){escaped_fragment}(?=$|[:)\]>\s\"'])",
+            normalized_line,
+        )
+    )
+
+
+def _line_contains_exact_basename(line: str, basename: str) -> bool:
+    """Return True when *line* mentions *basename* as a standalone file token."""
+    normalized_line = _normalize_lint_path_fragment(line)
+    escaped_basename = re.escape(basename)
+    return bool(
+        re.search(
+            rf"(?:^|[^A-Za-z0-9_.-]){escaped_basename}(?=$|[:)\]>\s\"'])",
+            normalized_line,
+        )
+    )
+
+
+def _lint_line_relevant_to_changed_files(line: str, changed_files: list[str]) -> bool:
+    """Check whether a lint output line refers to one of the task's changed files."""
+    normalized_line = _normalize_lint_path_fragment(line)
+    normalized_changed_files = [_normalize_lint_path_fragment(path) for path in changed_files]
+
+    if any(_line_contains_path_suffix(normalized_line, path) for path in normalized_changed_files):
+        return True
+
+    # Fall back to basename matching only when the linter did not include
+    # any path separator on this line. This avoids treating mock.ts as a
+    # match for unrelated absolute-path errors like CartSummary/mock.tsx.
+    if "/" in normalized_line:
+        return False
+
+    basename_counts: dict[str, int] = {}
+    for path in normalized_changed_files:
+        basename = os.path.basename(path)
+        if basename:
+            basename_counts[basename] = basename_counts.get(basename, 0) + 1
+    unique_basenames = [name for name, count in basename_counts.items() if count == 1]
+    return any(_line_contains_exact_basename(normalized_line, basename) for basename in unique_basenames)
 
 
 def detect_lint_strategy(
@@ -1827,14 +1886,9 @@ class ReviewMixin:
             # Failed — check if errors are only in files this task didn't modify.
             combined_output = (lint_result.stdout or "") + (lint_result.stderr or "")
             if changed_files:
-                changed_basenames = {os.path.basename(f) for f in changed_files}
-                changed_set = set(changed_files)
                 relevant_lines = []
                 for line in combined_output.splitlines():
-                    is_relevant = any(f in line for f in changed_set) or any(
-                        b in line for b in changed_basenames
-                    )
-                    if is_relevant:
+                    if _lint_line_relevant_to_changed_files(line, changed_files):
                         relevant_lines.append(line)
                 if not relevant_lines:
                     logger.info(

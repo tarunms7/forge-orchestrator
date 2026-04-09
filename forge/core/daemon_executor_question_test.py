@@ -94,6 +94,23 @@ class TestQuestionDetection:
         )
         assert q["source"] == "plaintext_fallback"
 
+    def test_detects_intro_based_plaintext_question_fallback(self):
+        result_text = (
+            "I've explored the current label template form structure.\n"
+            "Now I have a clarifying question about the max_rows and max_columns functionality:\n"
+            "**What should happen when a user doesn't specify max_rows or max_columns values?** Should the fields:\n"
+            "A) Default to specific values (like 1 for both), or\n"
+            "B) Remain truly optional/empty and be treated as no grid constraint, or\n"
+            "C) Have some other default behavior?\n"
+        )
+        q = _parse_forge_question(result_text)
+        assert q is not None
+        assert (
+            q["question"]
+            == "What should happen when a user doesn't specify max_rows or max_columns values?"
+        )
+        assert q["source"] == "plaintext_fallback"
+
 
 class TestResumeTaskSdkOptions:
     """Verify _resume_task passes resume=session_id to the SDK."""
@@ -255,6 +272,106 @@ class TestExecuteTaskQuestionDetection:
         assert "task:question" in event_types
 
         # Should have emitted awaiting_input state change
+        state_changes = [e[1]["state"] for e in emitted_events if e[0] == "task:state_changed"]
+        assert "awaiting_input" in state_changes
+
+    async def test_execute_task_emits_question_event_for_intro_plaintext_question(self):
+        """Intro-based plaintext questions should still pause the task for human input."""
+        from forge.agents.adapter import AgentResult
+
+        mixin = self._make_mixin()
+
+        db = MagicMock()
+        db.get_task = AsyncMock(
+            return_value=MagicMock(
+                title="Test Task",
+                retry_count=0,
+                retry_reason=None,
+                files=["foo.py"],
+                complexity="medium",
+                depends_on=[],
+                review_feedback=None,
+                questions_asked=0,
+            )
+        )
+        db.update_task_state = AsyncMock()
+        db.release_agent = AsyncMock()
+        db.create_task_question = AsyncMock(
+            return_value=MagicMock(
+                id="q-1",
+                question="What should happen when a user doesn't specify max_rows or max_columns values?",
+            )
+        )
+        db.update_task_field = AsyncMock()
+        db.get_pipeline = AsyncMock(return_value=None)
+        db.get_pipeline_contracts = AsyncMock(return_value=None)
+        db.add_task_agent_cost = AsyncMock()
+        db.add_pipeline_cost = AsyncMock()
+        db.get_pipeline_cost = AsyncMock(return_value=0.0)
+        db.get_pipeline_budget = AsyncMock(return_value=0.0)
+        db._session_factory = MagicMock()
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=None)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        db._session_factory.return_value = mock_session
+
+        agent_result = AgentResult(
+            success=True,
+            files_changed=["foo.py"],
+            summary=(
+                "I've explored the current label template form structure.\n"
+                "Now I have a clarifying question about the max_rows and max_columns functionality:\n"
+                "**What should happen when a user doesn't specify max_rows or max_columns values?** Should the fields:\n"
+                "A) Default to specific values (like 1 for both), or\n"
+                "B) Remain truly optional/empty and be treated as no grid constraint, or\n"
+                "C) Have some other default behavior?\n"
+            ),
+            session_id="sess_xyz",
+        )
+
+        worktree_mgr = MagicMock()
+        worktree_mgr.async_create = AsyncMock(return_value="/fake/worktrees/task-1")
+
+        runtime = MagicMock()
+        runtime.run_task = AsyncMock(return_value=agent_result)
+
+        merge_worker = MagicMock()
+        merge_worker._main = "main"
+
+        db.set_task_timing = AsyncMock()
+        db.set_task_error = AsyncMock()
+
+        emitted_events: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted_events.append((event_type, payload))
+
+        mixin._emit = mock_emit
+
+        async def fake_stream_agent(*args, **kwargs):
+            return agent_result
+
+        mixin._stream_agent = fake_stream_agent
+
+        with patch("forge.core.daemon_executor._get_diff_vs_main", return_value="diff content"):
+            with patch(
+                "forge.core.daemon_executor._run_git",
+                return_value=MagicMock(returncode=0, stdout=""),
+            ):
+                with patch("forge.core.budget.check_budget", AsyncMock()):
+                    await mixin._execute_task(
+                        db,
+                        runtime,
+                        worktree_mgr,
+                        merge_worker,
+                        task_id="task-1",
+                        agent_id="agent-1",
+                        pipeline_id="pipe-1",
+                    )
+
+        event_types = [event_type for event_type, _ in emitted_events]
+        assert "task:question" in event_types
         state_changes = [e[1]["state"] for e in emitted_events if e[0] == "task:state_changed"]
         assert "awaiting_input" in state_changes
 

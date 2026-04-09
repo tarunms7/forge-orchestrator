@@ -32,7 +32,53 @@ _PLAINTEXT_QUESTION_LABEL = re.compile(
     r"^\s*Question(?:\s+\d+)?\s*:\s*(.*\S)?\s*$",
     re.IGNORECASE,
 )
+_PLAINTEXT_QUESTION_INTRO = re.compile(
+    r"\b(?:clarifying|follow-?up|key|specific|quick|important|main|one)?\s*questions?\b",
+    re.IGNORECASE,
+)
 _PLAINTEXT_QUESTION_BULLET = re.compile(r"^\s*(?:[-*]|\d+[.)]|[A-Za-z][.)])\s+(.*\S)\s*$")
+
+
+def _normalize_plaintext_question_line(raw_line: str) -> str:
+    """Normalize lightweight markdown formatting around plain-text questions."""
+    return raw_line.strip().replace("**", "")
+
+
+def _extract_plaintext_question_sentence(raw_line: str) -> str:
+    """Return the first question sentence from a plain-text line, if any."""
+    normalized = _normalize_plaintext_question_line(raw_line)
+    question_end = normalized.find("?")
+    if question_end == -1:
+        return ""
+    return normalized[: question_end + 1].strip()
+
+
+def _find_plaintext_question_forward(
+    lines: list[str],
+    start_idx: int,
+) -> tuple[str, int]:
+    """Scan forward from *start_idx* to find the next question-like line."""
+    forward = start_idx + 1
+    while forward < len(lines):
+        candidate = lines[forward].strip()
+        if not candidate:
+            break
+        if _PLAINTEXT_QUESTION_BULLET.match(candidate):
+            forward += 1
+            continue
+
+        normalized = _normalize_plaintext_question_line(candidate)
+        label_match = _PLAINTEXT_QUESTION_LABEL.match(normalized)
+        if label_match:
+            inline_text = (label_match.group(1) or "").strip()
+            question = _extract_plaintext_question_sentence(inline_text)
+            if question:
+                return question, forward
+        question = _extract_plaintext_question_sentence(normalized)
+        if question:
+            return question, forward
+        forward += 1
+    return "", start_idx
 
 
 async def async_subprocess(
@@ -91,41 +137,31 @@ def _parse_forge_question(text: str | None) -> dict | None:
     if marker_idx == -1:
         lines = text.splitlines()
         for idx, raw_line in enumerate(lines):
-            normalized_line = raw_line.strip().replace("**", "")
+            normalized_line = _normalize_plaintext_question_line(raw_line)
             match = _PLAINTEXT_QUESTION_LINE.match(normalized_line)
             question = match.group(1).strip() if match else ""
+            question_line_idx = idx
             if not question:
                 label_match = _PLAINTEXT_QUESTION_LABEL.match(normalized_line)
-                if not label_match:
-                    continue
-                inline_text = (label_match.group(1) or "").strip()
-                if inline_text.endswith("?"):
-                    question = inline_text
+                if label_match:
+                    inline_text = (label_match.group(1) or "").strip()
+                    question = _extract_plaintext_question_sentence(inline_text)
+                elif _PLAINTEXT_QUESTION_INTRO.search(normalized_line):
+                    question, question_line_idx = _find_plaintext_question_forward(lines, idx)
                 else:
-                    forward_question = idx + 1
-                    while forward_question < len(lines):
-                        candidate = lines[forward_question].strip()
-                        if not candidate:
-                            forward_question += 1
-                            continue
-                        if _PLAINTEXT_QUESTION_BULLET.match(candidate):
-                            forward_question += 1
-                            continue
-                        if candidate.endswith("?"):
-                            question = candidate
-                        break
+                    continue
             if not question:
                 continue
 
             context_lines: list[str] = []
-            back = idx - 1
+            back = question_line_idx - 1
             while back >= 0 and lines[back].strip():
                 context_lines.append(lines[back].strip())
                 back -= 1
             context = " ".join(reversed(context_lines)).strip()
 
             suggestions: list[str] = []
-            forward = idx + 1
+            forward = question_line_idx + 1
             while forward < len(lines):
                 candidate = lines[forward].strip()
                 if not candidate:
