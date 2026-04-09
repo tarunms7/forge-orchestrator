@@ -121,15 +121,60 @@ def _safe_error(exc: BaseException, prefix: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _cleanup_worktree(project_dir: str, task_id: str, repo_id: str | None = None) -> bool:
+def _repo_paths_for_pipeline(pipeline: object | None, project_dir: str) -> dict[str, str]:
+    """Return repo_id -> repo path mapping for a pipeline."""
+    if pipeline is None:
+        return {"default": project_dir}
+
+    try:
+        repos = pipeline.get_repos()
+    except ValueError:
+        logger.warning(
+            "Pipeline %s has invalid repo metadata; falling back to project_dir",
+            getattr(pipeline, "id", "<unknown>"),
+        )
+        return {"default": project_dir}
+
+    repo_paths: dict[str, str] = {}
+    for repo in repos:
+        repo_id = repo.get("id")
+        repo_path = repo.get("path")
+        if isinstance(repo_id, str) and repo_id and isinstance(repo_path, str) and repo_path:
+            repo_paths[repo_id] = repo_path
+
+    if not repo_paths:
+        repo_paths["default"] = project_dir
+    return repo_paths
+
+
+def _resolve_repo_path(
+    project_dir: str,
+    *,
+    pipeline: object | None = None,
+    repo_id: str | None = None,
+    repo_path: str | None = None,
+) -> str:
+    """Resolve the repo root for a task, falling back to project_dir."""
+    if repo_path:
+        return repo_path
+    if not repo_id:
+        return project_dir
+    return _repo_paths_for_pipeline(pipeline, project_dir).get(repo_id, project_dir)
+
+
+def _cleanup_worktree(
+    project_dir: str,
+    task_id: str,
+    repo_id: str | None = None,
+    *,
+    repo_path: str | None = None,
+) -> bool:
     """Remove a single task's worktree + branch. Returns True if cleaned."""
     from forge.merge.worktree import WorktreeManager
 
     worktrees_dir = os.path.join(project_dir, ".forge", "worktrees")
-    if repo_id and repo_id != "default":
-        worktrees_dir = os.path.join(project_dir, ".forge", "worktrees", repo_id)
     try:
-        wt_mgr = WorktreeManager(project_dir, worktrees_dir)
+        wt_mgr = WorktreeManager(repo_path or project_dir, worktrees_dir)
         wt_mgr.remove(task_id)
         return True
     except Exception as exc:
@@ -143,19 +188,28 @@ async def _cleanup_all_pipeline_worktrees(
     project_dir: str,
 ) -> int:
     """Remove worktrees for all tasks in a pipeline. Returns count cleaned."""
+    pipeline = await forge_db.get_pipeline(pipeline_id)
+    repo_paths = _repo_paths_for_pipeline(pipeline, project_dir)
     tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
     cleaned = 0
     for task in tasks:
-        if _cleanup_worktree(project_dir, task.id, repo_id=getattr(task, "repo_id", "default")):
+        repo_id = getattr(task, "repo_id", "default")
+        if _cleanup_worktree(
+            project_dir,
+            task.id,
+            repo_id=repo_id,
+            repo_path=repo_paths.get(repo_id, project_dir),
+        ):
             cleaned += 1
     # Prune stale git worktree admin files
-    await asyncio.to_thread(
-        subprocess.run,
-        ["git", "worktree", "prune"],
-        cwd=project_dir,
-        capture_output=True,
-        timeout=30,
-    )
+    for repo_path in sorted(set(repo_paths.values())):
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "worktree", "prune"],
+            cwd=repo_path,
+            capture_output=True,
+            timeout=30,
+        )
     return cleaned
 
 
@@ -1322,12 +1376,14 @@ async def approve_task(
             from forge.merge.worker import MergeWorker
 
             project_dir = pipeline.project_dir
+            repo_id = getattr(task, "repo_id", "default")
+            repo_dir = _resolve_repo_path(project_dir, pipeline=pipeline, repo_id=repo_id)
             # Use _get_diff_stats (camelCase keys: linesAdded/linesRemoved)
             # to match the frontend's TaskState.mergeResult interface.
             stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
 
             # Perform the actual merge via MergeWorker
-            merge_worker = MergeWorker(project_dir, main_branch=pipeline_branch)
+            merge_worker = MergeWorker(repo_dir, main_branch=pipeline_branch)
             branch = f"forge/{task_id}"
             merge_result = await merge_worker.merge(branch, worktree_path=worktree_path)
 
@@ -1388,13 +1444,22 @@ async def approve_task(
             await forge_db.clear_task_approval_context(task_id)
 
             # Clean up worktree (success or failure — it's no longer useful)
-            _cleanup_worktree(project_dir, task_id, repo_id=getattr(task, "repo_id", "default"))
+            _cleanup_worktree(project_dir, task_id, repo_id=repo_id, repo_path=repo_dir)
         except Exception as exc:
             logger.exception("Merge failed for approved task %s: %s", task_id, exc)
             await forge_db.update_task_state(task_id, "error")
             # Still try to clean up the worktree on error
+            repo_id = getattr(task, "repo_id", "default")
+            repo_dir = _resolve_repo_path(
+                pipeline.project_dir,
+                pipeline=pipeline,
+                repo_id=repo_id,
+            )
             _cleanup_worktree(
-                pipeline.project_dir, task_id, repo_id=getattr(task, "repo_id", "default")
+                pipeline.project_dir,
+                task_id,
+                repo_id=repo_id,
+                repo_path=repo_dir,
             )
 
     def _on_done(t: asyncio.Task) -> None:
@@ -1478,14 +1543,16 @@ async def cleanup_pipeline_worktrees(
 
     # Also delete orphaned forge/* branches belonging to this pipeline's tasks
     tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
-    task_ids = {t.id for t in tasks}
+    repo_paths = _repo_paths_for_pipeline(pipeline, project_dir)
     branches_deleted = 0
-    for tid in task_ids:
+    for task in tasks:
+        tid = task.id
         branch = f"forge/{tid}"
+        repo_id = getattr(task, "repo_id", "default")
         result = await asyncio.to_thread(
             subprocess.run,
             ["git", "branch", "-D", branch],
-            cwd=project_dir,
+            cwd=repo_paths.get(repo_id, project_dir),
             capture_output=True,
             timeout=30,
         )

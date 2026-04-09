@@ -1150,34 +1150,34 @@ class TestComputeWorktreePath:
         assert result == "/Users/dev/myproject/.forge/worktrees/task-1"
 
     def test_compute_worktree_path_multi_repo(self):
-        """Multi-repo (repo_count > 1) returns nested path with repo_id."""
+        """Multi-repo uses the shared workspace worktree root."""
         result = compute_worktree_path(
             "/Users/dev/myproject",
             "backend",
             "task-1",
             repo_count=2,
         )
-        assert result == "/Users/dev/myproject/.forge/worktrees/backend/task-1"
+        assert result == "/Users/dev/myproject/.forge/worktrees/task-1"
 
     def test_compute_worktree_path_default_with_high_count(self):
-        """repo_id='default' but repo_count > 1 still produces a nested path."""
+        """repo_id='default' but repo_count > 1 still produces the flat path."""
         result = compute_worktree_path(
             "/Users/dev/myproject",
             "default",
             "task-1",
             repo_count=3,
         )
-        assert result == "/Users/dev/myproject/.forge/worktrees/default/task-1"
+        assert result == "/Users/dev/myproject/.forge/worktrees/task-1"
 
     def test_compute_worktree_path_explicit_single_repo(self):
-        """repo_count=1 with non-default repo_id nests the path."""
+        """repo_count=1 with non-default repo_id still uses the shared root."""
         result = compute_worktree_path(
             "/Users/dev/myproject",
             "frontend",
             "task-2",
             repo_count=1,
         )
-        assert result == "/Users/dev/myproject/.forge/worktrees/frontend/task-2"
+        assert result == "/Users/dev/myproject/.forge/worktrees/task-2"
 
     def test_compute_worktree_path_default_repo_count_is_one(self):
         """Default repo_count value of 1 with 'default' repo_id returns flat path."""

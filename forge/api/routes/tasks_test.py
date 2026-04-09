@@ -2550,7 +2550,7 @@ class TestMultiRepoWorktreeCleanup:
     """Chunk 5: Tests for multi-repo worktree cleanup."""
 
     def test_cleanup_worktree_multi_repo(self, tmp_path):
-        """_cleanup_worktree with repo_id resolves to <worktrees>/backend/<task_id>/."""
+        """_cleanup_worktree uses the repo root plus the shared worktrees dir."""
         import os
         from unittest.mock import MagicMock, patch
 
@@ -2558,13 +2558,16 @@ class TestMultiRepoWorktreeCleanup:
 
         mock_wt_mgr = MagicMock()
         with patch("forge.merge.worktree.WorktreeManager", return_value=mock_wt_mgr) as MockWTMgr:
-            _cleanup_worktree(str(tmp_path), "task-123", repo_id="backend")
+            _cleanup_worktree(
+                str(tmp_path),
+                "task-123",
+                repo_id="backend",
+                repo_path=str(tmp_path / "backend"),
+            )
 
-            # Verify the worktrees_dir includes the repo_id
             call_args = MockWTMgr.call_args
-            worktrees_dir = call_args[0][1]
-            assert "backend" in worktrees_dir
-            assert worktrees_dir == os.path.join(str(tmp_path), ".forge", "worktrees", "backend")
+            assert call_args[0][0] == os.path.join(str(tmp_path), "backend")
+            assert call_args[0][1] == os.path.join(str(tmp_path), ".forge", "worktrees")
 
     def test_cleanup_worktree_default_repo(self, tmp_path):
         """_cleanup_worktree with repo_id='default' uses standard worktrees dir."""
@@ -2597,12 +2600,18 @@ class TestMultiRepoWorktreeCleanup:
             assert worktrees_dir == os.path.join(str(tmp_path), ".forge", "worktrees")
 
     async def test_cleanup_all_worktrees_multi_repo(self):
-        """_cleanup_all_pipeline_worktrees passes each task's repo_id."""
+        """_cleanup_all_pipeline_worktrees resolves repo paths from pipeline repos_json."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from forge.api.routes.tasks import _cleanup_all_pipeline_worktrees
 
         mock_db = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.get_repos.return_value = [
+            {"id": "backend", "path": "/repos/backend"},
+            {"id": "frontend", "path": "/repos/frontend"},
+        ]
+        mock_db.get_pipeline.return_value = mock_pipeline
         task1 = MagicMock()
         task1.id = "t1"
         task1.repo_id = "backend"
@@ -2619,8 +2628,18 @@ class TestMultiRepoWorktreeCleanup:
             await _cleanup_all_pipeline_worktrees(mock_db, "pipe-1", "/proj")
 
             assert mock_cleanup.call_count == 2
-            mock_cleanup.assert_any_call("/proj", "t1", repo_id="backend")
-            mock_cleanup.assert_any_call("/proj", "t2", repo_id="frontend")
+            mock_cleanup.assert_any_call(
+                "/proj",
+                "t1",
+                repo_id="backend",
+                repo_path="/repos/backend",
+            )
+            mock_cleanup.assert_any_call(
+                "/proj",
+                "t2",
+                repo_id="frontend",
+                repo_path="/repos/frontend",
+            )
 
 
 class TestMultiRepoBackwardCompat:
@@ -2736,6 +2755,99 @@ class TestMultiRepoWebSocketBroadcasts:
         ]
         assert len(merging_broadcasts) >= 1
         assert merging_broadcasts[0].get("repo_id") == "backend"
+
+    async def test_approve_task_multi_repo_uses_repo_path_for_merge(self, client_with_app):
+        """approve_task should merge against the task repo, not the workspace root."""
+        import asyncio
+        import json
+        import uuid
+
+        from forge.api.security.jwt import decode_token
+        from forge.merge.worker import MergeResult
+        from forge.storage.db import PipelineRow, TaskRow
+
+        client, app = client_with_app
+        token = await _register_and_get_token(client, email="approve-repo@example.com")
+        headers = _auth_header(token)
+
+        payload = decode_token(token, secret="test-secret-for-stats")
+        user_id = payload["sub"]
+
+        pid = str(uuid.uuid4())
+        tid = "backend-task-1"
+        db = app.state.db
+        async with db._session_factory() as session:
+            session.add(
+                PipelineRow(
+                    id=pid,
+                    description="Approve repo routing",
+                    project_dir="/workspace",
+                    status="executing",
+                    user_id=user_id,
+                    repos_json=json.dumps(
+                        [
+                            {"id": "backend", "path": "/workspace/backend", "base_branch": "main"},
+                            {
+                                "id": "frontend",
+                                "path": "/workspace/frontend",
+                                "base_branch": "main",
+                            },
+                        ]
+                    ),
+                )
+            )
+            session.add(
+                TaskRow(
+                    id=tid,
+                    title="T1",
+                    description="D",
+                    files=[],
+                    depends_on=[],
+                    complexity="low",
+                    state="awaiting_approval",
+                    pipeline_id=pid,
+                    repo_id="backend",
+                    approval_context=json.dumps(
+                        {
+                            "worktree_path": "/workspace/.forge/worktrees/backend-task-1",
+                            "pipeline_branch": "forge/pipeline-abc",
+                        }
+                    ),
+                )
+            )
+            await session.commit()
+
+        app.state.ws_manager = AsyncMock()
+        scheduled: list[asyncio.Task] = []
+        real_create_task = asyncio.create_task
+        merge_worker_instance = AsyncMock()
+        merge_worker_instance.merge = AsyncMock(return_value=MergeResult(success=True, error=None))
+
+        def capture_task(coro):
+            task = real_create_task(coro)
+            scheduled.append(task)
+            return task
+
+        with (
+            patch(
+                "forge.merge.worker.MergeWorker",
+                return_value=merge_worker_instance,
+            ) as MockMergeWorker,
+            patch(
+                "forge.core.daemon_helpers._get_diff_stats",
+                new=AsyncMock(return_value={"linesAdded": 1, "linesRemoved": 0}),
+            ),
+            patch("forge.api.routes.tasks._cleanup_worktree"),
+            patch("forge.api.routes.tasks.asyncio.create_task", side_effect=capture_task),
+        ):
+            resp = await client.post(
+                f"/api/tasks/{pid}/tasks/{tid}/approve",
+                headers=headers,
+            )
+            assert resp.status_code == 202
+            await asyncio.gather(*scheduled)
+
+        MockMergeWorker.assert_called_once_with("/workspace/backend", main_branch="forge/pipeline-abc")
 
     async def test_reject_task_broadcast_includes_repo_id(self, client_with_app):
         """reject_task broadcast should include repo_id field."""

@@ -167,19 +167,12 @@ class SafetyAuditor:
         return False
 
     def _is_read_only(self, tool_input: str) -> bool:
-        """Check if a path targets a read-only directory."""
+        """Check if any target path resolves into a read-only directory."""
         if not self.workspace.read_only_dirs:
             return False
 
-        # Try to extract a file path from the tool input
-        # tool_input may be JSON or a raw path
-        path = self._extract_path(tool_input)
-        if not path:
-            return False
-
-        try:
-            real_path = os.path.realpath(path)
-        except (OSError, ValueError):
+        paths = self._extract_paths(tool_input)
+        if not paths:
             return False
 
         for ro_dir in self.workspace.read_only_dirs:
@@ -187,26 +180,47 @@ class SafetyAuditor:
                 real_ro = os.path.realpath(ro_dir)
             except (OSError, ValueError):
                 continue
-            if real_path.startswith(real_ro + os.sep) or real_path == real_ro:
-                return True
+            for path in paths:
+                try:
+                    real_path = self._resolve_path(path)
+                except (OSError, ValueError):
+                    continue
+                if real_path.startswith(real_ro + os.sep) or real_path == real_ro:
+                    return True
 
         return False
 
+    def _resolve_path(self, path: str) -> str:
+        """Resolve relative tool paths against the execution worktree."""
+        if os.path.isabs(path):
+            return os.path.realpath(path)
+        return os.path.realpath(os.path.join(self.workspace.primary_cwd, path))
+
     @staticmethod
-    def _extract_path(tool_input: str) -> str | None:
-        """Extract a file path from tool input (JSON or raw)."""
+    def _extract_paths(tool_input: str) -> list[str]:
+        """Extract one or more file paths from tool input (JSON or raw)."""
         import json as _json
 
         try:
             data = _json.loads(tool_input)
             if isinstance(data, dict):
-                return data.get("file_path") or data.get("path") or data.get("file")
+                path = data.get("file_path") or data.get("path") or data.get("file")
+                return [path] if isinstance(path, str) and path.strip() else []
+            if isinstance(data, list):
+                paths: list[str] = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    path = item.get("file_path") or item.get("path") or item.get("file")
+                    if isinstance(path, str) and path.strip():
+                        paths.append(path)
+                return paths
         except (ValueError, TypeError):
             pass
 
         # Treat as raw path if it looks like one
         stripped = tool_input.strip()
-        if stripped.startswith("/") or stripped.startswith("./"):
-            return stripped
+        if stripped.startswith("/") or stripped.startswith("."):
+            return [stripped]
 
-        return None
+        return []
