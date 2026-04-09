@@ -520,10 +520,8 @@ class AgentOutput(Widget):
         self._streaming = active
         if active:
             self._typing_frame = 0
-            try:
+            if getattr(self, "is_mounted", False):
                 self._typing_timer = self.set_interval(0.12, self._tick_typing)
-            except Exception:
-                pass  # Not yet composed
         else:
             if self._typing_timer is not None:
                 self._typing_timer.stop()
@@ -651,9 +649,9 @@ class AgentOutput(Widget):
         # Start fade-in for the last line (reuse timer to avoid churn)
         self._fade_step = 0
         if self._fade_timer is None:
-            try:
+            if getattr(self, "is_mounted", False):
                 self._fade_timer = self.set_interval(_FADE_INTERVAL, self._tick_fade)
-            except Exception:
+            else:
                 self._fade_step = len(_FADE_STEPS)  # Skip fade if not composed
 
         self._update_content()
