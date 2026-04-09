@@ -928,6 +928,29 @@ class TestParseForgeQuestion:
             == "Which approach would you prefer, and should the collapsed format show the current file/query being processed or the last one in the sequence?"
         )
         assert "smart deduplication approach" in (result["context"] or "")
+
+    def test_plaintext_question_recovers_intro_followed_by_bold_question(self):
+        text = (
+            "I've explored the current label template form structure.\n"
+            "Now I have a clarifying question about the max_rows and max_columns functionality:\n"
+            "**What should happen when a user doesn't specify max_rows or max_columns values?** Should the fields:\n"
+            "A) Default to specific values (like 1 for both), or\n"
+            "B) Remain truly optional/empty and be treated as no grid constraint, or\n"
+            "C) Have some other default behavior?\n"
+        )
+        result = _parse_forge_question(text)
+        assert result is not None
+        assert (
+            result["question"]
+            == "What should happen when a user doesn't specify max_rows or max_columns values?"
+        )
+        assert result["suggestions"] == [
+            "Default to specific values (like 1 for both), or",
+            "Remain truly optional/empty and be treated as no grid constraint, or",
+            "Have some other default behavior?",
+        ]
+        assert "clarifying question" in (result["context"] or "")
+        assert result["source"] == "plaintext_fallback"
         assert result["source"] == "plaintext_fallback"
 
 

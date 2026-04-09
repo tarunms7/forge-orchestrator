@@ -1130,6 +1130,91 @@ class TestLintGateAutoFix:
         assert "Lint clean (auto-fixed:" in result.details
         assert "removed 1 unused import" in result.details
 
+    @pytest.mark.asyncio
+    async def test_ignores_absolute_path_errors_for_unchanged_similar_basenames(self):
+        """Absolute-path lint output should not match unchanged files with similar basenames."""
+        mixin = self._make_mixin()
+
+        async def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            result.stdout = ""
+            return result
+
+        fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        check_result = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr=(
+                "/repo/src/screens/CartSummary/components/mock.tsx\n"
+                "  10:1  error  Unexpected console statement  no-console\n"
+            ),
+        )
+
+        with (
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["src/screens/Settings/components/Product/mock.ts"],
+            ),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch(
+                "forge.core.daemon_review.detect_all_lint_strategies",
+                return_value=[self._ruff_strategy()],
+            ),
+            patch(
+                "forge.core.daemon_review.async_subprocess",
+                new_callable=AsyncMock,
+                side_effect=[fix_result, check_result],
+            ),
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            result = await mixin._run_lint_gate("/repo")
+
+        assert result.passed is True
+        assert "pre-existing errors in unchanged files ignored" in result.details
+
+    @pytest.mark.asyncio
+    async def test_matches_basename_only_output_for_exact_changed_file(self):
+        """Basename-only lint output should still match the exact changed file."""
+        mixin = self._make_mixin()
+
+        async def fake_run_git(args, cwd=None, check=True, description=""):
+            result = MagicMock()
+            result.stdout = ""
+            return result
+
+        fix_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        check_result = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="mock.ts:10:1  error  Unexpected console statement  no-console\n",
+        )
+
+        with (
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main",
+                new_callable=AsyncMock,
+                return_value=["src/screens/Settings/components/Product/mock.ts"],
+            ),
+            patch("forge.core.daemon_review.os.path.isfile", return_value=True),
+            patch(
+                "forge.core.daemon_review.detect_all_lint_strategies",
+                return_value=[self._ruff_strategy()],
+            ),
+            patch(
+                "forge.core.daemon_review.async_subprocess",
+                new_callable=AsyncMock,
+                side_effect=[fix_result, check_result],
+            ),
+            patch("forge.core.daemon_review._run_git", side_effect=fake_run_git),
+        ):
+            result = await mixin._run_lint_gate("/repo")
+
+        assert result.passed is False
+        assert "mock.ts:10:1" in result.details
+
 
 class TestSummarizeAutoFix:
     """Unit tests for _summarize_auto_fix helper."""
