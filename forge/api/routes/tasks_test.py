@@ -2633,12 +2633,14 @@ class TestMultiRepoWorktreeCleanup:
                 "t1",
                 repo_id="backend",
                 repo_path="/repos/backend",
+                repo_count=2,
             )
             mock_cleanup.assert_any_call(
                 "/proj",
                 "t2",
                 repo_id="frontend",
                 repo_path="/repos/frontend",
+                repo_count=2,
             )
 
 

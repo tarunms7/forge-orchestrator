@@ -425,21 +425,21 @@ async def test_single_repo_pipeline_regression(tmp_path, make_git_repo):
 
 @pytest.mark.asyncio
 async def test_multi_repo_worktree_layout(tmp_path, workspace_dir):
-    """Verify multi-repo worktree directory structure."""
+    """Verify multi-repo worktrees share one root with repo-prefixed basenames."""
     worktrees_root = os.path.join(workspace_dir, ".forge", "worktrees")
 
-    # Simulate creating worktree directories for multi-repo layout
+    # Simulate creating worktree directories for the shared-root multi-repo layout
     task_id = "task-42"
     for repo_id in ("backend", "frontend"):
-        worktree_path = os.path.join(worktrees_root, repo_id, task_id)
+        worktree_path = os.path.join(worktrees_root, f"{repo_id}-{task_id}")
         os.makedirs(worktree_path, exist_ok=True)
         # Write a marker file to verify no cross-contamination
         with open(os.path.join(worktree_path, "marker.txt"), "w") as f:
             f.write(f"repo={repo_id}")
 
     # Verify structure
-    backend_wt = os.path.join(worktrees_root, "backend", task_id)
-    frontend_wt = os.path.join(worktrees_root, "frontend", task_id)
+    backend_wt = os.path.join(worktrees_root, "backend-task-42")
+    frontend_wt = os.path.join(worktrees_root, "frontend-task-42")
     assert os.path.isdir(backend_wt)
     assert os.path.isdir(frontend_wt)
 
@@ -449,11 +449,8 @@ async def test_multi_repo_worktree_layout(tmp_path, workspace_dir):
     with open(os.path.join(frontend_wt, "marker.txt")) as f:
         assert f.read() == "repo=frontend"
 
-    # Verify repo dirs are separate
-    backend_contents = set(os.listdir(os.path.join(worktrees_root, "backend")))
-    frontend_contents = set(os.listdir(os.path.join(worktrees_root, "frontend")))
-    assert backend_contents == {task_id}
-    assert frontend_contents == {task_id}
+    # Verify the shared root contains one clearly labeled directory per repo/task pair
+    assert set(os.listdir(worktrees_root)) == {"backend-task-42", "frontend-task-42"}
 
 
 @pytest.mark.asyncio

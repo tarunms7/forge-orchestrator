@@ -1299,16 +1299,30 @@ def compute_worktree_path(
 ) -> str:
     """Compute worktree path for a task.
 
-    Task worktrees always live under the shared workspace worktree root:
-    <workspace_dir>/.forge/worktrees/<task_id>
-
-    ``repo_id`` and ``repo_count`` are retained for backward compatibility and
-    validation, but they do not change the task worktree layout.
+    Task worktrees always live under the shared workspace worktree root.
+    In multi-repo mode the basename is prefixed with repo_id so the physical
+    worktree directory clearly indicates which repo it belongs to.
     """
+    return os.path.join(
+        workspace_dir,
+        ".forge",
+        "worktrees",
+        compute_worktree_name(repo_id, task_id, repo_count=repo_count),
+    )
+
+
+def compute_worktree_name(
+    repo_id: str,
+    task_id: str,
+    *,
+    repo_count: int = 1,
+) -> str:
+    """Compute the worktree directory basename for a task."""
     validate_task_id(task_id)
-    if repo_count > 1 or repo_id != "default":
-        validate_repo_id(repo_id)
-    return os.path.join(workspace_dir, ".forge", "worktrees", task_id)
+    if repo_count <= 1 and repo_id == "default":
+        return task_id
+    validate_repo_id(repo_id)
+    return f"{repo_id}-{task_id}"
 
 
 async def _run_git(

@@ -168,13 +168,19 @@ def _cleanup_worktree(
     repo_id: str | None = None,
     *,
     repo_path: str | None = None,
+    repo_count: int = 1,
 ) -> bool:
     """Remove a single task's worktree + branch. Returns True if cleaned."""
     from forge.merge.worktree import WorktreeManager
 
     worktrees_dir = os.path.join(project_dir, ".forge", "worktrees")
     try:
-        wt_mgr = WorktreeManager(repo_path or project_dir, worktrees_dir)
+        wt_mgr = WorktreeManager(
+            repo_path or project_dir,
+            worktrees_dir,
+            repo_id=repo_id or "default",
+            repo_count=repo_count,
+        )
         wt_mgr.remove(task_id)
         return True
     except Exception as exc:
@@ -190,6 +196,7 @@ async def _cleanup_all_pipeline_worktrees(
     """Remove worktrees for all tasks in a pipeline. Returns count cleaned."""
     pipeline = await forge_db.get_pipeline(pipeline_id)
     repo_paths = _repo_paths_for_pipeline(pipeline, project_dir)
+    repo_count = max(1, len(repo_paths))
     tasks = await forge_db.list_tasks_by_pipeline(pipeline_id)
     cleaned = 0
     for task in tasks:
@@ -199,6 +206,7 @@ async def _cleanup_all_pipeline_worktrees(
             task.id,
             repo_id=repo_id,
             repo_path=repo_paths.get(repo_id, project_dir),
+            repo_count=repo_count,
         ):
             cleaned += 1
     # Prune stale git worktree admin files
@@ -1377,6 +1385,7 @@ async def approve_task(
 
             project_dir = pipeline.project_dir
             repo_id = getattr(task, "repo_id", "default")
+            repo_count = max(1, len(_repo_paths_for_pipeline(pipeline, project_dir)))
             repo_dir = _resolve_repo_path(project_dir, pipeline=pipeline, repo_id=repo_id)
             # Use _get_diff_stats (camelCase keys: linesAdded/linesRemoved)
             # to match the frontend's TaskState.mergeResult interface.
@@ -1444,12 +1453,19 @@ async def approve_task(
             await forge_db.clear_task_approval_context(task_id)
 
             # Clean up worktree (success or failure — it's no longer useful)
-            _cleanup_worktree(project_dir, task_id, repo_id=repo_id, repo_path=repo_dir)
+            _cleanup_worktree(
+                project_dir,
+                task_id,
+                repo_id=repo_id,
+                repo_path=repo_dir,
+                repo_count=repo_count,
+            )
         except Exception as exc:
             logger.exception("Merge failed for approved task %s: %s", task_id, exc)
             await forge_db.update_task_state(task_id, "error")
             # Still try to clean up the worktree on error
             repo_id = getattr(task, "repo_id", "default")
+            repo_count = max(1, len(_repo_paths_for_pipeline(pipeline, pipeline.project_dir)))
             repo_dir = _resolve_repo_path(
                 pipeline.project_dir,
                 pipeline=pipeline,
@@ -1460,6 +1476,7 @@ async def approve_task(
                 task_id,
                 repo_id=repo_id,
                 repo_path=repo_dir,
+                repo_count=repo_count,
             )
 
     def _on_done(t: asyncio.Task) -> None:

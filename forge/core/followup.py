@@ -18,6 +18,7 @@ from forge.agents import adapter as _legacy_agent_adapter
 from forge.agents.runtime import AgentRuntime
 from forge.core import sdk_helpers
 from forge.core.cost_registry import CostRegistry
+from forge.core.daemon_helpers import compute_worktree_path
 from forge.core.events import EventEmitter
 from forge.core.provider_config import (
     build_provider_registry,
@@ -26,7 +27,7 @@ from forge.core.provider_config import (
     resolve_reasoning_effort_for_stage,
     resolve_registry_model,
 )
-from forge.core.sanitize import validate_repo_id, validate_task_id
+from forge.core.sanitize import validate_task_id
 from forge.providers.base import (
     EventKind,
     ExecutionMode,
@@ -365,13 +366,13 @@ async def _execute_task_followup(
 
     # Look up repo config from the pipeline
     repo_dir = project_dir  # fallback for single-repo
-    is_multi_repo = False
+    repo_count = 1
     pipeline = None
     try:
         pipeline = await db.get_pipeline(pipeline_id)
         if pipeline:
-            is_multi_repo = pipeline.repos_json is not None
             repos = pipeline.get_repos()
+            repo_count = max(1, len(repos))
             repo_config = next((r for r in repos if r["id"] == repo_id), None)
             if repo_config:
                 repo_dir = repo_config["path"]
@@ -404,15 +405,17 @@ async def _execute_task_followup(
     )
 
     # Set up worktree on the pipeline branch
-    # Multi-repo: {project_dir}/.forge/worktrees/{repo_id}/{worktree_id}
-    # Single-repo: {project_dir}/.forge/worktrees/{worktree_id}
+    # All follow-up worktrees live under the shared workspace root.
+    # In multi-repo mode, the basename is prefixed with repo_id so the
+    # directory name itself identifies which repo it belongs to.
     validate_task_id(task_id)
     worktree_id = f"followup-{followup_id[:8]}-{task_id}"
-    if is_multi_repo:
-        validate_repo_id(repo_id)
-        worktree_dir = os.path.join(project_dir, ".forge", "worktrees", repo_id, worktree_id)
-    else:
-        worktree_dir = os.path.join(project_dir, ".forge", "worktrees", worktree_id)
+    worktree_dir = compute_worktree_path(
+        project_dir,
+        repo_id,
+        worktree_id,
+        repo_count=repo_count,
+    )
 
     try:
         await _setup_worktree(repo_dir, worktree_dir, branch_name, worktree_id)
