@@ -568,21 +568,18 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         )
 
     def _build_allowed_dirs(self, repo_id: str | None = None) -> list[str]:
-        """Return settings.allowed_dirs + repo path(s).
+        """Return settings.allowed_dirs + all repo roots as read-only dirs.
 
-        When *repo_id* is given, include ONLY that repo's path so the agent
-        is scoped to its own repo.  When None, include all repos (backward
-        compat for single-repo and planner).
+        Provider runtimes treat ``allowed_dirs`` as read-only surfaces that the
+        agent may inspect in addition to its writable worktree. In multi-repo
+        mode we include every repo root so agents can cross-reference sibling
+        repos while the safety auditor blocks writes back into the main checkouts.
+        The ``repo_id`` parameter is retained for call-site compatibility.
         """
         dirs = list(self._settings.allowed_dirs or [])
-        if repo_id and repo_id in self._repos:
-            path = self._repos[repo_id].path
-            if path not in dirs:
-                dirs.append(path)
-        else:
-            for rc in self._repos.values():
-                if rc.path not in dirs:
-                    dirs.append(rc.path)
+        for rc in self._repos.values():
+            if rc.path not in dirs:
+                dirs.append(rc.path)
         return dirs
 
     def _build_repos_json(self) -> str | None:

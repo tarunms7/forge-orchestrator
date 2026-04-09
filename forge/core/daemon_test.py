@@ -1721,6 +1721,25 @@ class TestAllowedDirs:
         assert back_dir in dirs
         assert front_dir in dirs
 
+    def test_allowed_dirs_repo_scoped_call_still_includes_all_repo_roots(self, tmp_path):
+        """Per-task allowed_dirs still expose every repo root as read-only."""
+        back_dir = str(tmp_path / "back")
+        front_dir = str(tmp_path / "front")
+
+        repos = [
+            RepoConfig(id="backend", path=back_dir, base_branch="main"),
+            RepoConfig(id="frontend", path=front_dir, base_branch="develop"),
+        ]
+        daemon = ForgeDaemon(
+            project_dir=str(tmp_path),
+            settings=ForgeSettings(),
+            repos=repos,
+        )
+
+        dirs = daemon._build_allowed_dirs(repo_id="backend")
+        assert back_dir in dirs
+        assert front_dir in dirs
+
 
 class TestReposJsonStorage:
     """Tests for _build_repos_json."""

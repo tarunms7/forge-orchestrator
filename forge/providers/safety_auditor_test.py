@@ -196,6 +196,41 @@ class TestReadOnlyDirWriteBlocked:
         )
         assert auditor.check(event) == AuditVerdict.ALLOW
 
+    def test_relative_write_escape_to_read_only_blocked(self) -> None:
+        workspace = WorkspaceRoots(
+            primary_cwd="/tmp/work/.forge/worktrees/task-1",
+            read_only_dirs=["/tmp/work/backend"],
+        )
+        policy = ToolPolicy(mode="unrestricted")
+        auditor = SafetyAuditor(policy, workspace)
+        event = _write_event("Write", "../../../backend/src/app.py")
+        assert auditor.check(event) == AuditVerdict.ABORT
+
+    def test_relative_write_inside_worktree_allowed(self) -> None:
+        workspace = WorkspaceRoots(
+            primary_cwd="/tmp/work/.forge/worktrees/task-1",
+            read_only_dirs=["/tmp/work/backend"],
+        )
+        policy = ToolPolicy(mode="unrestricted")
+        auditor = SafetyAuditor(policy, workspace)
+        event = _write_event("Write", "./src/app.py")
+        assert auditor.check(event) == AuditVerdict.ALLOW
+
+    def test_file_change_list_to_read_only_blocked(self) -> None:
+        workspace = WorkspaceRoots(
+            primary_cwd="/tmp/work/.forge/worktrees/task-1",
+            read_only_dirs=["/tmp/work/backend"],
+        )
+        policy = ToolPolicy(mode="unrestricted")
+        auditor = SafetyAuditor(policy, workspace)
+        event = ProviderEvent(
+            kind=EventKind.TOOL_USE,
+            tool_name="file_change",
+            tool_call_id="call-1",
+            tool_input=json.dumps([{"path": "../../../backend/src/app.py", "kind": "replace"}]),
+        )
+        assert auditor.check(event) == AuditVerdict.ABORT
+
 
 class TestNonToolUseEvents:
     """Non-TOOL_USE events always return ALLOW."""
