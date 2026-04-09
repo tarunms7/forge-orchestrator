@@ -270,6 +270,37 @@ class ForgeApp(App):
         self._force_quit: bool = False
         self._dry_run_mode: bool = False
 
+    def _resolve_current_settings(self, project_dir: str | None = None):
+        """Build the effective settings and registry used by the TUI."""
+        from forge.config.project_config import ProjectConfig, apply_project_config
+        from forge.config.settings import ForgeSettings
+        from forge.config.user_settings import load_local_user_settings
+        from forge.core.provider_config import (
+            apply_user_settings,
+            build_provider_registry,
+            ensure_routing_defaults,
+            normalize_routing_settings,
+        )
+        from forge.providers.status import (
+            collect_provider_connection_statuses,
+            preferred_default_provider,
+        )
+
+        target_project_dir = os.path.abspath(project_dir or self._project_dir)
+        settings = self._settings or ForgeSettings()
+        project_config = ProjectConfig.load(target_project_dir)
+
+        if self._settings is None:
+            apply_project_config(settings, project_config)
+            apply_user_settings(settings, load_local_user_settings())
+
+        preferred_provider = preferred_default_provider(collect_provider_connection_statuses())
+        ensure_routing_defaults(settings, preferred_provider)
+        registry = build_provider_registry(settings, project_config)
+        normalize_routing_settings(settings, registry, preferred_provider=preferred_provider)
+        self._settings = settings
+        return settings, project_config, registry
+
     async def _init_db(self):
         """Initialize database connection."""
         from forge.core.paths import forge_db_url
@@ -1295,21 +1326,15 @@ class ForgeApp(App):
         """Run planning phase only, then show plan for approval."""
         import uuid
 
-        from forge.config.project_config import ProjectConfig, apply_project_config
-        from forge.config.settings import ForgeSettings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
         from forge.core.preflight import run_preflight
         from forge.core.provider_config import (
             build_provider_config_snapshot,
-            build_provider_registry,
             resolve_pipeline_models,
         )
 
-        settings = self._settings or ForgeSettings()
-        project_config = ProjectConfig.load(self._project_dir)
-        apply_project_config(settings, project_config)
-        registry = build_provider_registry(settings, project_config)
+        settings, project_config, registry = self._resolve_current_settings(self._project_dir)
         config_issues = project_config.validate(registry)
         if config_issues:
             self._state.apply_event(
@@ -1420,7 +1445,7 @@ class ForgeApp(App):
             if self._dry_run_mode:
                 from forge.core.cost_estimator import estimate_pipeline_cost
 
-                settings = self._settings or ForgeSettings()
+                settings = self._settings
                 cost_estimate_result = await estimate_pipeline_cost(
                     len(self._graph.tasks),
                     strategy=settings.model_strategy,
@@ -1696,7 +1721,8 @@ class ForgeApp(App):
     def action_switch_settings(self) -> None:
         if self._is_input_focused() or self._is_modal_screen():
             return
-        self.push_screen(SettingsScreen(self._settings))
+        settings, _, registry = self._resolve_current_settings(self._project_dir)
+        self.push_screen(SettingsScreen(self._project_dir, settings, registry))
 
     def action_switch_stats(self) -> None:
         if self._is_input_focused() or self._is_modal_screen():
@@ -1794,14 +1820,10 @@ class ForgeApp(App):
 
     async def _setup_daemon_for_resume(self, pipeline) -> None:
         """Set up daemon, event bus, and event subscriptions for pipeline resume."""
-        from forge.config.project_config import ProjectConfig, apply_project_config
-        from forge.config.settings import ForgeSettings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
 
-        settings = self._settings or ForgeSettings()
-        project_config = ProjectConfig.load(pipeline.project_dir)
-        apply_project_config(settings, project_config)
+        settings, _, _ = self._resolve_current_settings(pipeline.project_dir)
         emitter = EventEmitter()
         self._bus = EventBus()
         self._source = EmbeddedSource(emitter, self._bus)

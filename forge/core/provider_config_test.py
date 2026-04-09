@@ -8,8 +8,12 @@ from forge.config.project_config import CustomModelConfig, ProjectConfig
 from forge.config.settings import ForgeSettings
 from forge.core.provider_config import (
     apply_provider_config_snapshot,
+    apply_user_settings,
     build_provider_config_snapshot,
     build_provider_registry,
+    default_routing_overrides_for_provider,
+    ensure_routing_defaults,
+    normalize_routing_settings,
     resolve_registry_model,
 )
 from forge.providers.base import ModelSpec
@@ -253,3 +257,45 @@ def test_mixed_provider_snapshot_roundtrip() -> None:
     assert rebuilt_snapshot["stages"]["planner"]["provider"] == "claude"
     assert rebuilt_snapshot["stages"]["reviewer"]["provider"] == "openai"
     assert rebuilt_snapshot["stages"]["reviewer"]["reasoning_effort"] == "high"
+
+
+def test_default_routing_overrides_for_openai_uses_codex_models() -> None:
+    overrides = default_routing_overrides_for_provider("openai")
+
+    assert overrides["planner_model"] == "openai:gpt-5.4"
+    assert overrides["reviewer_model"] == "openai:gpt-5.4-mini"
+    assert overrides["agent_model_low"] == "openai:gpt-5.4-mini"
+
+
+def test_ensure_routing_defaults_only_fills_missing_fields() -> None:
+    settings = ForgeSettings(planner_model="claude:opus")
+
+    ensure_routing_defaults(settings, "openai")
+
+    assert settings.planner_model == "claude:opus"
+    assert settings.reviewer_model == "openai:gpt-5.4-mini"
+
+
+def test_normalize_routing_settings_replaces_non_codex_openai_models() -> None:
+    settings = ForgeSettings(reviewer_model="openai:o3")
+    registry = build_provider_registry(settings)
+
+    normalize_routing_settings(settings, registry, preferred_provider="claude")
+
+    assert settings.reviewer_model == "claude:sonnet"
+
+
+def test_apply_user_settings_respects_env_vars(monkeypatch) -> None:
+    settings = ForgeSettings()
+    monkeypatch.setenv("FORGE_REVIEWER_MODEL", "claude:sonnet")
+
+    apply_user_settings(
+        settings,
+        {
+            "reviewer_model": "openai:gpt-5.4",
+            "planner_model": "claude:opus",
+        },
+    )
+
+    assert settings.reviewer_model is None
+    assert settings.planner_model == "claude:opus"

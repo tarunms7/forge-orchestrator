@@ -41,6 +41,7 @@ from forge.providers.catalog import (
     CLAUDE_TOOL_MAP,
     FORGE_MODEL_CATALOG,
 )
+from forge.providers.status import get_claude_connection_status
 
 logger = logging.getLogger("forge.providers.claude")
 
@@ -488,8 +489,11 @@ class ClaudeProvider:
                 "Remove it before running the forge daemon."
             )
 
-        if not errors:
-            details_parts.append("authenticated")
+        status = get_claude_connection_status()
+        if status.connected:
+            details_parts.append(status.detail)
+        else:
+            errors.append(status.detail or "Claude authentication not configured")
 
         return ProviderHealthStatus(
             healthy=len(errors) == 0,

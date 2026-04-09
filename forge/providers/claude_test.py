@@ -21,6 +21,7 @@ from forge.providers.claude import (
     _normalize_tool_name,
     _translate_denied_operations,
 )
+from forge.providers.status import ProviderConnectionStatus
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,7 +100,20 @@ class TestHealthCheck:
         import os
 
         os.environ.pop("CLAUDECODE", None)  # Ensure clean env
-        status = p.health_check()
+        with patch(
+            "forge.providers.claude.get_claude_connection_status",
+            return_value=ProviderConnectionStatus(
+                ui_key="claude",
+                provider_key="claude",
+                display_name="Claude",
+                installed=True,
+                connected=True,
+                status="Connected",
+                detail="Connected as dev@example.com",
+                auth_source="claude.ai",
+            ),
+        ):
+            status = p.health_check()
         assert status.healthy is True
         assert status.provider == "claude"
         assert "claude-code-sdk" in status.details
@@ -110,7 +124,20 @@ class TestHealthCheck:
 
         os.environ["CLAUDECODE"] = "1"
         try:
-            status = p.health_check()
+            with patch(
+                "forge.providers.claude.get_claude_connection_status",
+                return_value=ProviderConnectionStatus(
+                    ui_key="claude",
+                    provider_key="claude",
+                    display_name="Claude",
+                    installed=True,
+                    connected=True,
+                    status="Connected",
+                    detail="Connected as dev@example.com",
+                    auth_source="claude.ai",
+                ),
+            ):
+                status = p.health_check()
             assert status.healthy is False
             assert any("CLAUDECODE" in e for e in status.errors)
         finally:

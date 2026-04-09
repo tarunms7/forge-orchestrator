@@ -30,6 +30,7 @@ from forge.providers.openai import (
     _normalize_codex_tool,
     _translate_denied_to_instructions,
 )
+from forge.providers.status import ProviderConnectionStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -176,12 +177,21 @@ class TestHealthCheck:
                 return_value=SimpleNamespace(__version__="0.1.0"),
             ),
             patch(
-                "forge.providers.openai._codex_auth_description",
-                return_value="Codex ChatGPT subscription login configured",
-            ),
-            patch(
                 "forge.providers.openai._available_codex_model_aliases",
                 return_value={"gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"},
+            ),
+            patch(
+                "forge.providers.openai.get_codex_connection_status",
+                return_value=ProviderConnectionStatus(
+                    ui_key="codex",
+                    provider_key="openai",
+                    display_name="Codex",
+                    installed=True,
+                    connected=True,
+                    status="Connected",
+                    detail="Logged in using ChatGPT",
+                    auth_source="chatgpt",
+                ),
             ),
         ):
             status = provider.health_check()
@@ -197,8 +207,17 @@ class TestHealthCheck:
                 return_value=SimpleNamespace(__version__="0.1.0"),
             ),
             patch(
-                "forge.providers.openai._codex_auth_description",
-                return_value="Codex ChatGPT subscription login configured",
+                "forge.providers.openai.get_codex_connection_status",
+                return_value=ProviderConnectionStatus(
+                    ui_key="codex",
+                    provider_key="openai",
+                    display_name="Codex",
+                    installed=True,
+                    connected=True,
+                    status="Connected",
+                    detail="Logged in using ChatGPT",
+                    auth_source="chatgpt",
+                ),
             ),
         ):
             status = provider.health_check(backend="codex-sdk")
@@ -212,7 +231,19 @@ class TestHealthCheck:
                 "forge.providers.openai._try_import_codex",
                 return_value=SimpleNamespace(__version__="0.1.0"),
             ),
-            patch("forge.providers.openai._codex_auth_description", return_value=None),
+            patch(
+                "forge.providers.openai.get_codex_connection_status",
+                return_value=ProviderConnectionStatus(
+                    ui_key="codex",
+                    provider_key="openai",
+                    display_name="Codex",
+                    installed=True,
+                    connected=False,
+                    status="Needs login",
+                    detail="Run `codex login` to connect Codex.",
+                    auth_source=None,
+                ),
+            ),
         ):
             status = provider.health_check(backend="codex-sdk")
             assert status.healthy is False
@@ -225,8 +256,17 @@ class TestHealthCheck:
             patch.dict(os.environ, {}, clear=True),
             patch("forge.providers.openai._try_import_codex", return_value=None),
             patch(
-                "forge.providers.openai._codex_auth_description",
-                return_value="Codex ChatGPT subscription login configured",
+                "forge.providers.openai.get_codex_connection_status",
+                return_value=ProviderConnectionStatus(
+                    ui_key="codex",
+                    provider_key="openai",
+                    display_name="Codex",
+                    installed=True,
+                    connected=True,
+                    status="Connected",
+                    detail="Logged in using ChatGPT",
+                    auth_source="chatgpt",
+                ),
             ),
         ):
             status = provider.health_check(backend="codex-sdk")
