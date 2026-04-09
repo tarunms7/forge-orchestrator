@@ -40,6 +40,28 @@ def _decode_output(raw: str | bytes) -> str:
     return raw.decode() if isinstance(raw, bytes) else str(raw)
 
 
+def _extract_fix_result_cost(fix_result: object | None) -> float:
+    """Read cost from either the current or legacy provider result shape."""
+    if fix_result is None:
+        return 0.0
+    for attr in ("provider_reported_cost_usd", "cost_usd"):
+        value = getattr(fix_result, attr, None)
+        if isinstance(value, int | float):
+            return float(value)
+    return 0.0
+
+
+def _extract_fix_result_summary(fix_result: object | None) -> str:
+    """Read summary text from either the current or legacy provider result shape."""
+    if fix_result is None:
+        return ""
+    for attr in ("text", "result_text", "summary"):
+        value = getattr(fix_result, attr, None)
+        if isinstance(value, str) and value:
+            return value[:500]
+    return ""
+
+
 # ── Data structures ──────────────────────────────────────────────────
 
 
@@ -611,14 +633,9 @@ async def run_ci_fix_loop(
             continue
 
         # Record attempt
-        cost = 0.0
-        if fix_result and fix_result.provider_reported_cost_usd is not None:
-            cost = fix_result.provider_reported_cost_usd
+        cost = _extract_fix_result_cost(fix_result)
         total_cost += cost
-        summary = ""
-        if fix_result and fix_result.text:
-            # Take first 500 chars of result as summary
-            summary = fix_result.text[:500]
+        summary = _extract_fix_result_summary(fix_result)
 
         attempt = CIFixAttempt(
             attempt=attempt_num,

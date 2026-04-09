@@ -17,6 +17,12 @@ def safe_create_task(
 ) -> asyncio.Task:
     """Create an asyncio task with automatic exception logging."""
     task = asyncio.create_task(coro, name=name)
+    if not isinstance(task, asyncio.Task):
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return task
     task.add_done_callback(functools.partial(_log_task_exception, logger=logger))
     return task
 

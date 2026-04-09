@@ -113,6 +113,14 @@ def _detect_excluded_repos(user_input: str, repo_ids: set[str]) -> set[str]:
     return excluded
 
 
+def _coerce_cost_estimate_total_usd(estimate: object) -> float:
+    """Accept both PipelineCostEstimate objects and legacy float-like totals."""
+    total = getattr(estimate, "total_cost_usd", estimate)
+    if isinstance(total, int | float):
+        return float(total)
+    raise TypeError(f"Unsupported cost estimate type: {type(estimate)!r}")
+
+
 def _classify_pipeline_result(task_states: list[str]) -> str:
     """Classify pipeline outcome from terminal task states."""
     active_states = [s for s in task_states if s != "cancelled"]
@@ -482,8 +490,6 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._merge_workers: dict[str, MergeWorker] = {}
         self._pipeline_branches: dict[str, str] = {}
 
-        multi = len(self._repos) > 1
-
         # All worktrees go to <workspace_root>/.forge/worktrees/ — one visible
         # place for all tasks.  WorktreeManager uses rc.path as the git repo
         # root so git commands still run in the correct repo.
@@ -533,6 +539,23 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         Raises:
             ForgeError: if repo_id is not found.
         """
+        if repo_id in self._repos and (
+            repo_id not in self._worktree_managers
+            or repo_id not in self._merge_workers
+            or repo_id not in self._pipeline_branches
+        ):
+            rc = self._repos[repo_id]
+            wt_dir = os.path.join(self._workspace_dir, ".forge", "worktrees")
+            pipeline_branch = self._pipeline_branches.get(repo_id) or rc.base_branch or "main"
+            logger.warning(
+                "Repo infra for '%s' was missing; rebuilding lazily with branch '%s'",
+                repo_id,
+                pipeline_branch,
+            )
+            self._worktree_managers[repo_id] = WorktreeManager(rc.path, wt_dir)
+            self._merge_workers[repo_id] = MergeWorker(rc.path, main_branch=pipeline_branch)
+            self._pipeline_branches[repo_id] = pipeline_branch
+
         if repo_id not in self._worktree_managers:
             raise ForgeError(
                 f"Unknown repo '{repo_id}' — available repos: "
@@ -1142,11 +1165,12 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 overrides=self._settings.build_routing_overrides(),
                 registry=self._registry,
             )
+            estimated_total = _coerce_cost_estimate_total_usd(estimated)
             await self._emit(
                 "pipeline:cost_estimate",
                 {
-                    "estimated_cost": estimated.total_cost_usd,
-                    "estimated_cost_usd": estimated.total_cost_usd,
+                    "estimated_cost": estimated_total,
+                    "estimated_cost_usd": estimated_total,
                     "task_count": len(graph.tasks),
                 },
                 db=db,
@@ -1925,7 +1949,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             await db.update_pipeline_status(self._pipeline_id, "dry_run")
             return {
                 "graph": graph,
-                "cost_estimate": cost.total_cost_usd,
+                "cost_estimate": _coerce_cost_estimate_total_usd(cost),
                 "model_assignments": model_assignments,
             }
         finally:

@@ -232,6 +232,41 @@ class ExecutorMixin:
         except Exception:
             logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
 
+    async def _task_is_terminal(self, db, task_id: str) -> bool:
+        """Check whether a task currently sits in a terminal state."""
+        try:
+            task = await db.get_task(task_id)
+        except Exception:
+            logger.debug("Failed to load %s while checking terminal state", task_id, exc_info=True)
+            return False
+
+        return bool(
+            task
+            and task.state
+            in (
+                TaskState.DONE.value,
+                TaskState.ERROR.value,
+                TaskState.CANCELLED.value,
+            )
+        )
+
+    async def _record_task_completion(
+        self,
+        db,
+        task_id: str,
+        *,
+        assume_terminal: bool = False,
+    ) -> None:
+        """Persist completed_at, optionally trusting the caller's completion contract."""
+        if assume_terminal and not await self._task_is_terminal(db, task_id):
+            try:
+                await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
+            except Exception:
+                logger.debug("Failed to record assumed completed_at for %s", task_id, exc_info=True)
+            return
+
+        await self._record_task_completion_if_terminal(db, task_id)
+
     def _select_model(
         self,
         stage: str,
@@ -400,6 +435,7 @@ class ExecutorMixin:
                     db=db,
                     pipeline_id=pid,
                 )
+                await self._record_task_completion(db, task_id)
                 await db.release_agent(agent_id)
                 return
             if await self._maybe_accept_scope_clean_noop(
@@ -434,7 +470,7 @@ class ExecutorMixin:
             task.complexity or "medium",
             retry_count=task.retry_count,
         )
-        await self._attempt_merge(
+        merge_finished = await self._attempt_merge(
             db,
             merge_worker,
             worktree_mgr,
@@ -450,7 +486,8 @@ class ExecutorMixin:
             repo_id=repo_id,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
-        await self._record_task_completion_if_terminal(db, task_id)
+        if merge_finished is not False:
+            await self._record_task_completion(db, task_id, assume_terminal=True)
 
     # -- merge-only fast path -------------------------------------------
 
@@ -1456,6 +1493,7 @@ class ExecutorMixin:
                     db=db,
                     pipeline_id=pid,
                 )
+                await self._record_task_completion(db, task_id)
                 await db.release_agent(agent_id)
                 return
             if await self._maybe_accept_scope_clean_noop(
@@ -1493,7 +1531,7 @@ class ExecutorMixin:
             task.complexity or "medium",
             retry_count=task.retry_count,
         )
-        await self._attempt_merge(
+        merge_finished = await self._attempt_merge(
             db,
             merge_worker,
             worktree_mgr,
@@ -1508,6 +1546,8 @@ class ExecutorMixin:
             repo_id=repo_id,
         )
         await self._cleanup_and_release(db, worktree_mgr, task_id, agent_id)
+        if merge_finished is not False:
+            await self._record_task_completion(db, task_id, assume_terminal=True)
 
     # -- event-driven resume ------------------------------------------------
 
@@ -1880,6 +1920,7 @@ class ExecutorMixin:
                 db=db,
                 pipeline_id=pipeline_id,
             )
+            await self._record_task_completion(db, task.id)
             return True
         except Exception:
             logger.debug(
@@ -1909,7 +1950,7 @@ class ExecutorMixin:
         pre_retry_ref: str | None = None,
         agent_summary: str = "",
         repo_id: str = "default",
-    ) -> None:
+    ) -> bool:
         """Review then merge; handles Tier 1 + Tier 2 conflict resolution."""
         diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
         # Compute delta diff for retry reviews: shows ONLY what the retry
@@ -2047,7 +2088,7 @@ class ExecutorMixin:
                     session_id=None,
                     pipeline_id=pid,
                 )
-                return
+                return False
             if not passed:
                 # Build focused retry feedback: reviewer feedback + changed files + diff snippet.
                 # Include the diff so the retry agent can see what it wrote without re-reading every file.
@@ -2077,7 +2118,7 @@ class ExecutorMixin:
                 await self._handle_retry(
                     db, task_id, worktree_mgr, review_feedback=enriched_feedback, pipeline_id=pid
                 )
-                return
+                return False
 
         # ── Capture agent self-reported learning (success after prior failure) ──
         if task.retry_count > 0 and agent_summary:
@@ -2157,7 +2198,7 @@ class ExecutorMixin:
             # Do NOT proceed to merge — await human approval.
             # The /approve endpoint triggers the merge. Agent is released by
             # _cleanup_and_release in the caller.
-            return
+            return False
 
         await db.update_task_state(task_id, TaskState.MERGING.value)
         await self._emit(
@@ -2206,12 +2247,12 @@ class ExecutorMixin:
             await self._emit_merge_success(
                 db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref
             )
-            return
+            return True
         if retry_result.success:
             await self._emit_merge_success(
                 db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref
             )
-            return
+            return True
         console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
         await self._attempt_tier2_resolution(
             db,
@@ -2226,6 +2267,7 @@ class ExecutorMixin:
             pre_merge_ref=pre_merge_ref,
             repo_id=repo_id,
         )
+        return await self._task_is_terminal(db, task_id)
 
     # -- Tier 2 conflict resolution -------------------------------------
 

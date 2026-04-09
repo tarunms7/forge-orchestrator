@@ -52,6 +52,7 @@ def format_streaming_output(
         return ""
     parts = list(lines)
     if streaming:
+        parts.append(f"[{TEXT_SECONDARY}]Typing…[/]")
         parts.append(_render_forging_shimmer(typing_frame))
     return "\n".join(parts)
 
@@ -83,10 +84,8 @@ class ReviewGates(Widget):
         self._streaming = active
         if active:
             self._typing_frame = 0
-            try:
+            if getattr(self, "is_mounted", False):
                 self._typing_timer = self.set_interval(0.12, self._tick_typing)
-            except Exception:
-                pass  # Not yet composed
         else:
             if self._typing_timer is not None:
                 self._typing_timer.stop()
