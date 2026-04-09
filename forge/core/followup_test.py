@@ -556,7 +556,7 @@ class TestFollowupWorktreeMultiRepo:
     async def test_followup_worktree_multi_repo(
         self, mock_gather, mock_setup, mock_adapter, mock_runtime_cls, mock_cleanup
     ):
-        """Multi-repo pipeline uses {project_dir}/.forge/worktrees/{repo_id}/{worktree_id}."""
+        """Multi-repo follow-ups use the shared root with a repo-prefixed basename."""
         mock_gather.return_value = "(No prior output recorded)"
 
         mock_agent_result = MagicMock(
@@ -616,12 +616,11 @@ class TestFollowupWorktreeMultiRepo:
         )
 
         assert result.success is True
-        # Verify worktree path includes repo_id segment
+        # Verify worktree path uses a repo-prefixed basename under the shared root
         setup_call = mock_setup.call_args
         worktree_dir = setup_call[0][1]  # second positional arg
-        assert "/backend/" in worktree_dir
         assert worktree_dir == os.path.join(
-            "/workspace", ".forge", "worktrees", "backend", "followup-fu-12345-task-1"
+            "/workspace", ".forge", "worktrees", "backend-followup-fu-12345-task-1"
         )
         # repo_dir should be the backend repo path
         repo_dir = setup_call[0][0]  # first positional arg

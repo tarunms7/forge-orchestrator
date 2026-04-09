@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 
+from forge.core.daemon_helpers import compute_worktree_name
 from forge.core.sanitize import validate_task_id
 
 logger = logging.getLogger("forge.merge.worktree")
@@ -14,12 +15,28 @@ logger = logging.getLogger("forge.merge.worktree")
 class WorktreeManager:
     """Creates, tracks, and removes git worktrees for tasks."""
 
-    def __init__(self, repo_path: str, worktrees_dir: str) -> None:
+    def __init__(
+        self,
+        repo_path: str,
+        worktrees_dir: str,
+        *,
+        repo_id: str = "default",
+        repo_count: int = 1,
+    ) -> None:
         self._repo = repo_path
         self._worktrees_dir = worktrees_dir
+        self._repo_id = repo_id
+        self._repo_count = repo_count
+
+    def _task_name(self, task_id: str) -> str:
+        return compute_worktree_name(
+            self._repo_id,
+            task_id,
+            repo_count=self._repo_count,
+        )
 
     def _task_path(self, task_id: str) -> str:
-        return os.path.join(self._worktrees_dir, task_id)
+        return os.path.join(self._worktrees_dir, self._task_name(task_id))
 
     def _branch_name(self, task_id: str) -> str:
         return f"forge/{task_id}"

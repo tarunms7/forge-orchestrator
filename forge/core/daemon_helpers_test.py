@@ -24,6 +24,7 @@ from forge.core.daemon_helpers import (
     _parse_forge_question,
     _run_git,
     async_subprocess,
+    compute_worktree_name,
     compute_worktree_path,
     format_routing_summary,
 )
@@ -1141,6 +1142,19 @@ class TestGetCurrentBranch:
         assert result == "main"
 
 
+class TestComputeWorktreeName:
+    """compute_worktree_name() applies repo prefixes only when needed."""
+
+    def test_compute_worktree_name_single_default_repo(self):
+        """Single default repo keeps the original task id as the directory name."""
+        assert compute_worktree_name("default", "task-1") == "task-1"
+
+    def test_compute_worktree_name_prefixes_repo_when_needed(self):
+        """Non-default or multi-repo layouts get a repo-prefixed basename."""
+        assert compute_worktree_name("backend", "task-1", repo_count=2) == "backend-task-1"
+        assert compute_worktree_name("frontend", "task-2", repo_count=1) == "frontend-task-2"
+
+
 class TestComputeWorktreePath:
     """compute_worktree_path() returns correct paths for single and multi-repo setups."""
 
@@ -1150,34 +1164,34 @@ class TestComputeWorktreePath:
         assert result == "/Users/dev/myproject/.forge/worktrees/task-1"
 
     def test_compute_worktree_path_multi_repo(self):
-        """Multi-repo uses the shared workspace worktree root."""
+        """Multi-repo uses the shared root with a repo-prefixed basename."""
         result = compute_worktree_path(
             "/Users/dev/myproject",
             "backend",
             "task-1",
             repo_count=2,
         )
-        assert result == "/Users/dev/myproject/.forge/worktrees/task-1"
+        assert result == "/Users/dev/myproject/.forge/worktrees/backend-task-1"
 
     def test_compute_worktree_path_default_with_high_count(self):
-        """repo_id='default' but repo_count > 1 still produces the flat path."""
+        """A multi-repo default repo still prefixes the basename to avoid collisions."""
         result = compute_worktree_path(
             "/Users/dev/myproject",
             "default",
             "task-1",
             repo_count=3,
         )
-        assert result == "/Users/dev/myproject/.forge/worktrees/task-1"
+        assert result == "/Users/dev/myproject/.forge/worktrees/default-task-1"
 
     def test_compute_worktree_path_explicit_single_repo(self):
-        """repo_count=1 with non-default repo_id still uses the shared root."""
+        """A single explicit repo id still gets a repo-prefixed basename."""
         result = compute_worktree_path(
             "/Users/dev/myproject",
             "frontend",
             "task-2",
             repo_count=1,
         )
-        assert result == "/Users/dev/myproject/.forge/worktrees/task-2"
+        assert result == "/Users/dev/myproject/.forge/worktrees/frontend-task-2"
 
     def test_compute_worktree_path_default_repo_count_is_one(self):
         """Default repo_count value of 1 with 'default' repo_id returns flat path."""
