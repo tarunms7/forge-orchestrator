@@ -145,19 +145,36 @@ class ExecutorMixin:
     ``_handle_retry``, ``_handle_merge_retry``.
     """
 
-    def _resolve_repo_id(self, repo_id: str, task_id: str = "") -> str:
+    def _resolve_repo_id(
+        self, repo_id: str, task_id: str = "", task_files: list[str] | None = None
+    ) -> str:
         """Resolve 'default' repo_id in workspace mode.
 
         When the planner assigns repo_id='default' but the workspace only has
-        named repos (e.g. 'temp', 'ultron'), fall back to the first configured
-        repo so downstream worktree/path operations don't crash.
+        named repos (e.g. 'temp', 'ultron'), infer the correct repo from the
+        task's file list by checking which repo actually contains those files.
+        Falls back to first repo if inference fails.
         """
         repos = getattr(self, "_repos", {})
         if repo_id == "default" and len(repos) > 1 and "default" not in repos:
+            # Try to infer from task files — check which repo contains them
+            if task_files:
+                for rid, rc in repos.items():
+                    for f in task_files:
+                        candidate = os.path.join(rc.path, f)
+                        if os.path.exists(candidate):
+                            logger.info(
+                                "Task %s: inferred repo_id='%s' from file '%s'",
+                                task_id,
+                                rid,
+                                f,
+                            )
+                            return rid
+            # Fallback: first configured repo
             resolved = next(iter(repos.keys()))
             logger.warning(
                 "Task %s has repo_id='default' in workspace mode, "
-                "resolved to '%s'",
+                "resolved to '%s' (could not infer from files)",
                 task_id,
                 resolved,
             )
@@ -296,7 +313,7 @@ class ExecutorMixin:
             logger.debug("Failed to record started_at for %s", task_id, exc_info=True)
         # Use repo_id from DB task row if available, else use parameter default.
         repo_id = getattr(task, "repo_id", repo_id) or repo_id
-        repo_id = self._resolve_repo_id(repo_id, task_id)
+        repo_id = self._resolve_repo_id(repo_id, task_id, task_files=task.files)
         if getattr(task, "retry_reason", None) == "merge_failed":
             await self._handle_merge_fast_path(
                 db,
@@ -558,7 +575,7 @@ class ExecutorMixin:
             pipeline_id=pid,
         )
         repo_id = getattr(task, "repo_id", repo_id) or repo_id
-        repo_id = self._resolve_repo_id(repo_id, task_id)
+        repo_id = self._resolve_repo_id(repo_id, task_id, task_files=task.files)
         worktree_path = self._worktree_path(repo_id, task_id)
 
         # Verify worktree exists — fall back to full execution if missing
@@ -1370,7 +1387,7 @@ class ExecutorMixin:
         await self._emit("task:resumed", {"task_id": task_id}, db=db, pipeline_id=pid)
 
         # Resolve worktree path (reuse existing — the agent's code is still there)
-        repo_id = self._resolve_repo_id(repo_id, task_id)
+        repo_id = self._resolve_repo_id(repo_id, task_id, task_files=task.files)
         worktree_path = self._worktree_path(repo_id, task_id)
         if not os.path.isdir(worktree_path):
             console.print(

@@ -2663,7 +2663,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 # Route to the correct repo's infrastructure
                 task_row = await db.get_task(task_id)
                 repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
-                repo_id = self._resolve_repo_id(repo_id, task_id)
+                task_files = getattr(task_row, "files", None) if task_row else None
+                if isinstance(task_files, str):
+                    import json as _json
+                    try:
+                        task_files = _json.loads(task_files)
+                    except (ValueError, TypeError):
+                        task_files = None
+                repo_id = self._resolve_repo_id(repo_id, task_id, task_files=task_files)
 
                 try:
                     wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
@@ -2711,7 +2718,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
                 task_row = await db.get_task(ir_task.id)
                 repo_id = getattr(task_row, "repo_id", "default") if task_row else "default"
-                repo_id = self._resolve_repo_id(repo_id, ir_task.id)
+                ir_files = getattr(task_row, "files", None) if task_row else None
+                if isinstance(ir_files, str):
+                    import json as _json
+                    try:
+                        ir_files = _json.loads(ir_files)
+                    except (ValueError, TypeError):
+                        ir_files = None
+                repo_id = self._resolve_repo_id(repo_id, ir_task.id, task_files=ir_files)
 
                 try:
                     wt_mgr, mw, _branch = self._get_repo_infra(repo_id)
