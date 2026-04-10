@@ -135,3 +135,21 @@ async def test_connect_button_uses_suspend_context_manager(tmp_path, monkeypatch
             cwd=screen._project_dir,
             check=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_cards_stay_compact_and_routing_columns_align(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    app = SettingsTestApp(ForgeSettings())
+
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+
+        claude_card = app.screen.query_one("#provider-card-claude")
+        codex_card = app.screen.query_one("#provider-card-codex")
+        planner_label = app.screen.query_one("#row-planner_model .routing-stage")
+        header_label = app.screen.query_one(".routing-header .routing-stage")
+
+        assert claude_card.size.height <= 12
+        assert codex_card.size.height <= 12
+        assert planner_label.region.x == header_label.region.x

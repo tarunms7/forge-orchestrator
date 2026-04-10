@@ -168,9 +168,11 @@ class SettingsScreen(Screen):
     #provider-grid {{
         width: 100%;
         height: auto;
+        margin-bottom: 1;
     }}
     .provider-card {{
         width: 1fr;
+        height: auto;
         min-height: 11;
         margin-right: 1;
         padding: 1;
@@ -189,7 +191,8 @@ class SettingsScreen(Screen):
     }}
     .provider-detail {{
         color: {TEXT_SECONDARY};
-        height: 4;
+        height: auto;
+        min-height: 2;
     }}
     .provider-actions {{
         margin-top: 1;
@@ -202,21 +205,26 @@ class SettingsScreen(Screen):
         color: {TEXT_SECONDARY};
         margin-bottom: 1;
     }}
-    .routing-header {{
-        width: 100%;
+    #routing-table {{
+        width: auto;
         height: auto;
+    }}
+    .routing-header {{
+        width: auto;
         margin-bottom: 1;
-        color: {TEXT_MUTED};
     }}
     .routing-row {{
-        width: 100%;
+        width: auto;
         height: auto;
         margin-bottom: 1;
-        align: center middle;
+        align: left middle;
     }}
-    .routing-label {{
+    .routing-stage {{
         width: 18;
         color: {TEXT_PRIMARY};
+    }}
+    .routing-column-title {{
+        color: {TEXT_MUTED};
     }}
     .routing-provider {{
         width: 14;
@@ -287,37 +295,40 @@ class SettingsScreen(Screen):
                 f"Claude stays the default when both providers are connected. Effort uses native controls on Codex and guidance on Claude.",
                 classes="routing-help",
             )
-            yield Static(
-                f"[{TEXT_MUTED}]Stage[/]              [{TEXT_MUTED}]Provider[/]      [{TEXT_MUTED}]Model[/]                  [{TEXT_MUTED}]Effort[/]",
-                classes="routing-header",
-            )
-            for row in _ROUTING_ROWS:
-                with Horizontal(classes="routing-row", id=f"row-{row.settings_attr}"):
-                    yield Static(row.label, classes="routing-label")
-                    yield Select(
-                        _provider_options(),
-                        value=self._current_provider_value(row.settings_attr),
-                        allow_blank=False,
-                        compact=True,
-                        classes="routing-provider",
-                        id=row.provider_select_id,
-                    )
-                    yield Select(
-                        self._model_options_for_attr(row.settings_attr),
-                        value=self._current_model_value(row.settings_attr),
-                        allow_blank=False,
-                        compact=True,
-                        classes="routing-model",
-                        id=row.model_select_id,
-                    )
-                    yield Select(
-                        _EFFORT_OPTIONS,
-                        value=self._current_effort_value(row.settings_attr),
-                        allow_blank=False,
-                        compact=True,
-                        classes="routing-effort",
-                        id=row.effort_select_id,
-                    )
+            with Vertical(id="routing-table"):
+                with Horizontal(classes="routing-header"):
+                    yield Static("Stage", classes="routing-stage routing-column-title")
+                    yield Static("Provider", classes="routing-provider routing-column-title")
+                    yield Static("Model", classes="routing-model routing-column-title")
+                    yield Static("Effort", classes="routing-effort routing-column-title")
+
+                for row in _ROUTING_ROWS:
+                    with Horizontal(classes="routing-row", id=f"row-{row.settings_attr}"):
+                        yield Static(row.label, classes="routing-stage")
+                        yield Select(
+                            _provider_options(),
+                            value=self._current_provider_value(row.settings_attr),
+                            allow_blank=False,
+                            compact=True,
+                            classes="routing-provider",
+                            id=row.provider_select_id,
+                        )
+                        yield Select(
+                            self._model_options_for_attr(row.settings_attr),
+                            value=self._current_model_value(row.settings_attr),
+                            allow_blank=False,
+                            compact=True,
+                            classes="routing-model",
+                            id=row.model_select_id,
+                        )
+                        yield Select(
+                            _EFFORT_OPTIONS,
+                            value=self._current_effort_value(row.settings_attr),
+                            allow_blank=False,
+                            compact=True,
+                            classes="routing-effort",
+                            id=row.effort_select_id,
+                        )
             yield Static("", id="settings-save-note")
 
         yield Static(
