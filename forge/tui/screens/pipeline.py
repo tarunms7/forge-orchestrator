@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from forge.core.async_utils import safe_create_task
 from forge.tui.state import TuiState
@@ -231,6 +231,40 @@ class PhaseBanner(Widget):
         return _vertically_center(banner)
 
 
+class RoutingAuditBanner(Static):
+    """Persistent routing audit summary shown below the phase banner."""
+
+    DEFAULT_CSS = """
+    RoutingAuditBanner {
+        height: auto;
+        padding: 0 2;
+        background: #11161d;
+        border-bottom: tall #263041;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._routing_summary = ""
+
+    def update_routing_summary(self, routing_summary: str) -> None:
+        self._routing_summary = routing_summary.strip()
+        self.refresh()
+
+    def render(self) -> str:
+        if not self._routing_summary:
+            return ""
+        summary = self._routing_summary
+        if summary.startswith("⚠ "):
+            summary = (
+                f"[bold #d29922]⚠[/] "
+                f"{summary[2:].replace('Claude', '[#22c55e]Claude[/]').replace('Codex', '[#58a6ff]Codex[/]')}"
+            )
+        return summary.replace("Claude", "[#22c55e]Claude[/]").replace(
+            "Codex", "[#58a6ff]Codex[/]"
+        )
+
+
 class DecisionBadge(Widget):
     """Shows count of pending questions/decisions at bottom of left panel."""
 
@@ -320,6 +354,9 @@ class PipelineScreen(Screen):
         text-align: center;
         background: #11161d;
         border-bottom: tall #263041;
+    }
+    PipelineScreen > RoutingAuditBanner {
+        width: 100%;
     }
     #split-pane {
         height: 1fr;
@@ -421,6 +458,7 @@ class PipelineScreen(Screen):
     def compose(self) -> ComposeResult:
         yield DagOverlay()
         yield PhaseBanner()
+        yield RoutingAuditBanner(id="routing-audit-banner")
         with Horizontal(id="split-pane"):
             with Vertical(id="left-panel"):
                 yield TaskList()
@@ -924,6 +962,12 @@ class PipelineScreen(Screen):
                 return error_task, review_lines
 
         return error_task, state.agent_output.get(task_id, [])
+
+    def _update_routing_audit(self, routing_summary: str) -> None:
+        """Update the persistent routing audit banner."""
+        self.query_one("#routing-audit-banner", RoutingAuditBanner).update_routing_summary(
+            routing_summary
+        )
 
     # ------------------------------------------------------------------
     # On-demand diff loading
