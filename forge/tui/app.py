@@ -40,6 +40,17 @@ _FAILED_PR_TASK_STATES = frozenset(
     }
 )
 
+_FINAL_APPROVAL_TRANSIENT_TASK_STATES = frozenset(
+    {
+        TaskState.TODO.value,
+        TaskState.IN_PROGRESS.value,
+        TaskState.AWAITING_INPUT.value,
+        TaskState.IN_REVIEW.value,
+        TaskState.AWAITING_APPROVAL.value,
+        TaskState.MERGING.value,
+    }
+)
+
 
 def _escape_markup(text: str) -> str:
     """Escape Rich markup characters in error messages to prevent MarkupError crashes.
@@ -127,6 +138,28 @@ def _partition_pr_task_summaries(
     done_tasks = [t for t in task_summaries if t.get("state") == TaskState.DONE.value]
     failed_tasks = [t for t in task_summaries if t.get("state") in _FAILED_PR_TASK_STATES]
     return done_tasks, failed_tasks or None
+
+
+def _normalize_final_approval_task_summaries(task_summaries: list[dict]) -> list[dict]:
+    """Normalize transient task states before handing them to final-approval flows.
+
+    Final approval only represents shippable work vs non-shippable work. If an
+    interrupted or partially-replayed pipeline leaks a transient state like
+    ``in_progress`` into this handoff, downstream consumers can reject it.
+    """
+    normalized: list[dict] = []
+    for task in task_summaries:
+        state = task.get("state")
+        if state not in _FINAL_APPROVAL_TRANSIENT_TASK_STATES:
+            normalized.append(task)
+            continue
+
+        normalized_task = dict(task)
+        normalized_task["state"] = TaskState.ERROR.value
+        if not normalized_task.get("error"):
+            normalized_task["error"] = f"Task did not finish before final approval ({state})."
+        normalized.append(normalized_task)
+    return normalized
 
 
 def _is_multi_repo_configs(repos: list) -> bool:
