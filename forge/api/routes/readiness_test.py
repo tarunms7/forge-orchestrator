@@ -1,6 +1,5 @@
 """Tests for GET /api/readiness endpoint."""
 
-from dataclasses import asdict
 from unittest.mock import patch
 
 import pytest
