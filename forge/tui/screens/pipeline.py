@@ -32,7 +32,6 @@ from forge.tui.widgets.progress_bar import PipelineProgress
 from forge.tui.widgets.queue_status import QueueStatus
 from forge.tui.widgets.search_overlay import SearchOverlay
 from forge.tui.widgets.shortcut_bar import ShortcutBar
-from forge.tui.widgets.suggestion_chips import SuggestionChips
 from forge.tui.widgets.task_list import TaskList
 
 logger = logging.getLogger("forge.tui.screens.pipeline")
@@ -510,6 +509,7 @@ class PipelineScreen(Screen):
         # Fast path: streaming fields only update the relevant widget
         if field == "agent_output":
             self._handle_agent_output_fast()
+            self._refresh_interjection_chat_if_active()
             return
         if field == "review_output":
             self._handle_review_output_fast()
@@ -931,6 +931,7 @@ class PipelineScreen(Screen):
             split_pane.remove_class("full-width")
 
         decision_badge.update_count(len(state.pending_questions))
+        self._refresh_interjection_chat_if_active()
 
     def _build_error_detail_context(self, task_id: str, task: dict) -> tuple[dict, list[str]]:
         """Choose the most useful failure context for the selected errored task.
@@ -1110,6 +1111,40 @@ class PipelineScreen(Screen):
             self.query_one("#chat-input").focus()
         except Exception:
             pass
+
+    def _show_interjection_chat(self, task_id: str, task: dict, *, focus_input: bool) -> None:
+        """Populate the chat panel with steering context for a running task."""
+        chat = self.query_one(ChatThread)
+        chat.task_id = task_id
+        chat.update_interjection_context(
+            self._state.agent_output.get(task_id, []),
+            task.get("interjections", []),
+        )
+        if self._active_view != "chat":
+            self._set_view("chat")
+        if focus_input and not self._read_only:
+            self.set_timer(0.15, self._focus_chat_input)
+
+    def _refresh_interjection_chat_if_active(self) -> None:
+        """Keep the interjection panel synced while tasks stream or selection changes."""
+        if self._active_view != "chat":
+            return
+        try:
+            chat = self.query_one(ChatThread)
+        except Exception:
+            return
+        if chat.mode != "interjection":
+            return
+        tid = self._state.selected_task_id
+        if not tid:
+            return
+        task = self._state.tasks.get(tid)
+        if not task:
+            return
+        if task.get("state") not in ("in_progress", "awaiting_input"):
+            self._set_view("output")
+            return
+        self._show_interjection_chat(tid, task, focus_input=False)
 
     def _auto_switch_chat(self, task_id: str, task: dict) -> None:
         """Switch to chat view and populate question when task needs input."""
@@ -1362,27 +1397,7 @@ class PipelineScreen(Screen):
         if state not in ("in_progress", "awaiting_input"):
             self.app.notify(f"Interject not available — task is {state}", severity="warning")
             return
-        # Replace the existing ChatThread with one in interjection mode
-        chat = self.query_one(ChatThread)
-        chat.task_id = tid
-        chat.set_mode("interjection")
-        # Update the input placeholder and hide suggestion chips
-        try:
-            inp = chat.query_one("#chat-input", Input)
-            inp.placeholder = "Type a message to the agent..."
-            inp.value = ""
-        except Exception:
-            pass
-        try:
-            chips = chat.query_one(SuggestionChips)
-            chips.display = False
-        except Exception:
-            pass
-        self._set_view("chat")
-        try:
-            self.query_one("#chat-input").focus()
-        except Exception:
-            pass
+        self._show_interjection_chat(tid, task, focus_input=True)
 
     def action_retry_task(self) -> None:
         """Retry the selected task (only active for error-state tasks)."""
@@ -1511,6 +1526,16 @@ class PipelineScreen(Screen):
         """Esc — only active in read-only mode."""
         if self._read_only:
             self.app.pop_screen()
+            return
+        if self._active_view != "chat":
+            return
+        try:
+            chat = self.query_one(ChatThread)
+        except Exception:
+            return
+        if chat.mode == "interjection":
+            self._set_view("output")
+            self._refresh_all()
 
     def action_jump_task(self, index: int) -> None:
         """Jump to task by 1-based position in the task list."""

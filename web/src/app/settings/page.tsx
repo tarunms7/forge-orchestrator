@@ -124,7 +124,7 @@ const EMPTY_TEMPLATE: PipelineTemplate = {
 };
 
 const DEFAULT_SETTINGS: Settings = {
-  max_agents: 4,
+  max_agents: 5,
   timeout: 600,
   max_retries: 3,
   model_strategy: "auto",

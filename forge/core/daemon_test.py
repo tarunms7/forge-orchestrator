@@ -18,7 +18,8 @@ from forge.core.daemon import (
     _max_dependency_wave_width,
 )
 from forge.core.errors import ForgeError
-from forge.core.models import RepoConfig, TaskState
+from forge.core.models import AgentRecord, AgentState, RepoConfig, TaskState
+from forge.core.scheduler import SchedulingAnalysis, TaskSchedulingInsight
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1956,6 +1957,71 @@ class TestExecuteAgentPoolSizing:
         assert daemon._effective_max_agents == 3
         created_ids = [call.args[0] for call in db.create_agent.await_args_list]
         assert created_ids == ["resume01-agent-1", "resume01-agent-2"]
+
+    async def test_scheduling_update_reports_configured_and_effective_max_agents(self, tmp_path):
+        daemon = _make_daemon(tmp_path, max_agents=5)
+        daemon._effective_max_agents = 2
+        daemon._emit = AsyncMock()
+
+        analysis = SchedulingAnalysis(
+            ready_task_ids=("task-3",),
+            waiting_task_ids=(),
+            blocked_task_ids=(),
+            active_task_ids=("task-1",),
+            human_wait_task_ids=(),
+            error_task_ids=(),
+            done_task_ids=("task-2",),
+            cancelled_task_ids=(),
+            critical_path_length=1,
+            task_insights={
+                "task-1": TaskSchedulingInsight(
+                    task_id="task-1",
+                    state="in_progress",
+                    status="active",
+                    priority_rank=None,
+                    priority_score=0.0,
+                    critical_path_length=1,
+                    downstream_count=0,
+                    reason="Currently in progress",
+                ),
+                "task-2": TaskSchedulingInsight(
+                    task_id="task-2",
+                    state="done",
+                    status="done",
+                    priority_rank=None,
+                    priority_score=0.0,
+                    critical_path_length=0,
+                    downstream_count=0,
+                ),
+                "task-3": TaskSchedulingInsight(
+                    task_id="task-3",
+                    state="todo",
+                    status="ready",
+                    priority_rank=1,
+                    priority_score=10.0,
+                    critical_path_length=1,
+                    downstream_count=0,
+                    reason="Ready to run",
+                ),
+            },
+        )
+        agents = [
+            AgentRecord(id="agent-1", state=AgentState.WORKING, current_task="task-1"),
+            AgentRecord(id="agent-2", state=AgentState.IDLE),
+        ]
+
+        await daemon._emit_scheduling_update(
+            db=AsyncMock(),
+            pipeline_id="pipe-1",
+            analysis=analysis,
+            agents=agents,
+            dispatch_plan=[],
+        )
+
+        payload = daemon._emit.await_args.args[1]
+        assert payload["max_agents"] == 5
+        assert payload["effective_max_agents"] == 2
+        assert payload["available_slots"] == 1
 
     async def test_contracts_status_persisted_with_hints(self, tmp_path):
         daemon = _make_daemon(tmp_path)

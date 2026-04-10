@@ -18,6 +18,13 @@ def _escape(text: str | None) -> str:
     return text.replace("[", "\\[").replace("]", "\\]")
 
 
+def _history_question_text(question: object) -> str:
+    """Render a human-friendly question label for chat history."""
+    if isinstance(question, dict):
+        return str(question.get("question") or question.get("title") or "")
+    return str(question or "")
+
+
 def format_work_log(lines: list[str]) -> str:
     if not lines:
         return f"[{TEXT_MUTED}]No activity yet[/]"
@@ -70,6 +77,17 @@ def format_chat_idle_notice() -> str:
     return (
         f"[{TEXT_SECONDARY}]No question is waiting right now.[/]\n"
         f"[{TEXT_MUTED}]When an agent needs your input, Forge will bring it here automatically.[/]"
+    )
+
+
+def format_interjection_notice() -> str:
+    """Render guidance for steering a running agent."""
+    return (
+        f"[bold {ACCENT_BLUE}]Steering a running agent[/]\n"
+        f"[{TEXT_SECONDARY}]Send a short note below and Forge will deliver it when the "
+        "current step yields.[/]\n"
+        f"[{TEXT_MUTED}]Your note and the agent's latest activity will stay visible here. "
+        "Press Esc to return to output.[/]"
     )
 
 
@@ -187,6 +205,7 @@ class ChatThread(Widget):
         self._work_lines: list[str] = []
         self._question: dict | None = None
         self._history: list[dict] = []
+        self._interjections: list[str] = []
         self._read_only = False
         self._read_only_notice = (
             "Press Esc to return. To continue this run, go back to history and use Shift+R."
@@ -269,13 +288,28 @@ class ChatThread(Widget):
             scroll.scroll_end(animate=False)
             return
 
+        if self._mode == "interjection":
+            scroll.mount(Static(format_interjection_notice()))
+            if not self._interjections and not self._work_lines:
+                scroll.scroll_end(animate=False)
+                return
+            scroll.mount(Static(""))
+
         # Show previous Q&A history
         for entry in self._history:
-            q_text = _escape(entry.get("question", ""))
+            q_text = _escape(_history_question_text(entry.get("question", "")))
             a_text = _escape(entry.get("answer", ""))
             scroll.mount(
                 Static(f"[{TEXT_SECONDARY}]Q: {q_text}[/]\n[{ACCENT_BLUE}]A: {a_text}[/]\n")
             )
+
+        for message in self._interjections[-5:]:
+            scroll.mount(
+                Static(f"[{ACCENT_BLUE}]You:[/] [{TEXT_SECONDARY}]{_escape(message)}[/]\n")
+            )
+
+        if self._interjections and self._work_lines:
+            scroll.mount(Static(""))
 
         # Show work log
         if self._work_lines:
@@ -298,6 +332,7 @@ class ChatThread(Widget):
         self._question = question
         self._work_lines = work_lines
         self._history = history or []
+        self._interjections = []
         chips = self.query_one(SuggestionChips)
         suggestions = list(question.get("suggestions", []))
         suggestions.append("Let agent decide")
@@ -318,11 +353,25 @@ class ChatThread(Widget):
         except Exception:
             pass
 
+    def update_interjection_context(
+        self, work_lines: list[str], interjections: list[str] | None = None
+    ) -> None:
+        """Show steering context for a running task."""
+        self._mode = "interjection"
+        self._question = None
+        self._history = []
+        self._work_lines = work_lines
+        self._interjections = interjections or []
+        self.query_one(SuggestionChips).update_suggestions([])
+        self._update_controls()
+        self._render_scroll_content()
+
     def clear_question(self) -> None:
         self._question = None
         self._mode = "answer"
         self._work_lines = []
         self._history = []
+        self._interjections = []
         self.task_id = ""
         self.query_one(SuggestionChips).update_suggestions([])
         inp = self.query_one("#chat-input", Input)
