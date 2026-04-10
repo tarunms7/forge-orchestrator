@@ -149,7 +149,11 @@ async def test_provider_cards_stay_compact_and_routing_columns_align(tmp_path, m
         codex_card = app.screen.query_one("#provider-card-codex")
         planner_label = app.screen.query_one("#row-planner_model .routing-stage")
         header_label = app.screen.query_one(".routing-header .routing-stage")
+        routing_header = app.screen.query_one(".routing-header")
+        planner_row = app.screen.query_one("#row-planner_model")
 
         assert claude_card.size.height <= 12
         assert codex_card.size.height <= 12
         assert planner_label.region.x == header_label.region.x
+        assert routing_header.size.height == 1
+        assert planner_row.region.y - routing_header.region.y <= 2

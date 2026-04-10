@@ -9,7 +9,7 @@ from typing import Any
 
 from textual.app import ComposeResult, SuspendNotSupported
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalGroup, Vertical, VerticalGroup, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Select, Static
 
@@ -295,15 +295,15 @@ class SettingsScreen(Screen):
                 f"Claude stays the default when both providers are connected. Effort uses native controls on Codex and guidance on Claude.",
                 classes="routing-help",
             )
-            with Vertical(id="routing-table"):
-                with Horizontal(classes="routing-header"):
+            with VerticalGroup(id="routing-table"):
+                with HorizontalGroup(classes="routing-header"):
                     yield Static("Stage", classes="routing-stage routing-column-title")
                     yield Static("Provider", classes="routing-provider routing-column-title")
                     yield Static("Model", classes="routing-model routing-column-title")
                     yield Static("Effort", classes="routing-effort routing-column-title")
 
                 for row in _ROUTING_ROWS:
-                    with Horizontal(classes="routing-row", id=f"row-{row.settings_attr}"):
+                    with HorizontalGroup(classes="routing-row", id=f"row-{row.settings_attr}"):
                         yield Static(row.label, classes="routing-stage")
                         yield Select(
                             _provider_options(),
