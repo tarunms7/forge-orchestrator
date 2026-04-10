@@ -514,6 +514,10 @@ from forge.cli.gauntlet import gauntlet  # noqa: E402
 
 cli.add_command(gauntlet)
 
+from forge.cli.readiness import readiness  # noqa: E402
+
+cli.add_command(readiness)
+
 
 @cli.group()
 def providers() -> None:
