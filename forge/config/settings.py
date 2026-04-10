@@ -22,7 +22,7 @@ class ForgeSettings(BaseSettings):
     planning_mode: str = "auto"  # "auto", "simple", "deep"
 
     # Agent limits — each agent spawns a Claude CLI subprocess consuming
-    # ~300-500 MB.  Default 4 balances parallelism with memory pressure.
+    # ~300-500 MB.  Default 5 balances parallelism with memory pressure.
     # The resource monitor provides backpressure if the machine is
     # overloaded (CPU, memory, disk thresholds).  Override via FORGE_MAX_AGENTS.
     max_agents: int = 5

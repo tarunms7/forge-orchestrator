@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from textual.app import App
+from textual.widgets import Static
 
 from forge.tui.screens.pipeline import PipelineScreen
 from forge.tui.state import TuiState
@@ -43,6 +44,11 @@ class PipelineMessageCaptureApp(App):
 
     def on_chat_thread_interjection_submitted(self, event) -> None:
         self.interjections.append((event.task_id, event.message))
+
+
+def _chat_scroll_text(chat: ChatThread) -> str:
+    scroll = chat.query_one("#chat-scroll")
+    return "\n".join(str(widget.render()) for widget in scroll.query(Static))
 
 
 @pytest.mark.asyncio
@@ -600,6 +606,116 @@ async def test_chat_interjection_submission_bubbles_to_app_once():
 
         assert app.interjections == [("t1", "hi")]
         assert chat_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_interject_view_shows_guidance_and_latest_task_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        state.apply_event(
+            "task:agent_output",
+            {"task_id": "t1", "line": "Reviewing the current implementation"},
+        )
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        rendered = _chat_scroll_text(chat)
+        chat_input = chat.query_one("#chat-input")
+
+        assert app.screen._active_view == "chat"
+        assert chat.mode == "interjection"
+        assert "Steering a running agent" in rendered
+        assert "Reviewing the current implementation" in rendered
+        assert chat_input.display is True
+
+
+@pytest.mark.asyncio
+async def test_interjection_chat_refreshes_for_sent_messages_and_streaming_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        state.apply_event("task:interjection", {"task_id": "t1", "message": "are u stuck?"})
+        await pilot.pause()
+        state.apply_event("task:agent_output", {"task_id": "t1", "line": "Applying the feedback"})
+        await pilot.pause()
+
+        chat = app.screen.query_one(ChatThread)
+        rendered = _chat_scroll_text(chat)
+
+        assert "are u stuck?" in rendered
+        assert "Applying the feedback" in rendered
+
+
+@pytest.mark.asyncio
+async def test_escape_leaves_interjection_view_and_returns_to_output():
+    state = TuiState()
+    app = PipelineTestApp(state=state)
+    async with app.run_test() as pilot:
+        state.apply_event(
+            "pipeline:plan_ready",
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "Test",
+                        "description": "",
+                        "files": ["f.py"],
+                        "depends_on": [],
+                        "complexity": "low",
+                    }
+                ]
+            },
+        )
+        state.apply_event("task:state_changed", {"task_id": "t1", "state": "in_progress"})
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.screen._active_view == "output"
 
 
 @pytest.mark.asyncio

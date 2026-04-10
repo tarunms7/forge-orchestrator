@@ -56,7 +56,7 @@ class TestGetSettings:
         resp = await client.get("/api/settings", headers=_auth_header(token))
         assert resp.status_code == 200
         data = resp.json()
-        assert data["max_agents"] == 2
+        assert data["max_agents"] == 5
         assert data["timeout"] == 600
         assert data["max_retries"] == 5
         assert data["model_strategy"] == "auto"

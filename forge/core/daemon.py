@@ -432,7 +432,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             {
                 "idle_agents": idle_count,
                 "busy_agents": working_count,
-                "max_agents": self._effective_max_agents,
+                "max_agents": self._settings.max_agents,
+                "effective_max_agents": self._effective_max_agents,
                 "available_slots": max(0, self._effective_max_agents - working_count),
             }
         )
