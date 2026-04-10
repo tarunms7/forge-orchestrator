@@ -368,7 +368,7 @@ def _build_routing_entries(
 ) -> list[StageRoutingEntry]:
     """Build per-stage routing entries with validation warnings."""
     entries: list[StageRoutingEntry] = []
-    for snapshot_key, stage, complexity in _ROUTING_PLAN:
+    for snapshot_key, stage, _complexity in _ROUTING_PLAN:
         spec = resolved[snapshot_key]
         try:
             cat_entry = registry.get_catalog_entry(spec)

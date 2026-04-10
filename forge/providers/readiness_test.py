@@ -14,7 +14,12 @@ from forge.providers.readiness import (
     ProviderReadinessEntry,
     ReadinessReport,
     StageRoutingEntry,
+    build_routing_audit,
     build_readiness_report,
+    format_routing_audit_rich,
+    routing_audit_to_dict,
+    RoutingAudit,
+    RoutingAuditEntry,
 )
 from forge.providers.registry import ProviderRegistry
 from forge.providers.status import ProviderConnectionStatus
@@ -442,3 +447,143 @@ def test_dataclasses_are_frozen():
         raise AssertionError("Should not reach here")
     except AttributeError:
         pass
+
+
+class TestRoutingAudit:
+    def test_all_claude_no_mismatches(self):
+        settings, registry = _build_registry_and_settings()
+        resolved = {
+            "planner": _make_entry("claude", "opus").spec,
+            "agent_low": _make_entry("claude", "opus").spec,
+            "agent_medium": _make_entry("claude", "opus").spec,
+            "agent_high": _make_entry("claude", "opus").spec,
+            "reviewer": _make_entry("claude", "opus").spec,
+            "contract_builder": _make_entry("claude", "opus").spec,
+            "ci_fix": _make_entry("claude", "opus").spec,
+        }
+
+        audit = build_routing_audit(resolved, registry)
+
+        assert isinstance(audit, RoutingAudit)
+        assert audit.has_mismatches is False
+        assert audit.mismatch_count == 0
+        assert len(audit.entries) == 7
+        assert all(entry.expected_provider == "claude" for entry in audit.entries)
+        assert all(entry.actual_provider == "claude" for entry in audit.entries)
+        assert all(entry.backend == "claude-code-sdk" for entry in audit.entries)
+        assert all(entry.mismatch is False for entry in audit.entries)
+        assert audit.summary == (
+            "Planner: Claude | Contracts: Claude | Agent L: Claude | "
+            "Agent M/H: Claude | Reviewer: Claude"
+        )
+
+    def test_mixed_codex_planner_claude_agents(self):
+        settings = ForgeSettings()
+        registry = ProviderRegistry(settings)
+        for entry in [
+            _make_entry("claude", "opus", "claude-code-sdk"),
+            _make_entry("claude", "sonnet", "claude-code-sdk"),
+            _make_entry("openai", "gpt-5.3-codex", "codex-sdk"),
+        ]:
+            registry.register_catalog_entry(entry)
+
+        resolved = {
+            "planner": _make_entry("openai", "gpt-5.3-codex", "codex-sdk").spec,
+            "agent_low": _make_entry("openai", "gpt-5.3-codex", "codex-sdk").spec,
+            "agent_medium": _make_entry("claude", "sonnet", "claude-code-sdk").spec,
+            "agent_high": _make_entry("claude", "opus", "claude-code-sdk").spec,
+            "reviewer": _make_entry("openai", "gpt-5.3-codex", "codex-sdk").spec,
+            "contract_builder": _make_entry("claude", "opus", "claude-code-sdk").spec,
+            "ci_fix": _make_entry("claude", "sonnet", "claude-code-sdk").spec,
+        }
+
+        audit = build_routing_audit(resolved, registry)
+        by_stage = {entry.stage: entry for entry in audit.entries}
+
+        assert audit.has_mismatches is True
+        assert audit.mismatch_count == 3
+        assert by_stage["planner"].actual_provider == "openai"
+        assert by_stage["planner"].backend == "codex-sdk"
+        assert by_stage["planner"].mismatch is True
+        assert by_stage["planner"].mismatch_detail == "Expected claude (dominant), got openai"
+        assert by_stage["agent_low"].actual_provider == "openai"
+        assert by_stage["agent_low"].mismatch is True
+        assert by_stage["agent_medium"].actual_provider == "claude"
+        assert by_stage["agent_medium"].mismatch is False
+        assert by_stage["agent_high"].actual_provider == "claude"
+        assert by_stage["agent_high"].actual_model == "opus"
+        assert by_stage["reviewer"].actual_provider == "openai"
+        assert by_stage["reviewer"].mismatch is True
+        assert by_stage["contract_builder"].actual_provider == "claude"
+        assert by_stage["contract_builder"].mismatch is False
+        assert by_stage["ci_fix"].actual_provider == "claude"
+        assert by_stage["ci_fix"].mismatch is False
+
+    def test_audit_summary_format(self):
+        settings = ForgeSettings()
+        registry = ProviderRegistry(settings)
+        for entry in [
+            _make_entry("claude", "opus", "claude-code-sdk"),
+            _make_entry("openai", "gpt-5.3-codex", "codex-sdk"),
+        ]:
+            registry.register_catalog_entry(entry)
+
+        resolved = {
+            "planner": _make_entry("openai", "gpt-5.3-codex", "codex-sdk").spec,
+            "agent_low": _make_entry("openai", "gpt-5.3-codex", "codex-sdk").spec,
+            "agent_medium": _make_entry("claude", "opus", "claude-code-sdk").spec,
+            "agent_high": _make_entry("claude", "opus", "claude-code-sdk").spec,
+            "reviewer": _make_entry("openai", "gpt-5.3-codex", "codex-sdk").spec,
+            "contract_builder": _make_entry("claude", "opus", "claude-code-sdk").spec,
+            "ci_fix": _make_entry("claude", "opus", "claude-code-sdk").spec,
+        }
+
+        audit = build_routing_audit(resolved, registry)
+        rich = format_routing_audit_rich(audit)
+
+        assert audit.summary == (
+            "Planner: Codex | Contracts: Claude | Agent L: Codex | "
+            "Agent M/H: Claude | Reviewer: Codex"
+        )
+        assert "Planner: Codex" in audit.summary
+        assert "Contracts: Claude" in audit.summary
+        assert "Agent L: Codex" in audit.summary
+        assert "Agent M/H: Claude" in audit.summary
+        assert "Reviewer: Codex" in audit.summary
+        assert "[#58a6ff]Codex[/] planner [yellow]![/]" in rich
+        assert "[#22c55e]Claude[/] contracts" in rich
+
+    def test_audit_to_dict_roundtrip(self):
+        settings, registry = _build_registry_and_settings()
+        resolved = {
+            "planner": _make_entry("claude", "opus").spec,
+            "agent_low": _make_entry("claude", "opus").spec,
+            "agent_medium": _make_entry("claude", "opus").spec,
+            "agent_high": _make_entry("claude", "opus").spec,
+            "reviewer": _make_entry("claude", "opus").spec,
+            "contract_builder": _make_entry("claude", "opus").spec,
+            "ci_fix": _make_entry("claude", "opus").spec,
+        }
+
+        audit = build_routing_audit(resolved, registry)
+        payload = routing_audit_to_dict(audit)
+
+        assert payload["has_mismatches"] is False
+        assert payload["mismatch_count"] == 0
+        assert payload["summary"] == audit.summary
+        entries = payload["entries"]
+        assert isinstance(entries, list)
+        assert entries[0] == {
+            "stage": "planner",
+            "label": "Planner",
+            "expected_provider": "claude",
+            "actual_provider": "claude",
+            "actual_model": "opus",
+            "actual_spec": "claude:opus",
+            "backend": "claude-code-sdk",
+            "mismatch": False,
+            "mismatch_detail": None,
+        }
+        assert all(isinstance(entry, dict) for entry in entries)
+        assert len(entries) == len(audit.entries)
+        assert isinstance(audit.entries[0], RoutingAuditEntry)
