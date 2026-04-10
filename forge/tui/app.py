@@ -15,6 +15,7 @@ from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
 from forge.core.models import RepoConfig, TaskState
+from forge.providers.readiness import build_routing_audit
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
@@ -36,6 +37,17 @@ _FAILED_PR_TASK_STATES = frozenset(
         TaskState.ERROR.value,
         TaskState.BLOCKED.value,
         TaskState.CANCELLED.value,
+    }
+)
+
+_FINAL_APPROVAL_TRANSIENT_TASK_STATES = frozenset(
+    {
+        TaskState.TODO.value,
+        TaskState.IN_PROGRESS.value,
+        TaskState.AWAITING_INPUT.value,
+        TaskState.IN_REVIEW.value,
+        TaskState.AWAITING_APPROVAL.value,
+        TaskState.MERGING.value,
     }
 )
 
@@ -126,6 +138,28 @@ def _partition_pr_task_summaries(
     done_tasks = [t for t in task_summaries if t.get("state") == TaskState.DONE.value]
     failed_tasks = [t for t in task_summaries if t.get("state") in _FAILED_PR_TASK_STATES]
     return done_tasks, failed_tasks or None
+
+
+def _normalize_final_approval_task_summaries(task_summaries: list[dict]) -> list[dict]:
+    """Normalize transient task states before handing them to final-approval flows.
+
+    Final approval only represents shippable work vs non-shippable work. If an
+    interrupted or partially-replayed pipeline leaks a transient state like
+    ``in_progress`` into this handoff, downstream consumers can reject it.
+    """
+    normalized: list[dict] = []
+    for task in task_summaries:
+        state = task.get("state")
+        if state not in _FINAL_APPROVAL_TRANSIENT_TASK_STATES:
+            normalized.append(task)
+            continue
+
+        normalized_task = dict(task)
+        normalized_task["state"] = TaskState.ERROR.value
+        if not normalized_task.get("error"):
+            normalized_task["error"] = f"Task did not finish before final approval ({state})."
+        normalized.append(normalized_task)
+    return normalized
 
 
 def _is_multi_repo_configs(repos: list) -> bool:
@@ -431,10 +465,35 @@ class ForgeApp(App):
         and makes output appear in a burst at the end. Queueing the mutation
         back onto Textual's message pump keeps planner/agent/review streaming live.
         """
+        if event_type == "planner:output":
+            self._forward_routing_audit_line(data.get("line", ""))
         try:
             self.call_next(self._state.apply_event, event_type, data)
         except Exception:
             self._state.apply_event(event_type, data)
+
+    def _get_pipeline_screen(self) -> PipelineScreen | None:
+        """Return the mounted pipeline screen when present in the screen stack."""
+        try:
+            return self.query_one(PipelineScreen)
+        except Exception:
+            return None
+
+    def _set_pipeline_routing_audit(self, routing_summary: str) -> None:
+        """Update the pipeline screen routing audit banner if the screen exists."""
+        pipeline_screen = self._get_pipeline_screen()
+        if pipeline_screen is None:
+            return
+        try:
+            pipeline_screen._update_routing_audit(routing_summary)
+        except Exception:
+            logger.debug("Failed to update routing audit banner", exc_info=True)
+
+    def _forward_routing_audit_line(self, line: str) -> None:
+        """Forward planner routing summary lines into the persistent pipeline banner."""
+        if not line.startswith("Routing: "):
+            return
+        self._set_pipeline_routing_audit(line[len("Routing: ") :].strip())
 
     # Fields that change frequently and don't need a full screen refresh
     _HIGH_FREQ_FIELDS = frozenset(
@@ -528,6 +587,7 @@ class ForgeApp(App):
             merge_substatus=state.merge_substatus,
             review_gates=state.review_gates,
         )
+        task_summaries = _normalize_final_approval_task_summaries(task_summaries)
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = self._cached_pipeline_branch or ""
@@ -1344,6 +1404,17 @@ class ForgeApp(App):
             logger.error("Project config validation failed: %s", "; ".join(config_issues))
             return
 
+        resolved_models = resolve_pipeline_models(
+            settings,
+            registry,
+            strategy=settings.model_strategy,
+        )
+        routing_audit = build_routing_audit(resolved_models, registry)
+        routing_summary = routing_audit.summary
+        if routing_audit.has_mismatches:
+            routing_summary = f"⚠ {routing_summary}"
+        self._set_pipeline_routing_audit(routing_summary)
+
         # Pre-flight checks: catch issues before wasting time on planning
         repos_dict = {rc.id: rc for rc in self._repos} if self._repos else None
         preflight = await run_preflight(
@@ -1351,11 +1422,7 @@ class ForgeApp(App):
             base_branch=base_branch,
             repos=repos_dict,
             registry=registry,
-            resolved_models=resolve_pipeline_models(
-                settings,
-                registry,
-                strategy=settings.model_strategy,
-            ),
+            resolved_models=resolved_models,
         )
         if not preflight.passed:
             errors = "\n".join(
