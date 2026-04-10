@@ -587,6 +587,7 @@ class ForgeApp(App):
             merge_substatus=state.merge_substatus,
             review_gates=state.review_gates,
         )
+        task_summaries = _normalize_final_approval_task_summaries(task_summaries)
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = self._cached_pipeline_branch or ""

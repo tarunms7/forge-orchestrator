@@ -1,6 +1,12 @@
 """Tests for PR task summaries and multi-repo wiring."""
 
-from forge.tui.app import _build_task_summaries, _partition_pr_task_summaries
+from unittest.mock import MagicMock, patch
+
+from forge.tui.app import (
+    ForgeApp,
+    _build_task_summaries,
+    _partition_pr_task_summaries,
+)
 from forge.tui.state import TuiState
 
 
@@ -148,6 +154,29 @@ class TestBuildTaskSummariesRepoId:
         assert [task["title"] for task in done_tasks] == ["Done"]
         assert failed_tasks is not None
         assert [task["title"] for task in failed_tasks] == ["Failed", "Blocked"]
+
+    def test_push_final_approval_normalizes_transient_task_states(self):
+        app = ForgeApp.__new__(ForgeApp)
+        app.notify = MagicMock()
+        app.push_screen = MagicMock()
+        app._cached_pipeline_branch = "forge/test"
+        app._cached_base_branch = "main"
+
+        state = TuiState()
+        state.task_order = ["t1", "t2"]
+        state.tasks = {
+            "t1": {"id": "t1", "title": "Finished", "state": "done"},
+            "t2": {"id": "t2", "title": "Still running", "state": "in_progress"},
+        }
+        app._state = state
+
+        with patch("sys.stdout.write"), patch("sys.stdout.flush"):
+            app._push_final_approval()
+
+        screen = app.push_screen.call_args.args[0]
+        assert screen._tasks[0]["state"] == "done"
+        assert screen._tasks[1]["state"] == "error"
+        assert "did not finish before final approval" in screen._tasks[1]["error"]
 
 
 class TestMultiRepoPrCreationEvents:
