@@ -305,3 +305,43 @@ class ModelHistoryEntry(BaseModel):
     backend: str
     result: str
     cost_usd: float
+
+
+# ── Readiness schemas ─────────────────────────────────────────────────
+
+
+class ProviderReadinessEntrySchema(BaseModel):
+    """Per-provider readiness entry for the readiness response."""
+
+    ui_key: str
+    provider_key: str
+    display_name: str
+    installed: bool
+    connected: bool
+    auth_source: str | None = None
+    status: str
+    detail: str
+    blocking_issues: list[str] = Field(default_factory=list)
+
+
+class StageRoutingEntrySchema(BaseModel):
+    """Per-stage routing entry for the readiness response."""
+
+    stage: str
+    label: str
+    provider: str
+    model: str
+    spec: str
+    backend: str
+    reasoning_effort: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ReadinessResponse(BaseModel):
+    """Response for GET /api/readiness — mirrors ReadinessReport dataclass."""
+
+    providers: list[ProviderReadinessEntrySchema]
+    routing: list[StageRoutingEntrySchema]
+    blocking_issues: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    ready: bool
