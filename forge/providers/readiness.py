@@ -129,20 +129,14 @@ def build_readiness_report(
         if cs is None:
             continue
         if not cs.installed:
-            issue = (
-                f"Provider {provider_key} is not installed but used by stage "
-                + ", ".join(
-                    sk for sk, spec in resolved.items() if spec.provider == provider_key
-                )
+            issue = f"Provider {provider_key} is not installed but used by stage " + ", ".join(
+                sk for sk, spec in resolved.items() if spec.provider == provider_key
             )
             if issue not in all_blocking:
                 all_blocking.append(issue)
         elif not cs.connected:
-            issue = (
-                f"Provider {provider_key} is not connected but used by stage "
-                + ", ".join(
-                    sk for sk, spec in resolved.items() if spec.provider == provider_key
-                )
+            issue = f"Provider {provider_key} is not connected but used by stage " + ", ".join(
+                sk for sk, spec in resolved.items() if spec.provider == provider_key
             )
             if issue not in all_blocking:
                 all_blocking.append(issue)

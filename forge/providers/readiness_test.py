@@ -77,7 +77,9 @@ class _FakeProvider:
         pass
 
 
-def _connected_status(ui_key: str, provider_key: str, display_name: str) -> ProviderConnectionStatus:
+def _connected_status(
+    ui_key: str, provider_key: str, display_name: str
+) -> ProviderConnectionStatus:
     return ProviderConnectionStatus(
         ui_key=ui_key,
         provider_key=provider_key,

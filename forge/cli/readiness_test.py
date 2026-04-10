@@ -21,8 +21,9 @@ def runner():
     return CliRunner()
 
 
-def _make_report(*, ready: bool = True, blocking: list[str] | None = None,
-                 warnings: list[str] | None = None) -> ReadinessReport:
+def _make_report(
+    *, ready: bool = True, blocking: list[str] | None = None, warnings: list[str] | None = None
+) -> ReadinessReport:
     """Build a ReadinessReport for testing."""
     providers = [
         ProviderReadinessEntry(
@@ -85,17 +86,29 @@ def _mock_readiness(report: ReadinessReport):
     mock_settings = MagicMock()
     mock_registry = MagicMock()
 
-    stack.enter_context(patch("forge.config.project_config.ProjectConfig.load", return_value=MagicMock()))
+    stack.enter_context(
+        patch("forge.config.project_config.ProjectConfig.load", return_value=MagicMock())
+    )
     stack.enter_context(patch("forge.config.settings.ForgeSettings", return_value=mock_settings))
     stack.enter_context(patch("forge.config.project_config.apply_project_config"))
-    stack.enter_context(patch("forge.config.user_settings.load_local_user_settings", return_value={}))
+    stack.enter_context(
+        patch("forge.config.user_settings.load_local_user_settings", return_value={})
+    )
     stack.enter_context(patch("forge.core.provider_config.apply_user_settings"))
-    stack.enter_context(patch("forge.core.provider_config.build_provider_registry", return_value=mock_registry))
+    stack.enter_context(
+        patch("forge.core.provider_config.build_provider_registry", return_value=mock_registry)
+    )
     stack.enter_context(patch("forge.core.provider_config.ensure_routing_defaults"))
     stack.enter_context(patch("forge.core.provider_config.normalize_routing_settings"))
-    stack.enter_context(patch("forge.providers.status.collect_provider_connection_statuses", return_value={}))
-    stack.enter_context(patch("forge.providers.status.preferred_default_provider", return_value="claude"))
-    stack.enter_context(patch("forge.providers.readiness.build_readiness_report", return_value=report))
+    stack.enter_context(
+        patch("forge.providers.status.collect_provider_connection_statuses", return_value={})
+    )
+    stack.enter_context(
+        patch("forge.providers.status.preferred_default_provider", return_value="claude")
+    )
+    stack.enter_context(
+        patch("forge.providers.readiness.build_readiness_report", return_value=report)
+    )
     return stack
 
 

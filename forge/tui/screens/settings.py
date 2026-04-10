@@ -401,7 +401,9 @@ class SettingsScreen(Screen):
         value = getattr(self._settings, _MODEL_TO_REASONING_ATTR[settings_attr], None)
         return _effort_display(value)
 
-    def _model_options_for_attr(self, settings_attr: str, provider: str | None = None) -> list[tuple[str, str]]:
+    def _model_options_for_attr(
+        self, settings_attr: str, provider: str | None = None
+    ) -> list[tuple[str, str]]:
         row = self._stage_row(settings_attr)
         target_provider = provider or self._current_provider_value(settings_attr)
         entries = []

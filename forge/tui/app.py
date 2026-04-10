@@ -1850,7 +1850,9 @@ class ForgeApp(App):
                     if raw_path and not os.path.isabs(raw_path)
                     else os.path.realpath(raw_path or pipeline.project_dir)
                 )
-                base_branch = entry.get("base_branch") or getattr(pipeline, "base_branch", None) or ""
+                base_branch = (
+                    entry.get("base_branch") or getattr(pipeline, "base_branch", None) or ""
+                )
                 repos.append(RepoConfig(id=repo_id, path=repo_path, base_branch=base_branch))
         except Exception:
             logger.warning(

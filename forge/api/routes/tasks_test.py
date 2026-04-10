@@ -2849,7 +2849,9 @@ class TestMultiRepoWebSocketBroadcasts:
             assert resp.status_code == 202
             await asyncio.gather(*scheduled)
 
-        MockMergeWorker.assert_called_once_with("/workspace/backend", main_branch="forge/pipeline-abc")
+        MockMergeWorker.assert_called_once_with(
+            "/workspace/backend", main_branch="forge/pipeline-abc"
+        )
 
     async def test_reject_task_broadcast_includes_repo_id(self, client_with_app):
         """reject_task broadcast should include repo_id field."""
