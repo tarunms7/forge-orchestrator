@@ -13,6 +13,7 @@ from forge.core.preflight import (
     _check_git_installed,
     _check_models_in_catalog,
     _check_provider_health,
+    _check_routing_validity,
     run_preflight,
 )
 
@@ -404,3 +405,172 @@ class TestModelsInCatalog:
         assert not results[0].passed
         assert "gpt-99" in results[0].message
         assert "agent" in results[0].message
+
+
+class TestRoutingValidity:
+    """Tests for _check_routing_validity."""
+
+    def test_no_issues_returns_empty(self):
+        """Valid routing produces no check results."""
+        from unittest.mock import MagicMock, patch
+
+        from forge.providers.base import ModelSpec
+        from forge.providers.status import ProviderConnectionStatus
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model_for_stage.return_value = []
+
+        resolved = {"planner": ModelSpec("claude", "opus")}
+
+        mock_cs = ProviderConnectionStatus(
+            ui_key="claude",
+            provider_key="claude",
+            display_name="Claude",
+            installed=True,
+            connected=True,
+            status="Connected",
+            detail="user@example.com",
+        )
+        with patch(
+            "forge.providers.status.collect_provider_connection_statuses",
+            return_value={"claude": mock_cs},
+        ):
+            results = _check_routing_validity(mock_registry, resolved)
+
+        assert results == []
+
+    def test_blocked_model_fails(self):
+        """BLOCKED model should produce a failing CheckResult."""
+        from unittest.mock import MagicMock, patch
+
+        from forge.providers.base import ModelSpec
+        from forge.providers.status import ProviderConnectionStatus
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model_for_stage.return_value = [
+            "BLOCKED: model 'openai:gpt-99' not found in catalog"
+        ]
+
+        resolved = {"agent_high": ModelSpec("openai", "gpt-99")}
+
+        mock_cs = ProviderConnectionStatus(
+            ui_key="codex",
+            provider_key="openai",
+            display_name="Codex",
+            installed=True,
+            connected=True,
+            status="Connected",
+            detail="OK",
+        )
+        with patch(
+            "forge.providers.status.collect_provider_connection_statuses",
+            return_value={"codex": mock_cs},
+        ):
+            results = _check_routing_validity(mock_registry, resolved)
+
+        blocked = [r for r in results if "routing_validity" in r.name]
+        assert len(blocked) == 1
+        assert not blocked[0].passed
+        assert "BLOCKED" in blocked[0].message
+        assert "agent_high" in blocked[0].message
+
+    def test_disconnected_provider_fails(self):
+        """Disconnected provider used by a stage should produce a failing CheckResult."""
+        from unittest.mock import MagicMock, patch
+
+        from forge.providers.base import ModelSpec
+        from forge.providers.status import ProviderConnectionStatus
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model_for_stage.return_value = []
+
+        resolved = {
+            "planner": ModelSpec("openai", "gpt-5.4"),
+            "reviewer": ModelSpec("openai", "gpt-5.4"),
+        }
+
+        mock_cs = ProviderConnectionStatus(
+            ui_key="codex",
+            provider_key="openai",
+            display_name="Codex",
+            installed=True,
+            connected=False,
+            status="Needs login",
+            detail="Run `codex login`",
+        )
+        with patch(
+            "forge.providers.status.collect_provider_connection_statuses",
+            return_value={"codex": mock_cs},
+        ):
+            results = _check_routing_validity(mock_registry, resolved)
+
+        provider_checks = [r for r in results if "routing_provider" in r.name]
+        assert len(provider_checks) == 1
+        assert not provider_checks[0].passed
+        assert "not connected" in provider_checks[0].message
+        assert "codex login" in provider_checks[0].fix_hint
+
+    def test_uninstalled_provider_fails(self):
+        """Uninstalled provider used by a stage should produce a failing CheckResult."""
+        from unittest.mock import MagicMock, patch
+
+        from forge.providers.base import ModelSpec
+        from forge.providers.status import ProviderConnectionStatus
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model_for_stage.return_value = []
+
+        resolved = {"agent_low": ModelSpec("openai", "gpt-5.4-mini")}
+
+        mock_cs = ProviderConnectionStatus(
+            ui_key="codex",
+            provider_key="openai",
+            display_name="Codex",
+            installed=False,
+            connected=False,
+            status="Not installed",
+            detail="Install codex CLI",
+        )
+        with patch(
+            "forge.providers.status.collect_provider_connection_statuses",
+            return_value={"codex": mock_cs},
+        ):
+            results = _check_routing_validity(mock_registry, resolved)
+
+        provider_checks = [r for r in results if "routing_provider" in r.name]
+        assert len(provider_checks) == 1
+        assert not provider_checks[0].passed
+        assert "not installed" in provider_checks[0].message
+
+    def test_non_blocking_warnings_ignored(self):
+        """Non-BLOCKED warnings from validate_model_for_stage should not produce failures."""
+        from unittest.mock import MagicMock, patch
+
+        from forge.providers.base import ModelSpec
+        from forge.providers.status import ProviderConnectionStatus
+
+        mock_registry = MagicMock()
+        mock_registry.validate_model_for_stage.return_value = [
+            "opus is expensive for reviewer stage"
+        ]
+
+        resolved = {"reviewer": ModelSpec("claude", "opus")}
+
+        mock_cs = ProviderConnectionStatus(
+            ui_key="claude",
+            provider_key="claude",
+            display_name="Claude",
+            installed=True,
+            connected=True,
+            status="Connected",
+            detail="OK",
+        )
+        with patch(
+            "forge.providers.status.collect_provider_connection_statuses",
+            return_value={"claude": mock_cs},
+        ):
+            results = _check_routing_validity(mock_registry, resolved)
+
+        # No BLOCKED warnings, so no routing_validity failures
+        blocked_checks = [r for r in results if "routing_validity" in r.name]
+        assert blocked_checks == []

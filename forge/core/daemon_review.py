@@ -281,7 +281,9 @@ def _lint_line_relevant_to_changed_files(line: str, changed_files: list[str]) ->
         if basename:
             basename_counts[basename] = basename_counts.get(basename, 0) + 1
     unique_basenames = [name for name, count in basename_counts.items() if count == 1]
-    return any(_line_contains_exact_basename(normalized_line, basename) for basename in unique_basenames)
+    return any(
+        _line_contains_exact_basename(normalized_line, basename) for basename in unique_basenames
+    )
 
 
 def detect_lint_strategy(

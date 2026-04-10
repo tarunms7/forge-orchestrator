@@ -2707,6 +2707,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 task_files = getattr(task_row, "files", None) if task_row else None
                 if isinstance(task_files, str):
                     import json as _json
+
                     try:
                         task_files = _json.loads(task_files)
                     except (ValueError, TypeError):
@@ -2762,6 +2763,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 ir_files = getattr(task_row, "files", None) if task_row else None
                 if isinstance(ir_files, str):
                     import json as _json
+
                     try:
                         ir_files = _json.loads(ir_files)
                     except (ValueError, TypeError):
