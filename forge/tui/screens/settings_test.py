@@ -11,6 +11,7 @@ from textual.widgets import Button, Select
 
 from forge.config.settings import ForgeSettings
 from forge.core.provider_config import build_provider_registry
+from forge.providers.readiness import ReadinessReport
 from forge.providers.status import ProviderConnectionStatus
 from forge.tui.screens.settings import SettingsScreen
 
@@ -40,16 +41,45 @@ def _statuses(*, claude_connected: bool = True, codex_connected: bool = False):
     }
 
 
+def _ready_report():
+    return ReadinessReport(
+        providers=[],
+        routing=[],
+        blocking_issues=[],
+        warnings=[],
+        ready=True,
+    )
+
+
+def _blocking_report():
+    return ReadinessReport(
+        providers=[],
+        routing=[],
+        blocking_issues=[
+            "Provider openai is not connected but used by stage agent_high",
+        ],
+        warnings=[],
+        ready=False,
+    )
+
+
 class SettingsTestApp(App):
-    def __init__(self, settings: ForgeSettings) -> None:
+    def __init__(self, settings: ForgeSettings, readiness_report=None) -> None:
         super().__init__()
         self._settings = settings
         self._provider_registry = build_provider_registry(settings)
+        self._readiness_report = readiness_report or _ready_report()
 
     def on_mount(self) -> None:
-        with patch(
-            "forge.tui.screens.settings.collect_provider_connection_statuses",
-            return_value=_statuses(),
+        with (
+            patch(
+                "forge.tui.screens.settings.collect_provider_connection_statuses",
+                return_value=_statuses(),
+            ),
+            patch(
+                "forge.tui.screens.settings.build_readiness_report",
+                return_value=self._readiness_report,
+            ),
         ):
             self.push_screen(SettingsScreen(".", self._settings, self._provider_registry))
 
@@ -69,6 +99,10 @@ async def test_settings_screen_mounts(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_provider_change_updates_stage_model(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "forge.tui.screens.settings.build_readiness_report",
+        lambda *a, **kw: _ready_report(),
+    )
     app = SettingsTestApp(ForgeSettings())
 
     async with app.run_test() as pilot:
@@ -82,6 +116,10 @@ async def test_provider_change_updates_stage_model(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_model_change_updates_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "forge.tui.screens.settings.build_readiness_report",
+        lambda *a, **kw: _ready_report(),
+    )
     app = SettingsTestApp(ForgeSettings())
 
     async with app.run_test() as pilot:
@@ -99,6 +137,10 @@ async def test_model_change_updates_settings(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_effort_change_updates_reasoning_setting(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "forge.tui.screens.settings.build_readiness_report",
+        lambda *a, **kw: _ready_report(),
+    )
     app = SettingsTestApp(ForgeSettings())
 
     async with app.run_test() as pilot:
@@ -125,6 +167,10 @@ async def test_connect_button_uses_suspend_context_manager(tmp_path, monkeypatch
                 return_value=_statuses(),
             ),
             patch("forge.tui.screens.settings.subprocess.run") as subprocess_run,
+            patch(
+                "forge.tui.screens.settings.build_readiness_report",
+                return_value=_ready_report(),
+            ),
         ):
             screen.on_button_pressed(Button.Pressed(button))
             await pilot.pause()
@@ -157,3 +203,60 @@ async def test_provider_cards_stay_compact_and_routing_columns_align(tmp_path, m
         assert planner_label.region.x == header_label.region.x
         assert routing_header.size.height == 1
         assert planner_row.region.y - routing_header.region.y <= 2
+
+
+@pytest.mark.asyncio
+async def test_readiness_summary_widget_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    app = SettingsTestApp(ForgeSettings())
+
+    async with app.run_test() as _pilot:
+        widget = app.screen.query_one("#readiness-summary")
+        assert widget is not None
+
+
+@pytest.mark.asyncio
+async def test_readiness_called_on_mount(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    from unittest.mock import MagicMock
+
+    mock_report = MagicMock(return_value=_ready_report())
+    monkeypatch.setattr(
+        "forge.tui.screens.settings.build_readiness_report",
+        mock_report,
+    )
+    app = SettingsTestApp(ForgeSettings())
+
+    async with app.run_test() as _pilot:
+        mock_report.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_readiness_ready_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "forge.tui.screens.settings.build_readiness_report",
+        lambda *a, **kw: _ready_report(),
+    )
+    app = SettingsTestApp(ForgeSettings())
+
+    async with app.run_test() as _pilot:
+        widget = app.screen.query_one("#readiness-summary")
+        rendered = str(widget.render())
+        assert "Ready" in rendered
+
+
+@pytest.mark.asyncio
+async def test_readiness_blocking_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "forge.tui.screens.settings.build_readiness_report",
+        lambda *a, **kw: _blocking_report(),
+    )
+    app = SettingsTestApp(ForgeSettings())
+
+    async with app.run_test() as _pilot:
+        widget = app.screen.query_one("#readiness-summary")
+        rendered = str(widget.render())
+        assert "Blocking issues" in rendered
+        assert "openai" in rendered

@@ -24,6 +24,7 @@ from forge.core.provider_config import (
     normalize_routing_settings,
 )
 from forge.providers.base import ModelSpec
+from forge.providers.readiness import build_readiness_report
 from forge.providers.registry import ProviderRegistry
 from forge.providers.status import (
     ProviderConnectionStatus,
@@ -142,6 +143,24 @@ def _effort_display(value: str | None) -> str:
     return "__auto__" if value is None else value
 
 
+def _readiness_hint(issue: str) -> str | None:
+    """Return a short fix hint for a blocking issue, or None."""
+    lower = issue.lower()
+    if "not installed" in lower:
+        if "openai" in lower or "codex" in lower:
+            return "Install Codex CLI: npm install -g @openai/codex"
+        return "Install the provider CLI, then press R to recheck"
+    if "not connected" in lower:
+        if "openai" in lower or "codex" in lower:
+            return "Press Connect on the Codex card above, or run: codex login"
+        if "claude" in lower:
+            return "Press Connect on the Claude card above, or run: claude auth login"
+        return "Press Connect on the provider card above to authenticate"
+    if "blocked:" in lower:
+        return "Change the model for this stage in the routing table above"
+    return None
+
+
 class SettingsScreen(Screen):
     """Provider setup plus advanced per-stage routing."""
 
@@ -241,6 +260,11 @@ class SettingsScreen(Screen):
         margin-top: 1;
         color: {TEXT_MUTED};
     }}
+    #readiness-summary {{
+        padding: 1 2;
+        margin-top: 1;
+        border-top: tall {BORDER_PANEL};
+    }}
     #settings-footer {{
         dock: bottom;
         height: 1;
@@ -329,6 +353,8 @@ class SettingsScreen(Screen):
                             classes="routing-effort",
                             id=row.effort_select_id,
                         )
+            yield Static("[bold]Readiness[/]", classes="section-title")
+            yield Static("", id="readiness-summary")
             yield Static("", id="settings-save-note")
 
         yield Static(
@@ -346,6 +372,7 @@ class SettingsScreen(Screen):
 
     def on_mount(self) -> None:
         self._refresh_provider_cards()
+        self._refresh_readiness()
         self._persist_settings(show_message=False)
 
     def _stage_row(self, settings_attr: str) -> StageRow:
@@ -406,6 +433,20 @@ class SettingsScreen(Screen):
             status_widget.update(badge)
             detail.update(detail_text)
 
+    def _refresh_readiness(self) -> None:
+        report = build_readiness_report(self._settings, self._registry)
+        widget = self.query_one("#readiness-summary", Static)
+        if report.ready:
+            widget.update(f"[bold {ACCENT_GREEN}]\u2714 Ready[/]")
+        else:
+            lines = [f"[bold {ACCENT_RED}]\u2718 Blocking issues:[/]"]
+            for issue in report.blocking_issues:
+                lines.append(f"  [{ACCENT_RED}]\u2022 {issue}[/]")
+                hint = _readiness_hint(issue)
+                if hint:
+                    lines.append(f"    [{TEXT_MUTED}]{hint}[/]")
+            widget.update("\n".join(lines))
+
     def _set_save_message(self, message: str) -> None:
         self.query_one("#settings-save-note", Static).update(message)
 
@@ -445,6 +486,7 @@ class SettingsScreen(Screen):
         self._statuses = collect_provider_connection_statuses()
         self._preferred_provider = preferred_default_provider(self._statuses)
         self._refresh_provider_cards()
+        self._refresh_readiness()
         self._set_save_message(f"[{TEXT_SECONDARY}]Provider status refreshed.[/]")
 
     def action_refresh_status(self) -> None:
@@ -488,6 +530,7 @@ class SettingsScreen(Screen):
             provider = str(event.value)
             self._refresh_model_select(settings_attr, provider)
             self._persist_settings()
+            self._refresh_readiness()
             return
 
         if control_id.startswith("model-"):
@@ -495,6 +538,7 @@ class SettingsScreen(Screen):
             provider = self._current_provider_value(settings_attr)
             setattr(self._settings, settings_attr, f"{provider}:{event.value}")
             self._persist_settings()
+            self._refresh_readiness()
             return
 
         if control_id.startswith("effort-"):
@@ -503,3 +547,4 @@ class SettingsScreen(Screen):
             effort_value = None if str(event.value) == "__auto__" else str(event.value)
             setattr(self._settings, effort_attr, effort_value)
             self._persist_settings()
+            self._refresh_readiness()
