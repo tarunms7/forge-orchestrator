@@ -9,6 +9,16 @@ type RoutingItem = {
   model: string;
 };
 
+const STAGE_ORDER = [
+  "planner",
+  "contract_builder",
+  "agent_low",
+  "agent_medium",
+  "agent_high",
+  "reviewer",
+  "ci_fix",
+] as const;
+
 const STAGE_LABELS: Record<string, string> = {
   planner: "Planner",
   contract_builder: "Contracts",
@@ -19,11 +29,16 @@ const STAGE_LABELS: Record<string, string> = {
   ci_fix: "CI Fix",
 };
 
+function orderItems(items: RoutingItem[]): RoutingItem[] {
+  const rank = new Map(STAGE_ORDER.map((stage, index) => [stage, index]));
+  return [...items].sort((left, right) => (rank.get(left.key) ?? 999) - (rank.get(right.key) ?? 999));
+}
+
 function toItems(providerConfig: ProviderConfig): RoutingItem[] {
   if (!providerConfig) return [];
 
   if (Array.isArray(providerConfig.entries)) {
-    return providerConfig.entries.flatMap((entry) => {
+    return orderItems(providerConfig.entries.flatMap((entry) => {
       if (!entry || typeof entry !== "object") return [];
       const auditEntry = entry as Record<string, unknown>;
       const key = typeof auditEntry.stage === "string" ? auditEntry.stage : "stage";
@@ -33,11 +48,11 @@ function toItems(providerConfig: ProviderConfig): RoutingItem[] {
         provider: typeof auditEntry.actual_provider === "string" ? auditEntry.actual_provider : "unknown",
         model: typeof auditEntry.actual_model === "string" ? auditEntry.actual_model : "unknown",
       }];
-    });
+    }));
   }
 
   if (providerConfig.stages && typeof providerConfig.stages === "object") {
-    return Object.entries(providerConfig.stages as Record<string, unknown>).flatMap(([key, value]) => {
+    return orderItems(Object.entries(providerConfig.stages as Record<string, unknown>).flatMap(([key, value]) => {
       if (!value || typeof value !== "object") return [];
       const stage = value as Record<string, unknown>;
       return [{
@@ -46,10 +61,10 @@ function toItems(providerConfig: ProviderConfig): RoutingItem[] {
         provider: typeof stage.provider === "string" ? stage.provider : "unknown",
         model: typeof stage.model === "string" ? stage.model : "unknown",
       }];
-    });
+    }));
   }
 
-  return Object.entries(providerConfig).flatMap(([key, value]) =>
+  return orderItems(Object.entries(providerConfig).flatMap(([key, value]) =>
     typeof value === "string"
       ? [{
           key,
@@ -58,7 +73,7 @@ function toItems(providerConfig: ProviderConfig): RoutingItem[] {
           model: value.split(":")[1] || value,
         }]
       : []
-  );
+  ));
 }
 
 function providerColor(provider: string): string {
@@ -70,7 +85,7 @@ export default function RoutingAuditPanel({ providerConfig }: { providerConfig: 
 
   if (!providerConfig || items.length === 0) return null;
 
-  const providerCount = new Set(items.map((item) => item.provider)).size;
+  const providerCount = new Set(items.map((item) => item.provider).filter((provider) => provider !== "unknown")).size;
 
   return (
     <div
