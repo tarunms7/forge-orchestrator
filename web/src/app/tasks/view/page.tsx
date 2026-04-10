@@ -12,6 +12,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { apiGet, apiPost } from "@/lib/api";
 import AgentCard from "@/components/task/AgentCard";
 import PipelineProgress from "@/components/task/PipelineProgress";
+import RoutingAuditPanel from "@/components/task/RoutingAuditPanel";
 import PlannerCard from "@/components/task/PlannerCard";
 import CompletionSummary from "@/components/task/CompletionSummary";
 import TaskDetailPanel from "@/components/task/TaskDetailPanel";
@@ -501,6 +502,7 @@ function TaskExecutionPageInner() {
   const editedTasks = useTaskStore((s) => s.editedTasks);
   const planValidation = useTaskStore((s) => s.planValidation);
   const applyEditedTasks = useTaskStore((s) => s.applyEditedTasks);
+  const providerConfig = useTaskStore((s) => s.providerConfig);
 
   const [executing, setExecuting] = useState(false);
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -719,6 +721,9 @@ function TaskExecutionPageInner() {
         </div>
         {/* Progress track inside header */}
         <PipelineProgress phase={phase} />
+        {providerConfig && (
+          <RoutingAuditPanel providerConfig={providerConfig as Record<string, unknown>} />
+        )}
       </div>
 
       {/* Connection Status */}

@@ -219,12 +219,34 @@ def _check_provider_health() -> list[tuple[str, str, str]]:
     results: list[tuple[str, str, str]] = []
     try:
         from forge.config.settings import ForgeSettings
-        from forge.providers.claude import ClaudeProvider
-        from forge.providers.registry import ProviderRegistry
+        from forge.config.user_settings import load_local_user_settings
+        from forge.core.provider_config import (
+            apply_user_settings,
+            build_provider_registry,
+        )
+        from forge.providers.base import ModelSpec
 
         settings = ForgeSettings()
-        registry = ProviderRegistry(settings)
-        registry.register(ClaudeProvider())
+        apply_user_settings(settings, load_local_user_settings())
+        registry = build_provider_registry(settings)
+        openai_required = False
+        for raw in (
+            settings.planner_model,
+            settings.agent_model_low,
+            settings.agent_model_medium,
+            settings.agent_model_high,
+            settings.reviewer_model,
+            settings.contract_builder_model,
+            settings.ci_fix_model,
+        ):
+            if not raw:
+                continue
+            try:
+                if ModelSpec.parse(raw).provider == "openai":
+                    openai_required = True
+                    break
+            except ValueError:
+                continue
 
         health = registry.preflight_all()
         for name, status in health.items():
@@ -232,7 +254,8 @@ def _check_provider_health() -> list[tuple[str, str, str]]:
                 results.append(("ok", f"Provider: {name}", status.details))
             else:
                 detail = "; ".join(status.errors) if status.errors else "unhealthy"
-                results.append(("fail", f"Provider: {name}", detail))
+                severity = "warn" if name == "openai" and not openai_required else "fail"
+                results.append((severity, f"Provider: {name}", detail))
     except Exception as exc:
         results.append(("warn", "Provider health", f"could not check: {exc}"))
     return results

@@ -98,6 +98,11 @@ async def run_preflight(
         catalog_checks = _check_models_in_catalog(registry, resolved_models)
         report.checks.extend(catalog_checks)
 
+    # Validate routing: blocked models and disconnected providers
+    if registry is not None and resolved_models is not None:
+        routing_checks = _check_routing_validity(registry, resolved_models)
+        report.checks.extend(routing_checks)
+
     # Early exit: skip git-dependent checks if git is missing
     git_available = git_check.passed
 
@@ -477,6 +482,90 @@ def _check_models_in_catalog(
                     passed=False,
                     message=f"Model '{spec}' for stage '{stage}' not found in catalog",
                     fix_hint="Check model name or use 'forge providers list' to see available models",
+                )
+            )
+
+    return results
+
+
+def _check_routing_validity(
+    registry: object,
+    resolved_models: dict,
+) -> list[CheckResult]:
+    """Validate stage routing: check for blocked models and disconnected providers.
+
+    For each stage+model, calls registry.validate_model_for_stage() and flags
+    any BLOCKED issues. Also checks that providers used by stages are connected.
+    """
+    from forge.providers.status import collect_provider_connection_statuses
+
+    results: list[CheckResult] = []
+
+    # Check each stage's model for BLOCKED validation issues
+    for stage, spec in resolved_models.items():
+        warnings = registry.validate_model_for_stage(spec, stage)
+        blocked = [w for w in warnings if w.startswith("BLOCKED:")]
+        if blocked:
+            results.append(
+                CheckResult(
+                    name=f"routing_validity_{stage}",
+                    passed=False,
+                    message=f"Stage '{stage}' model '{spec}': {'; '.join(blocked)}",
+                    fix_hint=(
+                        f"Change model for stage '{stage}' or use "
+                        "'forge providers list' to see valid models for this stage"
+                    ),
+                )
+            )
+
+    # Check that providers used by routing stages are connected
+    try:
+        conn_statuses = collect_provider_connection_statuses()
+    except Exception as e:
+        results.append(
+            CheckResult(
+                name="routing_provider_status",
+                passed=False,
+                message=f"Could not check provider connection status: {e}",
+                severity="warning",
+            )
+        )
+        return results
+
+    # Build lookup by provider_key
+    provider_by_key = {cs.provider_key: cs for cs in conn_statuses.values()}
+
+    # Collect unique providers used in routing
+    used_providers: dict[str, list[str]] = {}
+    for stage, spec in resolved_models.items():
+        used_providers.setdefault(spec.provider, []).append(stage)
+
+    for provider_key, stages in used_providers.items():
+        cs = provider_by_key.get(provider_key)
+        if cs is None:
+            continue
+        if not cs.installed:
+            results.append(
+                CheckResult(
+                    name=f"routing_provider_{provider_key}",
+                    passed=False,
+                    message=(
+                        f"Provider '{provider_key}' is not installed but used by "
+                        f"stage {', '.join(stages)}"
+                    ),
+                    fix_hint=f"Install the {provider_key} CLI to use this provider",
+                )
+            )
+        elif not cs.connected:
+            results.append(
+                CheckResult(
+                    name=f"routing_provider_{provider_key}",
+                    passed=False,
+                    message=(
+                        f"Provider '{provider_key}' is not connected but used by "
+                        f"stage {', '.join(stages)}"
+                    ),
+                    fix_hint="Run `claude auth login` or `codex login`",
                 )
             )
 

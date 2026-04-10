@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -57,6 +57,39 @@ interface ProvidersResponse {
   observed_health: ObservedHealthEntry[];
 }
 
+/* ── Readiness types (from GET /api/readiness) ──────────────────── */
+
+interface ReadinessProvider {
+  ui_key: string;
+  provider_key: string;
+  display_name: string;
+  installed: boolean;
+  connected: boolean;
+  auth_source: string | null;
+  status: string;
+  detail: string;
+  blocking_issues: string[];
+}
+
+interface StageRouting {
+  stage: string;
+  label: string;
+  provider: string;
+  model: string;
+  spec: string;
+  backend: string;
+  reasoning_effort: string | null;
+  warnings: string[];
+}
+
+interface ReadinessData {
+  providers: ReadinessProvider[];
+  routing: StageRouting[];
+  blocking_issues: string[];
+  warnings: string[];
+  ready: boolean;
+}
+
 interface PipelineTemplate {
   id?: string;
   name: string;
@@ -91,7 +124,7 @@ const EMPTY_TEMPLATE: PipelineTemplate = {
 };
 
 const DEFAULT_SETTINGS: Settings = {
-  max_agents: 4,
+  max_agents: 5,
   timeout: 600,
   max_retries: 3,
   model_strategy: "auto",
@@ -616,11 +649,370 @@ function DeleteConfirmDialog({
   );
 }
 
+/* ── Readiness Panel ─────────────────────────────────────────────── */
+
+function ReadinessPanel({
+  data,
+  loading: panelLoading,
+  error: panelError,
+  onRefresh,
+}: {
+  data: ReadinessData | null;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  if (panelLoading && !data) {
+    return (
+      <div className="settings-group">
+        <div className="settings-group-header">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7v-2h2v2zm0-4H7V4h2v3z"
+              fill="currentColor"
+              opacity="0.6"
+            />
+          </svg>
+          <span className="settings-group-title">Readiness</span>
+          <span className="settings-group-desc">Checking provider status...</span>
+        </div>
+        <div style={{ padding: "16px 0", textAlign: "center" }}>
+          <div
+            style={{
+              width: "120px",
+              height: "4px",
+              borderRadius: "999px",
+              background: "var(--bg-surface-3)",
+              overflow: "hidden",
+              margin: "0 auto",
+            }}
+          >
+            <div
+              style={{
+                width: "33%",
+                height: "100%",
+                borderRadius: "999px",
+                background: "var(--accent)",
+                animation: "pulse 2s ease-in-out infinite",
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (panelError && !data) {
+    return (
+      <div className="settings-group">
+        <div className="settings-group-header">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7v-2h2v2zm0-4H7V4h2v3z"
+              fill="currentColor"
+              opacity="0.6"
+            />
+          </svg>
+          <span className="settings-group-title">Readiness</span>
+        </div>
+        <div
+          style={{
+            padding: "10px 14px",
+            fontSize: "12px",
+            color: "#fca5a5",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            background: "var(--red-dim)",
+          }}
+        >
+          {panelError}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const statusColor = (provider: ReadinessProvider): string => {
+    if (provider.connected) return "var(--green, #22c55e)";
+    if (provider.installed) return "var(--amber, #f59e0b)";
+    return "var(--red, #ef4444)";
+  };
+
+  return (
+    <div className="settings-group">
+      <div className="settings-group-header">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M8 1a7 7 0 100 14A7 7 0 008 1zm1 10H7v-2h2v2zm0-4H7V4h2v3z"
+            fill="currentColor"
+            opacity="0.6"
+          />
+        </svg>
+        <span className="settings-group-title">Readiness</span>
+        <span className="settings-group-desc" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {/* Readiness badge */}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              fontSize: "11px",
+              fontWeight: 600,
+              padding: "2px 8px",
+              borderRadius: "999px",
+              background: data.ready
+                ? "rgba(34,197,94,0.15)"
+                : "rgba(239,68,68,0.15)",
+              color: data.ready
+                ? "var(--green, #22c55e)"
+                : "var(--red, #ef4444)",
+            }}
+          >
+            <span
+              style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: "currentColor",
+              }}
+            />
+            {data.ready ? "Ready" : "Not Ready"}
+          </span>
+          <button
+            className="btn-sm-outline"
+            onClick={onRefresh}
+            disabled={panelLoading}
+            style={{ fontSize: "11px", padding: "2px 8px" }}
+          >
+            {panelLoading ? "..." : "Refresh"}
+          </button>
+        </span>
+      </div>
+
+      {/* Provider cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: "10px",
+          padding: "4px 0 12px",
+        }}
+      >
+        {data.providers.map((p) => (
+          <div
+            key={p.ui_key}
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-md)",
+              background: "var(--bg-surface-2)",
+              padding: "12px 14px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "6px",
+              }}
+            >
+              <span style={{ fontWeight: 600, fontSize: "13px", color: "var(--text-primary)" }}>
+                {p.display_name}
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  color: statusColor(p),
+                }}
+              >
+                <span
+                  style={{
+                    width: "6px",
+                    height: "6px",
+                    borderRadius: "50%",
+                    background: "currentColor",
+                  }}
+                />
+                {p.status}
+              </span>
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-dim)", lineHeight: 1.4 }}>
+              {p.detail}
+            </div>
+            {p.blocking_issues.length > 0 && (
+              <div style={{ marginTop: "6px" }}>
+                {p.blocking_issues.map((issue, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      fontSize: "11px",
+                      color: "var(--red, #ef4444)",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {issue}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Routing table */}
+      {data.routing.length > 0 && (
+        <div style={{ overflowX: "auto", paddingBottom: "4px" }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "12px",
+            }}
+          >
+            <thead>
+              <tr
+                style={{
+                  borderBottom: "1px solid var(--border)",
+                  color: "var(--text-dim)",
+                  textAlign: "left",
+                }}
+              >
+                <th style={{ padding: "6px 10px", fontWeight: 500 }}>Stage</th>
+                <th style={{ padding: "6px 10px", fontWeight: 500 }}>Model</th>
+                <th style={{ padding: "6px 10px", fontWeight: 500 }}>Backend</th>
+                <th style={{ padding: "6px 10px", fontWeight: 500 }}>Effort</th>
+                <th style={{ padding: "6px 10px", fontWeight: 500 }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.routing.map((r) => {
+                const hasBlocked = r.warnings.some((w) => w.startsWith("BLOCKED:"));
+                const hasWarning = r.warnings.length > 0 && !hasBlocked;
+                return (
+                  <tr
+                    key={r.stage}
+                    style={{
+                      borderBottom: "1px solid var(--border)",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    <td style={{ padding: "6px 10px", fontWeight: 500, color: "var(--text-primary)" }}>
+                      {r.label}
+                    </td>
+                    <td
+                      style={{
+                        padding: "6px 10px",
+                        fontFamily: "var(--font-mono, monospace)",
+                      }}
+                    >
+                      {r.spec}
+                    </td>
+                    <td style={{ padding: "6px 10px" }}>{r.backend}</td>
+                    <td style={{ padding: "6px 10px" }}>
+                      {r.reasoning_effort || "auto"}
+                    </td>
+                    <td style={{ padding: "6px 10px" }}>
+                      {hasBlocked ? (
+                        <span style={{ color: "var(--red, #ef4444)", fontWeight: 500 }}>Blocked</span>
+                      ) : hasWarning ? (
+                        <span style={{ color: "var(--amber, #f59e0b)" }}>Warning</span>
+                      ) : (
+                        <span style={{ color: "var(--green, #22c55e)" }}>OK</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Blocking issues */}
+      {data.blocking_issues.length > 0 && (
+        <div
+          style={{
+            marginTop: "8px",
+            padding: "10px 14px",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            background: "var(--red-dim)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "var(--red, #ef4444)",
+              marginBottom: "4px",
+            }}
+          >
+            Blocking Issues
+          </div>
+          {data.blocking_issues.map((issue, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: "12px",
+                color: "#fca5a5",
+                lineHeight: 1.5,
+              }}
+            >
+              {issue}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Non-blocking warnings */}
+      {data.warnings.length > 0 && (
+        <div
+          style={{
+            marginTop: "8px",
+            padding: "10px 14px",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid rgba(245,158,11,0.3)",
+            background: "rgba(245,158,11,0.05)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "var(--amber, #f59e0b)",
+              marginBottom: "4px",
+            }}
+          >
+            Warnings
+          </div>
+          {data.warnings.map((w, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: "12px",
+                color: "var(--text-secondary)",
+                lineHeight: 1.5,
+              }}
+            >
+              {w}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main Settings Page ───────────────────────────────────────────── */
 
 export default function SettingsPage() {
   const token = useAuthStore((s) => s.token);
-  useNotifications();
+  const { notify } = useNotifications();
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -631,6 +1023,12 @@ export default function SettingsPage() {
   // Provider state
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [health, setHealth] = useState<ObservedHealthEntry[]>([]);
+
+  // Readiness state
+  const [readiness, setReadiness] = useState<ReadinessData | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
+  const prevReadyRef = useRef<boolean | null>(null);
 
   // Template state
   const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
@@ -656,6 +1054,28 @@ export default function SettingsPage() {
     }
   }, [token]);
 
+  const fetchReadiness = useCallback(async () => {
+    if (!token) return;
+    setReadinessLoading(true);
+    setReadinessError(null);
+    try {
+      const data = (await apiGet("/readiness", token)) as ReadinessData;
+      setReadiness(data);
+      // Toast on readiness state change (only after initial load)
+      if (prevReadyRef.current !== null && prevReadyRef.current !== data.ready) {
+        notify(
+          "Readiness Changed",
+          data.ready ? "All providers ready — pipelines can run." : "Some providers have blocking issues.",
+        );
+      }
+      prevReadyRef.current = data.ready;
+    } catch (err) {
+      setReadinessError(err instanceof Error ? err.message : "Failed to fetch readiness");
+    } finally {
+      setReadinessLoading(false);
+    }
+  }, [token, notify]);
+
   useEffect(() => {
     if (!token) return;
 
@@ -675,13 +1095,14 @@ export default function SettingsPage() {
       .finally(() => setLoading(false));
 
     fetchTemplates();
+    fetchReadiness();
 
     // Auto-check CLI status on load (health endpoint is at /health, not under /api)
     const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     fetch(`${apiBase.replace('/api', '')}/health`)
       .then((r) => (r.ok ? setCliStatus("connected") : setCliStatus("error")))
       .catch(() => setCliStatus("error"));
-  }, [token, fetchTemplates]);
+  }, [token, fetchTemplates, fetchReadiness]);
 
   const handleSave = async () => {
     if (!token) return;
@@ -698,6 +1119,8 @@ export default function SettingsPage() {
       setSettings(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+      // Refetch readiness after settings change
+      fetchReadiness();
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to save settings",
@@ -844,6 +1267,14 @@ export default function SettingsPage() {
       )}
 
       <div className="settings-container">
+        {/* Readiness */}
+        <ReadinessPanel
+          data={readiness}
+          loading={readinessLoading}
+          error={readinessError}
+          onRefresh={fetchReadiness}
+        />
+
         {/* Pipeline Templates */}
         <div className="settings-group">
           <div className="settings-group-header">

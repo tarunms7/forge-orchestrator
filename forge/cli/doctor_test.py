@@ -591,6 +591,13 @@ def test_all_pass_exit_zero(runner):
             "forge.cli.doctor._check_central_db",
             return_value=("ok", "Central DB", "/data/forge.db"),
         ),
+        patch(
+            "forge.cli.doctor._check_provider_health",
+            return_value=[
+                ("ok", "Provider: claude", "ready"),
+                ("warn", "Provider: openai", "optional"),
+            ],
+        ),
         patch.dict(os.environ, {"FORGE_JWT_SECRET": "s3cret"}),
     ):
         result = runner.invoke(doctor)
@@ -653,10 +660,7 @@ def test_provider_health_healthy_shows_ok():
     mock_registry = MagicMock()
     mock_registry.preflight_all.return_value = {"claude": mock_status}
 
-    with (
-        patch("forge.providers.registry.ProviderRegistry", return_value=mock_registry),
-        patch("forge.providers.claude.ClaudeProvider"),
-    ):
+    with patch("forge.core.provider_config.build_provider_registry", return_value=mock_registry):
         results = _check_provider_health()
     assert len(results) >= 1
     ok_results = [r for r in results if r[0] == "ok"]
@@ -676,13 +680,36 @@ def test_provider_health_unhealthy_shows_fail():
     mock_registry.preflight_all.return_value = {"openai": mock_status}
 
     with (
-        patch("forge.providers.registry.ProviderRegistry", return_value=mock_registry),
-        patch("forge.providers.claude.ClaudeProvider"),
+        patch("forge.core.provider_config.build_provider_registry", return_value=mock_registry),
+        patch(
+            "forge.config.user_settings.load_local_user_settings",
+            return_value={"reviewer_model": "openai:gpt-5.4"},
+        ),
     ):
         results = _check_provider_health()
     fail_results = [r for r in results if r[0] == "fail"]
     assert len(fail_results) >= 1
     assert "OPENAI_API_KEY" in fail_results[0][2]
+
+
+def test_provider_health_optional_openai_shows_warn():
+    """Codex should warn, not fail, when it is available but not required."""
+    from unittest.mock import MagicMock
+
+    mock_status = MagicMock()
+    mock_status.healthy = False
+    mock_status.details = ""
+    mock_status.errors = ["Codex auth not configured"]
+
+    mock_registry = MagicMock()
+    mock_registry.preflight_all.return_value = {"openai": mock_status}
+
+    with patch("forge.core.provider_config.build_provider_registry", return_value=mock_registry):
+        results = _check_provider_health()
+
+    warn_results = [r for r in results if r[0] == "warn"]
+    assert len(warn_results) >= 1
+    assert "Codex auth not configured" in warn_results[0][2]
 
 
 def test_observed_health_no_file():

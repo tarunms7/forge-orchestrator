@@ -432,7 +432,8 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             {
                 "idle_agents": idle_count,
                 "busy_agents": working_count,
-                "max_agents": self._effective_max_agents,
+                "max_agents": self._settings.max_agents,
+                "effective_max_agents": self._effective_max_agents,
                 "available_slots": max(0, self._effective_max_agents - working_count),
             }
         )
@@ -2707,6 +2708,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 task_files = getattr(task_row, "files", None) if task_row else None
                 if isinstance(task_files, str):
                     import json as _json
+
                     try:
                         task_files = _json.loads(task_files)
                     except (ValueError, TypeError):
@@ -2762,6 +2764,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 ir_files = getattr(task_row, "files", None) if task_row else None
                 if isinstance(ir_files, str):
                     import json as _json
+
                     try:
                         ir_files = _json.loads(ir_files)
                     except (ValueError, TypeError):

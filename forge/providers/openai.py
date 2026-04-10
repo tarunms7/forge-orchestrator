@@ -37,6 +37,7 @@ from forge.providers.base import (
     WorkspaceRoots,
 )
 from forge.providers.catalog import CODEX_TOOL_MAP, FORGE_MODEL_CATALOG
+from forge.providers.status import get_codex_connection_status
 
 logger = logging.getLogger("forge.providers.openai")
 
@@ -628,13 +629,13 @@ class OpenAIProvider:
                 details_parts.append(f"codex-sdk v{getattr(codex, '__version__', 'unknown')}")
             else:
                 errors.append("openai-codex-sdk not installed")
-            codex_auth = _codex_auth_description()
-            if codex_auth:
-                details_parts.append(codex_auth)
+            codex_status = get_codex_connection_status()
+            if codex_status.connected:
+                details_parts.append(codex_status.detail)
             elif _codex_api_key_override():
                 details_parts.append("OPENAI_API_KEY fallback configured for Codex")
             else:
-                errors.append("Codex auth not configured; run `codex login` or set `CODEX_API_KEY`")
+                errors.append(codex_status.detail or "Codex auth not configured")
 
         if "openai-agents-sdk" in backends:
             agents = _try_import_agents()

@@ -15,6 +15,7 @@ from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
 from forge.core.models import RepoConfig, TaskState
+from forge.providers.readiness import build_routing_audit
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.dry_run import DryRunScreen
 from forge.tui.screens.final_approval import FinalApprovalScreen
@@ -36,6 +37,17 @@ _FAILED_PR_TASK_STATES = frozenset(
         TaskState.ERROR.value,
         TaskState.BLOCKED.value,
         TaskState.CANCELLED.value,
+    }
+)
+
+_FINAL_APPROVAL_TRANSIENT_TASK_STATES = frozenset(
+    {
+        TaskState.TODO.value,
+        TaskState.IN_PROGRESS.value,
+        TaskState.AWAITING_INPUT.value,
+        TaskState.IN_REVIEW.value,
+        TaskState.AWAITING_APPROVAL.value,
+        TaskState.MERGING.value,
     }
 )
 
@@ -126,6 +138,28 @@ def _partition_pr_task_summaries(
     done_tasks = [t for t in task_summaries if t.get("state") == TaskState.DONE.value]
     failed_tasks = [t for t in task_summaries if t.get("state") in _FAILED_PR_TASK_STATES]
     return done_tasks, failed_tasks or None
+
+
+def _normalize_final_approval_task_summaries(task_summaries: list[dict]) -> list[dict]:
+    """Normalize transient task states before handing them to final-approval flows.
+
+    Final approval only represents shippable work vs non-shippable work. If an
+    interrupted or partially-replayed pipeline leaks a transient state like
+    ``in_progress`` into this handoff, downstream consumers can reject it.
+    """
+    normalized: list[dict] = []
+    for task in task_summaries:
+        state = task.get("state")
+        if state not in _FINAL_APPROVAL_TRANSIENT_TASK_STATES:
+            normalized.append(task)
+            continue
+
+        normalized_task = dict(task)
+        normalized_task["state"] = TaskState.ERROR.value
+        if not normalized_task.get("error"):
+            normalized_task["error"] = f"Task did not finish before final approval ({state})."
+        normalized.append(normalized_task)
+    return normalized
 
 
 def _is_multi_repo_configs(repos: list) -> bool:
@@ -270,6 +304,37 @@ class ForgeApp(App):
         self._force_quit: bool = False
         self._dry_run_mode: bool = False
 
+    def _resolve_current_settings(self, project_dir: str | None = None):
+        """Build the effective settings and registry used by the TUI."""
+        from forge.config.project_config import ProjectConfig, apply_project_config
+        from forge.config.settings import ForgeSettings
+        from forge.config.user_settings import load_local_user_settings
+        from forge.core.provider_config import (
+            apply_user_settings,
+            build_provider_registry,
+            ensure_routing_defaults,
+            normalize_routing_settings,
+        )
+        from forge.providers.status import (
+            collect_provider_connection_statuses,
+            preferred_default_provider,
+        )
+
+        target_project_dir = os.path.abspath(project_dir or self._project_dir)
+        settings = self._settings or ForgeSettings()
+        project_config = ProjectConfig.load(target_project_dir)
+
+        if self._settings is None:
+            apply_project_config(settings, project_config)
+            apply_user_settings(settings, load_local_user_settings())
+
+        preferred_provider = preferred_default_provider(collect_provider_connection_statuses())
+        ensure_routing_defaults(settings, preferred_provider)
+        registry = build_provider_registry(settings, project_config)
+        normalize_routing_settings(settings, registry, preferred_provider=preferred_provider)
+        self._settings = settings
+        return settings, project_config, registry
+
     async def _init_db(self):
         """Initialize database connection."""
         from forge.core.paths import forge_db_url
@@ -400,10 +465,35 @@ class ForgeApp(App):
         and makes output appear in a burst at the end. Queueing the mutation
         back onto Textual's message pump keeps planner/agent/review streaming live.
         """
+        if event_type == "planner:output":
+            self._forward_routing_audit_line(data.get("line", ""))
         try:
             self.call_next(self._state.apply_event, event_type, data)
         except Exception:
             self._state.apply_event(event_type, data)
+
+    def _get_pipeline_screen(self) -> PipelineScreen | None:
+        """Return the mounted pipeline screen when present in the screen stack."""
+        try:
+            return self.query_one(PipelineScreen)
+        except Exception:
+            return None
+
+    def _set_pipeline_routing_audit(self, routing_summary: str) -> None:
+        """Update the pipeline screen routing audit banner if the screen exists."""
+        pipeline_screen = self._get_pipeline_screen()
+        if pipeline_screen is None:
+            return
+        try:
+            pipeline_screen._update_routing_audit(routing_summary)
+        except Exception:
+            logger.debug("Failed to update routing audit banner", exc_info=True)
+
+    def _forward_routing_audit_line(self, line: str) -> None:
+        """Forward planner routing summary lines into the persistent pipeline banner."""
+        if not line.startswith("Routing: "):
+            return
+        self._set_pipeline_routing_audit(line[len("Routing: ") :].strip())
 
     # Fields that change frequently and don't need a full screen refresh
     _HIGH_FREQ_FIELDS = frozenset(
@@ -497,6 +587,7 @@ class ForgeApp(App):
             merge_substatus=state.merge_substatus,
             review_gates=state.review_gates,
         )
+        task_summaries = _normalize_final_approval_task_summaries(task_summaries)
         # Get pipeline branch for diff viewing — use state cached value or
         # schedule async DB lookup (sync context, cannot await).
         pipeline_branch = self._cached_pipeline_branch or ""
@@ -1295,21 +1386,15 @@ class ForgeApp(App):
         """Run planning phase only, then show plan for approval."""
         import uuid
 
-        from forge.config.project_config import ProjectConfig, apply_project_config
-        from forge.config.settings import ForgeSettings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
         from forge.core.preflight import run_preflight
         from forge.core.provider_config import (
             build_provider_config_snapshot,
-            build_provider_registry,
             resolve_pipeline_models,
         )
 
-        settings = self._settings or ForgeSettings()
-        project_config = ProjectConfig.load(self._project_dir)
-        apply_project_config(settings, project_config)
-        registry = build_provider_registry(settings, project_config)
+        settings, project_config, registry = self._resolve_current_settings(self._project_dir)
         config_issues = project_config.validate(registry)
         if config_issues:
             self._state.apply_event(
@@ -1319,6 +1404,17 @@ class ForgeApp(App):
             logger.error("Project config validation failed: %s", "; ".join(config_issues))
             return
 
+        resolved_models = resolve_pipeline_models(
+            settings,
+            registry,
+            strategy=settings.model_strategy,
+        )
+        routing_audit = build_routing_audit(resolved_models, registry)
+        routing_summary = routing_audit.summary
+        if routing_audit.has_mismatches:
+            routing_summary = f"⚠ {routing_summary}"
+        self._set_pipeline_routing_audit(routing_summary)
+
         # Pre-flight checks: catch issues before wasting time on planning
         repos_dict = {rc.id: rc for rc in self._repos} if self._repos else None
         preflight = await run_preflight(
@@ -1326,11 +1422,7 @@ class ForgeApp(App):
             base_branch=base_branch,
             repos=repos_dict,
             registry=registry,
-            resolved_models=resolve_pipeline_models(
-                settings,
-                registry,
-                strategy=settings.model_strategy,
-            ),
+            resolved_models=resolved_models,
         )
         if not preflight.passed:
             errors = "\n".join(
@@ -1420,7 +1512,7 @@ class ForgeApp(App):
             if self._dry_run_mode:
                 from forge.core.cost_estimator import estimate_pipeline_cost
 
-                settings = self._settings or ForgeSettings()
+                settings = self._settings
                 cost_estimate_result = await estimate_pipeline_cost(
                     len(self._graph.tasks),
                     strategy=settings.model_strategy,
@@ -1696,7 +1788,8 @@ class ForgeApp(App):
     def action_switch_settings(self) -> None:
         if self._is_input_focused() or self._is_modal_screen():
             return
-        self.push_screen(SettingsScreen(self._settings))
+        settings, _, registry = self._resolve_current_settings(self._project_dir)
+        self.push_screen(SettingsScreen(self._project_dir, settings, registry))
 
     def action_switch_stats(self) -> None:
         if self._is_input_focused() or self._is_modal_screen():
@@ -1794,14 +1887,21 @@ class ForgeApp(App):
 
     async def _setup_daemon_for_resume(self, pipeline) -> None:
         """Set up daemon, event bus, and event subscriptions for pipeline resume."""
-        from forge.config.project_config import ProjectConfig, apply_project_config
-        from forge.config.settings import ForgeSettings
+        from forge.config.user_settings import load_local_user_settings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
+        from forge.core.provider_config import build_settings_for_project
 
-        settings = self._settings or ForgeSettings()
-        project_config = ProjectConfig.load(pipeline.project_dir)
-        apply_project_config(settings, project_config)
+        provider_config = getattr(pipeline, "provider_config", None)
+        if provider_config:
+            settings, _project_config = build_settings_for_project(
+                pipeline.project_dir,
+                user_settings=load_local_user_settings(),
+                provider_config=provider_config,
+            )
+            self._settings = settings
+        else:
+            settings, _, _ = self._resolve_current_settings(pipeline.project_dir)
         emitter = EventEmitter()
         self._bus = EventBus()
         self._source = EmbeddedSource(emitter, self._bus)
@@ -1828,7 +1928,9 @@ class ForgeApp(App):
                     if raw_path and not os.path.isabs(raw_path)
                     else os.path.realpath(raw_path or pipeline.project_dir)
                 )
-                base_branch = entry.get("base_branch") or getattr(pipeline, "base_branch", None) or ""
+                base_branch = (
+                    entry.get("base_branch") or getattr(pipeline, "base_branch", None) or ""
+                )
                 repos.append(RepoConfig(id=repo_id, path=repo_path, base_branch=base_branch))
         except Exception:
             logger.warning(

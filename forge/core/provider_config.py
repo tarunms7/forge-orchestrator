@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from forge.config.project_config import ProjectConfig, apply_project_config
 from forge.config.settings import ForgeSettings
-from forge.core.model_router import select_model
+from forge.core.model_router import select_model, translate_to_provider
 from forge.providers.base import CatalogEntry, ModelSpec
 from forge.providers.registry import ProviderRegistry
 
@@ -37,6 +38,31 @@ _USER_SETTINGS_TO_ATTR = {
     "question_limit": "question_limit",
     "question_timeout": "question_timeout",
     "auto_pr": "auto_pr",
+}
+
+_USER_SETTINGS_TO_ENV = {
+    "max_agents": "FORGE_MAX_AGENTS",
+    "timeout": "FORGE_AGENT_TIMEOUT_SECONDS",
+    "max_retries": "FORGE_MAX_RETRIES",
+    "model_strategy": "FORGE_MODEL_STRATEGY",
+    "planner_model": "FORGE_PLANNER_MODEL",
+    "agent_model_low": "FORGE_AGENT_MODEL_LOW",
+    "agent_model_medium": "FORGE_AGENT_MODEL_MEDIUM",
+    "agent_model_high": "FORGE_AGENT_MODEL_HIGH",
+    "reviewer_model": "FORGE_REVIEWER_MODEL",
+    "contract_builder_model": "FORGE_CONTRACT_BUILDER_MODEL",
+    "ci_fix_model": "FORGE_CI_FIX_MODEL",
+    "planner_reasoning_effort": "FORGE_PLANNER_REASONING_EFFORT",
+    "agent_model_low_reasoning_effort": "FORGE_AGENT_MODEL_LOW_REASONING_EFFORT",
+    "agent_model_medium_reasoning_effort": "FORGE_AGENT_MODEL_MEDIUM_REASONING_EFFORT",
+    "agent_model_high_reasoning_effort": "FORGE_AGENT_MODEL_HIGH_REASONING_EFFORT",
+    "reviewer_reasoning_effort": "FORGE_REVIEWER_REASONING_EFFORT",
+    "contract_builder_reasoning_effort": "FORGE_CONTRACT_BUILDER_REASONING_EFFORT",
+    "ci_fix_reasoning_effort": "FORGE_CI_FIX_REASONING_EFFORT",
+    "autonomy": "FORGE_AUTONOMY",
+    "question_limit": "FORGE_QUESTION_LIMIT",
+    "question_timeout": "FORGE_QUESTION_TIMEOUT",
+    "auto_pr": "FORGE_AUTO_PR",
 }
 
 _SNAPSHOT_TO_SETTING = {
@@ -69,14 +95,93 @@ _ROUTING_PLAN = (
     ("ci_fix", "ci_fix", "medium"),
 )
 
+_STAGE_SETTING_TO_ROUTE = {
+    "planner_model": ("planner", "planner", "high"),
+    "agent_model_low": ("agent_low", "agent", "low"),
+    "agent_model_medium": ("agent_medium", "agent", "medium"),
+    "agent_model_high": ("agent_high", "agent", "high"),
+    "reviewer_model": ("reviewer", "reviewer", "medium"),
+    "contract_builder_model": ("contract_builder", "contract_builder", "high"),
+    "ci_fix_model": ("ci_fix", "ci_fix", "medium"),
+}
+
 
 def apply_user_settings(settings: ForgeSettings, user_settings: dict[str, Any] | None) -> None:
     """Apply persisted web settings onto ForgeSettings."""
     if not user_settings:
         return
+    env = os.environ
     for source_key, attr_name in _USER_SETTINGS_TO_ATTR.items():
+        env_var = _USER_SETTINGS_TO_ENV.get(source_key)
+        if env_var and env_var in env:
+            continue
         if source_key in user_settings and user_settings[source_key] is not None:
             setattr(settings, attr_name, user_settings[source_key])
+
+
+def default_routing_overrides_for_provider(provider: str) -> dict[str, str]:
+    """Build explicit per-stage routing defaults for one provider."""
+    translated = translate_to_provider(provider)
+    auto = translated.get("auto", {})
+    return {
+        "planner_model": auto.get("planner", {}).get("medium", "claude:opus"),
+        "agent_model_low": auto.get("agent", {}).get("low", "claude:sonnet"),
+        "agent_model_medium": auto.get("agent", {}).get("medium", "claude:opus"),
+        "agent_model_high": auto.get("agent", {}).get("high", "claude:opus"),
+        "reviewer_model": auto.get("reviewer", {}).get("medium", "claude:sonnet"),
+        "contract_builder_model": auto.get("contract_builder", {}).get("medium", "claude:opus"),
+        "ci_fix_model": auto.get("ci_fix", {}).get("medium", "claude:sonnet"),
+    }
+
+
+def ensure_routing_defaults(settings: ForgeSettings, preferred_provider: str = "claude") -> None:
+    """Fill any missing stage routing fields with provider-specific defaults."""
+    defaults = default_routing_overrides_for_provider(preferred_provider)
+    for attr_name, default_value in defaults.items():
+        if getattr(settings, attr_name) is None:
+            setattr(settings, attr_name, default_value)
+
+
+def normalize_routing_settings(
+    settings: ForgeSettings,
+    registry: ProviderRegistry,
+    *,
+    preferred_provider: str = "claude",
+    codex_only_openai: bool = True,
+) -> None:
+    """Normalize routing to explicit specs and keep the UI on Claude/Codex models only."""
+    defaults = default_routing_overrides_for_provider(preferred_provider)
+    for settings_attr, (_, stage, _) in _STAGE_SETTING_TO_ROUTE.items():
+        raw = getattr(settings, settings_attr)
+        if raw is None:
+            setattr(settings, settings_attr, defaults[settings_attr])
+            continue
+        try:
+            spec = ModelSpec.parse(raw)
+        except ValueError:
+            setattr(settings, settings_attr, defaults[settings_attr])
+            continue
+
+        try:
+            entry = registry.get_catalog_entry(spec)
+        except Exception:
+            setattr(settings, settings_attr, defaults[settings_attr])
+            continue
+
+        if codex_only_openai and spec.provider == "openai" and entry.backend != "codex-sdk":
+            setattr(settings, settings_attr, defaults[settings_attr])
+            continue
+
+        issues = registry.validate_model_for_stage(spec, stage)
+        if any(issue.startswith("BLOCKED:") for issue in issues):
+            setattr(settings, settings_attr, defaults[settings_attr])
+            continue
+
+        if stage not in entry.validated_stages:
+            setattr(settings, settings_attr, defaults[settings_attr])
+            continue
+
+        setattr(settings, settings_attr, str(spec))
 
 
 def _parse_provider_config(provider_config: str | dict[str, Any] | None) -> dict[str, Any] | None:
@@ -229,21 +334,18 @@ def build_provider_registry(
     registry = ProviderRegistry(settings)
     registry.register(ClaudeProvider())
 
-    needs_openai = settings.openai_enabled or _settings_reference_provider(settings, "openai")
-    if not needs_openai and project_config is not None:
-        needs_openai = any(cm.provider == "openai" for cm in project_config.custom_models)
+    try:
+        from forge.providers.openai import OpenAIProvider
 
-    if needs_openai:
-        try:
-            from forge.providers.openai import OpenAIProvider
-
-            registry.register(OpenAIProvider())
-        except ImportError:
+        registry.register(OpenAIProvider())
+    except ImportError:
+        if settings.openai_enabled or _settings_reference_provider(settings, "openai"):
             logger.warning(
-                "openai_enabled=True but OpenAI provider is unavailable; continuing without it"
+                "OpenAI provider requested but unavailable; continuing without it",
+                exc_info=True,
             )
-        except Exception:
-            logger.warning("Failed to register OpenAI provider", exc_info=True)
+    except Exception:
+        logger.warning("Failed to register OpenAI provider", exc_info=True)
 
     if project_config is None:
         return registry

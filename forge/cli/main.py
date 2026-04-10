@@ -157,6 +157,7 @@ def run(
         click.echo(f"[dev mode] Using local DB: {os.path.join(forge_data, 'forge.db')}")
 
     from forge.config.project_config import DEFAULT_FORGE_TOML, ProjectConfig, apply_project_config
+    from forge.config.user_settings import load_local_user_settings
 
     forge_dir = os.path.join(project_dir, ".forge")
     if not os.path.isdir(forge_dir):
@@ -167,7 +168,17 @@ def run(
         _write_if_missing(os.path.join(forge_dir, "module-registry.json"), "[]")
 
     from forge.config.project_config import resolve_repos, validate_repos_startup
-    from forge.core.provider_config import build_provider_registry, resolve_pipeline_models
+    from forge.core.provider_config import (
+        apply_user_settings,
+        build_provider_registry,
+        ensure_routing_defaults,
+        normalize_routing_settings,
+        resolve_pipeline_models,
+    )
+    from forge.providers.status import (
+        collect_provider_connection_statuses,
+        preferred_default_provider,
+    )
 
     # Resolve repos: CLI flags → workspace.toml → single-repo default
     repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
@@ -180,6 +191,11 @@ def run(
     project_config = ProjectConfig.load(project_dir)
     settings = ForgeSettings()
     apply_project_config(settings, project_config)
+    apply_user_settings(settings, load_local_user_settings())
+    preferred_provider = preferred_default_provider(collect_provider_connection_statuses())
+    ensure_routing_defaults(settings, preferred_provider)
+    registry = build_provider_registry(settings, project_config)
+    normalize_routing_settings(settings, registry, preferred_provider=preferred_provider)
     if strategy:
         settings.model_strategy = strategy
 
@@ -326,6 +342,7 @@ def tui(
         resolve_repos,
         validate_repos_startup,
     )
+    from forge.config.user_settings import load_local_user_settings
 
     # Resolve repos: CLI flags → workspace.toml → single-repo default
     repos = resolve_repos(repo_flags=repo, project_dir=project_dir)
@@ -339,12 +356,27 @@ def tui(
     configure_tui_logging()
 
     from forge.config.settings import ForgeSettings
+    from forge.core.provider_config import (
+        apply_user_settings,
+        build_provider_registry,
+        ensure_routing_defaults,
+        normalize_routing_settings,
+    )
+    from forge.providers.status import (
+        collect_provider_connection_statuses,
+        preferred_default_provider,
+    )
     from forge.tui.app import ForgeApp
 
     # Load project config and apply to settings (env vars still win)
     project_config = ProjectConfig.load(project_dir)
     settings = ForgeSettings()
     apply_project_config(settings, project_config)
+    apply_user_settings(settings, load_local_user_settings())
+    preferred_provider = preferred_default_provider(collect_provider_connection_statuses())
+    ensure_routing_defaults(settings, preferred_provider)
+    registry = build_provider_registry(settings, project_config)
+    normalize_routing_settings(settings, registry, preferred_provider=preferred_provider)
     if strategy:
         settings.model_strategy = strategy
 
@@ -481,6 +513,10 @@ cli.add_command(export)
 from forge.cli.gauntlet import gauntlet  # noqa: E402
 
 cli.add_command(gauntlet)
+
+from forge.cli.readiness import readiness  # noqa: E402
+
+cli.add_command(readiness)
 
 
 @cli.group()

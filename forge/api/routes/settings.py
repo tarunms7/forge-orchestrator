@@ -13,7 +13,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 # Default settings for new users
 DEFAULT_SETTINGS: dict = {
-    "max_agents": 2,
+    "max_agents": 5,
     "timeout": 600,
     "max_retries": 5,
     "model_strategy": "auto",
