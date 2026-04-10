@@ -8,7 +8,7 @@ import os
 import subprocess
 import tempfile
 
-from textual.app import ComposeResult
+from textual.app import ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.message import Message
 from textual.screen import Screen
@@ -213,9 +213,11 @@ class ReviewScreen(Screen):
             f.flush()
             tmp_path = f.name
         try:
-            self.app.suspend()
-            subprocess.run([editor, tmp_path])
-            self.app.resume()
+            try:
+                with self.app.suspend():
+                    subprocess.run([editor, tmp_path])
+            except SuspendNotSupported:
+                subprocess.run([editor, tmp_path])
         finally:
             os.unlink(tmp_path)
 

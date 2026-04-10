@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import pytest
 from textual.app import App
-from textual.widgets import Select
+from textual.widgets import Button, Select
 
 from forge.config.settings import ForgeSettings
 from forge.core.provider_config import build_provider_registry
@@ -106,3 +107,31 @@ async def test_effort_change_updates_reasoning_setting(tmp_path, monkeypatch):
         await pilot.pause()
 
         assert app._settings.reviewer_reasoning_effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_connect_button_uses_suspend_context_manager(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_DATA_DIR", str(tmp_path))
+    app = SettingsTestApp(ForgeSettings())
+
+    async with app.run_test() as pilot:
+        screen = app.screen
+        button = screen.query_one("#connect-claude", Button)
+
+        with (
+            patch.object(screen.app, "suspend", return_value=nullcontext()) as suspend_mock,
+            patch(
+                "forge.tui.screens.settings.collect_provider_connection_statuses",
+                return_value=_statuses(),
+            ),
+            patch("forge.tui.screens.settings.subprocess.run") as subprocess_run,
+        ):
+            screen.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+
+        suspend_mock.assert_called_once_with()
+        subprocess_run.assert_called_once_with(
+            ["claude", "auth", "login"],
+            cwd=screen._project_dir,
+            check=False,
+        )

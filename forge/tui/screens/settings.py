@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
-from textual.app import ComposeResult
+from textual.app import ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
@@ -458,13 +458,14 @@ class SettingsScreen(Screen):
                 f"[{ACCENT_RED}]Install the {status.display_name} CLI first, then recheck.[/]"
             )
             return
-        self.app.suspend()
         try:
-            subprocess.run(command, cwd=self._project_dir, check=False)
+            try:
+                with self.app.suspend():
+                    subprocess.run(command, cwd=self._project_dir, check=False)
+            except SuspendNotSupported:
+                subprocess.run(command, cwd=self._project_dir, check=False)
         except Exception as exc:
             self._set_save_message(f"[{ACCENT_RED}]Failed to launch login:[/] {exc}")
-        finally:
-            self.app.resume()
         self._refresh_all_statuses()
 
     def on_select_changed(self, event: Select.Changed) -> None:
