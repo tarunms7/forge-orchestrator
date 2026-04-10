@@ -7,19 +7,17 @@ from unittest.mock import patch
 from forge.config.settings import ForgeSettings
 from forge.providers.base import (
     CatalogEntry,
-    ModelSpec,
     ProviderHealthStatus,
 )
 from forge.providers.readiness import (
+    _STAGE_LABELS,
     ProviderReadinessEntry,
     ReadinessReport,
     StageRoutingEntry,
-    _STAGE_LABELS,
     build_readiness_report,
 )
 from forge.providers.registry import ProviderRegistry
 from forge.providers.status import ProviderConnectionStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
