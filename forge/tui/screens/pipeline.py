@@ -243,26 +243,27 @@ class RoutingAuditBanner(Static):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         self._routing_summary = ""
 
     def update_routing_summary(self, routing_summary: str) -> None:
         self._routing_summary = routing_summary.strip()
         self.refresh()
 
+    @staticmethod
+    def _colorize_provider_names(summary: str) -> str:
+        return summary.replace("Claude", "[#22c55e]Claude[/]").replace(
+            "Codex", "[#58a6ff]Codex[/]"
+        )
+
     def render(self) -> str:
         if not self._routing_summary:
             return ""
         summary = self._routing_summary
         if summary.startswith("⚠ "):
-            summary = (
-                f"[bold #d29922]⚠[/] "
-                f"{summary[2:].replace('Claude', '[#22c55e]Claude[/]').replace('Codex', '[#58a6ff]Codex[/]')}"
-            )
-        return summary.replace("Claude", "[#22c55e]Claude[/]").replace(
-            "Codex", "[#58a6ff]Codex[/]"
-        )
+            return f"[bold #d29922]⚠[/] {self._colorize_provider_names(summary[2:])}"
+        return self._colorize_provider_names(summary)
 
 
 class DecisionBadge(Widget):

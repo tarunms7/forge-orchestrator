@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from textual.app import App
 
-from forge.tui.screens.pipeline import PipelineScreen
+from forge.tui.screens.pipeline import PipelineScreen, RoutingAuditBanner
 from forge.tui.state import TuiState
 from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.suggestion_chips import SuggestionChips
@@ -53,6 +53,7 @@ async def test_pipeline_screen_mounts():
         assert app.screen.query_one("AgentOutput") is not None
         assert app.screen.query_one("PipelineProgress") is not None
         assert app.screen.query_one("PhaseBanner") is not None
+        assert app.screen.query_one(RoutingAuditBanner) is not None
 
 
 @pytest.mark.asyncio
@@ -81,6 +82,39 @@ async def test_phase_banner_not_in_left_panel():
         left_panel = app.screen.query_one("#left-panel")
         # left-panel should not contain any PhaseBanner
         assert len(left_panel.query(PhaseBanner)) == 0
+
+
+@pytest.mark.asyncio
+async def test_routing_audit_banner_is_between_phase_banner_and_split_pane():
+    from forge.tui.screens.pipeline import PhaseBanner
+
+    app = PipelineTestApp()
+    async with app.run_test():
+        screen = app.screen
+        children = list(screen.children)
+        phase_banner = screen.query_one(PhaseBanner)
+        routing_banner = screen.query_one(RoutingAuditBanner)
+        split_pane = screen.query_one("#split-pane")
+
+        assert routing_banner.parent is screen
+        assert children.index(phase_banner) < children.index(routing_banner) < children.index(
+            split_pane
+        )
+
+
+@pytest.mark.asyncio
+async def test_routing_audit_banner_colorizes_providers_and_warning_prefix():
+    app = PipelineTestApp()
+    async with app.run_test():
+        screen = app.screen
+        banner = screen.query_one(RoutingAuditBanner)
+
+        screen._update_routing_audit("⚠ Planner: Codex | Contracts: Claude")
+
+        rendered = str(banner.render())
+        assert "[bold #d29922]⚠[/]" in rendered
+        assert "[#58a6ff]Codex[/]" in rendered
+        assert "[#22c55e]Claude[/]" in rendered
 
 
 @pytest.mark.asyncio
