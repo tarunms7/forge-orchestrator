@@ -253,9 +253,7 @@ class RoutingAuditBanner(Static):
 
     @staticmethod
     def _colorize_provider_names(summary: str) -> str:
-        return summary.replace("Claude", "[#22c55e]Claude[/]").replace(
-            "Codex", "[#58a6ff]Codex[/]"
-        )
+        return summary.replace("Claude", "[#22c55e]Claude[/]").replace("Codex", "[#58a6ff]Codex[/]")
 
     def render(self) -> str:
         if not self._routing_summary:

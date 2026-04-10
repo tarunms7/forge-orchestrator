@@ -97,8 +97,10 @@ async def test_routing_audit_banner_is_between_phase_banner_and_split_pane():
         split_pane = screen.query_one("#split-pane")
 
         assert routing_banner.parent is screen
-        assert children.index(phase_banner) < children.index(routing_banner) < children.index(
-            split_pane
+        assert (
+            children.index(phase_banner)
+            < children.index(routing_banner)
+            < children.index(split_pane)
         )
 
 

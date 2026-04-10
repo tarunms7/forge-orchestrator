@@ -203,9 +203,7 @@ def build_routing_audit(
         mismatch = dominant_provider is not None and spec.provider != dominant_provider
         mismatch_detail = None
         if mismatch:
-            mismatch_detail = (
-                f"Expected {dominant_provider} (dominant), got {spec.provider}"
-            )
+            mismatch_detail = f"Expected {dominant_provider} (dominant), got {spec.provider}"
 
         entries.append(
             RoutingAuditEntry(
@@ -237,7 +235,9 @@ def format_routing_audit_rich(audit: RoutingAudit) -> str:
         _format_rich_summary_entry("planner", "planner", entry_by_stage),
         _format_rich_summary_entry("contract_builder", "contracts", entry_by_stage),
         _format_rich_summary_entry("agent_low", "agent-low", entry_by_stage),
-        _format_rich_summary_entry(("agent_medium", "agent_high"), "agent-med/high", entry_by_stage),
+        _format_rich_summary_entry(
+            ("agent_medium", "agent_high"), "agent-med/high", entry_by_stage
+        ),
         _format_rich_summary_entry("reviewer", "reviewer", entry_by_stage),
     ]
     return " · ".join(segment for segment in segments if segment)

@@ -236,23 +236,17 @@ class TestMixedRoutingRegression:
         settings, registry = _build_mixed_routing_settings()
 
         # Low-complexity agent (Codex) escalates within openai
-        spec_low = resolve_model_for_stage(
-            settings, registry, "agent", "low", retry_count=2
-        )
+        spec_low = resolve_model_for_stage(settings, registry, "agent", "low", retry_count=2)
         assert spec_low.provider == "openai"
         assert spec_low.model == "gpt-5.4-mini"
 
         # Medium-complexity agent (Claude) escalates within claude
-        spec_med = resolve_model_for_stage(
-            settings, registry, "agent", "medium", retry_count=2
-        )
+        spec_med = resolve_model_for_stage(settings, registry, "agent", "medium", retry_count=2)
         assert spec_med.provider == "claude"
         assert spec_med.model == "opus"
 
         # High-complexity agent (Claude opus) has no further escalation
-        spec_high = resolve_model_for_stage(
-            settings, registry, "agent", "high", retry_count=2
-        )
+        spec_high = resolve_model_for_stage(settings, registry, "agent", "high", retry_count=2)
         assert spec_high.provider == "claude"
         assert spec_high.model == "opus"
 
@@ -273,6 +267,5 @@ class TestMixedRoutingRegression:
 
         for stage_key in original:
             assert restored[stage_key] == original[stage_key], (
-                f"Stage {stage_key}: expected {original[stage_key]}, "
-                f"got {restored[stage_key]}"
+                f"Stage {stage_key}: expected {original[stage_key]}, got {restored[stage_key]}"
             )
