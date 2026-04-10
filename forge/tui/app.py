@@ -1820,10 +1820,21 @@ class ForgeApp(App):
 
     async def _setup_daemon_for_resume(self, pipeline) -> None:
         """Set up daemon, event bus, and event subscriptions for pipeline resume."""
+        from forge.config.user_settings import load_local_user_settings
         from forge.core.daemon import ForgeDaemon
         from forge.core.events import EventEmitter
+        from forge.core.provider_config import build_settings_for_project
 
-        settings, _, _ = self._resolve_current_settings(pipeline.project_dir)
+        provider_config = getattr(pipeline, "provider_config", None)
+        if provider_config:
+            settings, _project_config = build_settings_for_project(
+                pipeline.project_dir,
+                user_settings=load_local_user_settings(),
+                provider_config=provider_config,
+            )
+            self._settings = settings
+        else:
+            settings, _, _ = self._resolve_current_settings(pipeline.project_dir)
         emitter = EventEmitter()
         self._bus = EventBus()
         self._source = EmbeddedSource(emitter, self._bus)

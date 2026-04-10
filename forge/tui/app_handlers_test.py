@@ -415,6 +415,59 @@ async def test_history_resume_planned_pipeline_with_list_task_graph_reopens_plan
 
 
 @pytest.mark.asyncio
+async def test_setup_daemon_for_resume_uses_pipeline_provider_snapshot():
+    """Resume should rebuild daemon settings from the pipeline snapshot when present."""
+    from forge.config.settings import ForgeSettings
+    from forge.tui.app import ForgeApp
+
+    pipeline = MagicMock(
+        id="pipe-snapshot",
+        project_dir="/tmp/project",
+        provider_config='{"stages":{"planner":{"spec":"openai:gpt-5.4"}}}',
+    )
+    pipeline.get_repos.return_value = []
+
+    app = ForgeApp.__new__(ForgeApp)
+    app._queue_state_event = MagicMock()
+    app._resolve_current_settings = MagicMock(
+        side_effect=AssertionError("should not fall back to current settings")
+    )
+    app._project_dir = "/tmp"
+    app._repos = []
+
+    settings = ForgeSettings(planner_model="openai:gpt-5.4")
+    fake_source = MagicMock()
+    fake_bus = MagicMock()
+
+    with (
+        patch(
+            "forge.config.user_settings.load_local_user_settings",
+            return_value={"planner_model": "claude:opus"},
+        ) as load_user_settings,
+        patch(
+            "forge.core.provider_config.build_settings_for_project",
+            return_value=(settings, MagicMock()),
+        ) as build_settings,
+        patch("forge.core.events.EventEmitter", return_value=MagicMock()),
+        patch("forge.tui.app.EventBus", return_value=fake_bus),
+        patch("forge.tui.app.EmbeddedSource", return_value=fake_source),
+        patch("forge.core.daemon.ForgeDaemon") as daemon_cls,
+    ):
+        await app._setup_daemon_for_resume(pipeline)
+
+    load_user_settings.assert_called_once_with()
+    build_settings.assert_called_once_with(
+        "/tmp/project",
+        user_settings={"planner_model": "claude:opus"},
+        provider_config='{"stages":{"planner":{"spec":"openai:gpt-5.4"}}}',
+    )
+    fake_source.connect.assert_called_once_with()
+    daemon_cls.assert_called_once()
+    assert daemon_cls.call_args.kwargs["settings"] is settings
+    assert app._settings is settings
+
+
+@pytest.mark.asyncio
 async def test_replay_state_filters_answered_questions_from_history():
     """Replay should not resurrect questions that are already answered in the DB."""
     from forge.tui.app import ForgeApp
