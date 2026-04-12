@@ -1,5 +1,6 @@
 """Tests for daemon_executor — worktree rebase and prompt selection."""
 
+import asyncio
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -597,6 +598,69 @@ class TestHandleReviewAnswer:
 
         db.release_agent.assert_awaited_once_with("agent-1")
         mixin._handle_merge_fast_path.assert_not_called()
+
+    async def test_review_answer_is_tracked_as_active_task(self):
+        mixin = self._make_mixin()
+        mixin._active_tasks = {}
+        mixin._active_tasks_lock = asyncio.Lock()
+
+        started = asyncio.Event()
+        unblock = asyncio.Event()
+
+        async def slow_review_answer(*args, **kwargs):
+            started.set()
+            await unblock.wait()
+
+        mixin._handle_review_answer = AsyncMock(side_effect=slow_review_answer)
+
+        task = MagicMock()
+        task.state = "awaiting_input"
+        task.assigned_agent = "agent-1"
+
+        db = AsyncMock()
+        db.get_task = AsyncMock(return_value=task)
+        db.list_agents = AsyncMock(return_value=[MagicMock(id="agent-1", state="idle")])
+        db.assign_task = AsyncMock()
+
+        question_row = MagicMock(source="review_uncertain")
+        execute_result = MagicMock()
+        execute_result.scalar_one_or_none.return_value = question_row
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=execute_result)
+
+        class _SessionContext:
+            async def __aenter__(self_inner):
+                return session
+
+            async def __aexit__(self_inner, exc_type, exc, tb):
+                return False
+
+        db._session_factory = MagicMock(return_value=_SessionContext())
+
+        await mixin._on_task_answered(
+            {
+                "task_id": "task-1",
+                "answer": "Approve",
+                "pipeline_id": "pipe-1",
+            },
+            db,
+        )
+
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert "task-1" in mixin._active_tasks
+        db.assign_task.assert_awaited_once_with("task-1", "agent-1")
+        mixin._handle_review_answer.assert_awaited_once_with(
+            db,
+            "task-1",
+            "agent-1",
+            "Approve",
+            "pipe-1",
+        )
+
+        running = mixin._active_tasks["task-1"]
+        unblock.set()
+        await asyncio.wait_for(running, timeout=1)
+        assert "task-1" not in mixin._active_tasks
 
 
 @pytest.mark.asyncio

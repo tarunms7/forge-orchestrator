@@ -2589,6 +2589,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                         _all_paused_since = None
                         await db.add_pipeline_paused_duration(pipeline_id, paused_elapsed)
                         await db.set_pipeline_paused_at(pipeline_id, None)
+                        await self._emit(
+                            "pipeline:resumed",
+                            {
+                                "reason": "awaiting_input_resolved",
+                                "paused_seconds": paused_elapsed,
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id,
+                        )
                         logger.info(
                             "Pipeline %s resumed after %.1fs pause",
                             pipeline_id,

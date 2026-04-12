@@ -1674,7 +1674,23 @@ class ExecutorMixin:
                 source = getattr(row, "source", None)
 
         if source in ("review_escalation", "review_uncertain"):
-            await self._handle_review_answer(db, task_id, agent_id, answer, pipeline_id)
+            if self._worktree_mgr is None or self._merge_worker is None:
+                logger.error(
+                    "Cannot resume review answer for %s: components not initialised "
+                    "(worktree_mgr=%s, merge_worker=%s)",
+                    task_id,
+                    self._worktree_mgr,
+                    self._merge_worker,
+                )
+                await db.release_agent(agent_id)
+                return
+
+            atask = asyncio.create_task(
+                self._safe_handle_review_answer(db, task_id, agent_id, answer, pipeline_id),
+                name=f"forge-review-answer-{task_id}",
+            )
+            async with self._active_tasks_lock:
+                self._active_tasks[task_id] = atask
             return
 
         if self._runtime is None or self._worktree_mgr is None or self._merge_worker is None:
@@ -1780,6 +1796,37 @@ class ExecutorMixin:
                 review_feedback=f"Human reviewer guidance: {answer}",
                 pipeline_id=pid,
             )
+
+    async def _safe_handle_review_answer(
+        self,
+        db,
+        task_id: str,
+        agent_id: str,
+        answer: str,
+        pipeline_id: str,
+    ) -> None:
+        """Run review-answer handling inside the active-task pool with cleanup."""
+        try:
+            await self._handle_review_answer(db, task_id, agent_id, answer, pipeline_id)
+        except asyncio.CancelledError:
+            logger.info("Review-answer resume for %s was cancelled", task_id)
+        except Exception as exc:
+            logger.error("Review-answer resume for %s crashed: %s", task_id, exc, exc_info=True)
+            try:
+                task = await db.get_task(task_id)
+                if task and task.state not in (
+                    TaskState.DONE.value,
+                    TaskState.ERROR.value,
+                    TaskState.CANCELLED.value,
+                ):
+                    await db.set_task_error(task_id, str(exc))
+                    await db.update_task_state(task_id, TaskState.ERROR.value)
+                await db.release_agent(agent_id)
+            except Exception:
+                logger.exception("Failed to clean up crashed review-answer resume for %s", task_id)
+        finally:
+            async with self._active_tasks_lock:
+                self._active_tasks.pop(task_id, None)
 
     async def _safe_execute_resume(
         self,
