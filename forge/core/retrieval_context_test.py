@@ -82,9 +82,10 @@ def test_build_agent_context_renders_retrieval(monkeypatch, tmp_path):
         ],
     }
 
-    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+    def fake_run(cmd, cwd, capture_output, text, env, timeout, check):
         assert cwd == str(codegraph_dir)
         assert "--file" in cmd
+        assert env["CODEGRAPH_CACHE_DIR"].endswith("/.forge/codegraph")
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
 
     monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)
@@ -144,9 +145,10 @@ def test_build_planner_context_falls_back_when_confidence_is_low(monkeypatch, tm
         ],
     }
 
-    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+    def fake_run(cmd, cwd, capture_output, text, env, timeout, check):
         assert cwd == str(codegraph_dir)
         assert "--text" in cmd
+        assert env["CODEGRAPH_CACHE_DIR"].endswith("/.forge/codegraph")
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
 
     monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)
@@ -186,9 +188,10 @@ def test_build_planner_context_uses_retrieval_when_confidence_is_high(monkeypatc
         ],
     }
 
-    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+    def fake_run(cmd, cwd, capture_output, text, env, timeout, check):
         assert cwd == str(codegraph_dir)
         assert "--text" in cmd
+        assert env["CODEGRAPH_CACHE_DIR"].endswith("/.forge/codegraph")
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
 
     monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)

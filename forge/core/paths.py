@@ -70,3 +70,20 @@ def project_forge_dir(project_dir: str) -> str:
     path = os.path.join(os.path.abspath(project_dir), ".forge")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def project_artifact_dir(project_dir: str, *parts: str) -> str:
+    """Return a Forge-managed artifact directory under ``.forge``.
+
+    The returned directory is created if needed and contains a nested
+    ``.gitignore`` that ignores all generated files in that directory.
+    """
+    path = os.path.join(project_forge_dir(project_dir), *parts)
+    os.makedirs(path, exist_ok=True)
+
+    gitignore_path = os.path.join(path, ".gitignore")
+    desired = "*\n!.gitignore\n"
+    if not os.path.exists(gitignore_path):
+        with open(gitignore_path, "w", encoding="utf-8") as handle:
+            handle.write(desired)
+    return path

@@ -6,6 +6,7 @@ from forge.tui.app import (
     ForgeApp,
     _build_task_summaries,
     _partition_pr_task_summaries,
+    _screenshot_dir,
 )
 from forge.tui.state import TuiState
 
@@ -177,6 +178,15 @@ class TestBuildTaskSummariesRepoId:
         assert screen._tasks[0]["state"] == "done"
         assert screen._tasks[1]["state"] == "error"
         assert "did not finish before final approval" in screen._tasks[1]["error"]
+
+
+class TestScreenshotDir:
+    def test_screenshot_dir_uses_project_forge_artifacts(self, tmp_path):
+        result = _screenshot_dir(str(tmp_path))
+
+        assert result == str(tmp_path / ".forge" / "screenshots")
+        assert (tmp_path / ".forge" / "screenshots").is_dir()
+        assert (tmp_path / ".forge" / "screenshots" / ".gitignore").read_text() == "*\n!.gitignore\n"
 
 
 class TestMultiRepoPrCreationEvents:

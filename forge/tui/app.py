@@ -15,6 +15,7 @@ from textual.widgets import Input, TextArea
 
 from forge.core.async_utils import safe_create_task
 from forge.core.models import RepoConfig, TaskState
+from forge.core.paths import project_artifact_dir
 from forge.providers.readiness import build_routing_audit
 from forge.tui.bus import TUI_EVENT_TYPES, EmbeddedSource, EventBus
 from forge.tui.screens.dry_run import DryRunScreen
@@ -60,6 +61,11 @@ def _escape_markup(text: str) -> str:
     Textual notifications/toasts.
     """
     return str(text).replace("[", "\\[")
+
+
+def _screenshot_dir(project_dir: str) -> str:
+    """Return the Forge-managed screenshot directory for a project."""
+    return project_artifact_dir(project_dir or ".", "screenshots")
 
 
 def _recent_pipeline_pr_counts(row: dict) -> tuple[int, int]:
@@ -524,8 +530,7 @@ class ForgeApp(App):
 
     def _auto_screenshot(self, label: str) -> None:
         """Automatically save a screenshot for README."""
-        path = os.path.join(self._project_dir, "screenshots")
-        os.makedirs(path, exist_ok=True)
+        path = _screenshot_dir(self._project_dir)
         filename = os.path.join(path, f"forge-{label}.svg")
         try:
             self.save_screenshot(filename)
@@ -1879,8 +1884,7 @@ class ForgeApp(App):
             return
 
     def action_screenshot_export(self) -> None:
-        path = os.path.join(self._project_dir, "screenshots")
-        os.makedirs(path, exist_ok=True)
+        path = _screenshot_dir(self._project_dir)
         filename = os.path.join(path, f"forge-{self._state.phase}.svg")
         self.save_screenshot(filename)
         self.notify(f"Screenshot saved: {filename}")
