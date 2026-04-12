@@ -413,6 +413,6 @@ async def _run_webhook_pipeline(
         await _post_issue_comment(
             repo_full_name,
             issue_number,
-            f"❌ **Pipeline failed** (`{type(exc).__name__}`). Check server logs for details.",
+            "❌ **Pipeline failed.** Check server logs for details.",
             project_dir,
         )
