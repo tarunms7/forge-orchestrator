@@ -1,7 +1,10 @@
+import json
+import logging
+
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from forge.storage.db import Database
+from forge.storage.db import Database, PipelineRow
 
 
 @pytest.fixture
@@ -1955,3 +1958,175 @@ async def test_set_pipeline_provider_config(db: Database):
     pipeline = await db.get_pipeline("pipe-prov-2")
     assert pipeline.provider_config is not None
     assert "claude:sonnet" in pipeline.provider_config
+
+
+# ── Silent null-check warning tests ──────────────────────────────────
+
+
+async def test_update_task_state_warns_on_missing_task(db: Database, caplog):
+    """update_task_state logs warning when task not found."""
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        await db.update_task_state("nonexistent", "done")
+    assert "update_task_state: task nonexistent not found" in caplog.text
+
+
+async def test_assign_task_warns_on_missing_task(db: Database, caplog):
+    """assign_task logs warning when task not found."""
+    await db.create_agent(id="agent-warn")
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        await db.assign_task("nonexistent", "agent-warn")
+    assert "assign_task: task nonexistent not found" in caplog.text
+
+
+async def test_assign_task_warns_on_missing_agent(db: Database, caplog):
+    """assign_task logs warning when agent not found."""
+    await db.create_task(
+        id="t-warn-agent",
+        title="T",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
+    )
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        await db.assign_task("t-warn-agent", "nonexistent-agent")
+    assert "assign_task: agent nonexistent-agent not found" in caplog.text
+
+
+async def test_retry_task_warns_on_missing_task(db: Database, caplog):
+    """retry_task logs warning when task not found."""
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        await db.retry_task("nonexistent")
+    assert "retry_task: task nonexistent not found" in caplog.text
+
+
+async def test_set_task_timing_warns_on_missing_task(db: Database, caplog):
+    """set_task_timing logs warning when task not found."""
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        await db.set_task_timing("nonexistent", started_at="2024-01-01")
+    assert "set_task_timing: task nonexistent not found" in caplog.text
+
+
+# ── json.loads() error handling tests ────────────────────────────────
+
+
+async def test_get_repos_malformed_json_returns_empty_list(db: Database, caplog):
+    """get_repos() returns [] when repos_json is malformed."""
+    await db.create_pipeline(
+        id="pipe-bad-json",
+        description="Bad JSON",
+        project_dir="/tmp",
+    )
+    # Manually corrupt repos_json
+    async with db._session_factory() as session:
+        result = await session.execute(
+            __import__("sqlalchemy").select(PipelineRow).where(PipelineRow.id == "pipe-bad-json")
+        )
+        pipeline = result.scalar_one()
+        pipeline.repos_json = "{not valid json"
+        await session.commit()
+
+    pipeline = await db.get_pipeline("pipe-bad-json")
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        repos = pipeline.get_repos()
+    assert repos == []
+    assert "malformed repos_json" in caplog.text
+
+
+async def test_get_user_settings_malformed_json_returns_empty_dict(db: Database, caplog):
+    """get_user_settings() returns {} when settings_json is malformed."""
+    user = await db.create_user(
+        email="badjson@test.com",
+        password="password123",
+        display_name="Bad JSON User",
+    )
+    # Manually corrupt settings_json
+    async with db._session_factory() as session:
+        from forge.storage.db import UserRow
+
+        u = await session.get(UserRow, user.id)
+        u.settings_json = "not json at all"
+        await session.commit()
+
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        result = await db.get_user_settings(user.id)
+    assert result == {}
+    assert "malformed settings_json" in caplog.text
+
+
+async def test_append_task_model_history_malformed_json_resets(db: Database, caplog):
+    """append_task_model_history resets to [] when model_history is corrupt."""
+    await db.create_task(
+        id="t-bad-hist",
+        title="Bad history",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
+    )
+    # Manually corrupt model_history
+    async with db._session_factory() as session:
+        from forge.storage.db import TaskRow
+
+        task = await session.get(TaskRow, "t-bad-hist")
+        task.model_history = "not json"
+        await session.commit()
+
+    entry = {"model": "test", "reason": "test"}
+    with caplog.at_level(logging.WARNING, logger="forge.storage.db"):
+        await db.append_task_model_history("t-bad-hist", entry)
+    assert "malformed model_history" in caplog.text
+
+    task = await db.get_task("t-bad-hist")
+    history = json.loads(task.model_history)
+    assert len(history) == 1
+    assert history[0]["model"] == "test"
+
+
+# ── restart_pipeline orphaned records test ───────────────────────────
+
+
+async def test_restart_pipeline_deletes_questions_and_interjections(db: Database):
+    """restart_pipeline deletes TaskQuestionRow and InterjectionRow records."""
+    await db.create_pipeline(
+        id="pipe-orphan",
+        description="Orphan test",
+        project_dir="/tmp",
+    )
+    await db.create_task(
+        id="t-orphan-1",
+        title="T1",
+        description="D",
+        files=[],
+        depends_on=[],
+        complexity="low",
+        pipeline_id="pipe-orphan",
+    )
+
+    # Create question and interjection
+    await db.create_task_question(
+        task_id="t-orphan-1",
+        pipeline_id="pipe-orphan",
+        question="What should I do?",
+    )
+    await db.create_interjection(
+        task_id="t-orphan-1",
+        pipeline_id="pipe-orphan",
+        message="Do this instead",
+    )
+
+    # Verify they exist
+    questions = await db.get_pending_questions("pipe-orphan")
+    assert len(questions) == 1
+    interjections = await db.get_pending_interjections("t-orphan-1")
+    assert len(interjections) == 1
+
+    # Restart the pipeline
+    result = await db.restart_pipeline("pipe-orphan")
+    assert result["tasks_reset"] == 1
+
+    # Verify questions and interjections are gone
+    questions = await db.get_pending_questions("pipe-orphan")
+    assert len(questions) == 0
+    interjections = await db.get_pending_interjections("t-orphan-1")
+    assert len(interjections) == 0

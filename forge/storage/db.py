@@ -97,8 +97,8 @@ class TaskRow(Base):
     files: Mapped[list] = mapped_column(JSON)
     depends_on: Mapped[list] = mapped_column(JSON)
     complexity: Mapped[str] = mapped_column(String)
-    state: Mapped[str] = mapped_column(String, default="todo")
-    assigned_agent: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    state: Mapped[str] = mapped_column(String, default="todo", index=True)
+    assigned_agent: Mapped[str | None] = mapped_column(String, nullable=True, default=None, index=True)
     retry_count: Mapped[int] = mapped_column(default=0)
     branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
@@ -150,7 +150,7 @@ class PipelineRow(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     description: Mapped[str] = mapped_column(String)
     project_dir: Mapped[str] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String, default="planning")
+    status: Mapped[str] = mapped_column(String, default="planning", index=True)
     model_strategy: Mapped[str] = mapped_column(String, default="auto")
     task_graph_json: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
@@ -210,7 +210,14 @@ class PipelineRow(Base):
     def get_repos(self) -> list[dict]:
         """Return repo configurations. Single-repo returns synthetic default entry."""
         if self.repos_json:
-            return json.loads(self.repos_json)
+            try:
+                return json.loads(self.repos_json)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Pipeline %s has malformed repos_json, returning empty list",
+                    self.id,
+                )
+                return []
         if not self.base_branch:
             raise ValueError(
                 f"Pipeline {self.id} has no base_branch set. "
@@ -558,7 +565,14 @@ class Database:
         async with self._session_factory() as session:
             user = await session.get(UserRow, user_id)
             if user and user.settings_json:
-                return json.loads(user.settings_json)
+                try:
+                    return json.loads(user.settings_json)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "User %s has malformed settings_json, returning empty dict",
+                        user_id,
+                    )
+                    return {}
             return None
 
     async def save_user_settings(self, user_id: str, settings: dict) -> None:
@@ -679,6 +693,8 @@ class Database:
                     )
                 task.state = state
                 await session.commit()
+            else:
+                logger.warning("update_task_state: task %s not found", task_id)
 
     async def update_task_provider_info(
         self,
@@ -697,6 +713,7 @@ class Database:
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
             if not task:
+                logger.warning("update_task_provider_info: task %s not found", task_id)
                 return
             if provider_model is not None:
                 task.provider_model = provider_model
@@ -719,8 +736,16 @@ class Database:
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
             if not task:
+                logger.warning("append_task_model_history: task %s not found", task_id)
                 return
-            history = json.loads(task.model_history or "[]")
+            try:
+                history = json.loads(task.model_history or "[]")
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Task %s has malformed model_history, resetting to empty list",
+                    task_id,
+                )
+                history = []
             history.append(entry)
             task.model_history = json.dumps(history)
             await session.commit()
@@ -851,6 +876,11 @@ class Database:
                 agent.current_task = task_id
                 agent.state = "working"
                 await session.commit()
+            else:
+                if not task:
+                    logger.warning("assign_task: task %s not found", task_id)
+                if not agent:
+                    logger.warning("assign_task: agent %s not found", agent_id)
 
     async def retry_task(self, task_id: str, review_feedback: str | None = None) -> None:
         """Reset a task for retry: increment retry_count, set state to todo, unassign agent."""
@@ -867,6 +897,8 @@ class Database:
                 if review_feedback is not None:
                     task.review_feedback = review_feedback
                 await session.commit()
+            else:
+                logger.warning("retry_task: task %s not found", task_id)
 
     async def reset_task_for_resume(
         self,
@@ -886,6 +918,8 @@ class Database:
                 if not preserve_retry_reason:
                     task.retry_reason = None
                 await session.commit()
+            else:
+                logger.warning("reset_task_for_resume: task %s not found", task_id)
 
     async def reset_task_for_human_retry(
         self,
@@ -914,6 +948,8 @@ class Database:
                 if review_feedback is not None:
                     task.review_feedback = review_feedback
                 await session.commit()
+            else:
+                logger.warning("reset_task_for_human_retry: task %s not found", task_id)
 
     async def retry_task_for_merge(self, task_id: str) -> None:
         """Reset a task for merge-only retry (skip agent + review on next run).
@@ -932,6 +968,8 @@ class Database:
                 task.approval_context = None
                 task.retry_reason = "merge_failed"
                 await session.commit()
+            else:
+                logger.warning("retry_task_for_merge: task %s not found", task_id)
 
     async def release_agent(self, agent_id: str) -> None:
         """Set agent back to idle and clear its current task."""
@@ -1016,6 +1054,8 @@ class Database:
                 pipeline.executor_pid = pid
                 pipeline.executor_token = token
                 await session.commit()
+            else:
+                logger.warning("set_executor_info: pipeline %s not found", pipeline_id)
 
     async def clear_executor_info(self, pipeline_id: str) -> None:
         """Clear executor tracking fields when a pipeline finishes cleanly."""
@@ -1025,6 +1065,8 @@ class Database:
                 pipeline.executor_pid = None
                 pipeline.executor_token = None
                 await session.commit()
+            else:
+                logger.warning("clear_executor_info: pipeline %s not found", pipeline_id)
 
     async def update_pipeline_status(self, pipeline_id: str, status: str) -> None:
         async with self._session_factory() as session:
@@ -1154,39 +1196,36 @@ class Database:
     async def get_pipeline_list_with_counts(self, limit: int = 10) -> list[dict]:
         """Return recent pipelines with task counts for the HomeScreen list."""
         async with self._session_factory() as session:
-            pipelines = (
-                (
-                    await session.execute(
-                        select(PipelineRow).order_by(PipelineRow.created_at.desc()).limit(limit)
-                    )
+            stmt = (
+                select(
+                    PipelineRow,
+                    func.count(TaskRow.id).label("total_tasks"),
+                    func.count(case((TaskRow.state == "done", 1))).label("tasks_done"),
+                    func.count(case((TaskRow.state == "error", 1))).label("tasks_error"),
                 )
-                .scalars()
-                .all()
+                .outerjoin(TaskRow, TaskRow.pipeline_id == PipelineRow.id)
+                .group_by(PipelineRow.id)
+                .order_by(PipelineRow.created_at.desc())
+                .limit(limit)
             )
+            rows = (await session.execute(stmt)).all()
 
-            result = []
-            for p in pipelines:
-                tasks = (
-                    (await session.execute(select(TaskRow).where(TaskRow.pipeline_id == p.id)))
-                    .scalars()
-                    .all()
-                )
-                result.append(
-                    {
-                        "id": p.id,
-                        "description": p.description,
-                        "status": p.status,
-                        "created_at": p.created_at,
-                        "cost": p.total_cost_usd,
-                        "total_tasks": len(tasks),
-                        "tasks_done": sum(1 for t in tasks if t.state == "done"),
-                        "tasks_error": sum(1 for t in tasks if t.state == "error"),
-                        "pr_url": p.pr_url,
-                        "repos_json": p.repos_json,
-                        "project_dir": p.project_dir,
-                    }
-                )
-            return result
+            return [
+                {
+                    "id": p.id,
+                    "description": p.description,
+                    "status": p.status,
+                    "created_at": p.created_at,
+                    "cost": p.total_cost_usd,
+                    "total_tasks": total_tasks,
+                    "tasks_done": tasks_done,
+                    "tasks_error": tasks_error,
+                    "pr_url": p.pr_url,
+                    "repos_json": p.repos_json,
+                    "project_dir": p.project_dir,
+                }
+                for p, total_tasks, tasks_done, tasks_error in rows
+            ]
 
     async def list_pipelines(
         self,
@@ -1250,6 +1289,14 @@ class Database:
             pipeline.pr_url = None
             pipeline.cancelled_at = None
 
+            # Delete orphaned questions and interjections before deleting tasks
+            await session.execute(
+                sa_delete(TaskQuestionRow).where(TaskQuestionRow.pipeline_id == pipeline_id)
+            )
+            await session.execute(
+                sa_delete(InterjectionRow).where(InterjectionRow.pipeline_id == pipeline_id)
+            )
+
             # Delete all old tasks so re-planning can create fresh rows
             # with the same prefixed IDs (pipeline_id[:8]-task-N).
             del_tasks = await session.execute(
@@ -1308,6 +1355,8 @@ class Database:
             if task:
                 task.approval_context = context_json
                 await session.commit()
+            else:
+                logger.warning("set_task_approval_context: task %s not found", task_id)
 
     async def clear_task_approval_context(self, task_id: str) -> None:
         """Clear approval context after approval/rejection."""
@@ -1316,6 +1365,8 @@ class Database:
             if task:
                 task.approval_context = None
                 await session.commit()
+            else:
+                logger.warning("clear_task_approval_context: task %s not found", task_id)
 
     async def approve_task_atomically(self, task_id: str, pipeline_id: str):
         """Atomically check state=awaiting_approval and transition to merging.
@@ -1341,6 +1392,8 @@ class Database:
             if task:
                 task.prior_diff = diff
                 await session.commit()
+            else:
+                logger.warning("set_task_prior_diff: task %s not found", task_id)
 
     async def set_task_review_diff(self, task_id: str, diff: str) -> None:
         """Store the current diff when task enters review.
@@ -1354,6 +1407,8 @@ class Database:
             if task:
                 task.review_diff = diff
                 await session.commit()
+            else:
+                logger.warning("set_task_review_diff: task %s not found", task_id)
 
     async def get_task_review_diff(self, task_id: str) -> str | None:
         """Retrieve the stored review diff for a task."""
@@ -1386,6 +1441,8 @@ class Database:
             if task:
                 task.implementation_summary = summary
                 await session.commit()
+            else:
+                logger.warning("update_task_implementation_summary: task %s not found", task_id)
 
     async def set_pipeline_paused(self, pipeline_id: str, paused: bool) -> None:
         """Set or clear the paused flag on a pipeline."""
@@ -1921,6 +1978,8 @@ class Database:
                 if merge_duration_s is not None:
                     task.merge_duration_s = merge_duration_s
                 await session.commit()
+            else:
+                logger.warning("set_task_timing: task %s not found", task_id)
 
     async def set_task_turns(self, task_id: str, num_turns: int, max_turns: int) -> None:
         """Store agent conversation turn counts for a task."""
@@ -1930,6 +1989,8 @@ class Database:
                 task.num_turns = num_turns
                 task.max_turns = max_turns
                 await session.commit()
+            else:
+                logger.warning("set_task_turns: task %s not found", task_id)
 
     async def set_task_error(self, task_id: str, error_message: str) -> None:
         """Store the last error message on a task."""
@@ -1938,6 +1999,8 @@ class Database:
             if task:
                 task.error_message = error_message
                 await session.commit()
+            else:
+                logger.warning("set_task_error: task %s not found", task_id)
 
     async def finalize_pipeline_metrics(self, pipeline_id: str) -> None:
         """Compute and store aggregated pipeline metrics by summing task rows.
