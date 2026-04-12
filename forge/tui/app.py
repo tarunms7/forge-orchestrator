@@ -1540,7 +1540,12 @@ class ForgeApp(App):
                     )
                 )
             else:
-                self.push_screen(PlanApprovalScreen(plan_tasks))
+                self.push_screen(
+                    PlanApprovalScreen(
+                        plan_tasks,
+                        planner_diagnostics=self._state.retrieval_diagnostics.get("planner"),
+                    )
+                )
         except asyncio.CancelledError:
             logger.info("Planning was cancelled")
             self._state.apply_event("pipeline:error", {"error": "Planning cancelled"})
@@ -2093,7 +2098,12 @@ class ForgeApp(App):
                 ]
                 if plan_tasks:
                     self.push_screen(PipelineScreen(self._state))
-                    self.push_screen(PlanApprovalScreen(plan_tasks))
+                    self.push_screen(
+                        PlanApprovalScreen(
+                            plan_tasks,
+                            planner_diagnostics=self._state.retrieval_diagnostics.get("planner"),
+                        )
+                    )
                 else:
                     self.notify("No tasks found in plan", severity="error")
                 return
