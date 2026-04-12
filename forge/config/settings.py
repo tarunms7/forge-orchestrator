@@ -41,6 +41,7 @@ class ForgeSettings(BaseSettings):
     retrieval_max_symbols: int = 4
     retrieval_max_neighbors: int = 2
     retrieval_timeout_seconds: int = 20
+    retrieval_planner_min_confidence: float = 0.6
 
     # Build, test & lint verification
     build_cmd: str | None = None
@@ -228,6 +229,13 @@ class ForgeSettings(BaseSettings):
     def retrieval_positive(cls, v: int) -> int:
         if v < 1:
             raise ValueError("retrieval settings must be >= 1")
+        return v
+
+    @field_validator("retrieval_planner_min_confidence")
+    @classmethod
+    def retrieval_planner_confidence_range(cls, v: float) -> float:
+        if not (0 <= v <= 1):
+            raise ValueError("retrieval_planner_min_confidence must be between 0 and 1")
         return v
 
     @field_validator("planning_mode")

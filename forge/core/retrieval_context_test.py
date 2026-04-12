@@ -9,6 +9,7 @@ from forge.core.retrieval_context import (
     _resolve_codegraph_dir,
     build_agent_context,
     build_multi_repo_planner_context,
+    build_planner_context,
 )
 
 
@@ -121,3 +122,86 @@ def test_build_multi_repo_planner_context_falls_back_without_retrieval():
 
     assert "### Repo: backend (/tmp/backend)" in result
     assert "### File Tree" in result
+
+
+def test_build_planner_context_falls_back_when_confidence_is_low(monkeypatch, tmp_path):
+    codegraph_dir = tmp_path / "codegraph"
+    package_dir = codegraph_dir / "codegraph"
+    package_dir.mkdir(parents=True)
+    (package_dir / "cli.py").write_text("")
+    (package_dir / "__init__.py").write_text("")
+
+    payload = {
+        "mode": "query",
+        "confidence": 0.42,
+        "files": [
+            {
+                "path": "forge/core/daemon.py",
+                "rank": 5.1,
+                "reasons": ["path-match"],
+                "focus_range": [10, 20],
+            }
+        ],
+    }
+
+    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+        assert cwd == str(codegraph_dir)
+        assert "--text" in cmd
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)
+
+    snapshot = _snapshot()
+    settings = ForgeSettings(retrieval_tool_dir=str(codegraph_dir))
+    result = build_planner_context(
+        project_dir_hint=str(tmp_path / "project"),
+        repo_path="/tmp/project",
+        snapshot=snapshot,
+        query="planner behavior",
+        settings=settings,
+    )
+
+    assert result == snapshot.format_for_planner()
+
+
+def test_build_planner_context_uses_retrieval_when_confidence_is_high(monkeypatch, tmp_path):
+    codegraph_dir = tmp_path / "codegraph"
+    package_dir = codegraph_dir / "codegraph"
+    package_dir.mkdir(parents=True)
+    (package_dir / "cli.py").write_text("")
+    (package_dir / "__init__.py").write_text("")
+
+    payload = {
+        "mode": "query",
+        "confidence": 0.91,
+        "matched_terms": ["planner", "retry"],
+        "files": [
+            {
+                "path": "forge/core/planning/unified_planner.py",
+                "rank": 7.2,
+                "reasons": ["path-match", "symbol-match"],
+                "focus_range": [50, 90],
+                "symbols": [{"name": "UnifiedPlanner", "line": 55}],
+            }
+        ],
+    }
+
+    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+        assert cwd == str(codegraph_dir)
+        assert "--text" in cmd
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)
+
+    settings = ForgeSettings(retrieval_tool_dir=str(codegraph_dir))
+    result = build_planner_context(
+        project_dir_hint=str(tmp_path / "project"),
+        repo_path="/tmp/project",
+        snapshot=_snapshot(),
+        query="planner retry",
+        settings=settings,
+    )
+
+    assert "## Planner Retrieval" in result
+    assert "`forge/core/planning/unified_planner.py`" in result
+    assert "### File Tree" not in result

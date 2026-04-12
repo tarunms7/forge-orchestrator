@@ -42,7 +42,7 @@ def build_planner_context(
         settings=settings,
         query=query,
     )
-    if evidence is None:
+    if evidence is None or not _planner_evidence_is_usable(evidence, settings=settings):
         return fallback
     parts = [_compact_snapshot(snapshot, repo_label=repo_label, include_branch=True)]
     rendered = _render_evidence(evidence, heading="Planner Retrieval")
@@ -72,7 +72,7 @@ def build_multi_repo_planner_context(
             settings=settings,
             query=query,
         )
-        if evidence is None:
+        if evidence is None or not _planner_evidence_is_usable(evidence, settings=settings):
             continue
         found_retrieval = True
         section_parts = [
@@ -233,6 +233,14 @@ def _fetch_evidence(
     if not data.get("files"):
         return None
     return data
+
+
+def _planner_evidence_is_usable(data: dict, *, settings: ForgeSettings) -> bool:
+    """Use retrieval for planning only when the result looks strong enough."""
+    confidence = data.get("confidence")
+    if not isinstance(confidence, (int, float)):
+        return False
+    return confidence >= settings.retrieval_planner_min_confidence
 
 
 def _resolve_codegraph_dir(
