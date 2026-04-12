@@ -533,3 +533,131 @@ async def test_run_with_retry_preserves_forge_question_text():
 
     assert result.success is True
     assert "FORGE_QUESTION:" in result.summary
+
+
+async def test_run_task_forwards_project_dir_and_commands_to_adapter(mock_adapter):
+    """AgentRuntime.run_task() should forward project_dir and project_commands to adapter.run()."""
+    runtime = AgentRuntime(adapter=mock_adapter, timeout_seconds=60)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="test",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        project_dir="/some/path",
+        project_commands={"test": "pytest", "lint": "ruff check"},
+    )
+
+    call_kwargs = mock_adapter.run.call_args[1]
+    assert call_kwargs["project_dir"] == "/some/path"
+    assert call_kwargs["project_commands"] == {"test": "pytest", "lint": "ruff check"}
+
+
+async def test_provider_path_forwards_completed_deps_to_system_prompt(monkeypatch):
+    """Provider path should forward completed_deps to build_agent_system_prompt."""
+    # Setup provider registry mock
+    provider = MagicMock()
+    catalog = _make_catalog_entry(
+        provider="openai",
+        alias="gpt-5.4-mini",
+        canonical_id="gpt-5.4-mini-0414",
+        backend="codex-sdk",
+        tier="supported",
+        can_resume_session=False,
+        supports_mcp_servers=False,
+        supports_structured_output=True,
+        cost_key="openai:gpt-5.4-mini",
+    )
+    provider.start.return_value = MockExecutionHandle(
+        _make_provider_result(model_canonical_id="gpt-5.4-mini-0414")
+    )
+
+    registry = MagicMock()
+    registry.get_for_model.return_value = provider
+    registry.get_catalog_entry.return_value = catalog
+
+    monkeypatch.setattr("forge.agents.runtime._get_changed_files", AsyncMock(return_value=[]))
+
+    # Wrap the real function to capture calls
+    from forge.agents.runtime import build_agent_system_prompt
+    real_build_agent_system_prompt = build_agent_system_prompt
+    captured_kwargs = []
+
+    def mock_build_agent_system_prompt(**kwargs):
+        captured_kwargs.append(kwargs)
+        return real_build_agent_system_prompt(**kwargs)
+
+    monkeypatch.setattr("forge.agents.runtime.build_agent_system_prompt", mock_build_agent_system_prompt)
+
+    completed_deps = [
+        {
+            "task_id": "task-1",
+            "title": "Setup",
+            "implementation_summary": "Init",
+            "files_changed": ["setup.py"]
+        }
+    ]
+
+    runtime = AgentRuntime(registry=registry)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="Build X",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        model=ModelSpec("openai", "gpt-5.4-mini"),
+        completed_deps=completed_deps,
+    )
+
+    assert len(captured_kwargs) == 1
+    assert captured_kwargs[0]["completed_deps"] == completed_deps
+
+
+async def test_provider_path_forwards_autonomy_to_system_prompt(monkeypatch):
+    """Provider path should forward autonomy and questions_remaining to build_agent_system_prompt."""
+    # Setup provider registry mock
+    provider = MagicMock()
+    catalog = _make_catalog_entry(
+        provider="openai",
+        alias="gpt-5.4-mini",
+        canonical_id="gpt-5.4-mini-0414",
+        backend="codex-sdk",
+        tier="supported",
+        can_resume_session=False,
+        supports_mcp_servers=False,
+        supports_structured_output=True,
+        cost_key="openai:gpt-5.4-mini",
+    )
+    provider.start.return_value = MockExecutionHandle(
+        _make_provider_result(model_canonical_id="gpt-5.4-mini-0414")
+    )
+
+    registry = MagicMock()
+    registry.get_for_model.return_value = provider
+    registry.get_catalog_entry.return_value = catalog
+
+    monkeypatch.setattr("forge.agents.runtime._get_changed_files", AsyncMock(return_value=[]))
+
+    # Wrap the real function to capture calls
+    from forge.agents.runtime import build_agent_system_prompt
+    real_build_agent_system_prompt = build_agent_system_prompt
+    captured_kwargs = []
+
+    def mock_build_agent_system_prompt(**kwargs):
+        captured_kwargs.append(kwargs)
+        return real_build_agent_system_prompt(**kwargs)
+
+    monkeypatch.setattr("forge.agents.runtime.build_agent_system_prompt", mock_build_agent_system_prompt)
+
+    runtime = AgentRuntime(registry=registry)
+    await runtime.run_task(
+        agent_id="agent-1",
+        task_prompt="Build X",
+        worktree_path="/tmp/test",
+        allowed_files=["a.py"],
+        model=ModelSpec("openai", "gpt-5.4-mini"),
+        autonomy="full",
+        questions_remaining=0,
+    )
+
+    assert len(captured_kwargs) == 1
+    assert captured_kwargs[0]["autonomy"] == "full"
+    assert captured_kwargs[0]["questions_remaining"] == 0

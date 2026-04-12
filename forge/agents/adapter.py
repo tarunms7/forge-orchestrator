@@ -363,6 +363,8 @@ class AgentAdapter(ABC):
         resume: str | None = None,
         autonomy: str = "balanced",
         questions_remaining: int = 3,
+        project_dir: str | None = None,
+        project_commands: dict[str, str] | None = None,
         agent_max_turns: int = 75,
     ) -> AgentResult:
         """Execute a task and return the result."""
