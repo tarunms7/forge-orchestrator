@@ -102,6 +102,11 @@ Do NOT use UNCERTAIN for:
 - You do NOT have live git history or branch state. Do NOT claim you ran `git`
   commands, inspected other branches, or verified repository state unless that
   evidence appears in the provided diff or files you actually read.
+- Do NOT use Bash to run `git diff`, `git log`, `git show`, `git checkout`,
+  `git restore`, or any other git branch/history comparison during review.
+  The provided FULL DIFF, validation context, and allowed file scope are the
+  authoritative source of truth for this review, especially on non-`main`
+  pipeline branches.
 - You have workspace tools available: Read, Glob, Grep, and Bash.
 - Read the current version of each changed in-scope source file before issuing a
   PASS or FAIL verdict.

@@ -140,3 +140,49 @@ class TestFormatEvidencePanelMatchedMissedTerms:
         assert "bar" in result
         assert "#d29922" in result  # yellow for missed
         assert "baz" in result
+
+
+class TestFormatEvidencePanelCustomHeader:
+    def test_format_evidence_panel_custom_header(self):
+        diag = {"used_retrieval": False}
+        result = format_evidence_panel(diag, "My Task", header="WHY THIS TASK?")
+        assert "WHY THIS TASK?" in result
+        assert "WHY THESE FILES?" not in result
+        assert "My Task" in result
+
+
+class TestFormatEvidencePanelWithRationale:
+    def test_format_evidence_panel_with_rationale(self):
+        diag = {
+            "used_retrieval": True,
+            "confidence": 0.85,
+            "matched_terms": ["auth"],
+            "missed_terms": [],
+            "evidence_files": [
+                {
+                    "path": "src/auth.py",
+                    "rank": 1,
+                    "focus_range": None,
+                    "reasons": ["import_match"],
+                    "symbols": [],
+                    "neighbors": [],
+                },
+            ],
+            "rationale": "Task touches auth.py which matched planner evidence (import_match)",
+        }
+        result = format_evidence_panel(diag, "Auth task", header="WHY THIS TASK?")
+        assert "Task touches auth.py which matched planner evidence" in result
+        assert "WHY THIS TASK?" in result
+
+    def test_format_evidence_panel_without_rationale(self):
+        diag = {
+            "used_retrieval": True,
+            "confidence": 0.7,
+            "evidence_files": [],
+        }
+        result = format_evidence_panel(diag, "Test")
+        # No rationale line — just header and task title
+        lines = result.split("\n")
+        assert lines[0].count("WHY THESE FILES?") == 1
+        # No rationale text between title and empty line
+        assert lines[1].count("Test") == 1

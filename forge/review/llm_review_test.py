@@ -365,6 +365,8 @@ class TestReviewSystemPrompt:
 
         assert "Do NOT claim you ran `git`" in REVIEW_SYSTEM_PROMPT
         assert "Prior review feedback can be stale" in REVIEW_SYSTEM_PROMPT
+        assert "Do NOT use Bash to run `git diff`" in REVIEW_SYSTEM_PROMPT
+        assert "non-`main`" in REVIEW_SYSTEM_PROMPT
 
     def test_prompt_requires_tool_assisted_verification(self):
         from forge.review.llm_review import REVIEW_SYSTEM_PROMPT

@@ -12,6 +12,7 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
 
+from forge.core.retrieval_context import derive_task_evidence
 from forge.tui.theme import (
     ACCENT_BLUE,
     ACCENT_GREEN,
@@ -21,6 +22,7 @@ from forge.tui.theme import (
     TEXT_MUTED,
     TEXT_SECONDARY,
 )
+from forge.tui.widgets.evidence_panel import format_evidence_panel
 from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _COMPLEXITY_COLORS = {
@@ -180,6 +182,17 @@ class PlanApprovalScreen(Screen):
     #add-form.visible {
         display: block;
     }
+    #evidence-area {
+        max-height: 12;
+        margin: 0 2;
+        border: solid #30363d;
+        background: #0d1117;
+        padding: 1;
+        display: none;
+    }
+    #evidence-area.visible {
+        display: block;
+    }
     .add-field {
         height: 1;
         margin: 0 0;
@@ -204,6 +217,7 @@ class PlanApprovalScreen(Screen):
         Binding("K", "move_up", "Move up", show=False),
         Binding("c", "cycle_complexity", "Cycle complexity", show=False),
         Binding("n", "add_note", "Add note", show=False),
+        Binding("w", "toggle_evidence", "Why task?", show=False),
     ]
 
     class PlanApproved(Message):
@@ -225,12 +239,14 @@ class PlanApprovalScreen(Screen):
         tasks: list[dict],
         estimated_cost: float = 0.0,
         cost_estimate: dict | None = None,
+        planner_diagnostics: dict | None = None,
     ) -> None:
         super().__init__()
         self._tasks = [copy.deepcopy(t) for t in tasks]
         self._original_tasks = [copy.deepcopy(t) for t in tasks]
         self._estimated_cost = estimated_cost
         self._cost_estimate = cost_estimate
+        self._planner_diagnostics = planner_diagnostics
         self._cursor = 0
         self._removed: set[int] = set()
         self._modified: set[int] = set()
@@ -260,8 +276,9 @@ class PlanApprovalScreen(Screen):
                     id=f"task-{i}",
                 )
                 yield Static("")
+        yield Static("", id="evidence-area")
         yield Static(
-            "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [Esc] save & exit",
+            "[Enter] approve  [e] edit  [f] files  [x] remove  [a] add  [J/K] reorder  [c] complexity  [n] note  [w] why?  [Esc] save & exit",
             id="plan-footer",
         )
         yield ShortcutBar(
@@ -272,6 +289,7 @@ class PlanApprovalScreen(Screen):
                 ("x", "Remove"),
                 ("a", "Add"),
                 ("J/K", "Reorder"),
+                ("w", "Why?"),
                 ("Esc", "Save & Exit"),
             ]
         )
@@ -289,6 +307,7 @@ class PlanApprovalScreen(Screen):
         self.query_one("#plan-header", Static).update(
             f"[bold {ACCENT_BLUE}]PLAN REVIEW[/]  {summary}"
         )
+        self._update_evidence_area()
 
     def _clamp_cursor(self) -> None:
         """Ensure cursor is within bounds."""
@@ -404,6 +423,7 @@ class PlanApprovalScreen(Screen):
                 ("x", "Remove"),
                 ("a", "Add"),
                 ("J/K", "Reorder"),
+                ("w", "Why?"),
                 ("Esc", "Save & Exit"),
             ]
         try:
@@ -543,6 +563,40 @@ class PlanApprovalScreen(Screen):
         task["complexity"] = _COMPLEXITY_ORDER[(idx + 1) % len(_COMPLEXITY_ORDER)]
         self._modified.add(self._cursor)
         self._refresh_task_list()
+
+    def _update_evidence_area(self) -> None:
+        """Refresh the evidence area content for the current cursor task."""
+        area = self.query_one("#evidence-area", Static)
+        if not area.has_class("visible"):
+            return
+        task = self._tasks[self._cursor]
+        task_files = task.get("files", [])
+        task_title = task.get("title", "Untitled")
+        if not self._planner_diagnostics:
+            area.update("[#8b949e]No planner evidence available[/]")
+        else:
+            derived = derive_task_evidence(self._planner_diagnostics, task_files)
+            markup = format_evidence_panel(derived, task_title, header="WHY THIS TASK?")
+            area.update(markup)
+
+    def action_toggle_evidence(self) -> None:
+        """Toggle the evidence panel for the current task."""
+        if self._is_editing():
+            return
+        area = self.query_one("#evidence-area", Static)
+        if area.has_class("visible"):
+            area.remove_class("visible")
+            return
+        task = self._tasks[self._cursor]
+        task_files = task.get("files", [])
+        task_title = task.get("title", "Untitled")
+        if not self._planner_diagnostics:
+            area.update("[#8b949e]No planner evidence available[/]")
+        else:
+            derived = derive_task_evidence(self._planner_diagnostics, task_files)
+            markup = format_evidence_panel(derived, task_title, header="WHY THIS TASK?")
+            area.update(markup)
+        area.add_class("visible")
 
     def action_approve(self) -> None:
         if self._is_editing():

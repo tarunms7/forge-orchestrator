@@ -12,6 +12,7 @@ from forge.core.retrieval_context import (
     build_agent_context,
     build_multi_repo_planner_context,
     build_planner_context,
+    derive_task_evidence,
 )
 
 
@@ -386,3 +387,118 @@ def test_evidence_files_defaults_to_empty_when_no_retrieval():
 
     event = diag.to_event_dict()
     assert event["evidence_files"] == []
+
+
+# --- derive_task_evidence tests ---
+
+
+def _sample_planner_diagnostics() -> dict:
+    """Build a realistic planner diagnostics dict for derive_task_evidence tests."""
+    return {
+        "stage": "planner",
+        "used_retrieval": True,
+        "confidence": 0.91,
+        "matched_terms": ["auth", "login"],
+        "missed_terms": ["obscure"],
+        "evidence_files": [
+            {
+                "path": "forge/core/auth.py",
+                "reasons": ["import_match", "symbol_hit"],
+                "symbols": [{"name": "authenticate", "line": 15}],
+                "neighbors": [{"kind": "imports", "path": "forge/core/models.py"}],
+                "rank": 1,
+                "focus_range": [10, 50],
+            },
+            {
+                "path": "forge/api/routes.py",
+                "reasons": ["text_match"],
+                "symbols": [{"name": "login_route", "line": 30}],
+                "neighbors": [{"kind": "imports", "path": "forge/core/auth.py"}],
+                "rank": 2,
+                "focus_range": None,
+            },
+            {
+                "path": "forge/tui/app.py",
+                "reasons": ["co_changed"],
+                "symbols": [],
+                "neighbors": [],
+                "rank": 5,
+                "focus_range": None,
+            },
+        ],
+    }
+
+
+def test_derive_task_evidence_matches_exact_path():
+    diag = _sample_planner_diagnostics()
+    result = derive_task_evidence(diag, ["forge/core/auth.py"])
+
+    assert result["used_retrieval"] is True
+    assert len(result["evidence_files"]) >= 1
+    paths = [ef["path"] for ef in result["evidence_files"]]
+    assert "forge/core/auth.py" in paths
+    assert result["confidence"] == 0.91
+    assert result["matched_terms"] == ["auth", "login"]
+    assert result["missed_terms"] == ["obscure"]
+
+
+def test_derive_task_evidence_matches_neighbor():
+    diag = _sample_planner_diagnostics()
+    # forge/api/routes.py has neighbor forge/core/auth.py — task touches auth.py
+    result = derive_task_evidence(diag, ["forge/core/auth.py"])
+
+    paths = [ef["path"] for ef in result["evidence_files"]]
+    # routes.py should be included because its neighbor (auth.py) is a task file
+    assert "forge/api/routes.py" in paths
+    assert result["used_retrieval"] is True
+
+
+def test_derive_task_evidence_matches_same_directory():
+    diag = _sample_planner_diagnostics()
+    # forge/core/auth.py is in forge/core/ — use a task file in the same directory
+    # that is NOT referenced as a neighbor (models.py IS a neighbor of auth.py,
+    # so it would match via Check 2 instead of Check 3).
+    result = derive_task_evidence(diag, ["forge/core/utils.py"])
+
+    paths = [ef["path"] for ef in result["evidence_files"]]
+    assert "forge/core/auth.py" in paths
+    assert result["used_retrieval"] is True
+    assert "shares directory" in result["rationale"]
+
+
+def test_derive_task_evidence_no_match():
+    diag = _sample_planner_diagnostics()
+    result = derive_task_evidence(diag, ["forge/unrelated/something.py"])
+
+    assert result["used_retrieval"] is False
+    assert result["evidence_files"] == []
+    assert result["rationale"] == ""
+    assert result["confidence"] == 0.91  # still copied
+
+
+def test_derive_task_evidence_empty_diagnostics():
+    # None input
+    result = derive_task_evidence(None, ["forge/core/auth.py"])
+    assert result["used_retrieval"] is False
+    assert result["evidence_files"] == []
+    assert result["rationale"] == ""
+
+    # Empty dict input
+    result = derive_task_evidence({}, ["forge/core/auth.py"])
+    assert result["used_retrieval"] is False
+    assert result["evidence_files"] == []
+
+    # Empty task_files
+    result = derive_task_evidence(_sample_planner_diagnostics(), [])
+    assert result["used_retrieval"] is False
+    assert result["evidence_files"] == []
+
+
+def test_derive_task_evidence_generates_rationale():
+    diag = _sample_planner_diagnostics()
+    result = derive_task_evidence(diag, ["forge/core/auth.py"])
+
+    rationale = result["rationale"]
+    assert rationale  # non-empty
+    assert "auth.py" in rationale
+    assert "import_match" in rationale or "symbol_hit" in rationale

@@ -21,13 +21,24 @@ def _rank_color(rank: int | float | None) -> str:
     return "#8b949e"
 
 
-def format_evidence_panel(diagnostics: dict, task_title: str) -> str:
+def format_evidence_panel(
+    diagnostics: dict,
+    task_title: str,
+    *,
+    header: str = "WHY THESE FILES?",
+) -> str:
     """Render evidence panel content as Rich markup (pure function)."""
     parts: list[str] = []
 
     # Header
-    parts.append("[bold #58a6ff]── WHY THESE FILES? ──[/] [#8b949e](w to close)[/]")
+    parts.append(f"[bold #58a6ff]── {header} ──[/] [#8b949e](w to close)[/]")
     parts.append(f"[bold #c9d1d9]{task_title}[/]")
+
+    # Rationale (if present in derived diagnostics)
+    rationale = (diagnostics or {}).get("rationale", "")
+    if rationale:
+        parts.append(f"[#8b949e]{rationale}[/]")
+
     parts.append("")
 
     if not diagnostics or not diagnostics.get("used_retrieval"):

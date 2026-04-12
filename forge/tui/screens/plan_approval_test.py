@@ -563,3 +563,158 @@ class TestPlanApprovalShortcutBar:
         assert "Ctrl+S" in edit_keys
         normal_keys = [k for k, _ in normal_shortcuts]
         assert "Enter" in normal_keys
+
+
+# ---------------------------------------------------------------------------
+# Evidence panel integration tests
+# ---------------------------------------------------------------------------
+
+
+def _sample_diagnostics() -> dict:
+    """A planner diagnostics dict for testing evidence display."""
+    return {
+        "stage": "planner",
+        "used_retrieval": True,
+        "confidence": 0.85,
+        "top_files": ["auth.py", "middleware.py"],
+        "matched_terms": ["auth", "jwt"],
+        "missed_terms": ["oauth"],
+        "evidence_files": [
+            {
+                "path": "auth.py",
+                "reasons": ["import_match", "symbol_hit"],
+                "symbols": [{"name": "login", "line": 10}],
+                "neighbors": [{"kind": "import", "path": "middleware.py"}],
+                "rank": 1,
+                "focus_range": [1, 50],
+            },
+            {
+                "path": "routes.py",
+                "reasons": ["text_match"],
+                "symbols": [{"name": "register_routes", "line": 5}],
+                "neighbors": [],
+                "rank": 2,
+                "focus_range": None,
+            },
+        ],
+    }
+
+
+class TestPlanApprovalDiagnostics:
+    """Test planner_diagnostics storage on PlanApprovalScreen."""
+
+    def test_plan_approval_screen_stores_diagnostics(self):
+        diag = _sample_diagnostics()
+        screen = PlanApprovalScreen(_sample_tasks(), planner_diagnostics=diag)
+        assert screen._planner_diagnostics is diag
+
+    def test_plan_approval_screen_no_diagnostics_default(self):
+        screen = PlanApprovalScreen(_sample_tasks())
+        assert screen._planner_diagnostics is None
+
+
+class TestActionToggleEvidence:
+    """Test action_toggle_evidence using mocked widgets."""
+
+    def _make_screen_with_mocks(self, diagnostics=None):
+        from unittest.mock import MagicMock
+
+        screen = PlanApprovalScreen(_sample_tasks(), planner_diagnostics=diagnostics)
+        mock_area = MagicMock()
+        mock_area.has_class = MagicMock(return_value=False)
+
+        def query_one_side_effect(selector, *args):
+            if selector == "#evidence-area":
+                return mock_area
+            raise Exception(f"Unexpected query: {selector}")
+
+        screen.query_one = MagicMock(side_effect=query_one_side_effect)
+        return screen, mock_area
+
+    def test_action_toggle_evidence_with_diagnostics(self):
+        """Toggle evidence calls derive_task_evidence and updates area."""
+        diag = _sample_diagnostics()
+        screen, mock_area = self._make_screen_with_mocks(diagnostics=diag)
+
+        screen.action_toggle_evidence()
+
+        mock_area.update.assert_called_once()
+        markup = mock_area.update.call_args[0][0]
+        assert "WHY THIS TASK?" in markup
+        mock_area.add_class.assert_called_once_with("visible")
+
+    def test_action_toggle_evidence_without_diagnostics(self):
+        """Without diagnostics, shows fallback message."""
+        screen, mock_area = self._make_screen_with_mocks(diagnostics=None)
+
+        screen.action_toggle_evidence()
+
+        mock_area.update.assert_called_once()
+        markup = mock_area.update.call_args[0][0]
+        assert "No planner evidence available" in markup
+        mock_area.add_class.assert_called_once_with("visible")
+
+    def test_action_toggle_evidence_hides_on_second_toggle(self):
+        """Toggling again when visible hides the evidence area."""
+        from unittest.mock import MagicMock
+
+        diag = _sample_diagnostics()
+        screen = PlanApprovalScreen(_sample_tasks(), planner_diagnostics=diag)
+        mock_area = MagicMock()
+        # Simulate already-visible state
+        mock_area.has_class = MagicMock(return_value=True)
+
+        screen.query_one = MagicMock(return_value=mock_area)
+
+        screen.action_toggle_evidence()
+
+        mock_area.remove_class.assert_called_once_with("visible")
+        mock_area.update.assert_not_called()
+
+    def test_evidence_updates_on_cursor_change(self):
+        """When evidence area is visible and cursor moves, content updates."""
+        from unittest.mock import MagicMock
+
+        diag = _sample_diagnostics()
+        screen = PlanApprovalScreen(_sample_tasks(), planner_diagnostics=diag)
+        mock_area = MagicMock()
+
+        # First call: not visible (toggle opens it)
+        visible_state = [False]
+
+        def has_class_side_effect(cls):
+            return visible_state[0]
+
+        def add_class_side_effect(cls):
+            visible_state[0] = True
+
+        mock_area.has_class = MagicMock(side_effect=has_class_side_effect)
+        mock_area.add_class = MagicMock(side_effect=add_class_side_effect)
+
+        # Mock all widgets the refresh needs
+        mock_task_widgets = {f"#task-{i}": MagicMock() for i in range(3)}
+        mock_header = MagicMock()
+
+        def query_one_side_effect(selector, *args):
+            if selector == "#evidence-area":
+                return mock_area
+            if selector == "#plan-header":
+                return mock_header
+            if selector in mock_task_widgets:
+                return mock_task_widgets[selector]
+            raise Exception(f"Unexpected query: {selector}")
+
+        screen.query_one = MagicMock(side_effect=query_one_side_effect)
+
+        # Open evidence panel on task 0
+        screen.action_toggle_evidence()
+        first_markup = mock_area.update.call_args[0][0]
+        assert "Add user auth" in first_markup
+
+        # Move cursor to task 1 — _refresh_task_list calls _update_evidence_area
+        screen._cursor = 1
+        screen._refresh_task_list()
+
+        # Evidence area should have been updated with task 1's title
+        last_markup = mock_area.update.call_args[0][0]
+        assert "Add endpoints" in last_markup

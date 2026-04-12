@@ -283,6 +283,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
                 "_run_lint_gate",
@@ -333,6 +334,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
                 "_run_lint_gate",
@@ -434,6 +436,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
                 "_run_lint_gate",
@@ -481,6 +484,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
                 "_run_lint_gate",
@@ -585,6 +589,7 @@ class TestReviewGateEvents:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
                 "_run_lint_gate",
@@ -793,6 +798,8 @@ class TestRunReviewPassesOnMessage:
         """_run_review constructs on_message callback and passes it to gate2_llm_review."""
         mixin = self._make_mixin()
         task = _make_task_for_review()
+        task.files = ["feature.py"]
+        task.description = "Some description. Add regression coverage in feature_test.py."
         db = AsyncMock()
         db.list_tasks_by_pipeline.return_value = [task]
         db.get_pipeline_contracts.return_value = None
@@ -804,6 +811,7 @@ class TestRunReviewPassesOnMessage:
 
         with (
             patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=[]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
                 "_run_lint_gate",
@@ -824,6 +832,7 @@ class TestRunReviewPassesOnMessage:
                 "diff content",
                 db=db,
                 pipeline_id="pipe-1",
+                pipeline_branch="forge/task-provenance-view",
             )
 
         assert passed is True
@@ -838,6 +847,58 @@ class TestRunReviewPassesOnMessage:
         assert "Validation Context" in validation_context
         assert "Lint gate: PASSED" in validation_context
         assert "Test gate: SKIPPED — no test command configured" in validation_context
+        assert "Pipeline review base branch: forge/task-provenance-view" in validation_context
+        assert "Do NOT run `git diff main..HEAD`" in validation_context
+        assert call_kwargs.kwargs["allowed_files"] == ["feature.py", "feature_test.py"]
+
+    @pytest.mark.asyncio
+    async def test_review_uses_effective_scope_for_test_gate_and_llm(self):
+        """Description-named deliverables should stay in scope throughout review."""
+        mixin = self._make_mixin()
+        task = _make_task_for_review()
+        task.files = ["feature.py"]
+        task.description = "Update feature.py and add feature_test.py."
+        db = AsyncMock()
+        db.list_tasks_by_pipeline.return_value = [task]
+        db.get_pipeline_contracts.return_value = None
+
+        mixin._settings.build_cmd = None
+        mixin._pipeline_build_cmd = None
+        mixin._settings.test_cmd = "pytest -q"
+        mixin._pipeline_test_cmd = None
+        mixin._gate_test = AsyncMock(
+            return_value=GateResult(passed=True, gate="gate1_5_test", details="Tests clean")
+        )
+
+        with (
+            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["feature.py"]),
+            patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
+            patch.object(
+                mixin,
+                "_run_lint_gate",
+                return_value=GateResult(passed=True, gate="gate1_auto_check", details="Lint clean"),
+            ),
+            patch(
+                "forge.core.daemon_review.gate2_llm_review", new_callable=AsyncMock
+            ) as mock_gate2,
+            patch("forge.core.daemon_review.select_model", return_value="claude-sonnet-4-5"),
+        ):
+            mock_gate2.return_value = (
+                GateResult(passed=True, gate="gate2_llm_review", details="LGTM"),
+                MagicMock(cost_usd=0),
+            )
+            passed, _, _ = await mixin._run_review(
+                task,
+                "/repo",
+                "diff content",
+                db=db,
+                pipeline_id="pipe-1",
+                pipeline_branch="forge/task-provenance-view",
+            )
+
+        assert passed is True
+        assert mixin._gate_test.await_args.kwargs["allowed_files"] == ["feature.py", "feature_test.py"]
+        assert mock_gate2.await_args.kwargs["allowed_files"] == ["feature.py", "feature_test.py"]
 
 
 def test_discover_review_python_walks_up_to_repo_venv(tmp_path):

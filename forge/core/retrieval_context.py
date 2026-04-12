@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,92 @@ def _diagnostics_from_evidence(stage: str, data: dict) -> RetrievalDiagnostics:
         missed_terms=data.get("missed_terms") or [],
         evidence_files=evidence_files,
     )
+
+
+def _normalize_path(p: str) -> str:
+    """Normalize a file path for comparison (strip ./, collapse //, posix)."""
+    p = p.replace("\\", "/")
+    p = posixpath.normpath(p)
+    if p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def derive_task_evidence(
+    planner_diagnostics: dict | None,
+    task_files: list[str],
+) -> dict:
+    """Filter planner-level retrieval evidence to entries relevant to a specific task.
+
+    Returns a diagnostics dict (same shape as ``RetrievalDiagnostics.to_event_dict()``)
+    with an additional ``rationale`` field, suitable for ``format_evidence_panel()``.
+    """
+    empty: dict = {
+        "used_retrieval": False,
+        "confidence": None,
+        "matched_terms": [],
+        "missed_terms": [],
+        "evidence_files": [],
+        "rationale": "",
+    }
+
+    if not planner_diagnostics or not task_files:
+        return empty
+
+    normalized_task_files = {_normalize_path(f) for f in task_files}
+    task_dirs = {posixpath.dirname(f) for f in normalized_task_files}
+
+    evidence_files = planner_diagnostics.get("evidence_files") or []
+    matched: list[dict] = []
+    rationale_parts: list[str] = []
+
+    for ef in evidence_files:
+        norm_path = _normalize_path(ef.get("path", ""))
+
+        # Check 1: exact path match
+        if norm_path in normalized_task_files:
+            matched.append(ef)
+            reasons = ef.get("reasons") or []
+            rationale_parts.append(
+                f"Task touches {posixpath.basename(norm_path)} which matched "
+                f"planner evidence ({', '.join(reasons[:3])})"
+                if reasons
+                else f"Task touches {posixpath.basename(norm_path)} which matched planner evidence"
+            )
+            continue
+
+        # Check 2: neighbor path matches a task file
+        neighbors = ef.get("neighbors") or []
+        neighbor_matched = False
+        for nb in neighbors:
+            nb_path = _normalize_path(nb.get("path", ""))
+            if nb_path in normalized_task_files:
+                matched.append(ef)
+                rationale_parts.append(
+                    f"{posixpath.basename(norm_path)} is a neighbor of "
+                    f"{posixpath.basename(nb_path)}"
+                )
+                neighbor_matched = True
+                break
+        if neighbor_matched:
+            continue
+
+        # Check 3: same directory as a task file
+        ef_dir = posixpath.dirname(norm_path)
+        if ef_dir and ef_dir in task_dirs:
+            matched.append(ef)
+            rationale_parts.append(
+                f"{posixpath.basename(norm_path)} shares directory {ef_dir}/ with a task file"
+            )
+
+    return {
+        "used_retrieval": len(matched) > 0,
+        "confidence": planner_diagnostics.get("confidence"),
+        "matched_terms": planner_diagnostics.get("matched_terms") or [],
+        "missed_terms": planner_diagnostics.get("missed_terms") or [],
+        "evidence_files": matched,
+        "rationale": "; ".join(rationale_parts) if rationale_parts else "",
+    }
 
 
 def build_planner_context(
