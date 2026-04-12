@@ -69,17 +69,21 @@ def _diagnostics_from_evidence(stage: str, data: dict) -> RetrievalDiagnostics:
 
         # Extract symbols (up to 4)
         for symbol in (file_entry.get("symbols") or [])[:4]:
-            evidence_file["symbols"].append({
-                "name": symbol.get("name", ""),
-                "line": symbol.get("line"),
-            })
+            evidence_file["symbols"].append(
+                {
+                    "name": symbol.get("name", ""),
+                    "line": symbol.get("line"),
+                }
+            )
 
         # Extract neighbors (up to 2)
         for neighbor in (file_entry.get("neighbors") or [])[:2]:
-            evidence_file["neighbors"].append({
-                "kind": neighbor.get("kind", ""),
-                "path": neighbor.get("path", ""),
-            })
+            evidence_file["neighbors"].append(
+                {
+                    "kind": neighbor.get("kind", ""),
+                    "path": neighbor.get("path", ""),
+                }
+            )
 
         evidence_files.append(evidence_file)
 
@@ -170,17 +174,21 @@ def build_multi_repo_planner_context(
 
             # Extract symbols (up to 4)
             for symbol in (file_entry.get("symbols") or [])[:4]:
-                evidence_file["symbols"].append({
-                    "name": symbol.get("name", ""),
-                    "line": symbol.get("line"),
-                })
+                evidence_file["symbols"].append(
+                    {
+                        "name": symbol.get("name", ""),
+                        "line": symbol.get("line"),
+                    }
+                )
 
             # Extract neighbors (up to 2)
             for neighbor in (file_entry.get("neighbors") or [])[:2]:
-                evidence_file["neighbors"].append({
-                    "kind": neighbor.get("kind", ""),
-                    "path": neighbor.get("path", ""),
-                })
+                evidence_file["neighbors"].append(
+                    {
+                        "kind": neighbor.get("kind", ""),
+                        "path": neighbor.get("path", ""),
+                    }
+                )
 
             all_evidence_files.append(evidence_file)
 

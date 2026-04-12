@@ -286,7 +286,10 @@ def test_diagnostics_from_evidence_populates_evidence_files():
                 "neighbors": [
                     {"kind": "imports", "path": "forge/core/models.py"},
                     {"kind": "imported_by", "path": "forge/api/routes.py"},
-                    {"kind": "co_changed", "path": "forge/core/context.py"},  # 3rd neighbor - should be excluded
+                    {
+                        "kind": "co_changed",
+                        "path": "forge/core/context.py",
+                    },  # 3rd neighbor - should be excluded
                 ],
             },
             {
