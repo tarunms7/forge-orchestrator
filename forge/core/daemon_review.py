@@ -1384,7 +1384,9 @@ class ReviewMixin:
             snapshot = snapshots.get(repo_id) if repo_id and snapshots else self._snapshot
             repo_map = getattr(self, "_repos", {}) or {}
             project_dir_hint = getattr(self, "_project_dir", "")
-            repo_path = repo_map.get(repo_id).path if repo_id and repo_id in repo_map else project_dir_hint
+            repo_path = (
+                repo_map.get(repo_id).path if repo_id and repo_id in repo_map else project_dir_hint
+            )
             if not repo_path:
                 repo_path = worktree_path
             review_context = build_reviewer_context(

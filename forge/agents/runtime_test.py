@@ -579,6 +579,7 @@ async def test_provider_path_forwards_completed_deps_to_system_prompt(monkeypatc
 
     # Wrap the real function to capture calls
     from forge.agents.runtime import build_agent_system_prompt
+
     real_build_agent_system_prompt = build_agent_system_prompt
     captured_kwargs = []
 
@@ -586,14 +587,16 @@ async def test_provider_path_forwards_completed_deps_to_system_prompt(monkeypatc
         captured_kwargs.append(kwargs)
         return real_build_agent_system_prompt(**kwargs)
 
-    monkeypatch.setattr("forge.agents.runtime.build_agent_system_prompt", mock_build_agent_system_prompt)
+    monkeypatch.setattr(
+        "forge.agents.runtime.build_agent_system_prompt", mock_build_agent_system_prompt
+    )
 
     completed_deps = [
         {
             "task_id": "task-1",
             "title": "Setup",
             "implementation_summary": "Init",
-            "files_changed": ["setup.py"]
+            "files_changed": ["setup.py"],
         }
     ]
 
@@ -638,6 +641,7 @@ async def test_provider_path_forwards_autonomy_to_system_prompt(monkeypatch):
 
     # Wrap the real function to capture calls
     from forge.agents.runtime import build_agent_system_prompt
+
     real_build_agent_system_prompt = build_agent_system_prompt
     captured_kwargs = []
 
@@ -645,7 +649,9 @@ async def test_provider_path_forwards_autonomy_to_system_prompt(monkeypatch):
         captured_kwargs.append(kwargs)
         return real_build_agent_system_prompt(**kwargs)
 
-    monkeypatch.setattr("forge.agents.runtime.build_agent_system_prompt", mock_build_agent_system_prompt)
+    monkeypatch.setattr(
+        "forge.agents.runtime.build_agent_system_prompt", mock_build_agent_system_prompt
+    )
 
     runtime = AgentRuntime(registry=registry)
     await runtime.run_task(
