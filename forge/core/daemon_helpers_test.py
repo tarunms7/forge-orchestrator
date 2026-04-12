@@ -1401,7 +1401,7 @@ class TestHumanizeModelSpec:
         assert _humanize_model_spec("claude:sonnet") == "Claude Sonnet"
 
     def test_openai_model_is_humanized(self):
-        assert _humanize_model_spec("openai:gpt-5.4-mini") == "Codex GPT-5.4 Mini"
+        assert _humanize_model_spec("openai:gpt-5.4-mini") == "OpenAI GPT-5.4 Mini"
 
     def test_claude_opus(self):
         assert _humanize_model_spec("claude:opus") == "Claude Opus"
@@ -1410,10 +1410,10 @@ class TestHumanizeModelSpec:
         assert _humanize_model_spec("claude:haiku") == "Claude Haiku"
 
     def test_openai_gpt54(self):
-        assert _humanize_model_spec("openai:gpt-5.4") == "Codex GPT-5.4"
+        assert _humanize_model_spec("openai:gpt-5.4") == "OpenAI GPT-5.4"
 
     def test_openai_codex(self):
-        assert _humanize_model_spec("openai:gpt-5.3-codex") == "Codex GPT-5.3"
+        assert _humanize_model_spec("openai:gpt-5.3-codex") == "OpenAI GPT-5.3 Codex"
 
     def test_openai_o3(self):
         assert _humanize_model_spec("openai:o3") == "OpenAI o3"
@@ -1447,7 +1447,7 @@ class TestFormatRoutingSummary:
         result = format_routing_summary(
             "claude:opus", "claude:haiku", "claude:sonnet", "claude:opus", "openai:gpt-5.4"
         )
-        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review Codex GPT-5.4"
+        expected = "Routing: Planner Claude Opus | Agent (L/M/H) Claude Haiku/Claude Sonnet/Claude Opus | Review OpenAI GPT-5.4"
         assert result == expected
 
     def test_with_reasoning_effort(self):
