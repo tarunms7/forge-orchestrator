@@ -37,6 +37,7 @@ class RetrievalDiagnostics:
     top_files: list[str] = field(default_factory=list)
     matched_terms: list[str] = field(default_factory=list)
     missed_terms: list[str] = field(default_factory=list)
+    evidence_files: list[dict] = field(default_factory=list)
 
     def to_event_dict(self) -> dict:
         return {
@@ -46,18 +47,50 @@ class RetrievalDiagnostics:
             "top_files": self.top_files,
             "matched_terms": self.matched_terms,
             "missed_terms": self.missed_terms,
+            "evidence_files": self.evidence_files,
         }
 
 
 def _diagnostics_from_evidence(stage: str, data: dict) -> RetrievalDiagnostics:
     """Build a populated RetrievalDiagnostics from codegraph evidence."""
+    files = data.get("files") or []
+
+    # Extract evidence files detail (up to 10 files)
+    evidence_files = []
+    for file_entry in files[:10]:
+        evidence_file = {
+            "path": file_entry.get("path", ""),
+            "reasons": (file_entry.get("reasons") or [])[:3],
+            "symbols": [],
+            "neighbors": [],
+            "rank": file_entry.get("rank"),
+            "focus_range": file_entry.get("focus_range"),
+        }
+
+        # Extract symbols (up to 4)
+        for symbol in (file_entry.get("symbols") or [])[:4]:
+            evidence_file["symbols"].append({
+                "name": symbol.get("name", ""),
+                "line": symbol.get("line"),
+            })
+
+        # Extract neighbors (up to 2)
+        for neighbor in (file_entry.get("neighbors") or [])[:2]:
+            evidence_file["neighbors"].append({
+                "kind": neighbor.get("kind", ""),
+                "path": neighbor.get("path", ""),
+            })
+
+        evidence_files.append(evidence_file)
+
     return RetrievalDiagnostics(
         stage=stage,
         used_retrieval=True,
         confidence=data.get("confidence"),
-        top_files=[f.get("path", "") for f in (data.get("files") or [])[:5]],
+        top_files=[f.get("path", "") for f in files[:5]],
         matched_terms=data.get("matched_terms") or [],
         missed_terms=data.get("missed_terms") or [],
+        evidence_files=evidence_files,
     )
 
 
@@ -103,6 +136,7 @@ def build_multi_repo_planner_context(
     all_top_files: list[str] = []
     all_matched: list[str] = []
     all_missed: list[str] = []
+    all_evidence_files: list[dict] = []
 
     for repo_id in sorted(repos.keys()):
         repo = repos[repo_id]
@@ -118,9 +152,38 @@ def build_multi_repo_planner_context(
         found_retrieval = True
         if first_confidence is None:
             first_confidence = evidence.get("confidence")
-        all_top_files.extend(f.get("path", "") for f in (evidence.get("files") or [])[:5])
+        files = evidence.get("files") or []
+        all_top_files.extend(f.get("path", "") for f in files[:5])
         all_matched.extend(evidence.get("matched_terms") or [])
         all_missed.extend(evidence.get("missed_terms") or [])
+
+        # Extract evidence files detail for this repo (up to 10 files)
+        for file_entry in files[:10]:
+            evidence_file = {
+                "path": file_entry.get("path", ""),
+                "reasons": (file_entry.get("reasons") or [])[:3],
+                "symbols": [],
+                "neighbors": [],
+                "rank": file_entry.get("rank"),
+                "focus_range": file_entry.get("focus_range"),
+            }
+
+            # Extract symbols (up to 4)
+            for symbol in (file_entry.get("symbols") or [])[:4]:
+                evidence_file["symbols"].append({
+                    "name": symbol.get("name", ""),
+                    "line": symbol.get("line"),
+                })
+
+            # Extract neighbors (up to 2)
+            for neighbor in (file_entry.get("neighbors") or [])[:2]:
+                evidence_file["neighbors"].append({
+                    "kind": neighbor.get("kind", ""),
+                    "path": neighbor.get("path", ""),
+                })
+
+            all_evidence_files.append(evidence_file)
+
         section_parts = [
             f"### Repo: {repo_id} ({repo.path})",
             _compact_snapshot(snapshot, repo_label=repo_id, include_branch=True),
@@ -138,6 +201,7 @@ def build_multi_repo_planner_context(
             top_files=all_top_files[:5],
             matched_terms=list(dict.fromkeys(all_matched)),
             missed_terms=list(dict.fromkeys(all_missed)),
+            evidence_files=all_evidence_files[:10],
         )
         return "\n\n".join(rendered_sections), diag
 
