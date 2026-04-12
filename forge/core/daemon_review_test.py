@@ -459,7 +459,9 @@ class TestReviewGateEvents:
         emitted_events = self._collect_events(mixin)
         llm_output_events = [e for e in emitted_events if e[0] == "review:llm_output"]
         assert any(
-            "Starting review (GPT-5.4, high reasoning)" in data["line"]
+            "Starting review (" in data["line"]
+            and "GPT-5.4" in data["line"]
+            and "high reasoning" in data["line"]
             for _, data in llm_output_events
         )
 

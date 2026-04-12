@@ -28,6 +28,7 @@ from forge.core.daemon_helpers import (
 from forge.core.logging_config import make_console
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
+from forge.core.retrieval_context import build_reviewer_context
 
 logger = logging.getLogger("forge.daemon")
 console = make_console()
@@ -1379,6 +1380,22 @@ class ReviewMixin:
 
             # Load adaptive review settings from project config
             _review_cfg = getattr(getattr(self, "_project_config", None), "review", None)
+            snapshots = getattr(self, "_snapshots", {})
+            snapshot = snapshots.get(repo_id) if repo_id and snapshots else self._snapshot
+            repo_map = getattr(self, "_repos", {}) or {}
+            project_dir_hint = getattr(self, "_project_dir", "")
+            repo_path = repo_map.get(repo_id).path if repo_id and repo_id in repo_map else project_dir_hint
+            if not repo_path:
+                repo_path = worktree_path
+            review_context = build_reviewer_context(
+                project_dir_hint=project_dir_hint or repo_path,
+                repo_path=repo_path,
+                snapshot=snapshot,
+                settings=self._settings,
+                task_files=task.files,
+                task_prompt=f"{task.title}\n\n{task.description}",
+                repo_label=repo_id if repo_id not in (None, "default") else None,
+            )
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title,
                 task.description,
@@ -1387,7 +1404,7 @@ class ReviewMixin:
                 model=reviewer_model,
                 prior_feedback=prior_feedback,
                 prior_diff=prior_diff,
-                project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
+                project_context=review_context,
                 allowed_files=task.files,
                 delta_diff=delta_diff,
                 sibling_context=sibling_context,
@@ -1526,7 +1543,7 @@ class ReviewMixin:
                     diff,
                     worktree_path,
                     model=reviewer_model,
-                    project_context=self._snapshot.format_for_reviewer() if self._snapshot else "",
+                    project_context=review_context,
                     allowed_files=task.files,
                     sibling_context=sibling_context,
                     validation_context=validation_context,

@@ -72,6 +72,11 @@ def test_new_settings_defaults():
     s = ForgeSettings()
     assert s.pipeline_timeout_seconds == 3600
     assert s.contracts_required is False
+    assert s.retrieval_enabled is True
+    assert s.retrieval_max_files == 6
+    assert s.retrieval_max_symbols == 4
+    assert s.retrieval_max_neighbors == 2
+    assert s.retrieval_planner_min_confidence == 0.6
 
 
 def test_autonomy_default():
@@ -233,6 +238,16 @@ def test_question_timeout_too_low_raises():
 def test_question_timeout_too_high_raises():
     with pytest.raises(ValidationError, match="question_timeout must be between 60 and 7200"):
         ForgeSettings(question_timeout=7201)
+
+
+def test_retrieval_settings_must_be_positive():
+    with pytest.raises(ValidationError, match="retrieval settings must be >= 1"):
+        ForgeSettings(retrieval_max_files=0)
+
+
+def test_retrieval_planner_min_confidence_must_be_in_range():
+    with pytest.raises(ValidationError, match="retrieval_planner_min_confidence must be between 0 and 1"):
+        ForgeSettings(retrieval_planner_min_confidence=1.5)
 
 
 # --- Multi-provider fields ---

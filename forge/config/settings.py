@@ -34,6 +34,15 @@ class ForgeSettings(BaseSettings):
     # Agent sandboxing
     allowed_dirs: list[str] = []  # Extra directories agents can access
 
+    # Retrieval-backed context
+    retrieval_enabled: bool = True
+    retrieval_tool_dir: str = ""  # Optional path to a local codegraph checkout
+    retrieval_max_files: int = 6
+    retrieval_max_symbols: int = 4
+    retrieval_max_neighbors: int = 2
+    retrieval_timeout_seconds: int = 20
+    retrieval_planner_min_confidence: float = 0.6
+
     # Build, test & lint verification
     build_cmd: str | None = None
     test_cmd: str | None = None
@@ -208,6 +217,25 @@ class ForgeSettings(BaseSettings):
     def question_timeout_range(cls, v: int) -> int:
         if not (60 <= v <= 7200):
             raise ValueError("question_timeout must be between 60 and 7200")
+        return v
+
+    @field_validator(
+        "retrieval_max_files",
+        "retrieval_max_symbols",
+        "retrieval_max_neighbors",
+        "retrieval_timeout_seconds",
+    )
+    @classmethod
+    def retrieval_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("retrieval settings must be >= 1")
+        return v
+
+    @field_validator("retrieval_planner_min_confidence")
+    @classmethod
+    def retrieval_planner_confidence_range(cls, v: float) -> float:
+        if not (0 <= v <= 1):
+            raise ValueError("retrieval_planner_min_confidence must be between 0 and 1")
         return v
 
     @field_validator("planning_mode")
