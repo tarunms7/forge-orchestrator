@@ -391,6 +391,7 @@ def test_evidence_files_defaults_to_empty_when_no_retrieval():
 
 # --- derive_task_evidence tests ---
 
+
 def _sample_planner_diagnostics() -> dict:
     """Build a realistic planner diagnostics dict for derive_task_evidence tests."""
     return {

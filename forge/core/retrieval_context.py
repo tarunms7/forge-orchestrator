@@ -172,8 +172,7 @@ def derive_task_evidence(
         if ef_dir and ef_dir in task_dirs:
             matched.append(ef)
             rationale_parts.append(
-                f"{posixpath.basename(norm_path)} shares directory "
-                f"{ef_dir}/ with a task file"
+                f"{posixpath.basename(norm_path)} shares directory {ef_dir}/ with a task file"
             )
 
     return {
