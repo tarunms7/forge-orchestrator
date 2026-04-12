@@ -49,6 +49,8 @@ _GIT_ADD_EXCLUDES: list[str] = [
     ":(exclude).pytest_cache",
     ":(exclude).mypy_cache",
     ":(exclude).codegraph",
+    ":(exclude).forge/codegraph",
+    ":(exclude).forge/screenshots",
     ":(exclude)screenshots",
 ]
 
@@ -62,6 +64,8 @@ _STAGE_EXCLUDED_PREFIXES: tuple[str, ...] = (
     ".pytest_cache/",
     ".mypy_cache/",
     ".codegraph/",
+    ".forge/codegraph/",
+    ".forge/screenshots/",
     "screenshots/",
 )
 _STAGE_EXCLUDED_EXACT: tuple[str, ...] = (
@@ -74,6 +78,8 @@ _STAGE_EXCLUDED_EXACT: tuple[str, ...] = (
     ".pytest_cache",
     ".mypy_cache",
     ".codegraph",
+    ".forge/codegraph",
+    ".forge/screenshots",
     "screenshots",
 )
 

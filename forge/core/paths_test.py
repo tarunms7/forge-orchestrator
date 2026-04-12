@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import os
 
-from forge.core.paths import forge_data_dir, forge_db_path, forge_db_url, project_forge_dir
+from forge.core.paths import (
+    forge_data_dir,
+    forge_db_path,
+    forge_db_url,
+    project_artifact_dir,
+    project_forge_dir,
+)
 
 
 def test_forge_data_dir_respects_env_var(tmp_path, monkeypatch):
@@ -98,3 +104,26 @@ def test_project_forge_dir_repo_local_default(tmp_path):
     expected = os.path.join(str(tmp_path), ".forge")
     assert result == expected
     assert os.path.isdir(expected)
+
+
+def test_project_artifact_dir_creates_nested_dir_and_gitignore(tmp_path):
+    result = project_artifact_dir(str(tmp_path), "screenshots")
+
+    assert result == os.path.join(str(tmp_path), ".forge", "screenshots")
+    assert os.path.isdir(result)
+    gitignore_path = os.path.join(result, ".gitignore")
+    assert os.path.isfile(gitignore_path)
+    assert open(gitignore_path, encoding="utf-8").read() == "*\n!.gitignore\n"
+
+
+def test_project_artifact_dir_preserves_existing_gitignore(tmp_path):
+    artifact_dir = os.path.join(str(tmp_path), ".forge", "codegraph")
+    os.makedirs(artifact_dir, exist_ok=True)
+    gitignore_path = os.path.join(artifact_dir, ".gitignore")
+    with open(gitignore_path, "w", encoding="utf-8") as handle:
+        handle.write("custom\n")
+
+    result = project_artifact_dir(str(tmp_path), "codegraph")
+
+    assert result == artifact_dir
+    assert open(gitignore_path, encoding="utf-8").read() == "custom\n"

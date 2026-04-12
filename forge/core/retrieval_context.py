@@ -17,6 +17,7 @@ from forge.core.context import (
     _format_module_index,
     format_multi_repo_snapshot,
 )
+from forge.core.paths import project_artifact_dir
 
 if TYPE_CHECKING:
     from forge.config.settings import ForgeSettings
@@ -184,6 +185,9 @@ def _fetch_evidence(
         for path in files or []:
             cli_args.extend(["--file", path])
 
+    env = os.environ.copy()
+    env["CODEGRAPH_CACHE_DIR"] = _codegraph_cache_dir(repo_path)
+
     uv_bin = shutil.which("uv")
     if uv_bin:
         cmd = [uv_bin, "run", "codegraph", *cli_args]
@@ -206,6 +210,7 @@ def _fetch_evidence(
             cwd=codegraph_dir,
             capture_output=True,
             text=True,
+            env=env,
             timeout=settings.retrieval_timeout_seconds,
             check=False,
         )
@@ -233,6 +238,11 @@ def _fetch_evidence(
     if not data.get("files"):
         return None
     return data
+
+
+def _codegraph_cache_dir(repo_path: str) -> str:
+    """Store Forge-triggered codegraph cache under the repo's .forge directory."""
+    return project_artifact_dir(repo_path, "codegraph")
 
 
 def _planner_evidence_is_usable(data: dict, *, settings: ForgeSettings) -> bool:

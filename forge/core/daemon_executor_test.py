@@ -182,6 +182,8 @@ class TestStageablePathFiltering:
                 "?? .venv/bin/python",
                 "?? .ruff_cache/cache",
                 "?? .codegraph/index.db",
+                "?? .forge/codegraph/index.db",
+                "?? .forge/screenshots/run.svg",
                 "?? screenshots/run.png",
             ]
         )
