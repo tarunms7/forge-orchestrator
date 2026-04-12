@@ -454,12 +454,15 @@ def test_derive_task_evidence_matches_neighbor():
 
 def test_derive_task_evidence_matches_same_directory():
     diag = _sample_planner_diagnostics()
-    # forge/core/auth.py is in forge/core/ — if task has forge/core/models.py, same dir
-    result = derive_task_evidence(diag, ["forge/core/models.py"])
+    # forge/core/auth.py is in forge/core/ — use a task file in the same directory
+    # that is NOT referenced as a neighbor (models.py IS a neighbor of auth.py,
+    # so it would match via Check 2 instead of Check 3).
+    result = derive_task_evidence(diag, ["forge/core/utils.py"])
 
     paths = [ef["path"] for ef in result["evidence_files"]]
     assert "forge/core/auth.py" in paths
     assert result["used_retrieval"] is True
+    assert "shares directory" in result["rationale"]
 
 
 def test_derive_task_evidence_no_match():
