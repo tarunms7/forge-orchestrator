@@ -26,9 +26,9 @@ from forge.core.daemon_helpers import (
     async_subprocess,
 )
 from forge.core.logging_config import make_console
+from forge.core.retrieval_context import build_reviewer_context
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
-from forge.core.retrieval_context import build_reviewer_context
 
 logger = logging.getLogger("forge.daemon")
 console = make_console()
