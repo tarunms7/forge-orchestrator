@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from forge.core.claude_planner import PLANNER_SYSTEM_PROMPT, ClaudePlannerLLM
-from forge.core.sanitize import extract_json_block
 from forge.core.errors import SdkCallError
+from forge.core.sanitize import extract_json_block
 
 
 class TestPlannerSystemPrompt:
