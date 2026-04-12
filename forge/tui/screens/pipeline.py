@@ -27,8 +27,8 @@ from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.chat_thread import ChatThread, format_review_progress
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.dag import DagOverlay
-from forge.tui.widgets.evidence_panel import EvidencePanel
 from forge.tui.widgets.diff_viewer import DiffViewer
+from forge.tui.widgets.evidence_panel import EvidencePanel
 from forge.tui.widgets.progress_bar import PipelineProgress
 from forge.tui.widgets.queue_status import QueueStatus
 from forge.tui.widgets.search_overlay import SearchOverlay
