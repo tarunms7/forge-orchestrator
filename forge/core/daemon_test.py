@@ -584,7 +584,12 @@ class TestPipelinePauseTracking:
         db.set_executor_info = AsyncMock()
         db.clear_executor_info = AsyncMock()
 
-        daemon._emit = AsyncMock()
+        emitted: list[tuple] = []
+
+        async def mock_emit(event_type, payload, *, db=None, pipeline_id=None):
+            emitted.append((event_type, payload))
+
+        daemon._emit = mock_emit
 
         with patch("forge.core.daemon._print_status_table"):
             with patch("forge.core.daemon.Scheduler.dispatch_plan", return_value=[]):
@@ -615,6 +620,12 @@ class TestPipelinePauseTracking:
         db.add_pipeline_paused_duration.assert_called()
         duration_arg = db.add_pipeline_paused_duration.call_args.args[1]
         assert duration_arg >= 0  # non-negative elapsed time
+
+        event_types = [event for event, _payload in emitted]
+        assert "pipeline:resumed" in event_types
+        resume_event = next(payload for event, payload in emitted if event == "pipeline:resumed")
+        assert resume_event["reason"] == "awaiting_input_resolved"
+        assert resume_event["paused_seconds"] >= 0
 
     async def test_no_pause_tracking_without_pipeline_id(self, tmp_path):
         """Pause tracking is not active when pipeline_id is None."""
