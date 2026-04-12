@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,6 +27,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger("forge.retrieval")
 
 
+@dataclass
+class RetrievalDiagnostics:
+    """Diagnostics payload emitted when retrieval context is built."""
+
+    stage: str  # 'planner', 'agent', or 'reviewer'
+    used_retrieval: bool
+    confidence: float | None = None
+    top_files: list[str] = field(default_factory=list)
+    matched_terms: list[str] = field(default_factory=list)
+    missed_terms: list[str] = field(default_factory=list)
+
+    def to_event_dict(self) -> dict:
+        return {
+            "stage": self.stage,
+            "used_retrieval": self.used_retrieval,
+            "confidence": self.confidence,
+            "top_files": self.top_files,
+            "matched_terms": self.matched_terms,
+            "missed_terms": self.missed_terms,
+        }
+
+
+def _diagnostics_from_evidence(stage: str, data: dict) -> RetrievalDiagnostics:
+    """Build a populated RetrievalDiagnostics from codegraph evidence."""
+    return RetrievalDiagnostics(
+        stage=stage,
+        used_retrieval=True,
+        confidence=data.get("confidence"),
+        top_files=[f.get("path", "") for f in (data.get("files") or [])[:5]],
+        matched_terms=data.get("matched_terms") or [],
+        missed_terms=data.get("missed_terms") or [],
+    )
+
+
 def build_planner_context(
     *,
     project_dir_hint: str,
@@ -34,7 +69,7 @@ def build_planner_context(
     query: str,
     settings: ForgeSettings,
     repo_label: str | None = None,
-) -> str:
+) -> tuple[str, RetrievalDiagnostics]:
     """Build planner context using retrieval when available."""
     fallback = snapshot.format_for_planner() if snapshot else ""
     evidence = _fetch_evidence(
@@ -44,12 +79,13 @@ def build_planner_context(
         query=query,
     )
     if evidence is None or not _planner_evidence_is_usable(evidence, settings=settings):
-        return fallback
+        return fallback, RetrievalDiagnostics(stage="planner", used_retrieval=False)
     parts = [_compact_snapshot(snapshot, repo_label=repo_label, include_branch=True)]
     rendered = _render_evidence(evidence, heading="Planner Retrieval")
     if rendered:
         parts.append(rendered)
-    return "\n\n".join(part for part in parts if part)
+    context = "\n\n".join(part for part in parts if part)
+    return context, _diagnostics_from_evidence("planner", evidence)
 
 
 def build_multi_repo_planner_context(
@@ -59,10 +95,14 @@ def build_multi_repo_planner_context(
     snapshots: dict[str, ProjectSnapshot],
     query: str,
     settings: ForgeSettings,
-) -> str:
+) -> tuple[str, RetrievalDiagnostics]:
     """Build planner context for multi-repo workspaces."""
     rendered_sections: list[str] = []
     found_retrieval = False
+    first_confidence: float | None = None
+    all_top_files: list[str] = []
+    all_matched: list[str] = []
+    all_missed: list[str] = []
 
     for repo_id in sorted(repos.keys()):
         repo = repos[repo_id]
@@ -76,6 +116,13 @@ def build_multi_repo_planner_context(
         if evidence is None or not _planner_evidence_is_usable(evidence, settings=settings):
             continue
         found_retrieval = True
+        if first_confidence is None:
+            first_confidence = evidence.get("confidence")
+        all_top_files.extend(
+            f.get("path", "") for f in (evidence.get("files") or [])[:5]
+        )
+        all_matched.extend(evidence.get("matched_terms") or [])
+        all_missed.extend(evidence.get("missed_terms") or [])
         section_parts = [
             f"### Repo: {repo_id} ({repo.path})",
             _compact_snapshot(snapshot, repo_label=repo_id, include_branch=True),
@@ -86,9 +133,20 @@ def build_multi_repo_planner_context(
         rendered_sections.append("\n\n".join(part for part in section_parts if part))
 
     if found_retrieval:
-        return "\n\n".join(rendered_sections)
+        diag = RetrievalDiagnostics(
+            stage="planner",
+            used_retrieval=True,
+            confidence=first_confidence,
+            top_files=all_top_files[:5],
+            matched_terms=list(dict.fromkeys(all_matched)),
+            missed_terms=list(dict.fromkeys(all_missed)),
+        )
+        return "\n\n".join(rendered_sections), diag
 
-    return format_multi_repo_snapshot(snapshots, repos)
+    return (
+        format_multi_repo_snapshot(snapshots, repos),
+        RetrievalDiagnostics(stage="planner", used_retrieval=False),
+    )
 
 
 def build_agent_context(
@@ -100,7 +158,7 @@ def build_agent_context(
     task_files: list[str] | None = None,
     task_prompt: str = "",
     repo_label: str | None = None,
-) -> str:
+) -> tuple[str, RetrievalDiagnostics]:
     """Build agent context using file-seeded retrieval when possible."""
     fallback = snapshot.format_for_agent() if snapshot else ""
     evidence = _fetch_evidence(
@@ -111,12 +169,13 @@ def build_agent_context(
         query=task_prompt if not task_files else None,
     )
     if evidence is None:
-        return fallback
+        return fallback, RetrievalDiagnostics(stage="agent", used_retrieval=False)
     parts = [_compact_snapshot(snapshot, repo_label=repo_label, include_branch=True)]
     rendered = _render_evidence(evidence, heading="Task Retrieval")
     if rendered:
         parts.append(rendered)
-    return "\n\n".join(part for part in parts if part)
+    context = "\n\n".join(part for part in parts if part)
+    return context, _diagnostics_from_evidence("agent", evidence)
 
 
 def build_reviewer_context(
@@ -128,7 +187,7 @@ def build_reviewer_context(
     task_files: list[str] | None = None,
     task_prompt: str = "",
     repo_label: str | None = None,
-) -> str:
+) -> tuple[str, RetrievalDiagnostics]:
     """Build reviewer context focused on changed files and nearby code."""
     fallback = snapshot.format_for_reviewer() if snapshot else ""
     evidence = _fetch_evidence(
@@ -139,12 +198,13 @@ def build_reviewer_context(
         query=task_prompt if not task_files else None,
     )
     if evidence is None:
-        return fallback
+        return fallback, RetrievalDiagnostics(stage="reviewer", used_retrieval=False)
     parts = [_compact_snapshot(snapshot, repo_label=repo_label, include_branch=False)]
     rendered = _render_evidence(evidence, heading="Review Retrieval")
     if rendered:
         parts.append(rendered)
-    return "\n\n".join(part for part in parts if part)
+    context = "\n\n".join(part for part in parts if part)
+    return context, _diagnostics_from_evidence("reviewer", evidence)
 
 
 def _fetch_evidence(
