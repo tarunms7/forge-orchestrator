@@ -1219,7 +1219,7 @@ async def create_pr(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error(e, "Internal server error"))
 
 
 # ── CI Auto-Fix endpoints ────────────────────────────────────────────
