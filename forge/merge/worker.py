@@ -79,6 +79,16 @@ class MergeWorker:
                 check=False,
                 description="check worktree clean after rebase",
             )
+            if status_result.returncode != 0:
+                logger.error(
+                    "git status failed after rebase (rc=%d): %s",
+                    status_result.returncode,
+                    (status_result.stderr or "").strip()[:200],
+                )
+                return MergeResult(
+                    success=False,
+                    error="Worktree dirty after rebase",
+                )
             if status_result.stdout.strip():
                 logger.error(
                     "Worktree dirty after rebase: %s",
