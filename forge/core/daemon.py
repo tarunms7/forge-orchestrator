@@ -57,6 +57,7 @@ from forge.core.provider_config import (
     resolve_reasoning_effort_for_stage,
     resolve_registry_model,
 )
+from forge.core.retrieval_context import build_multi_repo_planner_context, build_planner_context
 from forge.core.scheduler import Scheduler, SchedulingAnalysis
 from forge.core.state import TaskStateMachine
 from forge.learning.store import format_lessons_block, row_to_lesson
@@ -962,19 +963,32 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         # Run snapshot gathering in a thread to avoid blocking the event loop
         await _planner_progress("Gathering project snapshot…")
         if len(planning_repos) == 1:
-            repo = next(iter(planning_repos.values()))
+            repo_id, repo = next(iter(planning_repos.items()))
             self._snapshot = await asyncio.get_running_loop().run_in_executor(
                 None,
                 gather_project_snapshot,
                 repo.path,
             )
-            snapshot_text = self._snapshot.format_for_planner() if self._snapshot else ""
+            snapshot_text = build_planner_context(
+                project_dir_hint=self._project_dir,
+                repo_path=repo.path,
+                snapshot=self._snapshot,
+                query=user_input,
+                settings=self._settings,
+                repo_label=repo_id,
+            )
             repo_ids = None
         else:
-            from forge.core.context import format_multi_repo_snapshot, gather_multi_repo_snapshots
+            from forge.core.context import gather_multi_repo_snapshots
 
             snapshots = await gather_multi_repo_snapshots(planning_repos)
-            snapshot_text = format_multi_repo_snapshot(snapshots, planning_repos)
+            snapshot_text = build_multi_repo_planner_context(
+                project_dir_hint=self._project_dir,
+                repos=planning_repos,
+                snapshots=snapshots,
+                query=user_input,
+                settings=self._settings,
+            )
             repo_ids = set(planning_repos.keys())
             self._snapshot = next(iter(snapshots.values())) if snapshots else None
             self._snapshots = snapshots if snapshots else {}

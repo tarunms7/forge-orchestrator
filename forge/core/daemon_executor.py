@@ -28,6 +28,7 @@ from forge.core.daemon_helpers import (
 )
 from forge.core.logging_config import make_console
 from forge.core.models import AgentState, TaskState
+from forge.core.retrieval_context import build_agent_context
 from forge.core.sanitize import validate_task_id
 from forge.learning.guard import GuardTriggered, RuntimeGuard
 from forge.learning.store import format_lessons_block, row_to_lesson
@@ -206,7 +207,13 @@ class ExecutorMixin:
         result = {k: v for k, v in cmds.items() if v}
         return result or None
 
-    def _build_project_context(self, repo_id: str | None = None) -> str:
+    def _build_project_context(
+        self,
+        repo_id: str | None = None,
+        *,
+        task_files: list[str] | None = None,
+        task_prompt: str = "",
+    ) -> str:
         """Build project context string from snapshot + forge.toml instructions.
 
         In multi-repo mode, uses the snapshot for *repo_id* so each agent
@@ -215,8 +222,22 @@ class ExecutorMixin:
         parts = []
         snapshots = getattr(self, "_snapshots", {})
         snapshot = snapshots.get(repo_id) if repo_id and snapshots else self._snapshot
-        if snapshot:
-            parts.append(snapshot.format_for_agent())
+        repo_map = getattr(self, "_repos", {}) or {}
+        project_dir_hint = getattr(self, "_project_dir", "")
+        repo_path = repo_map.get(repo_id).path if repo_id and repo_id in repo_map else project_dir_hint
+        if not repo_path:
+            repo_path = "."
+        retrieval_context = build_agent_context(
+            project_dir_hint=project_dir_hint or repo_path,
+            repo_path=repo_path,
+            snapshot=snapshot,
+            settings=self._settings,
+            task_files=task_files,
+            task_prompt=task_prompt,
+            repo_label=repo_id if repo_id not in (None, "default") else None,
+        )
+        if retrieval_context:
+            parts.append(retrieval_context)
         # Inject user instructions from .forge/forge.toml
         instructions = getattr(getattr(self, "_project_config", None), "instructions", "")
         if instructions:
@@ -2575,7 +2596,11 @@ class ExecutorMixin:
                 allowed_dirs=allowed_dirs,
                 model=agent_model,
                 on_message=_on_msg,
-                project_context=self._build_project_context(repo_id=task_repo_id),
+                project_context=self._build_project_context(
+                    repo_id=task_repo_id,
+                    task_files=task.files,
+                    task_prompt=f"{task.title}\n\n{task.description}",
+                ),
                 conventions_json=conventions_json,
                 conventions_md=conventions_md,
                 completed_deps=completed_deps if completed_deps else None,
