@@ -186,7 +186,9 @@ class TestScreenshotDir:
 
         assert result == str(tmp_path / ".forge" / "screenshots")
         assert (tmp_path / ".forge" / "screenshots").is_dir()
-        assert (tmp_path / ".forge" / "screenshots" / ".gitignore").read_text() == "*\n!.gitignore\n"
+        assert (
+            tmp_path / ".forge" / "screenshots" / ".gitignore"
+        ).read_text() == "*\n!.gitignore\n"
 
 
 class TestMultiRepoPrCreationEvents:

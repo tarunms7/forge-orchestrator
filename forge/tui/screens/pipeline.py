@@ -1038,9 +1038,7 @@ class PipelineScreen(Screen):
     def _update_retrieval_diagnostics(self) -> None:
         """Update the retrieval diagnostics banner from state."""
         try:
-            banner = self.query_one(
-                "#retrieval-diagnostics-banner", RetrievalDiagnosticsBanner
-            )
+            banner = self.query_one("#retrieval-diagnostics-banner", RetrievalDiagnosticsBanner)
             banner.update_diagnostics(self._state.retrieval_diagnostics)
         except Exception:
             pass

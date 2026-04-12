@@ -2607,7 +2607,10 @@ class ExecutorMixin:
         diag_data = agent_diag.to_event_dict()
         diag_data["task_id"] = task_id
         await self._emit(
-            "retrieval:diagnostics", diag_data, db=db, pipeline_id=pid,
+            "retrieval:diagnostics",
+            diag_data,
+            db=db,
+            pipeline_id=pid,
         )
 
         try:

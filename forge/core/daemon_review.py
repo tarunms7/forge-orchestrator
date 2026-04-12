@@ -1401,7 +1401,10 @@ class ReviewMixin:
             diag_data = reviewer_diag.to_event_dict()
             diag_data["task_id"] = task.id
             await self._emit(
-                "retrieval:diagnostics", diag_data, db=db, pipeline_id=pipeline_id,
+                "retrieval:diagnostics",
+                diag_data,
+                db=db,
+                pipeline_id=pipeline_id,
             )
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title,

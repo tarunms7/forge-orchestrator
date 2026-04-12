@@ -118,9 +118,7 @@ def build_multi_repo_planner_context(
         found_retrieval = True
         if first_confidence is None:
             first_confidence = evidence.get("confidence")
-        all_top_files.extend(
-            f.get("path", "") for f in (evidence.get("files") or [])[:5]
-        )
+        all_top_files.extend(f.get("path", "") for f in (evidence.get("files") or [])[:5])
         all_matched.extend(evidence.get("matched_terms") or [])
         all_missed.extend(evidence.get("missed_terms") or [])
         section_parts = [
