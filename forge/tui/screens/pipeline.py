@@ -27,6 +27,7 @@ from forge.tui.widgets.agent_output import AgentOutput
 from forge.tui.widgets.chat_thread import ChatThread, format_review_progress
 from forge.tui.widgets.copy_overlay import CopyOverlay
 from forge.tui.widgets.dag import DagOverlay
+from forge.tui.widgets.evidence_panel import EvidencePanel
 from forge.tui.widgets.diff_viewer import DiffViewer
 from forge.tui.widgets.progress_bar import PipelineProgress
 from forge.tui.widgets.queue_status import QueueStatus
@@ -473,6 +474,7 @@ class PipelineScreen(Screen):
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("g", "toggle_dag", "Toggle DAG"),
+        Binding("w", "toggle_evidence", "Why files?", show=True),
         Binding("tab", "cycle_agent", "Next agent", show=False),
         Binding("o", "view_output", "Output", show=True),
         Binding("c", "copy_mode", "Copy", show=True),
@@ -517,6 +519,7 @@ class PipelineScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield DagOverlay()
+        yield EvidencePanel(id="evidence-panel")
         yield PhaseBanner()
         yield RoutingAuditBanner(id="routing-audit-banner")
         yield RetrievalDiagnosticsBanner(id="retrieval-diagnostics-banner")
@@ -534,6 +537,7 @@ class PipelineScreen(Screen):
         yield ShortcutBar(
             [
                 ("d", "View Diff"),
+                ("w", "Why Files?"),
                 ("↑↓", "Select Task"),
                 ("q", "Quit (tasks saved)"),
             ]
@@ -582,6 +586,9 @@ class PipelineScreen(Screen):
             return
         if field == "retrieval_diagnostics":
             self._update_retrieval_diagnostics()
+            return
+        if field == "task_retrieval_diagnostics":
+            self._update_evidence_panel()
             return
         if field == "task_diffs":
             # New diff arrived from daemon — update diff viewer if showing
@@ -998,6 +1005,7 @@ class PipelineScreen(Screen):
 
         decision_badge.update_count(len(state.pending_questions))
         self._refresh_interjection_chat_if_active()
+        self._update_evidence_panel()
 
     def _build_error_detail_context(self, task_id: str, task: dict) -> tuple[dict, list[str]]:
         """Choose the most useful failure context for the selected errored task.
@@ -1329,6 +1337,30 @@ class PipelineScreen(Screen):
 
     def action_toggle_dag(self) -> None:
         self.query_one(DagOverlay).toggle()
+
+    def action_toggle_evidence(self) -> None:
+        panel = self.query_one("#evidence-panel", EvidencePanel)
+        if panel.is_open:
+            panel.toggle()
+        else:
+            tid = self._state.selected_task_id
+            diag = self._state.task_retrieval_diagnostics.get(tid or "", {})
+            title = self._state.tasks.get(tid or "", {}).get("title", tid or "")
+            panel.update_evidence(diag, title)
+            panel.toggle()
+
+    def _update_evidence_panel(self) -> None:
+        """Refresh evidence panel data if it is currently visible."""
+        try:
+            panel = self.query_one("#evidence-panel", EvidencePanel)
+        except Exception:
+            return
+        if not panel.is_open:
+            return
+        tid = self._state.selected_task_id
+        diag = self._state.task_retrieval_diagnostics.get(tid or "", {})
+        title = self._state.tasks.get(tid or "", {}).get("title", tid or "")
+        panel.update_evidence(diag, title)
 
     def action_cycle_agent(self) -> None:
         active = self._state.active_task_ids

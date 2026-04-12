@@ -1602,3 +1602,47 @@ class TestRetrievalDiagnostics:
         assert len(state.retrieval_diagnostics) == 2
         assert state.retrieval_diagnostics["planner"]["used_retrieval"] is True
         assert state.retrieval_diagnostics["agent"]["used_retrieval"] is False
+
+    def test_state_on_retrieval_diagnostics_stores_per_task(self):
+        """Emit event with task_id → stored in task_retrieval_diagnostics."""
+        state = TuiState()
+        notified = []
+        state.on_change(lambda f: notified.append(f))
+
+        state.apply_event(
+            "retrieval:diagnostics",
+            {
+                "stage": "agent",
+                "task_id": "task-42",
+                "used_retrieval": True,
+                "confidence": 0.88,
+                "top_files": ["x.py"],
+                "matched_terms": ["auth"],
+                "missed_terms": [],
+            },
+        )
+
+        assert "task-42" in state.task_retrieval_diagnostics
+        diag = state.task_retrieval_diagnostics["task-42"]
+        assert diag["used_retrieval"] is True
+        assert diag["confidence"] == 0.88
+        assert "task_retrieval_diagnostics" in notified
+
+    def test_state_on_retrieval_diagnostics_no_task_id_skips_per_task(self):
+        """Events without task_id don't populate task_retrieval_diagnostics."""
+        state = TuiState()
+        notified = []
+        state.on_change(lambda f: notified.append(f))
+
+        state.apply_event(
+            "retrieval:diagnostics",
+            {
+                "stage": "planner",
+                "used_retrieval": True,
+                "confidence": 0.9,
+                "top_files": ["a.py"],
+            },
+        )
+
+        assert state.task_retrieval_diagnostics == {}
+        assert "task_retrieval_diagnostics" not in notified

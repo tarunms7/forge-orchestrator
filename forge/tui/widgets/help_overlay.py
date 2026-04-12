@@ -73,6 +73,7 @@ PIPELINE_HELP: list[HelpEntry] = [
     HelpEntry("r", "Review panel", "Show review output", "Views"),
     HelpEntry("c", "Copy mode", "Enter line-selection copy mode", "Views"),
     HelpEntry("g", "Toggle DAG", "Toggle the dependency graph view", "Views"),
+    HelpEntry("w", "Why files?", "Show retrieval evidence for selected task", "Views"),
     HelpEntry("/", "Search", "Toggle search overlay", "Tools"),
     HelpEntry("n/N", "Search nav", "Jump to next/previous search match", "Tools"),
     HelpEntry("R", "Retry task", "Retry a failed task", "Actions"),

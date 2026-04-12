@@ -2016,3 +2016,15 @@ async def test_pipeline_screen_has_retrieval_diagnostics_banner():
         banner = app.screen.query_one(RetrievalDiagnosticsBanner)
         assert banner is not None
         assert banner.id == "retrieval-diagnostics-banner"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_screen_has_evidence_panel():
+    """EvidencePanel is present in PipelineScreen composition with correct id."""
+    from forge.tui.widgets.evidence_panel import EvidencePanel
+
+    app = PipelineTestApp()
+    async with app.run_test():
+        panel = app.screen.query_one("#evidence-panel", EvidencePanel)
+        assert panel is not None
+        assert panel.is_open is False
