@@ -404,7 +404,7 @@ async def _run_webhook_pipeline(
                 project_dir,
             )
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Webhook pipeline %s failed", pipeline_id)
         try:
             await forge_db.update_pipeline_status(pipeline_id, "error")
