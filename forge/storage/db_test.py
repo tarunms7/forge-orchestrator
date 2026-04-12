@@ -2,6 +2,7 @@ import json
 import logging
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
 from forge.storage.db import Database, PipelineRow
@@ -2020,7 +2021,7 @@ async def test_get_repos_malformed_json_returns_empty_list(db: Database, caplog)
     # Manually corrupt repos_json
     async with db._session_factory() as session:
         result = await session.execute(
-            __import__("sqlalchemy").select(PipelineRow).where(PipelineRow.id == "pipe-bad-json")
+            select(PipelineRow).where(PipelineRow.id == "pipe-bad-json")
         )
         pipeline = result.scalar_one()
         pipeline.repos_json = "{not valid json"

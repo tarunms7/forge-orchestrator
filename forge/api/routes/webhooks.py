@@ -404,7 +404,7 @@ async def _run_webhook_pipeline(
                 project_dir,
             )
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Webhook pipeline %s failed", pipeline_id)
         try:
             await forge_db.update_pipeline_status(pipeline_id, "error")
@@ -413,6 +413,6 @@ async def _run_webhook_pipeline(
         await _post_issue_comment(
             repo_full_name,
             issue_number,
-            "❌ **Pipeline failed.** Check server logs for details.",
+            f"❌ **Pipeline failed** (`{type(exc).__name__}`). Check server logs for details.",
             project_dir,
         )

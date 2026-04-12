@@ -1,4 +1,4 @@
-"""Authentication REST endpoints: register, login, logout, and refresh."""
+"""Authentication REST endpoints: register, login, and refresh."""
 
 from __future__ import annotations
 
@@ -164,20 +164,6 @@ async def login(body: LoginRequest, request: Request) -> JSONResponse:
     return _build_auth_response(user, jwt_secret)
 
 
-@router.post("/logout")
-async def logout() -> JSONResponse:
-    """Clear the refresh token cookie, ending the session."""
-    response = JSONResponse(content={"status": "ok"})
-    response.delete_cookie(
-        key="refresh_token",
-        path="/",
-        httponly=True,
-        secure=True,
-        samesite="strict",
-    )
-    return response
-
-
 @router.post("/refresh")
 async def refresh(request: Request) -> dict:
     """Exchange a valid refresh token cookie for a new access token."""
@@ -188,6 +174,8 @@ async def refresh(request: Request) -> dict:
         payload = decode_token(refresh_token, secret=request.app.state.jwt_secret)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
+        if payload.get("exp", 0) < time.time():
+            raise HTTPException(status_code=401, detail="Refresh token expired")
         new_access = create_access_token(
             subject=payload["sub"],
             secret=request.app.state.jwt_secret,
@@ -197,5 +185,4 @@ async def refresh(request: Request) -> dict:
     except HTTPException:
         raise
     except Exception:
-        logger.warning("Refresh token validation failed", exc_info=True)
         raise HTTPException(status_code=401, detail="Invalid refresh token")

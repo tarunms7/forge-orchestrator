@@ -5,8 +5,6 @@ from forge.api.routes.diff import router as diff_router
 from forge.api.routes.followup import router as followup_router
 from forge.api.routes.github import router as github_router
 from forge.api.routes.history import router as history_router
-from forge.api.routes.providers import router as providers_router
-from forge.api.routes.readiness import router as readiness_router
 from forge.api.routes.settings import router as settings_router
 from forge.api.routes.tasks import router as tasks_router
 from forge.api.routes.templates import router as templates_router
@@ -18,8 +16,6 @@ __all__ = [
     "followup_router",
     "github_router",
     "history_router",
-    "providers_router",
-    "readiness_router",
     "settings_router",
     "tasks_router",
     "templates_router",

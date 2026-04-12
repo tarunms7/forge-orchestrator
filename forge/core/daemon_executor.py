@@ -268,7 +268,7 @@ class ExecutorMixin:
         try:
             task = await db.get_task(task_id)
         except Exception:
-            logger.warning("Failed to load %s before recording completion", task_id, exc_info=True)
+            logger.debug("Failed to load %s before recording completion", task_id, exc_info=True)
             return
 
         if not task or task.state not in (
@@ -281,7 +281,7 @@ class ExecutorMixin:
         try:
             await db.set_task_timing(task_id, completed_at=datetime.now(UTC).isoformat())
         except Exception:
-            logger.warning("Failed to record completed_at for %s", task_id, exc_info=True)
+            logger.debug("Failed to record completed_at for %s", task_id, exc_info=True)
 
     async def _task_is_terminal(self, db, task_id: str) -> bool:
         """Check whether a task currently sits in a terminal state."""
@@ -1264,19 +1264,10 @@ class ExecutorMixin:
         pid = pipeline_id or ""
 
         # Persist the question
-        try:
-            question_text = question_data["question"]
-        except KeyError:
-            logger.warning(
-                "%s: malformed question_data missing 'question' key: %s",
-                task_id,
-                question_data,
-            )
-            question_text = "(malformed question)"
         q = await db.create_task_question(
             task_id=task_id,
             pipeline_id=pid,
-            question=question_text,
+            question=question_data["question"],
             suggestions=question_data.get("suggestions"),
             context=question_data.get("context"),
             source=question_data.get("source"),
@@ -1675,17 +1666,6 @@ class ExecutorMixin:
 
         if source in ("review_escalation", "review_uncertain"):
             await self._handle_review_answer(db, task_id, agent_id, answer, pipeline_id)
-            return
-
-        if self._runtime is None or self._worktree_mgr is None or self._merge_worker is None:
-            logger.error(
-                "Cannot resume task %s: runtime components not initialised "
-                "(runtime=%s, worktree_mgr=%s, merge_worker=%s)",
-                task_id,
-                self._runtime,
-                self._worktree_mgr,
-                self._merge_worker,
-            )
             return
 
         atask = asyncio.create_task(
