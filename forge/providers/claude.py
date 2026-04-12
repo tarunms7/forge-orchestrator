@@ -518,8 +518,10 @@ class ClaudeProvider:
         on_event: Callable[[ProviderEvent], None] | None = None,
     ) -> ExecutionHandle:
         """Start a Claude execution. Returns handle for abort/result."""
-        # Remove CLAUDECODE to prevent nested session block
-        os.environ.pop("CLAUDECODE", None)
+        # Build a clean env without CLAUDECODE to prevent nested session block.
+        # Use a filtered copy instead of mutating os.environ so concurrent
+        # Claude sessions don't interfere with each other.
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
         # Build ClaudeCodeOptions
         options = self._build_options(
@@ -530,6 +532,7 @@ class ClaudeProvider:
             max_turns=max_turns,
             reasoning_effort=reasoning_effort,
             resume_state=resume_state,
+            env=env,
         )
 
         # Launch the async query task
@@ -555,6 +558,7 @@ class ClaudeProvider:
         max_turns: int,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
         resume_state: ResumeState | None = None,
+        env: dict[str, str] | None = None,
     ) -> ClaudeCodeOptions:
         """Assemble ClaudeCodeOptions from provider parameters."""
         append_system_prompt = system_prompt
@@ -574,6 +578,9 @@ class ClaudeProvider:
             # stream progressively instead of only showing the final summary.
             "include_partial_messages": True,
         }
+
+        if env is not None:
+            kwargs["env"] = env
 
         # Resume from prior session
         if resume_state and resume_state.session_token:

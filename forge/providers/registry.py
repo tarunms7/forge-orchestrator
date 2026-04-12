@@ -7,6 +7,7 @@ supports model validation, stage validation, and health-check preflight.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from forge.providers.base import (
@@ -52,6 +53,7 @@ class ProviderRegistry:
         self._settings = settings
         self._providers: dict[str, ProviderProtocol] = {}
         self._catalog: dict[str, CatalogEntry] = {}
+        self._lock = threading.RLock()
 
     @property
     def settings(self) -> ForgeSettings:
@@ -60,14 +62,17 @@ class ProviderRegistry:
 
     def register(self, provider: ProviderProtocol) -> None:
         """Register a provider and index all its catalog entries by str(entry.spec)."""
-        self._providers[provider.name] = provider
-        for entry in provider.catalog_entries():
-            self.register_catalog_entry(entry)
+        with self._lock:
+            self._providers[provider.name] = provider
+            for entry in provider.catalog_entries():
+                key = str(entry.spec)
+                self._catalog[key] = entry
 
     def register_catalog_entry(self, entry: CatalogEntry) -> None:
         """Register a catalog entry directly without creating a new provider."""
-        key = str(entry.spec)
-        self._catalog[key] = entry
+        with self._lock:
+            key = str(entry.spec)
+            self._catalog[key] = entry
 
     def get_provider(self, name: str) -> ProviderProtocol:
         """Get provider by name. Raises KeyError if not found."""

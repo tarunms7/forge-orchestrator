@@ -631,6 +631,7 @@ async def synthesize_results(
     synthesis_tool_policy = ToolPolicy(mode="allowlist", allowed_tools=[])
 
     max_attempts = 2
+    last_result_text: str | None = None
     for attempt in range(1, max_attempts + 1):
         try:
             handle = provider.start(
@@ -652,7 +653,8 @@ async def synthesize_results(
             logger.warning("Synthesis attempt %d/%d failed: %s", attempt, max_attempts, exc)
             if attempt == max_attempts:
                 return _synthesis_fallback(
-                    chunk_results, chunks, pre_verdict, total_cost, strategy_label
+                    chunk_results, chunks, pre_verdict, total_cost, strategy_label,
+                    result_text=last_result_text,
                 )
             await asyncio.sleep(2**attempt)
             continue
@@ -667,10 +669,12 @@ async def synthesize_results(
                 )
             )
         raw = result.text or ""
+        last_result_text = result.text  # preserve for fallback
         if not raw:
             if attempt == max_attempts:
                 return _synthesis_fallback(
-                    chunk_results, chunks, pre_verdict, total_cost, strategy_label
+                    chunk_results, chunks, pre_verdict, total_cost, strategy_label,
+                    result_text=last_result_text,
                 )
             await asyncio.sleep(2**attempt)
             continue
@@ -684,7 +688,10 @@ async def synthesize_results(
         gate_result.chunk_verdicts = [r.verdict for r in chunk_results]
         return gate_result, total_cost
 
-    return _synthesis_fallback(chunk_results, chunks, pre_verdict, total_cost, strategy_label)
+    return _synthesis_fallback(
+        chunk_results, chunks, pre_verdict, total_cost, strategy_label,
+        result_text=last_result_text,
+    )
 
 
 def _synthesis_fallback(
@@ -693,8 +700,31 @@ def _synthesis_fallback(
     pre_verdict: str,
     total_cost: ReviewCostInfo,
     strategy_label: str = "tier3",
+    result_text: str | None = None,
 ) -> tuple[GateResult, ReviewCostInfo]:
-    """Fallback when synthesis LLM call fails: use rule-based verdict."""
+    """Fallback when synthesis LLM call fails: use rule-based verdict.
+
+    If *result_text* (partial LLM output) is available, attempt to parse a
+    verdict from it before falling back to the deterministic *pre_verdict*.
+    """
+    from forge.review.llm_review import _parse_review_result
+
+    # Try to salvage a verdict from partial LLM output before giving up
+    if result_text and result_text.strip():
+        try:
+            gate_result = _parse_review_result(result_text)
+            # If parsing produced a usable verdict (not an "Unclear" fallback),
+            # use it instead of the rule-based pre_verdict.
+            if not gate_result.details.startswith("Unclear review response"):
+                if pre_verdict == "UNCERTAIN" or gate_result.needs_human:
+                    gate_result.needs_human = True
+                gate_result.review_strategy = strategy_label
+                gate_result.chunk_count = len(chunks)
+                gate_result.chunk_verdicts = [r.verdict for r in chunk_results]
+                return gate_result, total_cost
+        except Exception:
+            pass  # Parsing failed — fall through to rule-based verdict
+
     summaries = "\n".join(
         f"Chunk {r.chunk_index}: {r.verdict} (conf {r.confidence}) — {r.summary}"
         for r in chunk_results

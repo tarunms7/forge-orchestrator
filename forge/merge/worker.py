@@ -71,6 +71,34 @@ class MergeWorker:
         except Exception as e:
             return MergeResult(success=False, error=str(e))
 
+        # Verify worktree is clean after rebase before advancing the ref
+        if worktree_path:
+            status_result = await _run_git(
+                ["status", "--porcelain"],
+                cwd=worktree_path,
+                check=False,
+                description="check worktree clean after rebase",
+            )
+            if status_result.returncode != 0:
+                logger.error(
+                    "git status failed after rebase (rc=%d): %s",
+                    status_result.returncode,
+                    (status_result.stderr or "").strip()[:200],
+                )
+                return MergeResult(
+                    success=False,
+                    error="Worktree dirty after rebase",
+                )
+            if status_result.stdout.strip():
+                logger.error(
+                    "Worktree dirty after rebase: %s",
+                    status_result.stdout.strip()[:200],
+                )
+                return MergeResult(
+                    success=False,
+                    error="Worktree dirty after rebase",
+                )
+
         try:
             await self._fast_forward(branch)
         except Exception as e:

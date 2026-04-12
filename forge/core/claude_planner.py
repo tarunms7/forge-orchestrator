@@ -262,11 +262,3 @@ class ClaudePlannerLLM(PlannerLLM):
             "Respond with ONLY the TaskGraph JSON. No markdown, no explanation. NEVER re-read a file you have already seen — if you catch yourself looping, output JSON immediately with what you have."
         )
         return "\n\n".join(parts)
-
-
-def _extract_json(text: str) -> str:
-    """Extract JSON from response, stripping markdown fences if present.
-
-    .. deprecated:: Use :func:`forge.core.sanitize.extract_json_block` directly.
-    """
-    return extract_json_block(text) or text

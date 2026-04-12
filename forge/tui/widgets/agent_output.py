@@ -521,6 +521,8 @@ class AgentOutput(Widget):
         if active:
             self._typing_frame = 0
             if getattr(self, "is_mounted", False):
+                if self._typing_timer:
+                    self._typing_timer.stop()
                 self._typing_timer = self.set_interval(0.12, self._tick_typing)
         else:
             if self._typing_timer is not None:

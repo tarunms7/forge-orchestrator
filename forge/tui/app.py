@@ -449,7 +449,8 @@ class ForgeApp(App):
 
     async def on_unmount(self) -> None:
         """Clean up state change callback to prevent leaks."""
-        self._state.remove_change_callback(self._state_cb)
+        if hasattr(self, "_state_cb"):
+            self._state.remove_change_callback(self._state_cb)
 
     def _replace_state(self, state: TuiState) -> None:
         """Swap in a new TUI state while preserving app-level change callbacks."""
@@ -476,6 +477,7 @@ class ForgeApp(App):
         try:
             self.call_next(self._state.apply_event, event_type, data)
         except Exception:
+            logger.debug("call_next failed, applying event synchronously", exc_info=True)
             self._state.apply_event(event_type, data)
 
     def _get_pipeline_screen(self) -> PipelineScreen | None:
@@ -792,7 +794,10 @@ class ForgeApp(App):
             event_type = "integration:check_response"
 
         try:
-            await self._daemon._events.emit(event_type, {"action": action})
+            daemon = self._daemon
+            if not daemon or not hasattr(daemon, "_events"):
+                return
+            await daemon._events.emit(event_type, {"action": action})
         except Exception:
             logger.error("Failed to emit %s to daemon", event_type, exc_info=True)
 
@@ -1003,6 +1008,7 @@ class ForgeApp(App):
                         await self._db.set_pipeline_pr_url(self._pipeline_id, pr_url)
                     except Exception:
                         logger.warning("Failed to persist pipeline PR URL", exc_info=True)
+                        self.notify("Warning: PR URL not saved to history", severity="warning")
                 # Show PR URL inline on the FinalApprovalScreen
                 try:
                     screen = self.screen

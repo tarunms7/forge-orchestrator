@@ -87,6 +87,9 @@ def _read_json_file(path: Path) -> Any | None:
         if not path.exists():
             return None
         return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        logger.warning("Failed to decode JSON file %s", path, exc_info=True)
+        return None
     except Exception:
         logger.debug("Failed to read JSON file %s", path, exc_info=True)
         return None
@@ -302,6 +305,7 @@ class _CodexExecutionHandle(ExecutionHandle):
         self._task = task
         self._catalog_entry = catalog_entry
         self._result: ProviderResult | None = None
+        self._stream_closed = False
 
     @property
     def is_running(self) -> bool:
@@ -309,6 +313,7 @@ class _CodexExecutionHandle(ExecutionHandle):
 
     async def abort(self) -> None:
         if not self._task.done():
+            self._stream_closed = True
             self._task.cancel()
             try:
                 await self._task
@@ -338,6 +343,7 @@ class _AgentsExecutionHandle(ExecutionHandle):
         self._task = task
         self._catalog_entry = catalog_entry
         self._result: ProviderResult | None = None
+        self._stream_closed = False
 
     @property
     def is_running(self) -> bool:
@@ -345,6 +351,7 @@ class _AgentsExecutionHandle(ExecutionHandle):
 
     async def abort(self) -> None:
         if not self._task.done():
+            self._stream_closed = True
             self._task.cancel()
             try:
                 await self._task
