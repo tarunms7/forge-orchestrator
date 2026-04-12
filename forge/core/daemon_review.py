@@ -26,9 +26,9 @@ from forge.core.daemon_helpers import (
     async_subprocess,
 )
 from forge.core.logging_config import make_console
+from forge.core.retrieval_context import build_reviewer_context
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
-from forge.core.retrieval_context import build_reviewer_context
 
 logger = logging.getLogger("forge.daemon")
 console = make_console()
@@ -1389,7 +1389,7 @@ class ReviewMixin:
             )
             if not repo_path:
                 repo_path = worktree_path
-            review_context = build_reviewer_context(
+            review_context, reviewer_diag = build_reviewer_context(
                 project_dir_hint=project_dir_hint or repo_path,
                 repo_path=repo_path,
                 snapshot=snapshot,
@@ -1397,6 +1397,14 @@ class ReviewMixin:
                 task_files=task.files,
                 task_prompt=f"{task.title}\n\n{task.description}",
                 repo_label=repo_id if repo_id not in (None, "default") else None,
+            )
+            diag_data = reviewer_diag.to_event_dict()
+            diag_data["task_id"] = task.id
+            await self._emit(
+                "retrieval:diagnostics",
+                diag_data,
+                db=db,
+                pipeline_id=pipeline_id,
             )
             gate2_result, review_cost_info = await gate2_llm_review(
                 task.title,

@@ -1552,3 +1552,53 @@ class TestReviewLifecycleVisibility:
 
         # Check that the existing pattern still works
         assert ("gate", "\U0001f528 Build: \u2713 Build successful") in state.unified_log["t1"]
+
+
+class TestRetrievalDiagnostics:
+    def test_state_on_retrieval_diagnostics(self):
+        """Apply retrieval:diagnostics event and verify state is populated."""
+        state = TuiState()
+        notified = []
+        state.on_change(lambda f: notified.append(f))
+
+        state.apply_event(
+            "retrieval:diagnostics",
+            {
+                "stage": "planner",
+                "used_retrieval": True,
+                "confidence": 0.91,
+                "top_files": ["a.py", "b.py"],
+                "matched_terms": ["auth"],
+                "missed_terms": ["obscure"],
+            },
+        )
+
+        assert "planner" in state.retrieval_diagnostics
+        diag = state.retrieval_diagnostics["planner"]
+        assert diag["used_retrieval"] is True
+        assert diag["confidence"] == 0.91
+        assert diag["top_files"] == ["a.py", "b.py"]
+        assert diag["matched_terms"] == ["auth"]
+        assert diag["missed_terms"] == ["obscure"]
+        assert "retrieval_diagnostics" in notified
+
+    def test_state_on_retrieval_diagnostics_no_stage(self):
+        """Events without a stage field are ignored."""
+        state = TuiState()
+        state.apply_event("retrieval:diagnostics", {"used_retrieval": True})
+        assert state.retrieval_diagnostics == {}
+
+    def test_state_on_retrieval_diagnostics_multiple_stages(self):
+        """Multiple stages accumulate in the dict."""
+        state = TuiState()
+        state.apply_event(
+            "retrieval:diagnostics",
+            {"stage": "planner", "used_retrieval": True, "confidence": 0.8},
+        )
+        state.apply_event(
+            "retrieval:diagnostics",
+            {"stage": "agent", "used_retrieval": False},
+        )
+        assert len(state.retrieval_diagnostics) == 2
+        assert state.retrieval_diagnostics["planner"]["used_retrieval"] is True
+        assert state.retrieval_diagnostics["agent"]["used_retrieval"] is False

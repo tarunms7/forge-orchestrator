@@ -117,6 +117,9 @@ class TuiState:
         self.review_substatus: dict[str, str] = {}
         self.scheduling: dict | None = None
 
+        # Retrieval diagnostics per stage: 'planner' | 'agent' | 'reviewer' → diagnostics dict
+        self.retrieval_diagnostics: dict[str, dict] = {}
+
         # Multi-repo state
         self.repos: list[dict] = []
         self.per_repo_pr_urls: dict[str, str] = {}
@@ -742,6 +745,13 @@ class TuiState:
 
     # ── Integration health check handlers ──────────────────────────
 
+    def _on_retrieval_diagnostics(self, data: dict) -> None:
+        stage = data.get("stage")
+        if not stage:
+            return
+        self.retrieval_diagnostics[stage] = data
+        self._notify("retrieval_diagnostics")
+
     def _on_integration_baseline_started(self, data: dict) -> None:
         self.integration_baseline = {"status": "running"}
         self._notify("integration")
@@ -1040,4 +1050,6 @@ class TuiState:
         "integration:check_response": _on_integration_check_response,
         "integration:final_gate_started": _on_integration_final_gate_started,
         "integration:final_gate_result": _on_integration_final_gate_result,
+        # Retrieval diagnostics
+        "retrieval:diagnostics": _on_retrieval_diagnostics,
     }

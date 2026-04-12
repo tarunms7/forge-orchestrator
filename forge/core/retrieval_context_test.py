@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from forge.config.settings import ForgeSettings
 from forge.core.context import ProjectSnapshot
 from forge.core.retrieval_context import (
+    RetrievalDiagnostics,
     _resolve_codegraph_dir,
     build_agent_context,
     build_multi_repo_planner_context,
@@ -43,7 +44,7 @@ def test_build_agent_context_falls_back_when_retrieval_disabled():
     settings = ForgeSettings(retrieval_enabled=False)
     snapshot = _snapshot()
 
-    result = build_agent_context(
+    result, diag = build_agent_context(
         project_dir_hint="/tmp/project",
         repo_path="/tmp/project",
         snapshot=snapshot,
@@ -53,6 +54,9 @@ def test_build_agent_context_falls_back_when_retrieval_disabled():
     )
 
     assert result == snapshot.format_for_agent()
+    assert isinstance(diag, RetrievalDiagnostics)
+    assert diag.stage == "agent"
+    assert diag.used_retrieval is False
 
 
 def test_build_agent_context_renders_retrieval(monkeypatch, tmp_path):
@@ -91,7 +95,7 @@ def test_build_agent_context_renders_retrieval(monkeypatch, tmp_path):
     monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)
 
     settings = ForgeSettings(retrieval_tool_dir=str(codegraph_dir))
-    result = build_agent_context(
+    result, diag = build_agent_context(
         project_dir_hint=str(tmp_path / "project"),
         repo_path="/tmp/project",
         snapshot=_snapshot(),
@@ -106,6 +110,11 @@ def test_build_agent_context_renders_retrieval(monkeypatch, tmp_path):
     assert "ExecutorMixin L41" in result
     assert "imports forge/core/models.py" in result
     assert "### File Tree" not in result
+    assert isinstance(diag, RetrievalDiagnostics)
+    assert diag.stage == "agent"
+    assert diag.used_retrieval is True
+    assert diag.confidence == 0.97
+    assert diag.top_files == ["forge/core/daemon_executor.py"]
 
 
 def test_build_multi_repo_planner_context_falls_back_without_retrieval():
@@ -113,7 +122,7 @@ def test_build_multi_repo_planner_context_falls_back_without_retrieval():
     snapshots = {"backend": _snapshot()}
     repos = {"backend": SimpleNamespace(path="/tmp/backend")}
 
-    result = build_multi_repo_planner_context(
+    result, diag = build_multi_repo_planner_context(
         project_dir_hint="/tmp/project",
         repos=repos,
         snapshots=snapshots,
@@ -123,6 +132,9 @@ def test_build_multi_repo_planner_context_falls_back_without_retrieval():
 
     assert "### Repo: backend (/tmp/backend)" in result
     assert "### File Tree" in result
+    assert isinstance(diag, RetrievalDiagnostics)
+    assert diag.stage == "planner"
+    assert diag.used_retrieval is False
 
 
 def test_build_planner_context_falls_back_when_confidence_is_low(monkeypatch, tmp_path):
@@ -155,7 +167,7 @@ def test_build_planner_context_falls_back_when_confidence_is_low(monkeypatch, tm
 
     snapshot = _snapshot()
     settings = ForgeSettings(retrieval_tool_dir=str(codegraph_dir))
-    result = build_planner_context(
+    result, diag = build_planner_context(
         project_dir_hint=str(tmp_path / "project"),
         repo_path="/tmp/project",
         snapshot=snapshot,
@@ -164,6 +176,9 @@ def test_build_planner_context_falls_back_when_confidence_is_low(monkeypatch, tm
     )
 
     assert result == snapshot.format_for_planner()
+    assert isinstance(diag, RetrievalDiagnostics)
+    assert diag.stage == "planner"
+    assert diag.used_retrieval is False
 
 
 def test_build_planner_context_uses_retrieval_when_confidence_is_high(monkeypatch, tmp_path):
@@ -197,7 +212,7 @@ def test_build_planner_context_uses_retrieval_when_confidence_is_high(monkeypatc
     monkeypatch.setattr("forge.core.retrieval_context.subprocess.run", fake_run)
 
     settings = ForgeSettings(retrieval_tool_dir=str(codegraph_dir))
-    result = build_planner_context(
+    result, diag = build_planner_context(
         project_dir_hint=str(tmp_path / "project"),
         repo_path="/tmp/project",
         snapshot=_snapshot(),
@@ -208,3 +223,39 @@ def test_build_planner_context_uses_retrieval_when_confidence_is_high(monkeypatc
     assert "## Planner Retrieval" in result
     assert "`forge/core/planning/unified_planner.py`" in result
     assert "### File Tree" not in result
+    assert isinstance(diag, RetrievalDiagnostics)
+    assert diag.stage == "planner"
+    assert diag.used_retrieval is True
+    assert diag.confidence == 0.91
+    assert diag.matched_terms == ["planner", "retry"]
+
+
+def test_retrieval_diagnostics_to_event_dict():
+    diag = RetrievalDiagnostics(
+        stage="agent",
+        used_retrieval=True,
+        confidence=0.85,
+        top_files=["a.py", "b.py"],
+        matched_terms=["foo"],
+        missed_terms=["bar"],
+    )
+    event = diag.to_event_dict()
+    assert event == {
+        "stage": "agent",
+        "used_retrieval": True,
+        "confidence": 0.85,
+        "top_files": ["a.py", "b.py"],
+        "matched_terms": ["foo"],
+        "missed_terms": ["bar"],
+    }
+
+
+def test_retrieval_diagnostics_to_event_dict_fallback():
+    diag = RetrievalDiagnostics(stage="reviewer", used_retrieval=False)
+    event = diag.to_event_dict()
+    assert event["stage"] == "reviewer"
+    assert event["used_retrieval"] is False
+    assert event["confidence"] is None
+    assert event["top_files"] == []
+    assert event["matched_terms"] == []
+    assert event["missed_terms"] == []

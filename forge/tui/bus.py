@@ -84,6 +84,8 @@ TUI_EVENT_TYPES = [
     "integration:check_response",
     "integration:final_gate_started",
     "integration:final_gate_result",
+    # Retrieval diagnostics
+    "retrieval:diagnostics",
 ]
 
 

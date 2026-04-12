@@ -9,7 +9,11 @@ import pytest
 from textual.app import App
 from textual.widgets import Static
 
-from forge.tui.screens.pipeline import PipelineScreen, RoutingAuditBanner
+from forge.tui.screens.pipeline import (
+    PipelineScreen,
+    RetrievalDiagnosticsBanner,
+    RoutingAuditBanner,
+)
 from forge.tui.state import TuiState
 from forge.tui.widgets.chat_thread import ChatThread
 from forge.tui.widgets.suggestion_chips import SuggestionChips
@@ -1930,3 +1934,85 @@ async def test_guard_skip_shows_notification_for_done_task():
             app.screen.action_skip_task()
             mock_notify.assert_called_once()
             assert "Skip not available" in mock_notify.call_args[0][0]
+
+
+# ------------------------------------------------------------------ #
+# RetrievalDiagnosticsBanner unit tests
+# ------------------------------------------------------------------ #
+
+
+def test_retrieval_diagnostics_banner_empty_when_no_data():
+    """Banner renders empty string when no diagnostics are present."""
+    banner = RetrievalDiagnosticsBanner()
+    assert banner.render() == ""
+
+
+def test_retrieval_diagnostics_banner_renders_retrieval_used():
+    """Banner shows retrieval with confidence and file count."""
+    banner = RetrievalDiagnosticsBanner()
+    banner.update_diagnostics(
+        {
+            "planner": {
+                "stage": "planner",
+                "used_retrieval": True,
+                "confidence": 0.91,
+                "top_files": ["a.py"],
+                "matched_terms": ["plan"],
+                "missed_terms": [],
+            }
+        }
+    )
+    rendered = banner.render()
+    assert "retrieval" in rendered
+    assert "91%" in rendered
+    assert "(1 files)" in rendered
+
+
+def test_retrieval_diagnostics_banner_renders_fallback():
+    """Banner shows snapshot fallback when retrieval is not used."""
+    banner = RetrievalDiagnosticsBanner()
+    banner.update_diagnostics(
+        {
+            "planner": {
+                "stage": "planner",
+                "used_retrieval": False,
+                "confidence": None,
+                "top_files": [],
+                "matched_terms": [],
+                "missed_terms": [],
+            }
+        }
+    )
+    rendered = banner.render()
+    assert "snapshot fallback" in rendered
+
+
+def test_retrieval_diagnostics_banner_shows_matched_and_missed_terms():
+    """Banner shows matched and missed terms."""
+    banner = RetrievalDiagnosticsBanner()
+    banner.update_diagnostics(
+        {
+            "agent": {
+                "stage": "agent",
+                "used_retrieval": True,
+                "confidence": 0.75,
+                "top_files": ["x.py"],
+                "matched_terms": ["auth", "jwt"],
+                "missed_terms": ["obscure"],
+            }
+        }
+    )
+    rendered = banner.render()
+    assert "auth" in rendered
+    assert "jwt" in rendered
+    assert "obscure" in rendered
+
+
+@pytest.mark.asyncio
+async def test_pipeline_screen_has_retrieval_diagnostics_banner():
+    """RetrievalDiagnosticsBanner is present in PipelineScreen composition."""
+    app = PipelineTestApp()
+    async with app.run_test():
+        banner = app.screen.query_one(RetrievalDiagnosticsBanner)
+        assert banner is not None
+        assert banner.id == "retrieval-diagnostics-banner"
