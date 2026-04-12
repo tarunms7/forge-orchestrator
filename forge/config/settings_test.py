@@ -246,7 +246,9 @@ def test_retrieval_settings_must_be_positive():
 
 
 def test_retrieval_planner_min_confidence_must_be_in_range():
-    with pytest.raises(ValidationError, match="retrieval_planner_min_confidence must be between 0 and 1"):
+    with pytest.raises(
+        ValidationError, match="retrieval_planner_min_confidence must be between 0 and 1"
+    ):
         ForgeSettings(retrieval_planner_min_confidence=1.5)
 
 
