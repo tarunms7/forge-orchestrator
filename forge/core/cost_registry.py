@@ -149,6 +149,8 @@ class CostRegistry:
 
     def _highest_rates(self) -> ModelRates:
         """Return the highest known rates across all models."""
+        if not self._rates:
+            return ModelRates(input_per_1k=0.0, output_per_1k=0.0)
         max_input = max(r.input_per_1k for r in self._rates.values())
         max_output = max(r.output_per_1k for r in self._rates.values())
         return ModelRates(input_per_1k=max_input, output_per_1k=max_output)
