@@ -977,12 +977,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 settings=self._settings,
                 repo_label=repo_id,
             )
-            await self._emit(
-                "retrieval:diagnostics",
-                planner_diag.to_event_dict(),
-                db=db,
-                pipeline_id=pipeline_id,
-            )
+            if pipeline_id:
+                await self._emit(
+                    "retrieval:diagnostics",
+                    planner_diag.to_event_dict(),
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
             repo_ids = None
         else:
             from forge.core.context import gather_multi_repo_snapshots
@@ -995,12 +996,13 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 query=user_input,
                 settings=self._settings,
             )
-            await self._emit(
-                "retrieval:diagnostics",
-                planner_diag.to_event_dict(),
-                db=db,
-                pipeline_id=pipeline_id,
-            )
+            if pipeline_id:
+                await self._emit(
+                    "retrieval:diagnostics",
+                    planner_diag.to_event_dict(),
+                    db=db,
+                    pipeline_id=pipeline_id,
+                )
             repo_ids = set(planning_repos.keys())
             self._snapshot = next(iter(snapshots.values())) if snapshots else None
             self._snapshots = snapshots if snapshots else {}

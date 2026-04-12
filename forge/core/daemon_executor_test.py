@@ -1105,7 +1105,12 @@ class TestStreamAgentAllowedDirs:
         mixin._contracts = None
         mixin._template_config = None
         mixin._emit = AsyncMock()
-        mixin._build_project_context = MagicMock(return_value="")
+        mixin._build_project_context = MagicMock(return_value=("", MagicMock(
+            to_event_dict=MagicMock(return_value={
+                "stage": "agent", "used_retrieval": False, "confidence": None,
+                "top_files": [], "matched_terms": [], "missed_terms": [],
+            }),
+        )))
         mixin._build_allowed_dirs = MagicMock(
             return_value=["/workspace/root/backend", "/workspace/root/frontend"]
         )
