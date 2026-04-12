@@ -62,6 +62,12 @@ class TestHelpData:
         assert "o" in keys
         assert "d" in keys
         assert "g" in keys
+        assert "w" in keys
+
+    def test_pipeline_help_w_entry(self):
+        entry = next(e for e in PIPELINE_HELP if e.key == "w")
+        assert entry.action == "Why files?"
+        assert entry.category == "Views"
 
     def test_review_help_has_approve_reject(self):
         actions = {e.action for e in REVIEW_HELP}

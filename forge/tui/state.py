@@ -119,6 +119,8 @@ class TuiState:
 
         # Retrieval diagnostics per stage: 'planner' | 'agent' | 'reviewer' → diagnostics dict
         self.retrieval_diagnostics: dict[str, dict] = {}
+        # Per-task retrieval diagnostics: task_id → diagnostics dict
+        self.task_retrieval_diagnostics: dict[str, dict] = {}
 
         # Multi-repo state
         self.repos: list[dict] = []
@@ -751,6 +753,11 @@ class TuiState:
             return
         self.retrieval_diagnostics[stage] = data
         self._notify("retrieval_diagnostics")
+        # Also store per-task diagnostics when task_id is present
+        task_id = data.get("task_id")
+        if task_id:
+            self.task_retrieval_diagnostics[task_id] = data
+            self._notify("task_retrieval_diagnostics")
 
     def _on_integration_baseline_started(self, data: dict) -> None:
         self.integration_baseline = {"status": "running"}

@@ -7,6 +7,7 @@ from forge.config.settings import ForgeSettings
 from forge.core.context import ProjectSnapshot
 from forge.core.retrieval_context import (
     RetrievalDiagnostics,
+    _diagnostics_from_evidence,
     _resolve_codegraph_dir,
     build_agent_context,
     build_multi_repo_planner_context,
@@ -247,6 +248,7 @@ def test_retrieval_diagnostics_to_event_dict():
         "top_files": ["a.py", "b.py"],
         "matched_terms": ["foo"],
         "missed_terms": ["bar"],
+        "evidence_files": [],
     }
 
 
@@ -259,3 +261,128 @@ def test_retrieval_diagnostics_to_event_dict_fallback():
     assert event["top_files"] == []
     assert event["matched_terms"] == []
     assert event["missed_terms"] == []
+    assert event["evidence_files"] == []
+
+
+def test_diagnostics_from_evidence_populates_evidence_files():
+    """Test that _diagnostics_from_evidence extracts symbols, neighbors, reasons, rank, and focus_range."""
+    data = {
+        "confidence": 0.85,
+        "matched_terms": ["test", "function"],
+        "missed_terms": ["missing"],
+        "files": [
+            {
+                "path": "forge/core/daemon_executor.py",
+                "rank": 8.5,
+                "reasons": ["seed-file", "graph-neighbor", "symbol-match"],
+                "focus_range": [27, 61],
+                "symbols": [
+                    {"name": "ExecutorMixin", "line": 41},
+                    {"name": "_execute_task", "line": 209},
+                    {"name": "logger", "line": 15},
+                    {"name": "TaskState", "line": 25},
+                    {"name": "extra_symbol", "line": 100},  # 5th symbol - should be excluded
+                ],
+                "neighbors": [
+                    {"kind": "imports", "path": "forge/core/models.py"},
+                    {"kind": "imported_by", "path": "forge/api/routes.py"},
+                    {
+                        "kind": "co_changed",
+                        "path": "forge/core/context.py",
+                    },  # 3rd neighbor - should be excluded
+                ],
+            },
+            {
+                "path": "forge/config/settings.py",
+                "rank": 2.1,
+                "reasons": ["import_match"],
+                "focus_range": [10, 346],
+                "symbols": [{"name": "ForgeSettings", "line": 13}],
+                "neighbors": [{"kind": "imports", "path": "forge/api/app.py"}],
+            },
+        ],
+    }
+
+    diag = _diagnostics_from_evidence("agent", data)
+
+    assert diag.stage == "agent"
+    assert diag.used_retrieval is True
+    assert diag.confidence == 0.85
+    assert diag.matched_terms == ["test", "function"]
+    assert diag.missed_terms == ["missing"]
+    assert diag.top_files == ["forge/core/daemon_executor.py", "forge/config/settings.py"]
+
+    # Check evidence_files structure
+    assert len(diag.evidence_files) == 2
+
+    # First file
+    file1 = diag.evidence_files[0]
+    assert file1["path"] == "forge/core/daemon_executor.py"
+    assert file1["rank"] == 8.5
+    assert file1["reasons"] == ["seed-file", "graph-neighbor", "symbol-match"]  # First 3
+    assert file1["focus_range"] == [27, 61]
+
+    # Check symbols (first 4)
+    assert len(file1["symbols"]) == 4
+    assert file1["symbols"][0] == {"name": "ExecutorMixin", "line": 41}
+    assert file1["symbols"][1] == {"name": "_execute_task", "line": 209}
+    assert file1["symbols"][2] == {"name": "logger", "line": 15}
+    assert file1["symbols"][3] == {"name": "TaskState", "line": 25}
+
+    # Check neighbors (first 2)
+    assert len(file1["neighbors"]) == 2
+    assert file1["neighbors"][0] == {"kind": "imports", "path": "forge/core/models.py"}
+    assert file1["neighbors"][1] == {"kind": "imported_by", "path": "forge/api/routes.py"}
+
+    # Second file
+    file2 = diag.evidence_files[1]
+    assert file2["path"] == "forge/config/settings.py"
+    assert file2["rank"] == 2.1
+    assert file2["reasons"] == ["import_match"]
+    assert file2["focus_range"] == [10, 346]
+    assert len(file2["symbols"]) == 1
+    assert file2["symbols"][0] == {"name": "ForgeSettings", "line": 13}
+    assert len(file2["neighbors"]) == 1
+    assert file2["neighbors"][0] == {"kind": "imports", "path": "forge/api/app.py"}
+
+
+def test_diagnostics_to_event_dict_includes_evidence_files():
+    """Test that to_event_dict() serializes the evidence_files field."""
+    evidence_files = [
+        {
+            "path": "test.py",
+            "reasons": ["test-reason"],
+            "symbols": [{"name": "TestClass", "line": 10}],
+            "neighbors": [{"kind": "imports", "path": "other.py"}],
+            "rank": 1.0,
+            "focus_range": [5, 20],
+        }
+    ]
+
+    diag = RetrievalDiagnostics(
+        stage="reviewer",
+        used_retrieval=True,
+        confidence=0.90,
+        top_files=["test.py"],
+        matched_terms=["test"],
+        missed_terms=["missing"],
+        evidence_files=evidence_files,
+    )
+
+    event = diag.to_event_dict()
+
+    assert "evidence_files" in event
+    assert event["evidence_files"] == evidence_files
+    assert len(event["evidence_files"]) == 1
+    assert event["evidence_files"][0]["path"] == "test.py"
+    assert event["evidence_files"][0]["symbols"][0]["name"] == "TestClass"
+
+
+def test_evidence_files_defaults_to_empty_when_no_retrieval():
+    """Test that evidence_files defaults to empty list when used_retrieval=False."""
+    diag = RetrievalDiagnostics(stage="planner", used_retrieval=False)
+
+    assert diag.evidence_files == []
+
+    event = diag.to_event_dict()
+    assert event["evidence_files"] == []
