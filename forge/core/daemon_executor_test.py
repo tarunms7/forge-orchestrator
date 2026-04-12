@@ -150,6 +150,21 @@ class TestBuildPrompt:
 
         assert "RETRY" not in prompt
 
+    def test_description_named_file_is_added_to_scope(self):
+        """Explicit deliverable paths in the task description stay in file scope."""
+        mixin = self._make_mixin()
+        task = MagicMock()
+        task.retry_count = 0
+        task.title = "Harden review retries"
+        task.description = "Add tests in forge/review/pipeline_test.py for retry behavior."
+        task.files = ["forge/review/pipeline.py"]
+        task.review_feedback = None
+
+        prompt = mixin._build_prompt(task)
+
+        assert "forge/review/pipeline.py" in prompt
+        assert "forge/review/pipeline_test.py" in prompt
+
 
 class TestComplexityTimeout:
     """_complexity_timeout() scales base timeout by task complexity."""
@@ -1145,6 +1160,7 @@ class TestStreamAgentAllowedDirs:
 
         task = MagicMock()
         task.files = ["backend/app.py"]
+        task.description = "Add regression coverage in backend/app_test.py."
         task.depends_on = []
         task.complexity = "medium"
 
@@ -1166,6 +1182,11 @@ class TestStreamAgentAllowedDirs:
             "/workspace/root/backend",
             "/workspace/root/frontend",
         ]
+        assert runtime.run_task.await_args.args[3] == ["backend/app.py", "backend/app_test.py"]
+        assert mixin._build_project_context.call_args.kwargs["task_files"] == [
+            "backend/app.py",
+            "backend/app_test.py",
+        ]
 
 
 @pytest.mark.asyncio
@@ -1185,6 +1206,7 @@ async def test_scope_clean_noop_marks_done_when_scoped_tests_pass():
     task = MagicMock()
     task.id = "t1"
     task.files = ["forge/agents/adapter.py", "forge/agents/adapter_test.py"]
+    task.description = "Also verify forge/agents/runtime_test.py stays green."
     task.repo_id = "default"
 
     accepted = await mixin._maybe_accept_scope_clean_noop(
@@ -1199,8 +1221,16 @@ async def test_scope_clean_noop_marks_done_when_scoped_tests_pass():
     mixin._gate_test.assert_awaited_once()
     gate_call = mixin._gate_test.await_args
     assert gate_call.args[:3] == ("/wt/task-1", "pytest -q", 300)
-    assert gate_call.kwargs["changed_files"] == task.files
-    assert gate_call.kwargs["allowed_files"] == task.files
+    assert gate_call.kwargs["changed_files"] == [
+        "forge/agents/adapter.py",
+        "forge/agents/adapter_test.py",
+        "forge/agents/runtime_test.py",
+    ]
+    assert gate_call.kwargs["allowed_files"] == [
+        "forge/agents/adapter.py",
+        "forge/agents/adapter_test.py",
+        "forge/agents/runtime_test.py",
+    ]
     assert gate_call.kwargs["pipeline_branch"] == "forge/pipeline-test"
     db.update_task_state.assert_awaited_once_with("t1", "done")
     mixin._emit.assert_awaited_once()

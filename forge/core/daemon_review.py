@@ -27,6 +27,7 @@ from forge.core.daemon_helpers import (
 )
 from forge.core.logging_config import make_console
 from forge.core.retrieval_context import build_reviewer_context
+from forge.core.task_scope import effective_task_files
 from forge.review.llm_review import gate2_llm_review
 from forge.review.pipeline import GateResult
 
@@ -987,6 +988,7 @@ class ReviewMixin:
         lint_validation_line = "- Lint gate: SKIPPED — lint gate not run"
         test_validation_line = "- Test gate: SKIPPED — no test command configured"
         prefer_deep_review = False
+        scope_files = effective_task_files(task.files, getattr(task, "description", ""))
 
         await self._emit("review:started", {"task_id": task.id}, db=db, pipeline_id=pipeline_id)
 
@@ -1190,7 +1192,7 @@ class ReviewMixin:
                 test_cmd,
                 gate_timeout,
                 changed_files=changed_files,
-                allowed_files=getattr(task, "files", None),
+                allowed_files=scope_files,
                 pipeline_branch=pipeline_branch,
             )
             await self._emit(
@@ -1302,6 +1304,16 @@ class ReviewMixin:
                 f"{lint_validation_line}\n"
                 f"{test_validation_line}\n\n"
                 + (
+                    f"Pipeline review base branch: {pipeline_branch}\n"
+                    "The provided FULL DIFF and allowed file scope were already computed against "
+                    "that branch and are authoritative for this review.\n"
+                    "Do NOT run `git diff main..HEAD`, `git log`, or any other branch/history "
+                    "comparison to infer scope or missing files. Do NOT compare against `main` "
+                    "unless the validation context explicitly tells you to.\n\n"
+                    if pipeline_branch
+                    else ""
+                )
+                + (
                     f"Preferred Python for verification commands: {reviewer_python}\n"
                     "If you run Python-based Bash checks, use that interpreter (for example,"
                     f" `{reviewer_python} -m pytest ...`) instead of bare `python`.\n\n"
@@ -1394,7 +1406,7 @@ class ReviewMixin:
                 repo_path=repo_path,
                 snapshot=snapshot,
                 settings=self._settings,
-                task_files=task.files,
+                task_files=scope_files,
                 task_prompt=f"{task.title}\n\n{task.description}",
                 repo_label=repo_id if repo_id not in (None, "default") else None,
             )
@@ -1415,7 +1427,7 @@ class ReviewMixin:
                 prior_feedback=prior_feedback,
                 prior_diff=prior_diff,
                 project_context=review_context,
-                allowed_files=task.files,
+                allowed_files=scope_files,
                 delta_diff=delta_diff,
                 sibling_context=sibling_context,
                 validation_context=validation_context,
@@ -1554,7 +1566,7 @@ class ReviewMixin:
                     worktree_path,
                     model=reviewer_model,
                     project_context=review_context,
-                    allowed_files=task.files,
+                    allowed_files=scope_files,
                     sibling_context=sibling_context,
                     validation_context=validation_context,
                     custom_review_focus=extra_focus,

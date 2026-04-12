@@ -30,6 +30,7 @@ from forge.core.logging_config import make_console
 from forge.core.models import AgentState, TaskState
 from forge.core.retrieval_context import RetrievalDiagnostics, build_agent_context
 from forge.core.sanitize import validate_task_id
+from forge.core.task_scope import effective_task_files
 from forge.learning.guard import GuardTriggered, RuntimeGuard
 from forge.learning.store import format_lessons_block, row_to_lesson
 
@@ -508,7 +509,10 @@ class ExecutorMixin:
                     "and have been REVERTED by the system.\n\n"
                     f"Files you modified that were REVERTED:\n{reverted_list}\n\n"
                     f"You are ONLY allowed to modify these files:\n"
-                    + "\n".join(f"  - {f}" for f in task.files)
+                    + "\n".join(
+                        f"  - {f}"
+                        for f in effective_task_files(task.files, getattr(task, "description", ""))
+                    )
                     + "\n\nDo NOT touch any other files. Focus ONLY on the files listed above."
                 ),
                 pipeline_id=pid,
@@ -1819,7 +1823,7 @@ class ExecutorMixin:
         if not pipeline_branch:
             return True, []  # Can't enforce without a base ref
 
-        allowed = set(task.files or [])
+        allowed = set(effective_task_files(task.files, getattr(task, "description", "")))
         if not allowed:
             return True, []  # No file list = no enforcement (safety valve)
 
@@ -1835,7 +1839,13 @@ class ExecutorMixin:
         # Exempt test files that are related to in-scope source files.
         # Agents often need to create/modify test files for the source files
         # they're working on — those shouldn't be reverted.
-        related_tests = set(await _find_related_test_files(worktree_path, list(allowed)))
+        related_tests = set(
+            await _find_related_test_files(
+                worktree_path,
+                list(allowed),
+                base_ref=pipeline_branch,
+            )
+        )
         # Always exempt .claude/ and .forge/ — these are Forge infrastructure
         # files (e.g. agent permissions), not agent work product.
         infra_prefixes = (".claude/", ".forge/")
@@ -1923,7 +1933,8 @@ class ExecutorMixin:
         gate_test = getattr(self, "_gate_test", None)
         if not callable(resolve_test_cmd) or not callable(gate_test):
             return False
-        if not task.files:
+        scope_files = effective_task_files(task.files, getattr(task, "description", ""))
+        if not scope_files:
             return False
 
         prev_pipeline_test_cmd = getattr(self, "_pipeline_test_cmd", None)
@@ -1941,8 +1952,8 @@ class ExecutorMixin:
                 worktree_path,
                 test_cmd,
                 gate_timeout,
-                changed_files=list(task.files or []),
-                allowed_files=list(task.files or []),
+                changed_files=scope_files,
+                allowed_files=scope_files,
                 pipeline_branch=pipeline_branch,
             )
             if getattr(test_result, "infra_error", False):
@@ -2427,6 +2438,7 @@ class ExecutorMixin:
         agent_prompt_modifier = (
             template_config.get("agent_prompt_modifier", "") if template_config else ""
         )
+        scope_files = effective_task_files(task.files, getattr(task, "description", ""))
 
         if task.retry_count > 0 and getattr(task, "review_feedback", None):
             console.print(
@@ -2435,13 +2447,16 @@ class ExecutorMixin:
             return _build_retry_prompt(
                 task.title,
                 task.description,
-                task.files,
+                scope_files,
                 task.review_feedback,
                 task.retry_count,
                 agent_prompt_modifier=agent_prompt_modifier,
             )
         return _build_agent_prompt(
-            task.title, task.description, task.files, agent_prompt_modifier=agent_prompt_modifier
+            task.title,
+            task.description,
+            scope_files,
+            agent_prompt_modifier=agent_prompt_modifier,
         )
 
     async def _stream_agent(
@@ -2590,6 +2605,7 @@ class ExecutorMixin:
 
         allowed_dirs = self._settings.allowed_dirs
         task_repo_id = getattr(task, "repo_id", None) or "default"
+        scope_files = effective_task_files(task.files, getattr(task, "description", ""))
         build_allowed_dirs = getattr(self, "_build_allowed_dirs", None)
         if callable(build_allowed_dirs):
             try:
@@ -2601,7 +2617,7 @@ class ExecutorMixin:
 
         project_context, agent_diag = self._build_project_context(
             repo_id=task_repo_id,
-            task_files=task.files,
+            task_files=scope_files,
             task_prompt=f"{task.title}\n\n{task.description}",
         )
         diag_data = agent_diag.to_event_dict()
@@ -2618,7 +2634,7 @@ class ExecutorMixin:
                 agent_id,
                 prompt,
                 worktree_path,
-                task.files,
+                scope_files,
                 allowed_dirs=allowed_dirs,
                 model=agent_model,
                 on_message=_on_msg,
