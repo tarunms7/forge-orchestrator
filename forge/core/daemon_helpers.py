@@ -610,9 +610,9 @@ def _humanize_model_spec(model: object) -> str:
 
     if spec.provider == "openai":
         labels = {
-            "gpt-5.4": "Codex GPT-5.4",
-            "gpt-5.4-mini": "Codex GPT-5.4 Mini",
-            "gpt-5.3-codex": "Codex GPT-5.3",
+            "gpt-5.4": "OpenAI GPT-5.4",
+            "gpt-5.4-mini": "OpenAI GPT-5.4 Mini",
+            "gpt-5.3-codex": "OpenAI GPT-5.3 Codex",
             "o3": "OpenAI o3",
         }
         return labels.get(spec.model, f"OpenAI {spec.model}")
