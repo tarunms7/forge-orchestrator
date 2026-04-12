@@ -1,5 +1,6 @@
 """Git worktree lifecycle management. One worktree per task for isolation."""
 
+import fcntl
 import logging
 import os
 import shutil
@@ -59,43 +60,55 @@ class WorktreeManager:
     def _ensure_forge_gitignored(self) -> None:
         """Ensure the repo .gitignore contains entries for .forge, .venv, etc.
 
-        Uses an atomic write-to-temp-then-rename pattern so concurrent
-        worktree creations don't corrupt the file.
+        Uses fcntl.flock() to serialize concurrent read-modify-write cycles
+        and an atomic write-to-temp-then-rename pattern so concurrent
+        worktree creations don't lose each other's entries.
         """
         gitignore = os.path.join(self._repo, ".gitignore")
-        if os.path.isfile(gitignore):
-            with open(gitignore, encoding="utf-8") as f:
-                content = f.read()
-            existing = {line.strip().rstrip("/") for line in content.splitlines()}
-        else:
-            content = ""
-            existing = set()
+        lock_path = os.path.join(self._repo, ".gitignore.lock")
 
-        missing = [
-            e
-            for e in self._GITIGNORE_REQUIRED_ENTRIES
-            if e not in existing and f"/{e}" not in existing and f"{e}/" not in existing
-        ]
-        if not missing:
-            return
-
-        new_content = content.rstrip("\n") + "\n" + "\n".join(missing) + "\n"
-
-        # Atomic write: write to a temp file in the same directory, then
-        # rename (rename is atomic on POSIX when src and dst are on the
-        # same filesystem).
-        fd, tmp_path = tempfile.mkstemp(dir=self._repo, prefix=".gitignore.tmp", suffix="")
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            os.replace(tmp_path, gitignore)
-        except BaseException:
-            # Clean up the temp file on any failure
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            if os.path.isfile(gitignore):
+                with open(gitignore, encoding="utf-8") as f:
+                    content = f.read()
+                existing = {line.strip().rstrip("/") for line in content.splitlines()}
+            else:
+                content = ""
+                existing = set()
+
+            missing = [
+                e
+                for e in self._GITIGNORE_REQUIRED_ENTRIES
+                if e not in existing and f"/{e}" not in existing and f"{e}/" not in existing
+            ]
+            if not missing:
+                return
+
+            new_content = content.rstrip("\n") + "\n" + "\n".join(missing) + "\n"
+
+            # Atomic write: write to a temp file in the same directory, then
+            # rename (rename is atomic on POSIX when src and dst are on the
+            # same filesystem).
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self._repo, prefix=".gitignore.tmp", suffix=""
+            )
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                os.replace(tmp_path, gitignore)
+            except BaseException:
+                # Clean up the temp file on any failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     def create(self, task_id: str, base_ref: str | None = None) -> str:
         """Create a worktree for a task. Returns the worktree path.
