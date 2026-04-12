@@ -12,6 +12,7 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Static, TextArea
 
+from forge.core.retrieval_context import derive_task_evidence
 from forge.tui.theme import (
     ACCENT_BLUE,
     ACCENT_GREEN,
@@ -21,10 +22,8 @@ from forge.tui.theme import (
     TEXT_MUTED,
     TEXT_SECONDARY,
 )
-from forge.tui.widgets.shortcut_bar import ShortcutBar
-
-from forge.core.retrieval_context import derive_task_evidence
 from forge.tui.widgets.evidence_panel import format_evidence_panel
+from forge.tui.widgets.shortcut_bar import ShortcutBar
 
 _COMPLEXITY_COLORS = {
     "low": ACCENT_GREEN,

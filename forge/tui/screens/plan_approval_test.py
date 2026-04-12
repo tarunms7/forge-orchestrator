@@ -673,7 +673,7 @@ class TestActionToggleEvidence:
 
     def test_evidence_updates_on_cursor_change(self):
         """When evidence area is visible and cursor moves, content updates."""
-        from unittest.mock import MagicMock, call
+        from unittest.mock import MagicMock
 
         diag = _sample_diagnostics()
         screen = PlanApprovalScreen(_sample_tasks(), planner_diagnostics=diag)
