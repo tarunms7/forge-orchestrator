@@ -263,6 +263,65 @@ class RoutingAuditBanner(Static):
         return self._colorize_provider_names(summary)
 
 
+class RetrievalDiagnosticsBanner(Static):
+    """Compact banner showing retrieval vs fallback status per pipeline stage."""
+
+    DEFAULT_CSS = """
+    RetrievalDiagnosticsBanner {
+        height: auto;
+        padding: 0 2;
+        background: #11161d;
+        border-bottom: tall #263041;
+    }
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._diagnostics: dict[str, dict] = {}
+
+    def update_diagnostics(self, diagnostics: dict[str, dict]) -> None:
+        self._diagnostics = diagnostics
+        self.refresh()
+
+    def render(self) -> str:
+        if not self._diagnostics:
+            return ""
+        parts: list[str] = []
+        for stage in ("planner", "agent", "reviewer"):
+            diag = self._diagnostics.get(stage)
+            if not diag:
+                continue
+            used = diag.get("used_retrieval", False)
+            if used:
+                conf = diag.get("confidence")
+                conf_str = f" {conf:.0%}" if conf is not None else ""
+                files = diag.get("top_files", [])
+                file_count = f" ({len(files)} files)" if files else ""
+                label = f"[#22c55e]retrieval{conf_str}{file_count}[/]"
+            else:
+                label = "[#8b949e]snapshot fallback[/]"
+            parts.append(f"[bold]{stage}[/]: {label}")
+
+        if not parts:
+            return ""
+        line = "  │  ".join(parts)
+        # Add matched/missed terms from whichever stage has them
+        term_parts: list[str] = []
+        for stage in ("planner", "agent", "reviewer"):
+            diag = self._diagnostics.get(stage)
+            if not diag or not diag.get("used_retrieval"):
+                continue
+            matched = diag.get("matched_terms", [])
+            missed = diag.get("missed_terms", [])
+            if matched:
+                term_parts.append(f"[#22c55e]✓ {' '.join(matched)}[/]")
+            if missed:
+                term_parts.append(f"[#d29922]✗ {' '.join(missed)}[/]")
+        if term_parts:
+            line += f"  │  {'  '.join(term_parts)}"
+        return f"\U0001f50d {line}"
+
+
 class DecisionBadge(Widget):
     """Shows count of pending questions/decisions at bottom of left panel."""
 
@@ -354,6 +413,9 @@ class PipelineScreen(Screen):
         border-bottom: tall #263041;
     }
     PipelineScreen > RoutingAuditBanner {
+        width: 100%;
+    }
+    PipelineScreen > RetrievalDiagnosticsBanner {
         width: 100%;
     }
     #split-pane {
@@ -457,6 +519,7 @@ class PipelineScreen(Screen):
         yield DagOverlay()
         yield PhaseBanner()
         yield RoutingAuditBanner(id="routing-audit-banner")
+        yield RetrievalDiagnosticsBanner(id="retrieval-diagnostics-banner")
         with Horizontal(id="split-pane"):
             with Vertical(id="left-panel"):
                 yield TaskList()
@@ -516,6 +579,9 @@ class PipelineScreen(Screen):
             return
         if field == "integration":
             self._refresh_integration_badge()
+            return
+        if field == "retrieval_diagnostics":
+            self._update_retrieval_diagnostics()
             return
         if field == "task_diffs":
             # New diff arrived from daemon — update diff viewer if showing
@@ -968,6 +1034,16 @@ class PipelineScreen(Screen):
         self.query_one("#routing-audit-banner", RoutingAuditBanner).update_routing_summary(
             routing_summary
         )
+
+    def _update_retrieval_diagnostics(self) -> None:
+        """Update the retrieval diagnostics banner from state."""
+        try:
+            banner = self.query_one(
+                "#retrieval-diagnostics-banner", RetrievalDiagnosticsBanner
+            )
+            banner.update_diagnostics(self._state.retrieval_diagnostics)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # On-demand diff loading
