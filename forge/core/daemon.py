@@ -1128,9 +1128,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
             finally:
                 # Clean up listener to prevent accumulation
-                handlers = self._events._handlers.get("planning:answer", [])
-                if _on_planning_answer in handlers:
-                    handlers.remove(_on_planning_answer)
+                self._events.off("planning:answer", _on_planning_answer)
 
             if planning_result.task_graph is None:
                 raise RuntimeError("Unified planner failed to produce a TaskGraph")
@@ -1826,9 +1824,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             response_value["action"] = "ignore_and_continue"
         finally:
-            handlers = self._events._handlers.get(event_type, [])
-            if _handler in handlers:
-                handlers.remove(_handler)
+            self._events.off(event_type, _handler)
 
         return response_value["action"] or "ignore_and_continue"
 
@@ -2149,6 +2145,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await db.force_release_agent(agent_id)
                 except Exception:
                     logger.critical("SLOT LEAK: Cannot release agent %s by any means", agent_id)
+                    raise
 
     async def _handle_task_exception(
         self,
@@ -2282,6 +2279,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             self._health_monitor = health_monitor
             health_task = asyncio.create_task(health_monitor.run(), name="health-monitor")
+
+            def _health_task_done(fut: asyncio.Task) -> None:
+                if fut.cancelled():
+                    return
+                exc = fut.exception()
+                if exc is not None:
+                    logger.error("Health monitor died unexpectedly: %s", exc, exc_info=exc)
+
+            health_task.add_done_callback(_health_task_done)
 
         try:
             await self._execution_loop_inner(
