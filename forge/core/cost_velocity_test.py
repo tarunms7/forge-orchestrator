@@ -1,6 +1,6 @@
 """Tests for cost velocity tracking."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
@@ -67,7 +67,7 @@ class TestUpdate:
         assert tracker.current_spent == 0.5
 
     async def test_single_event_gives_zero_burn_rate(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events = [_make_event(_iso(now - timedelta(seconds=60)), 0.10)]
         db = _make_db(events=events, pipeline_cost=0.10)
         tracker = CostVelocityTracker(db, "pipe-1")
@@ -77,7 +77,7 @@ class TestUpdate:
         assert tracker.burn_rate_per_min == 0.0
 
     async def test_two_events_computes_burn_rate(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events = [
             _make_event(_iso(now - timedelta(seconds=120)), 0.10),
             _make_event(_iso(now - timedelta(seconds=60)), 0.20),
@@ -91,7 +91,7 @@ class TestUpdate:
         assert abs(tracker.burn_rate_per_min - 0.10) < 0.001
 
     async def test_old_events_excluded_from_window(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events = [
             # This event is outside the 5-min window
             _make_event(_iso(now - timedelta(seconds=600)), 0.05),
@@ -108,7 +108,7 @@ class TestUpdate:
         assert abs(tracker.burn_rate_per_min - 0.10) < 0.001
 
     async def test_events_at_same_time_give_zero_rate(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ts = _iso(now - timedelta(seconds=30))
         events = [
             _make_event(ts, 0.10),
@@ -123,7 +123,7 @@ class TestUpdate:
 
     async def test_naive_datetime_treated_as_utc(self):
         """Events with naive timestamps should be treated as UTC."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events = [
             _make_event((now - timedelta(seconds=120)).replace(tzinfo=None).isoformat(), 0.10),
             _make_event((now - timedelta(seconds=60)).replace(tzinfo=None).isoformat(), 0.20),
@@ -138,7 +138,7 @@ class TestUpdate:
 
 class TestProjectedFinalCost:
     async def test_projection(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events = [
             _make_event(_iso(now - timedelta(seconds=120)), 0.10),
             _make_event(_iso(now - timedelta(seconds=60)), 0.20),
@@ -159,7 +159,7 @@ class TestProjectedFinalCost:
 
 class TestTimeToExhaustion:
     async def test_returns_minutes_remaining(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         events = [
             _make_event(_iso(now - timedelta(seconds=120)), 0.10),
             _make_event(_iso(now - timedelta(seconds=60)), 0.20),

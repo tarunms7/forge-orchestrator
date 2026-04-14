@@ -6,7 +6,7 @@ budget threshold checks (warn at 80%, pause at 95%).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -61,13 +61,13 @@ class CostVelocityTracker:
 
     def _compute_burn_rate(self, events: list[PipelineEventRow]) -> float:
         """Compute rolling burn rate from events within the sliding window."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         windowed = []
         for ev in events:
             ts = datetime.fromisoformat(ev.created_at)
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
+                ts = ts.replace(tzinfo=UTC)
             elapsed = (now - ts).total_seconds()
             if elapsed <= self.WINDOW_SECONDS:
                 windowed.append((ts, ev.payload.get("total_cost_usd", 0.0)))
