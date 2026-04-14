@@ -10,6 +10,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 
+from forge.agents.collaboration import AgentCollaborationBroker
 from forge.agents.runtime import AgentRuntime
 from forge.config.project_config import load_repo_configs
 from forge.config.settings import ForgeSettings
@@ -368,6 +369,9 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
 
         # Initialize provider registry
         self._registry = self._init_providers()
+
+        # Cross-agent collaboration broker for sharing context between tasks
+        self._collaboration_broker = AgentCollaborationBroker()
 
         # Lessons use the central DB — no separate initialization needed
 
@@ -2623,6 +2627,14 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     except Exception:
                         logger.debug(
                             "Failed to finalize pipeline metrics for %s",
+                            pipeline_id,
+                            exc_info=True,
+                        )
+                    try:
+                        self._collaboration_broker.cleanup(pipeline_id)
+                    except Exception:
+                        logger.debug(
+                            "Failed to cleanup collaboration broker for %s",
                             pipeline_id,
                             exc_info=True,
                         )
