@@ -211,9 +211,22 @@ async def gate2_llm_review(
         _t3_chunks = build_diff_chunks(_t3_file_scores, diff, max_chunk_lines)
 
     if on_review_event:
+        # ReviewStrategySnapshot: comprehensive observability for review decisions.
+        # Logs strategy, scoring, and chunk details so regression analysis and
+        # A/B comparisons are possible without digging through debug logs.
         payload: dict = {
             "strategy": strategy.value,
             "diff_lines": count_diff_lines(diff),
+            "file_count": len(file_scores) if file_scores else 0,
+            "adaptive_review": adaptive_review,
+            "prefer_deep_review": prefer_deep_review,
+            # Top-5 file scores for debugging strategy selection
+            "top_file_scores": sorted(
+                [{"file": f, "score": s} for f, s in (file_scores or {}).items()],
+                key=lambda x: x["score"],
+                reverse=True,
+            )[:5],
+            "snapshot_version": 2,  # Increment when payload schema changes
         }
         if strategy == ReviewStrategy.TIER2:
             payload["chunk_count"] = len(_t2_chunks)

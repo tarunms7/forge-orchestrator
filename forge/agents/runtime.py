@@ -16,12 +16,17 @@ from forge.agents.adapter import (
     _get_changed_files,
     build_agent_system_prompt,
 )
+from forge.agents.context_manager import (
+    AgentContextManager,
+    ContextPressure,
+)
 from forge.core.async_utils import safe_create_task
 from forge.core.cost_registry import CostRegistry
 from forge.learning.guard import GuardTriggered
 from forge.providers.base import (
     AuditVerdict,
     CatalogEntry,
+    EventKind,
     ExecutionMode,
     ModelSpec,
     OutputContract,
@@ -37,6 +42,61 @@ from forge.providers.restrictions import AGENT_TOOL_POLICY
 from forge.providers.safety_auditor import SafetyAuditor
 
 logger = logging.getLogger("forge.agents.runtime")
+
+# ── Token Velocity Monitor ──────────────────────────────────────────────
+# Inspired by Claude Code's diminishing-returns detection in tokenBudget.ts.
+# Tracks output token delta per turn and flags when an agent is spinning
+# (producing negligible output over consecutive turns).
+
+_VELOCITY_WINDOW = 5  # consecutive low-output turns before flagging
+_VELOCITY_MIN_TOKENS = 150  # minimum tokens per turn to not count as "low"
+
+
+class TokenVelocityMonitor:
+    """Detects agents that are spinning without producing meaningful output.
+
+    Track cumulative output_tokens across provider events. When the delta
+    (new tokens since last check) drops below _VELOCITY_MIN_TOKENS for
+    _VELOCITY_WINDOW consecutive checks, ``is_stalled`` returns True.
+
+    Usage:
+        monitor = TokenVelocityMonitor()
+        # ... wire monitor.record(event) into the on_event callback ...
+        if monitor.is_stalled:
+            # abort or escalate
+    """
+
+    def __init__(
+        self,
+        window: int = _VELOCITY_WINDOW,
+        min_tokens: int = _VELOCITY_MIN_TOKENS,
+    ) -> None:
+        self._window = window
+        self._min_tokens = min_tokens
+        self._last_output_tokens: int = 0
+        self._low_velocity_streak: int = 0
+        self._total_checks: int = 0
+
+    def record_tokens(self, output_tokens: int) -> None:
+        """Record a token count snapshot (called per turn or per event batch)."""
+        delta = output_tokens - self._last_output_tokens
+        self._last_output_tokens = output_tokens
+        self._total_checks += 1
+        if self._total_checks <= 2:
+            # Skip first two checks — agent is still warming up
+            return
+        if delta < self._min_tokens:
+            self._low_velocity_streak += 1
+        else:
+            self._low_velocity_streak = 0
+
+    @property
+    def is_stalled(self) -> bool:
+        return self._low_velocity_streak >= self._window
+
+    @property
+    def streak(self) -> int:
+        return self._low_velocity_streak
 
 
 class AgentRuntime:
@@ -149,27 +209,18 @@ class AgentRuntime:
             except GuardTriggered:
                 raise  # Must propagate to _stream_agent for lesson capture
             except Exception as e:
-                err_str = str(e).lower()
-                transient_keywords = [
-                    "rate_limit",
-                    "rate limit",
-                    "overloaded",
-                    "529",
-                    "500",
-                    "502",
-                    "503",
-                    "connection",
-                    "reset",
-                ]
-                is_transient = any(kw in err_str for kw in transient_keywords)
-                if is_transient and attempt < max_retries:
+                from forge.core.error_classifier import classify_agent_error
+
+                classified = classify_agent_error(str(e))
+                if classified.retriable and attempt < max_retries:
                     backoff = 5 * (2**attempt) + random.uniform(0, 5)
                     logger.warning(
-                        "Transient error for agent '%s' (attempt %d/%d): %s — retrying in %.1fs",
+                        "Retriable error [%s] for agent '%s' (attempt %d/%d): %s — retrying in %.1fs",
+                        classified.category,
                         agent_id,
                         attempt + 1,
                         max_retries + 1,
-                        e,
+                        classified.message,
                         backoff,
                     )
                     await asyncio.sleep(backoff)
@@ -177,7 +228,7 @@ class AgentRuntime:
                 return AgentResult(
                     success=False,
                     files_changed=[],
-                    summary=f"Agent '{agent_id}' failed: {e}",
+                    summary=f"Agent '{agent_id}' failed [{classified.category}]: {classified.message}",
                     error=str(e),
                 )
         # Should not reach here, but satisfy type checker
@@ -323,6 +374,12 @@ async def run_with_retry(
         AgentResult with provider metadata populated.
     """
     auditor = SafetyAuditor(policy=tool_policy, workspace=workspace)
+    velocity_monitor = TokenVelocityMonitor()
+    context_mgr = AgentContextManager(
+        max_context_tokens=catalog_entry.max_context_tokens,
+        agent_id=f"provider-{catalog_entry.provider}",
+        task_id="run_with_retry",
+    )
     safety_abort_reason: str | None = None
 
     for attempt in range(max_retries + 1):
@@ -330,8 +387,13 @@ async def run_with_retry(
         handle = None
         attempt_t0 = time.monotonic()
 
-        # Build the event callback that chains safety auditor + consumer
-        def _make_on_event(abort_holder: list):
+        # Build the event callback that chains:
+        # safety auditor → context manager → velocity monitor → consumer
+        def _make_on_event(
+            abort_holder: list,
+            vel_monitor: TokenVelocityMonitor,
+            ctx_mgr: AgentContextManager,
+        ):
             def _on_event(event: ProviderEvent) -> None:
                 # Safety check
                 verdict = auditor.check(event)
@@ -343,6 +405,38 @@ async def run_with_retry(
                         else "Safety policy violation"
                     )
                     abort_holder.append(reason)
+
+                # Context pressure tracking — record usage events
+                if event.kind == EventKind.USAGE and event.input_tokens and event.output_tokens:
+                    pressure = ctx_mgr.record_usage(event.input_tokens, event.output_tokens)
+                    if pressure in (ContextPressure.CRITICAL, ContextPressure.EXCEEDED):
+                        snapshot = ctx_mgr.snapshot()
+                        logger.warning(
+                            "Context pressure %s: %d/%d tokens (%.0f%%), ~%d turns remaining",
+                            pressure.value,
+                            snapshot.input_tokens,
+                            snapshot.max_context_tokens,
+                            snapshot.utilization_pct * 100,
+                            snapshot.estimated_turns_remaining,
+                        )
+
+                # Track tool results for potential microcompaction
+                if event.kind == EventKind.TOOL_RESULT and event.tool_call_id:
+                    ctx_mgr.record_tool_result(
+                        tool_call_id=event.tool_call_id,
+                        tool_name=event.tool_name or "unknown",
+                        result_text=event.tool_output,
+                    )
+
+                # Token velocity tracking — record output tokens from turn-complete events
+                if hasattr(event, "output_tokens") and event.output_tokens:
+                    vel_monitor.record_tokens(event.output_tokens)
+                    if vel_monitor.is_stalled:
+                        abort_holder.append(
+                            f"Token velocity stall: agent produced <{vel_monitor._min_tokens} "
+                            f"tokens/turn for {vel_monitor.streak} consecutive turns. "
+                            "Auto-terminating to prevent cost waste."
+                        )
                 # Forward to consumer
                 if on_event:
                     on_event(event)
@@ -350,7 +444,7 @@ async def run_with_retry(
             return _on_event
 
         abort_reasons: list[str] = []
-        event_cb = _make_on_event(abort_reasons)
+        event_cb = _make_on_event(abort_reasons, velocity_monitor, context_mgr)
 
         try:
             handle = provider.start(
@@ -383,6 +477,7 @@ async def run_with_retry(
                     error=safety_abort_reason,
                     attempt=attempt,
                     cost_registry=cost_registry,
+                    context_mgr=context_mgr,
                 )
 
             return _build_result(
@@ -392,6 +487,7 @@ async def run_with_retry(
                 error=result.text if result.is_error else None,
                 attempt=attempt,
                 cost_registry=cost_registry,
+                context_mgr=context_mgr,
             )
 
         except TimeoutError:
@@ -411,37 +507,28 @@ async def run_with_retry(
             raise
 
         except Exception as e:
+            from forge.core.error_classifier import classify_agent_error
+
             elapsed = time.monotonic() - attempt_t0
-            err_str = str(e).lower()
-            transient_keywords = [
-                "rate_limit",
-                "rate limit",
-                "overloaded",
-                "529",
-                "500",
-                "502",
-                "503",
-                "connection",
-                "reset",
-            ]
-            is_transient = any(kw in err_str for kw in transient_keywords)
-            if is_transient and attempt < max_retries:
+            classified = classify_agent_error(str(e))
+            if classified.retriable and attempt < max_retries:
                 backoff = 5 * (2**attempt) + random.uniform(0, 5)
                 logger.warning(
-                    "Transient error (attempt %d/%d, %.1fs): %s — retrying in %.1fs",
+                    "Retriable error [%s] (attempt %d/%d, %.1fs): %s — retrying in %.1fs",
+                    classified.category,
                     attempt + 1,
                     max_retries + 1,
                     elapsed,
-                    e,
+                    classified.message,
                     backoff,
                 )
                 await asyncio.sleep(backoff)
                 continue
-            # Non-transient or exhausted retries
+            # Non-retriable or exhausted retries
             return AgentResult(
                 success=False,
                 files_changed=[],
-                summary=f"Provider failed: {e}",
+                summary=f"Provider failed [{classified.category}]: {classified.message}",
                 error=str(e),
                 provider_model=str(catalog_entry.spec),
                 backend=catalog_entry.backend,
@@ -468,6 +555,7 @@ def _build_result(
     error: str | None,
     attempt: int,
     cost_registry: CostRegistry | None,
+    context_mgr: AgentContextManager | None = None,
 ) -> AgentResult:
     """Convert ProviderResult to AgentResult with provider metadata."""
     if cost_registry is not None:
@@ -484,6 +572,13 @@ def _build_result(
         "result": "success" if success else "error",
         "cost_usd": cost_usd,
     }
+
+    # Attach context pressure snapshot for daemon telemetry
+    if context_mgr is not None:
+        snapshot = context_mgr.snapshot()
+        model_history_entry["context_pressure"] = snapshot.pressure.value
+        model_history_entry["context_utilization_pct"] = round(snapshot.utilization_pct, 3)
+        model_history_entry["estimated_turns_remaining"] = snapshot.estimated_turns_remaining
 
     return AgentResult(
         success=success,

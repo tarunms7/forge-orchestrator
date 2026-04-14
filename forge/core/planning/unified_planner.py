@@ -234,8 +234,9 @@ class UnifiedPlanner:
                     feedback = answer
                     continue
 
-            # Try to parse TaskGraph
-            resume_state = None
+            # Try to parse TaskGraph — preserve resume_state from provider for
+            # potential retry so the agent can continue from where it left off
+            # instead of re-reading the entire codebase.
             graph, error = self._parse(raw)
             if graph is not None:
                 logger.info(
@@ -286,6 +287,9 @@ class UnifiedPlanner:
                 )
                 continue
 
+            # Preserve resume_state so the next attempt resumes the agent
+            # session rather than starting from scratch (saves 100k+ tokens).
+            resume_state = provider_result.resume_state if provider_result is not None else None
             feedback = f"Invalid output: {error}"
             logger.warning("UnifiedPlanner attempt %d parse failed: %s", attempt + 1, error)
 

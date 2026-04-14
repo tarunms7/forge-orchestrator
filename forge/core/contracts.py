@@ -80,6 +80,11 @@ class ContractSet(BaseModel):
     type_contracts: list[TypeContract] = Field(default_factory=list)
     # Original hints (kept for traceability)
     integration_hints: list[IntegrationHint] = Field(default_factory=list)
+    # True when contract generation failed and this is an empty fallback.
+    # Agents should be warned to verify cross-task interfaces manually.
+    degraded: bool = False
+    # Human-readable reason for degradation (empty when not degraded).
+    degraded_reason: str = ""
 
     def contracts_for_task(self, task_id: str) -> TaskContracts:
         """Get only the contracts relevant to a specific task."""

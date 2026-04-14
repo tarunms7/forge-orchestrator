@@ -10,6 +10,11 @@ _TERMINAL_STATES = frozenset({TaskState.DONE, TaskState.CANCELLED})
 _ACTIVE_STATES = frozenset({TaskState.IN_PROGRESS, TaskState.IN_REVIEW, TaskState.MERGING})
 _HUMAN_WAIT_STATES = frozenset({TaskState.AWAITING_APPROVAL, TaskState.AWAITING_INPUT})
 _COMPLEXITY_SCORE = {"low": 1.0, "medium": 1.7, "high": 2.5}
+# Backpressure: tasks with high retry counts get a priority penalty.
+# This ensures the scheduler doesn't keep feeding dependents of struggling
+# tasks when other healthy branches of the DAG could make progress.
+# Inspired by Claude Code's streaming tool executor sibling-abort pattern.
+_RETRY_PENALTY_PER_ATTEMPT = 30  # Deducted from priority score per retry
 
 
 def _normalize_state(raw_state) -> TaskState | None:
@@ -303,12 +308,24 @@ class Scheduler:
                 task.complexity.value if hasattr(task.complexity, "value") else str(task.complexity)
             )
             insight = task_insights[task.id]
-            return (
+            # Base score: critical path dominates, then downstream impact
+            base = (
                 insight.critical_path_length * 100
                 + insight.downstream_count * 12
-                + task.retry_count * 5
                 + _COMPLEXITY_SCORE.get(complexity_key, 1.0)
             )
+            # Backpressure: high retry counts signal the task is struggling.
+            # Apply a penalty to deprioritize in favor of healthier branches
+            # of the DAG. Retry count 0-1 has no penalty; 2+ gets penalized.
+            retry_penalty = max(0, task.retry_count - 1) * _RETRY_PENALTY_PER_ATTEMPT
+            # Also check if any upstream dependency has retried — this signals
+            # the whole branch may be unstable
+            upstream_retry_pressure = sum(
+                max(0, task_index[dep_id].retry_count - 1) * (_RETRY_PENALTY_PER_ATTEMPT // 2)
+                for dep_id in (task.depends_on or [])
+                if dep_id in task_index
+            )
+            return base - retry_penalty - upstream_retry_pressure
 
         ready_tasks.sort(
             key=lambda task: (

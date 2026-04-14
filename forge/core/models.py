@@ -36,6 +36,22 @@ class AgentState(str, Enum):
     PAUSED = "paused"
 
 
+class DegradationLevel(str, Enum):
+    """Formal degradation taxonomy for observable quality signals.
+
+    Surfaced in TUI and events so users know when quality is compromised.
+    Inspired by Claude Code's multi-level degradation modes (fast mode
+    cooldown, streaming fallback, persistent retry).
+    """
+
+    NORMAL = "normal"
+    CONTRACTS_DEGRADED = "contracts_degraded"  # Proceeding without API contracts
+    REVIEW_DEGRADED = "review_degraded"  # Using lighter review gate
+    SINGLE_AGENT = "single_agent"  # Falling back to sequential execution
+    PLANNING_DEGRADED = "planning_degraded"  # Using cached/simplified plan
+    PROVIDER_DEGRADED = "provider_degraded"  # Primary model unavailable, using fallback
+
+
 @dataclass(frozen=True)
 class RepoConfig:
     """Immutable configuration for a single repository in a workspace."""

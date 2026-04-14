@@ -1944,24 +1944,41 @@ class ExecutorMixin:
             f"{'...' if len(out_of_scope) > 5 else ''}[/yellow]"
         )
 
+        # Pre-filter: check which out-of-scope files actually exist in the
+        # pipeline branch. Files created by the agent (not in base) need
+        # removal, not restoration. This prevents "pathspec did not match"
+        # errors that previously caused noisy warnings.
+        base_tree = await _run_git(
+            ["ls-tree", "-r", "--name-only", pipeline_branch],
+            cwd=worktree_path,
+            check=False,
+            description="list base tree files",
+        )
+        base_files = set(base_tree.stdout.strip().split("\n")) if base_tree.stdout.strip() else set()
+
         for file in out_of_scope:
-            # Restore file to pipeline branch state (works for modified/deleted)
-            restore = await _run_git(
-                ["checkout", pipeline_branch, "--", file],
-                cwd=worktree_path,
-                check=False,
-                description="restore out-of-scope",
-            )
-            if restore.returncode != 0:
-                # File was newly created (doesn't exist in base) — remove it
+            if file in base_files:
+                # File exists in base — restore to pipeline branch state
                 await _run_git(
-                    ["rm", "-f", file],
+                    ["checkout", pipeline_branch, "--", file],
                     cwd=worktree_path,
                     check=False,
-                    description="rm out-of-scope",
+                    description="restore out-of-scope",
                 )
+            else:
+                # File was newly created by agent (doesn't exist in base) — remove it
+                import os as _os
+                file_path = _os.path.join(worktree_path, file)
+                if _os.path.exists(file_path):
+                    await _run_git(
+                        ["rm", "-f", file],
+                        cwd=worktree_path,
+                        check=False,
+                        description="rm out-of-scope new file",
+                    )
 
-        # Stage and commit the reverts
+        # Stage reverts — use pathspec for files that still exist on disk,
+        # and update-index for deletions
         await _run_git(
             ["add", "-A", "--", *out_of_scope],
             cwd=worktree_path,
@@ -2664,6 +2681,17 @@ class ExecutorMixin:
         if contract_set:
             task_contracts = contract_set.contracts_for_task(task_id)
             contracts_block = task_contracts.format_for_agent()
+            # Warn agents when contracts are degraded so they verify interfaces manually
+            if contract_set.degraded:
+                contracts_block += (
+                    "\n\n## ⚠️ CONTRACT WARNING\n"
+                    "Contract generation FAILED for this pipeline. The contracts above may be "
+                    "incomplete or missing. You MUST verify all cross-task interfaces manually:\n"
+                    "- Check that API endpoints match what consuming tasks expect\n"
+                    "- Check that shared types have consistent field names and types\n"
+                    "- Read the code of producing/consuming tasks before assuming interface shapes\n"
+                    f"Reason: {contract_set.degraded_reason}"
+                )
 
         task_timeout = _complexity_timeout(
             self._settings.agent_timeout_seconds,
