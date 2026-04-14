@@ -21,7 +21,6 @@ from forge.cli.health import (
 from forge.cli.main import cli
 from forge.storage.db import Database
 
-
 # ── DB fixtures (mirror stats_test.py) ──────────────────────────────
 
 
