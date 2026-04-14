@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 logger = logging.getLogger("forge.agents.collaboration")
 
@@ -67,7 +67,7 @@ class AgentCollaborationBroker:
             implementation_summary=implementation_summary,
             key_decisions=key_decisions,
             diff=diff,
-            completed_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
         )
         if pipeline_id not in self._completions:
             self._completions[pipeline_id] = {}
