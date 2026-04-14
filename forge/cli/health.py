@@ -13,7 +13,6 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-
 # ── Formatting helpers (mirror forge.cli.stats patterns) ─────────────
 
 
@@ -319,7 +318,6 @@ async def _fetch_health_data(
     db, pipeline_id: str
 ) -> dict:
     """Fetch all health data for a pipeline in one call."""
-    from forge.storage.db import PipelineRow
 
     await db.initialize()
     try:

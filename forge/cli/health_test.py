@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from rich.table import Table
 
 from forge.cli.health import (
@@ -13,7 +12,6 @@ from forge.cli.health import (
     build_health_dag,
     build_scheduler_panel,
 )
-
 
 # ── build_health_dag tests ───────────────────────────────────────────
 
