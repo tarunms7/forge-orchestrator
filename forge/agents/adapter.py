@@ -176,27 +176,41 @@ def build_agent_system_prompt(
     agent_max_turns: int = 75,
     lessons_block: str = "",
     project_commands: dict[str, str] | None = None,
+    current_turn: int = 0,
 ) -> str:
-    """Build the shared agent system prompt for all coding providers."""
+    """Build the shared agent system prompt for all coding providers.
+
+    The ``current_turn`` parameter enables *adaptive prompt compaction*:
+    after the agent has been running for several turns, it no longer needs
+    the full question-protocol examples, retry-discipline section, or
+    verbose file-scope listing.  Compressing these sections saves ~800-1200
+    input tokens per turn from turn 10+ onward — significant on a 75-turn
+    task (~60-90K tokens saved).
+
+    Compaction tiers (turn thresholds are intentionally conservative):
+      turn 0-9:   Full prompt — agent is orienting.
+      turn 10-29: Compress question protocol (drop examples/details).
+      turn 30+:   Also compress file scope (count only) and dep context.
+    """
     if allowed_dirs:
         extra_dirs_clause = " Also allowed: " + ", ".join(allowed_dirs)
     else:
         extra_dirs_clause = ""
-    conventions_block = _build_conventions_block(conventions_json, conventions_md)
-    dependency_context = _build_dependency_context(completed_deps)
-    if allowed_files:
-        files_list = "\n".join(f"- {f}" for f in allowed_files)
-        file_scope_block = (
-            "## File Scope\n\n"
-            "You may only modify these files:\n"
-            f"{files_list}\n\n"
-            "Out-of-scope changes are automatically reverted before review.\n\n"
-            "**Exception**: Test files for the source files above "
-            "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
-        )
+    conventions_block_str = _build_conventions_block(conventions_json, conventions_md)
+    dependency_context = _build_dependency_context(
+        completed_deps,
+        compact=current_turn >= 30,
+    )
+    file_scope_block = _build_file_scope_block(
+        allowed_files,
+        compact=current_turn >= 30,
+    )
+
+    # Adaptive question protocol: compress after turn 10
+    if current_turn >= 10:
+        question_protocol = _build_question_protocol_compact(autonomy, questions_remaining)
     else:
-        file_scope_block = ""
-    question_protocol = _build_question_protocol(autonomy, questions_remaining)
+        question_protocol = _build_question_protocol(autonomy, questions_remaining)
 
     project_commands_block = ""
     if project_commands:
@@ -221,7 +235,7 @@ def build_agent_system_prompt(
         cwd=worktree_path,
         extra_dirs_clause=extra_dirs_clause,
         project_context=project_context,
-        conventions_block=conventions_block,
+        conventions_block=conventions_block_str,
         contracts_block=contracts_block,
         dependency_context=dependency_context,
         file_scope_block=file_scope_block,
@@ -230,6 +244,67 @@ def build_agent_system_prompt(
         lessons_block=lessons_block,
         max_turns=max_turns,
         wrap_up_turn=wrap_up_turn,
+    )
+
+
+def _build_question_protocol_compact(autonomy: str = "balanced", remaining: int = 3) -> str:
+    """Compact question protocol — drops examples and verbose explanations.
+
+    Used after turn 10 when the agent has already seen the full protocol.
+    Saves ~500 tokens per turn compared to the full version.
+    """
+    remaining = max(0, remaining)
+    if autonomy == "full":
+        rule = "Make your best judgment on all decisions."
+    elif autonomy == "supervised":
+        rule = "Ask when uncertain about ANY implementation choice."
+    else:
+        rule = "Ask when uncertain about requirements, architecture, or destructive changes. Don't ask about style or obvious choices."
+
+    return f"""## Human Interaction Protocol
+
+Autonomy: {autonomy} | Questions remaining: {remaining}
+{rule}
+
+To ask, output FORGE_QUESTION JSON block as your FINAL message, then STOP:
+FORGE_QUESTION:
+{{
+  "question": "...", "context": "...", "suggestions": ["A", "B"], "impact": "high"
+}}
+Rules: Provide 2-3 suggestions. Explain context. No open-ended questions."""
+
+
+def _build_file_scope_block(
+    allowed_files: list[str] | None,
+    *,
+    compact: bool = False,
+) -> str:
+    """Build file scope section, with optional compaction.
+
+    After turn 30, the agent has read the full file list many times.
+    Switch to a count + sample to save tokens on large file lists.
+    """
+    if not allowed_files:
+        return ""
+
+    if compact and len(allowed_files) > 10:
+        # Show first 5 + count — agent already knows the full list
+        sample = "\n".join(f"- {f}" for f in allowed_files[:5])
+        return (
+            f"## File Scope ({len(allowed_files)} files)\n\n"
+            f"{sample}\n"
+            f"- ... and {len(allowed_files) - 5} more (same as initial scope)\n\n"
+            "Out-of-scope changes are automatically reverted."
+        )
+
+    files_list = "\n".join(f"- {f}" for f in allowed_files)
+    return (
+        "## File Scope\n\n"
+        "You may only modify these files:\n"
+        f"{files_list}\n\n"
+        "Out-of-scope changes are automatically reverted before review.\n\n"
+        "**Exception**: Test files for the source files above "
+        "(e.g. `tests/test_<name>.py` or `<name>_test.py`) are also allowed."
     )
 
 
@@ -285,11 +360,19 @@ def _build_conventions_block(
     return f"## Project Conventions\n\n{body}"
 
 
-def _build_dependency_context(completed_deps: list[dict] | None) -> str:
+def _build_dependency_context(
+    completed_deps: list[dict] | None,
+    *,
+    compact: bool = False,
+) -> str:
     """Build a formatted section describing completed dependency tasks.
 
     Each dict should have keys: task_id, title, implementation_summary (str|None),
     files_changed (list[str]).
+
+    When ``compact=True`` (turn 30+), truncates summaries to 200 chars and
+    caps file lists at 10 entries.  On a DAG with 8 upstream deps averaging
+    500 chars of summary and 20 files each, this saves ~2-3K tokens.
 
     Returns empty string if no deps provided.
     """
@@ -302,6 +385,9 @@ def _build_dependency_context(completed_deps: list[dict] | None) -> str:
         "The following tasks have already been completed and may affect your work:",
     ]
 
+    _MAX_SUMMARY_LEN = 200 if compact else 0  # 0 = no limit
+    _MAX_FILES = 10 if compact else 0
+
     for dep in completed_deps:
         task_id = dep.get("task_id", "unknown")
         title = dep.get("title", "Untitled")
@@ -310,11 +396,18 @@ def _build_dependency_context(completed_deps: list[dict] | None) -> str:
 
         parts.append("")
         parts.append(f"### Task: {title} ({task_id})")
+
+        if summary and _MAX_SUMMARY_LEN and len(summary) > _MAX_SUMMARY_LEN:
+            summary = summary[:_MAX_SUMMARY_LEN].rstrip() + "…"
         parts.append(f"**What was done:** {summary or 'No summary available'}")
+
         parts.append("**Files modified:**")
         if files:
-            for f in files:
+            display_files = files[:_MAX_FILES] if _MAX_FILES else files
+            for f in display_files:
                 parts.append(f"- {f}")
+            if _MAX_FILES and len(files) > _MAX_FILES:
+                parts.append(f"- … and {len(files) - _MAX_FILES} more")
         else:
             parts.append("- (none)")
 
