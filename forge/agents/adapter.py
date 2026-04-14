@@ -200,6 +200,7 @@ def build_agent_system_prompt(
     dependency_context = _build_dependency_context(
         completed_deps,
         compact=current_turn >= 30,
+        current_task_files=allowed_files,
     )
     file_scope_block = _build_file_scope_block(
         allowed_files,
@@ -360,10 +361,51 @@ def _build_conventions_block(
     return f"## Project Conventions\n\n{body}"
 
 
+def _jaccard_file_similarity(files_a: list[str], files_b: list[str]) -> float:
+    """Compute Jaccard similarity between two file lists.
+
+    Normalizes paths (strips leading './', uses forward slashes).  Computes
+    both exact-file Jaccard and parent-directory Jaccard, returns the max.
+    Returns 0.0 if both lists are empty.
+    """
+
+    def _normalize(p: str) -> str:
+        p = p.replace("\\", "/")
+        if p.startswith("./"):
+            p = p[2:]
+        return p
+
+    def _parent_dir(p: str) -> str:
+        normalized = _normalize(p)
+        idx = normalized.rfind("/")
+        return (normalized[: idx + 1]) if idx >= 0 else ""
+
+    norm_a = {_normalize(f) for f in files_a}
+    norm_b = {_normalize(f) for f in files_b}
+
+    # Exact file Jaccard
+    if norm_a or norm_b:
+        file_jaccard = len(norm_a & norm_b) / len(norm_a | norm_b)
+    else:
+        return 0.0
+
+    # Parent directory Jaccard
+    dirs_a = {_parent_dir(f) for f in norm_a} - {""}
+    dirs_b = {_parent_dir(f) for f in norm_b} - {""}
+
+    if dirs_a or dirs_b:
+        dir_jaccard = len(dirs_a & dirs_b) / len(dirs_a | dirs_b)
+    else:
+        dir_jaccard = 0.0
+
+    return max(file_jaccard, dir_jaccard)
+
+
 def _build_dependency_context(
     completed_deps: list[dict] | None,
     *,
     compact: bool = False,
+    current_task_files: list[str] | None = None,
 ) -> str:
     """Build a formatted section describing completed dependency tasks.
 
@@ -374,10 +416,34 @@ def _build_dependency_context(
     caps file lists at 10 entries.  On a DAG with 8 upstream deps averaging
     500 chars of summary and 20 files each, this saves ~2-3K tokens.
 
+    When ``current_task_files`` is provided, deps are ranked by Jaccard
+    similarity.  High-relevance deps (similarity >= 0.1) get full summaries;
+    low-relevance deps get a one-line summary without file lists.
+
     Returns empty string if no deps provided.
     """
     if not completed_deps:
         return ""
+
+    _MAX_SUMMARY_LEN = 200 if compact else 0  # 0 = no limit
+    _MAX_FILES = 10 if compact else 0
+
+    # If current_task_files provided, rank deps by Jaccard similarity
+    use_ranking = bool(current_task_files)
+    if use_ranking:
+        scored_deps = []
+        for dep in completed_deps:
+            dep_files = dep.get("files_changed", [])
+            score = _jaccard_file_similarity(current_task_files, dep_files)
+            scored_deps.append((score, dep))
+        scored_deps.sort(key=lambda x: x[0], reverse=True)
+
+        high_deps = [(s, d) for s, d in scored_deps if s >= 0.1]
+        low_deps = [(s, d) for s, d in scored_deps if s < 0.1]
+    else:
+        # No ranking — treat all as high relevance (original behavior)
+        high_deps = [(1.0, dep) for dep in completed_deps]
+        low_deps = []
 
     parts: list[str] = [
         "## Completed Dependencies",
@@ -385,31 +451,52 @@ def _build_dependency_context(
         "The following tasks have already been completed and may affect your work:",
     ]
 
-    _MAX_SUMMARY_LEN = 200 if compact else 0  # 0 = no limit
-    _MAX_FILES = 10 if compact else 0
-
-    for dep in completed_deps:
+    def _render_full(dep: dict) -> list[str]:
+        """Render a dep with full summary and file list."""
+        lines: list[str] = []
         task_id = dep.get("task_id", "unknown")
         title = dep.get("title", "Untitled")
         summary = dep.get("implementation_summary")
         files = dep.get("files_changed", [])
 
-        parts.append("")
-        parts.append(f"### Task: {title} ({task_id})")
+        lines.append("")
+        lines.append(f"### Task: {title} ({task_id})")
 
         if summary and _MAX_SUMMARY_LEN and len(summary) > _MAX_SUMMARY_LEN:
             summary = summary[:_MAX_SUMMARY_LEN].rstrip() + "…"
-        parts.append(f"**What was done:** {summary or 'No summary available'}")
+        lines.append(f"**What was done:** {summary or 'No summary available'}")
 
-        parts.append("**Files modified:**")
+        lines.append("**Files modified:**")
         if files:
             display_files = files[:_MAX_FILES] if _MAX_FILES else files
             for f in display_files:
-                parts.append(f"- {f}")
+                lines.append(f"- {f}")
             if _MAX_FILES and len(files) > _MAX_FILES:
-                parts.append(f"- … and {len(files) - _MAX_FILES} more")
+                lines.append(f"- … and {len(files) - _MAX_FILES} more")
         else:
-            parts.append("- (none)")
+            lines.append("- (none)")
+        return lines
+
+    if use_ranking and (high_deps and low_deps):
+        # Only add section headers when both sections exist
+        parts.append("")
+        parts.append("### High-Relevance Dependencies")
+        for _, dep in high_deps:
+            parts.extend(_render_full(dep))
+
+        parts.append("")
+        parts.append("### Other Dependencies")
+        for _, dep in low_deps:
+            task_id = dep.get("task_id", "unknown")
+            title = dep.get("title", "Untitled")
+            summary = dep.get("implementation_summary") or "No summary"
+            truncated = summary[:80].rstrip() + "…" if len(summary) > 80 else summary
+            parts.append(f"- **{title}** ({task_id}): {truncated}")
+    else:
+        # All deps in one section (either all high, all low, or no ranking)
+        dep_list = high_deps if high_deps else low_deps
+        for _, dep in dep_list:
+            parts.extend(_render_full(dep))
 
     return "\n".join(parts)
 
