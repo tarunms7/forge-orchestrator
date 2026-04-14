@@ -348,10 +348,15 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         self._cost_registry = CostRegistry(
             overrides=self._settings.build_cost_registry_overrides(),
         )
-        # Task list cache — avoids re-fetching from DB every poll iteration
+        # Task list cache — invalidated on state changes (event-driven).
+        # Falls back to time-based refresh as a safety net.
         self._cached_tasks: list | None = None
         self._task_cache_time: float = 0.0
+        self._task_cache_dirty: bool = True  # Start dirty to force first load
         self._last_scheduling_fingerprint: str | None = None
+        # Circuit breaker: track consecutive DB emit failures
+        self._emit_failure_count: int = 0
+        self._EMIT_CIRCUIT_BREAKER_THRESHOLD: int = 5
 
         # Multi-repo support: build repos dict
         if repos:
@@ -399,11 +404,20 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         This method is **fail-safe**: exceptions from event handlers or DB
         logging are caught and logged, never propagated.  Event emission
         must never kill a running task — it's telemetry, not business logic.
+
+        Includes a circuit breaker: after N consecutive DB write failures,
+        logs an ERROR and stops attempting DB writes until a success resets
+        the counter (WebSocket emission continues regardless).
         """
         try:
             await self._events.emit(event_type, data)
         except Exception:
             logger.warning("Event handler failed for %s (non-fatal)", event_type, exc_info=True)
+
+        # Circuit breaker: skip DB writes if we've hit too many consecutive failures
+        if self._emit_failure_count >= self._EMIT_CIRCUIT_BREAKER_THRESHOLD:
+            return
+
         try:
             await db.log_event(
                 pipeline_id=pipeline_id,
@@ -411,10 +425,27 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 event_type=event_type,
                 payload=data,
             )
+            # Reset on success
+            if self._emit_failure_count > 0:
+                logger.info("DB event logging recovered after %d consecutive failures", self._emit_failure_count)
+                self._emit_failure_count = 0
         except Exception:
-            logger.warning(
-                "Failed to persist event %s to DB (non-fatal)", event_type, exc_info=True
-            )
+            self._emit_failure_count += 1
+            if self._emit_failure_count >= self._EMIT_CIRCUIT_BREAKER_THRESHOLD:
+                logger.error(
+                    "DB event logging circuit breaker OPEN: %d consecutive failures. "
+                    "Events will only be sent via WebSocket until DB recovers. "
+                    "Last failed event: %s",
+                    self._emit_failure_count,
+                    event_type,
+                )
+            else:
+                logger.warning(
+                    "Failed to persist event %s to DB (failure %d/%d)",
+                    event_type,
+                    self._emit_failure_count,
+                    self._EMIT_CIRCUIT_BREAKER_THRESHOLD,
+                )
 
     async def _emit_scheduling_update(
         self,
@@ -1893,6 +1924,30 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         except Exception:
             logger.debug("Failed to prune stale lessons (non-fatal)", exc_info=True)
         try:
+            # Snapshot config at pipeline start — all tasks in this pipeline
+            # use the snapshot, preventing mid-run config drift if someone edits
+            # forge.toml while the pipeline is running. Inspired by Claude Code's
+            # immutable QueryConfig pattern (src/query/config.ts).
+            self._config_snapshot = {
+                "settings": {
+                    "max_agents": self._settings.max_agents,
+                    "agent_timeout_seconds": self._settings.agent_timeout_seconds,
+                    "agent_max_turns": self._settings.agent_max_turns,
+                    "model_strategy": self._settings.model_strategy,
+                    "budget_limit_usd": self._settings.budget_limit_usd,
+                    "autonomy": self._settings.autonomy,
+                    "question_limit": self._settings.question_limit,
+                    "review_enabled": self._settings.review_enabled,
+                    "contracts_required": self._settings.contracts_required,
+                },
+                "frozen_at": datetime.now(UTC).isoformat(),
+            }
+            logger.info(
+                "Pipeline config snapshot frozen: max_agents=%d, strategy=%s, budget=$%.2f",
+                self._settings.max_agents,
+                self._settings.model_strategy,
+                self._settings.budget_limit_usd or 0.0,
+            )
             self._pipeline_id = str(uuid.uuid4())
             await db.create_pipeline(
                 id=self._pipeline_id,
@@ -2398,7 +2453,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 if atask is None:
                     continue  # Already removed by concurrent event handler
                 # Invalidate task cache — task state changed
-                self._cached_tasks = None
+                self._task_cache_dirty = True
                 exc = atask.exception() if not atask.cancelled() else None
                 if exc:
                     await self._handle_task_exception(tid, exc, db, worktree_mgr, pipeline_id)
@@ -2437,16 +2492,20 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                     await asyncio.sleep(self._settings.scheduler_poll_interval)
                     continue
 
-            # Use cached task list with TTL to avoid DB fetch every poll iteration
+            # Event-driven cache with time-based safety net.
+            # Cache is invalidated immediately on task state changes (dirty flag)
+            # and also refreshes if the time-based TTL expires as a fallback.
             now_mono = time.monotonic()
             if (
                 self._cached_tasks is None
+                or self._task_cache_dirty
                 or now_mono - self._task_cache_time > self._settings.scheduler_poll_interval
             ):
                 self._cached_tasks = await (
                     db.list_tasks_by_pipeline(pipeline_id) if pipeline_id else db.list_tasks()
                 )
                 self._task_cache_time = now_mono
+                self._task_cache_dirty = False
             tasks = self._cached_tasks
             _print_status_table(tasks)
 
@@ -2677,14 +2736,42 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                                         task.id,
                                         exc_info=True,
                                     )
-                            await db.reset_task_for_resume(task.id)
-                            await self._emit(
-                                "task:state_changed",
-                                {"task_id": task.id, "state": "todo"},
-                                db=db,
-                                pipeline_id=pipeline_id or "",
+                            # Check if the task's worktree still exists. If yes,
+                            # reset to todo for re-dispatch.  If not, mark as
+                            # error so the user sees a clear signal instead of
+                            # a silent corrupt state.
+                            worktree_repo_id = getattr(task, "repo_id", None) or "default"
+                            worktree_path = compute_worktree_path(
+                                self._repos.get(worktree_repo_id, self._repos.get("default")).path
+                                if worktree_repo_id in self._repos
+                                else self._project_dir,
+                                task.id,
                             )
-                        self._cached_tasks = None
+                            if os.path.isdir(worktree_path):
+                                # Worktree intact — safe to retry
+                                await db.reset_task_for_resume(task.id, target_state="todo")
+                                await self._emit(
+                                    "task:state_changed",
+                                    {"task_id": task.id, "state": "todo"},
+                                    db=db,
+                                    pipeline_id=pipeline_id or "",
+                                )
+                            else:
+                                # Worktree missing — mark error so user is informed
+                                logger.error(
+                                    "Orphaned task %s has no worktree at %s — marking as error",
+                                    task.id,
+                                    worktree_path,
+                                )
+                                await db.reset_task_for_resume(task.id, target_state="error")
+                                await self._emit(
+                                    "task:state_changed",
+                                    {"task_id": task.id, "state": "error",
+                                     "reason": "Orphaned: worktree missing after interruption"},
+                                    db=db,
+                                    pipeline_id=pipeline_id or "",
+                                )
+                        self._task_cache_dirty = True
                         await asyncio.sleep(0)
                         continue
                     if any(
@@ -2789,7 +2876,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 async with self._active_tasks_lock:
                     self._active_tasks[task_id] = atask
                 # Invalidate task cache — new task dispatched
-                self._cached_tasks = None
+                self._task_cache_dirty = True
 
             # Dispatch in_review tasks to review-only path (resume scenario).
             # These tasks already have code in worktrees — skip agent, re-review + merge.
@@ -2837,7 +2924,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
                 async with self._active_tasks_lock:
                     self._active_tasks[ir_task.id] = atask
-                self._cached_tasks = None
+                self._task_cache_dirty = True
 
             # Wait efficiently
             if self._active_tasks:

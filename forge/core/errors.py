@@ -58,6 +58,72 @@ class AgentTimeoutError(AgentError):
         super().__init__(f"Agent '{agent_id}' timed out after {timeout_seconds}s")
 
 
+class StateTransitionError(ForgeError):
+    """Invalid task state transition attempted.
+
+    Raised when code attempts a transition not permitted by the TaskStateMachine.
+    Recovery paths that genuinely need to override should use ``force=True``
+    on the DB method rather than catching this exception.
+    """
+
+    def __init__(self, task_id: str, current: str, target: str) -> None:
+        self.task_id = task_id
+        self.current_state = current
+        self.target_state = target
+        super().__init__(
+            f"Invalid state transition for task {task_id}: {current} -> {target}"
+        )
+
+
+class ProviderError(ForgeError):
+    """Base class for provider-related errors."""
+
+
+class ProviderTransientError(ProviderError):
+    """Transient provider failure (429, 529, timeout). Safe to retry with backoff."""
+
+    def __init__(self, message: str, *, status_code: int | None = None, retry_after: float | None = None) -> None:
+        self.status_code = status_code
+        self.retry_after = retry_after
+        super().__init__(message)
+
+
+class ProviderAuthError(ProviderError):
+    """Authentication/authorization failure (401, 403). Refresh credentials and retry once."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        self.status_code = status_code
+        super().__init__(message)
+
+
+class ProviderSchemaError(ProviderError):
+    """Output format/schema error. Retry with corrective feedback."""
+
+
+class ProviderPermanentError(ProviderError):
+    """Permanent provider failure (400, model not found). Do not retry."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        self.status_code = status_code
+        super().__init__(message)
+
+
+class ProviderResourceError(ProviderError):
+    """Resource exhaustion at provider level (OOM, context too long). Pause and reassess."""
+
+
+class DegradedOperationWarning(ForgeError):
+    """Raised/logged when a subsystem is operating in degraded mode.
+
+    Not necessarily fatal — informs callers that quality may be compromised.
+    """
+
+    def __init__(self, subsystem: str, reason: str) -> None:
+        self.subsystem = subsystem
+        self.reason = reason
+        super().__init__(f"[DEGRADED] {subsystem}: {reason}")
+
+
 class ReviewError(ForgeError):
     """Review pipeline failed."""
 

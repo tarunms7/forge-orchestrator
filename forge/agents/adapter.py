@@ -339,6 +339,12 @@ class AgentResult:
     backend: str | None = None  # SDK backend used
     canonical_model_id: str | None = None  # Full model identifier
     model_history_entry: dict | None = field(default=None, repr=False)  # ModelHistoryEntry dict
+    # Query chain tracking — inspired by Claude Code's QueryChainTracking
+    # (src/Tool.ts). Enables cost attribution and agent lineage tracing.
+    chain_id: str | None = None  # Stable UUID across the pipeline run
+    chain_depth: int = 0  # 0 = agent execution, 1 = review sub-call, etc.
+    # Error classification from forge.core.error_classifier
+    error_category: str | None = None  # e.g. "sdk_error", "agent_timeout"
 
 
 class AgentAdapter(ABC):

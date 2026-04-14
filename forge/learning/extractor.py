@@ -113,6 +113,16 @@ def extract_from_agent_learning(
         project_dir=project_dir,
     )
 
+    # Confidence scoring by signal quality (not flat 0.5).
+    # FORGE_LEARNING blocks are explicit agent self-reports = high signal.
+    # Score higher if the resolution is specific (contains file paths, code refs).
+    confidence = 0.7  # Base: explicit agent learning is good signal
+    if _RE_FILE_PATH.search(resolution):
+        confidence += 0.1  # Resolution references specific files
+    if _RE_BACKTICK_CODE.search(resolution):
+        confidence += 0.1  # Resolution contains code snippets
+    confidence = min(confidence, 0.95)  # Cap below 1.0
+
     return Lesson(
         id=str(uuid.uuid4()),
         scope=scope,
@@ -121,7 +131,7 @@ def extract_from_agent_learning(
         content=f"Agent learning: {trigger}\nFiles: {', '.join(files)}",
         trigger=trigger,
         resolution=resolution,
-        confidence=0.5,
+        confidence=confidence,
     )
 
 
@@ -173,6 +183,10 @@ def extract_from_command_failures(
         project_dir=project_dir,
     )
 
+    # Command failure lessons are noisier — lower base confidence.
+    # More failures = more evidence = higher confidence.
+    confidence = min(0.3 + 0.1 * len(failures), 0.7)
+
     return Lesson(
         id=str(uuid.uuid4()),
         scope=scope,
@@ -181,6 +195,7 @@ def extract_from_command_failures(
         content=content,
         trigger=trigger,
         resolution=resolution,
+        confidence=confidence,
     )
 
 
@@ -211,6 +226,11 @@ def extract_from_review_feedback(
         project_dir=project_dir,
     )
 
+    # Review feedback is medium-signal: comes from a structured review gate
+    # so it's more reliable than command noise, but less specific than
+    # explicit FORGE_LEARNING blocks.
+    confidence = 0.6
+
     return Lesson(
         id=str(uuid.uuid4()),
         scope=scope,
@@ -219,6 +239,7 @@ def extract_from_review_feedback(
         content=content,
         trigger=trigger,
         resolution=resolution,
+        confidence=confidence,
     )
 
 

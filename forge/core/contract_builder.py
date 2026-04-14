@@ -232,12 +232,13 @@ class ContractBuilder:
             last_error = error
             logger.warning("Attempt %d validation failed: %s", attempt + 1, error)
 
-        # If all retries fail, return empty ContractSet (graceful degradation)
+        # All retries exhausted — return degraded ContractSet so agents are warned
+        reason = f"Contract generation failed after {self._max_retries} retries (last error: {last_error})"
         logger.warning(
-            "Contract generation failed after %d retries — proceeding without contracts",
-            self._max_retries,
+            "Contract generation DEGRADED: %s — agents will be warned to verify interfaces manually",
+            reason,
         )
-        return ContractSet()
+        return ContractSet(degraded=True, degraded_reason=reason)
 
     def _parse_and_validate(
         self,

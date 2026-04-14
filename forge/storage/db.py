@@ -665,28 +665,46 @@ class Database:
             result = await session.execute(select(TaskRow).where(TaskRow.id.in_(unique_ids)))
             return list(result.scalars().all())
 
-    async def update_task_state(self, task_id: str, state: str) -> None:
+    async def update_task_state(
+        self, task_id: str, state: str, *, force: bool = False
+    ) -> None:
+        """Update a task's state with strict state-machine validation.
+
+        Args:
+            task_id: The task to update.
+            state: The target state value.
+            force: If True, bypass state-machine validation. Use ONLY for
+                   recovery paths (e.g. resetting orphaned tasks to error).
+                   Normal code should never set this.
+
+        Raises:
+            StateTransitionError: If the transition is invalid and force=False.
+        """
+        from forge.core.errors import StateTransitionError
+
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
             if task:
-                # Guard: validate state transition via TaskStateMachine
-                try:
-                    from forge.core.models import TaskState
-                    from forge.core.state import TaskStateMachine
+                if not force:
+                    try:
+                        from forge.core.models import TaskState
+                        from forge.core.state import TaskStateMachine
 
-                    current = TaskState(task.state)
-                    target = TaskState(state)
-                    if not TaskStateMachine.can_transition(current, target):
+                        current = TaskState(task.state)
+                        target = TaskState(state)
+                        if not TaskStateMachine.can_transition(current, target):
+                            raise StateTransitionError(task_id, task.state, state)
+                    except (ValueError, KeyError):
                         logger.warning(
-                            "Invalid state transition for task %s: %s -> %s",
+                            "Could not validate state transition for task %s: %s -> %s "
+                            "(unknown state value — proceeding cautiously)",
                             task_id,
                             task.state,
                             state,
                         )
-                except (ValueError, KeyError):
-                    # Unknown state value — log and proceed
-                    logger.warning(
-                        "Could not validate state transition for task %s: %s -> %s",
+                else:
+                    logger.info(
+                        "Force state transition for task %s: %s -> %s",
                         task_id,
                         task.state,
                         state,
@@ -905,12 +923,24 @@ class Database:
         task_id: str,
         *,
         preserve_retry_reason: bool = True,
+        target_state: str = "todo",
     ) -> None:
-        """Reset an interrupted task so execution can safely re-dispatch it."""
+        """Reset an interrupted task so execution can safely re-dispatch it.
+
+        Args:
+            task_id: The task to reset.
+            preserve_retry_reason: Keep the retry_reason field (default True).
+            target_state: State to reset to. Defaults to "todo", but recovery
+                          paths may use "error" for orphaned tasks.
+        """
         async with self._session_factory() as session:
             task = await session.get(TaskRow, task_id)
             if task:
-                task.state = "todo"
+                logger.info(
+                    "reset_task_for_resume: %s: %s -> %s (force)",
+                    task_id, task.state, target_state,
+                )
+                task.state = target_state
                 task.assigned_agent = None
                 task.error_message = None
                 task.completed_at = None
