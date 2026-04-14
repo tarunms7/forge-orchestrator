@@ -537,6 +537,7 @@ _LAZY_SUBCOMMANDS = [
     ("export", "forge.cli.export", "export"),
     ("gauntlet", "forge.cli.gauntlet", "gauntlet"),
     ("readiness", "forge.cli.readiness", "readiness"),
+    ("health", "forge.cli.health", "health"),
 ]
 
 for _cmd_name, _import_path, _attr in _LAZY_SUBCOMMANDS:
