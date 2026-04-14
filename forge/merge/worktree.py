@@ -92,9 +92,7 @@ class WorktreeManager:
             # Atomic write: write to a temp file in the same directory, then
             # rename (rename is atomic on POSIX when src and dst are on the
             # same filesystem).
-            fd, tmp_path = tempfile.mkstemp(
-                dir=self._repo, prefix=".gitignore.tmp", suffix=""
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=self._repo, prefix=".gitignore.tmp", suffix="")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(new_content)

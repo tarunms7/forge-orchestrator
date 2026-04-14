@@ -121,21 +121,42 @@ class CompactionDecision:
 
 
 # Read-only tools whose results are safe to prune (won't lose state)
-_READ_ONLY_TOOLS = frozenset({
-    "Read", "file_read", "FileRead",
-    "Glob", "glob", "ListFiles",
-    "Grep", "grep", "Search", "search",
-    "Bash",  # Bash is classified at record time based on output
-    "WebFetch", "WebSearch",
-    "cat", "ls", "find", "git_log", "git_diff", "git_status",
-})
+_READ_ONLY_TOOLS = frozenset(
+    {
+        "Read",
+        "file_read",
+        "FileRead",
+        "Glob",
+        "glob",
+        "ListFiles",
+        "Grep",
+        "grep",
+        "Search",
+        "search",
+        "Bash",  # Bash is classified at record time based on output
+        "WebFetch",
+        "WebSearch",
+        "cat",
+        "ls",
+        "find",
+        "git_log",
+        "git_diff",
+        "git_status",
+    }
+)
 
 # Tools whose results should NEVER be pruned (carry forward state)
-_STATEFUL_TOOLS = frozenset({
-    "Edit", "file_edit", "FileEdit", "FileWrite", "Write",
-    "Bash_write",  # destructive bash commands
-    "TodoWrite",
-})
+_STATEFUL_TOOLS = frozenset(
+    {
+        "Edit",
+        "file_edit",
+        "FileEdit",
+        "FileWrite",
+        "Write",
+        "Bash_write",  # destructive bash commands
+        "TodoWrite",
+    }
+)
 
 
 class AgentContextManager:
@@ -319,40 +340,43 @@ class AgentContextManager:
         ]
 
         if agent_summary_so_far:
-            parts.extend([
-                "### Work Completed So Far",
-                agent_summary_so_far,
-                "",
-            ])
+            parts.extend(
+                [
+                    "### Work Completed So Far",
+                    agent_summary_so_far,
+                    "",
+                ]
+            )
 
         # Tool usage stats
-        parts.extend([
-            "### Session Stats",
-            f"- Turns completed: {self._turn_count}",
-            f"- Input tokens used: {self._input_tokens:,}",
-            f"- Output tokens used: {self._output_tokens:,}",
-            f"- Tool calls tracked: {len(self._tool_results)}",
-            f"- Compactions performed: {self._compaction_count}",
-            "",
-        ])
+        parts.extend(
+            [
+                "### Session Stats",
+                f"- Turns completed: {self._turn_count}",
+                f"- Input tokens used: {self._input_tokens:,}",
+                f"- Output tokens used: {self._output_tokens:,}",
+                f"- Tool calls tracked: {len(self._tool_results)}",
+                f"- Compactions performed: {self._compaction_count}",
+                "",
+            ]
+        )
 
         # Recent tool results that were NOT pruned (still relevant)
-        recent_unpruned = [
-            tr for tr in self._tool_results[-10:]
-            if not tr.pruned
-        ]
+        recent_unpruned = [tr for tr in self._tool_results[-10:] if not tr.pruned]
         if recent_unpruned:
             parts.append("### Recent Tool Activity")
             for tr in recent_unpruned:
                 parts.append(f"- {tr.tool_name} (call {tr.tool_call_id})")
             parts.append("")
 
-        parts.extend([
-            "### Instructions",
-            "Continue the task from where the previous session left off.",
-            "Do NOT repeat work already done. Focus on remaining objectives.",
-            "",
-        ])
+        parts.extend(
+            [
+                "### Instructions",
+                "Continue the task from where the previous session left off.",
+                "Do NOT repeat work already done. Focus on remaining objectives.",
+                "",
+            ]
+        )
 
         return "\n".join(parts)
 
@@ -389,9 +413,9 @@ class AgentContextManager:
         if len(recent) < 2:
             return 999
 
-        avg_growth = sum(
-            recent[i] - recent[i - 1] for i in range(1, len(recent))
-        ) / (len(recent) - 1)
+        avg_growth = sum(recent[i] - recent[i - 1] for i in range(1, len(recent))) / (
+            len(recent) - 1
+        )
 
         if avg_growth <= 0:
             return 999
@@ -404,10 +428,7 @@ class AgentContextManager:
 
     def _get_prunable_tool_ids(self) -> list[str]:
         """Get tool call IDs that are safe to prune, oldest first."""
-        prunable = [
-            tr for tr in self._tool_results
-            if tr.is_read_only and not tr.pruned
-        ]
+        prunable = [tr for tr in self._tool_results if tr.is_read_only and not tr.pruned]
         # Keep the most recent N results, prune the rest
         keep_recent = 5
         if len(prunable) <= keep_recent:

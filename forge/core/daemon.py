@@ -427,7 +427,10 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             )
             # Reset on success
             if self._emit_failure_count > 0:
-                logger.info("DB event logging recovered after %d consecutive failures", self._emit_failure_count)
+                logger.info(
+                    "DB event logging recovered after %d consecutive failures",
+                    self._emit_failure_count,
+                )
                 self._emit_failure_count = 0
         except Exception:
             self._emit_failure_count += 1
@@ -2766,8 +2769,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                                 await db.reset_task_for_resume(task.id, target_state="error")
                                 await self._emit(
                                     "task:state_changed",
-                                    {"task_id": task.id, "state": "error",
-                                     "reason": "Orphaned: worktree missing after interruption"},
+                                    {
+                                        "task_id": task.id,
+                                        "state": "error",
+                                        "reason": "Orphaned: worktree missing after interruption",
+                                    },
                                     db=db,
                                     pipeline_id=pipeline_id or "",
                                 )
