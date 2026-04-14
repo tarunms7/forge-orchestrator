@@ -66,7 +66,7 @@ def _build_file_response(
     return response[:_MAX_RESPONSE_LEN]
 
 
-def _build_summary_response(record: "CompletionRecord") -> str:  # noqa: F821
+def _build_summary_response(record: CompletionRecord) -> str:  # noqa: F821
     """Return implementation summary + key decisions + truncated diff."""
     parts: list[str] = [f"## Context from {record.task_id}\n"]
 
