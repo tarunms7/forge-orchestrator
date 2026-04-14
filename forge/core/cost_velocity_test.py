@@ -252,6 +252,66 @@ class TestShouldPause:
 
         assert tracker.should_pause(1.0) is True
 
+    async def test_warn_and_pause_independent(self):
+        """Spent between 80-95%: should_warn=True, should_pause=False."""
+        db = _make_db(pipeline_cost=8.5)
+        tracker = CostVelocityTracker(db, "pipe-1")
+        await tracker.update()
+
+        assert tracker.should_warn(10.0) is True
+        assert tracker.should_pause(10.0) is False
+
+
+class TestEdgeCases:
+    async def test_budget_zero_means_unlimited(self):
+        db = _make_db(pipeline_cost=999.0)
+        tracker = CostVelocityTracker(db, "pipe-1")
+        await tracker.update()
+
+        assert tracker.should_warn(0.0) is False
+        assert tracker.should_pause(0.0) is False
+
+    async def test_negative_cost_events_handled(self):
+        """Events with decreasing cost should not break the tracker."""
+        now = datetime.now(UTC)
+        events = [
+            _make_event(_iso(now - timedelta(seconds=120)), 5.0),
+            _make_event(_iso(now - timedelta(seconds=60)), 3.0),
+        ]
+        db = _make_db(events=events, pipeline_cost=3.0)
+        tracker = CostVelocityTracker(db, "pipe-1")
+        await tracker.update()
+
+        rate = tracker.burn_rate_per_min
+        assert isinstance(rate, float)
+        # Negative burn rate → time_to_exhaustion returns None
+        assert tracker.time_to_exhaustion(budget_limit=10.0) is None
+
+    async def test_update_called_multiple_times(self):
+        """update() can be called repeatedly without error."""
+        now = datetime.now(UTC)
+        events = [
+            _make_event(_iso(now - timedelta(seconds=120)), 0.10),
+            _make_event(_iso(now - timedelta(seconds=60)), 0.20),
+        ]
+        db = _make_db(events=events, pipeline_cost=0.20)
+        tracker = CostVelocityTracker(db, "pipe-1")
+
+        await tracker.update()
+        assert tracker.current_spent == 0.20
+
+        # Update again with new values
+        db.get_pipeline_cost.return_value = 0.50
+        db.list_events.return_value = [
+            _make_event(_iso(now - timedelta(seconds=60)), 0.30),
+            _make_event(_iso(now), 0.50),
+        ]
+        await tracker.update()
+
+        assert tracker.current_spent == 0.50
+        assert db.get_pipeline_cost.call_count == 2
+        assert db.list_events.call_count == 2
+
 
 class TestTimeoutBehavior:
     async def test_update_timeout_on_slow_list_events(self):
