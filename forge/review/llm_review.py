@@ -221,11 +221,10 @@ async def gate2_llm_review(
             "adaptive_review": adaptive_review,
             "prefer_deep_review": prefer_deep_review,
             # Top-5 file scores for debugging strategy selection
-            "top_file_scores": sorted(
-                [{"file": f, "score": s} for f, s in (file_scores or {}).items()],
-                key=lambda x: x["score"],
-                reverse=True,
-            )[:5],
+            "top_file_scores": [
+                {"file": fs.path, "score": fs.score}
+                for fs in (file_scores or [])[:5]
+            ],
             "snapshot_version": 2,  # Increment when payload schema changes
         }
         if strategy == ReviewStrategy.TIER2:
