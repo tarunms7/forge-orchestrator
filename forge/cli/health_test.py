@@ -1,10 +1,16 @@
-"""Tests for forge health CLI command — pure functions and registration."""
+"""Tests for forge health CLI command."""
 
 from __future__ import annotations
 
+import asyncio
+import os
+
+import pytest
+from click.testing import CliRunner
 from rich.table import Table
 
 from forge.cli.health import (
+    _CONTEXT_PRESSURE_COLORS,
     _fmt_cost,
     _fmt_tokens,
     build_context_panel,
@@ -12,6 +18,85 @@ from forge.cli.health import (
     build_health_dag,
     build_scheduler_panel,
 )
+from forge.cli.main import cli
+from forge.storage.db import Database
+
+
+# ── DB fixtures (mirror stats_test.py) ──────────────────────────────
+
+
+@pytest.fixture()
+def central_db(tmp_path, monkeypatch):
+    """Point FORGE_DATA_DIR to a temp dir so the central DB is isolated."""
+    data_dir = tmp_path / "forge-data"
+    data_dir.mkdir()
+    monkeypatch.setenv("FORGE_DATA_DIR", str(data_dir))
+    return data_dir
+
+
+def _db_url(central_db):
+    return f"sqlite+aiosqlite:///{central_db / 'forge.db'}"
+
+
+def _run_async(coro):
+    return asyncio.run(coro)
+
+
+async def _seed_pipelines(db_url: str, pipelines: list[dict]) -> None:
+    """Seed the database with pipeline rows and optional tasks."""
+    db = Database(db_url)
+    await db.initialize()
+    try:
+        for p in pipelines:
+            await db.create_pipeline(
+                id=p["id"],
+                description=p["description"],
+                project_dir=p.get("project_dir", "/tmp"),
+                project_path=p.get("project_path"),
+                project_name=p.get("project_name"),
+            )
+            if p.get("status"):
+                await db.update_pipeline_status(p["id"], p["status"])
+
+            from sqlalchemy import text
+
+            async with db._session_factory() as session:
+                await session.execute(
+                    text(
+                        "UPDATE pipelines SET "
+                        "total_cost_usd = :cost, "
+                        "total_input_tokens = :inp, "
+                        "total_output_tokens = :out "
+                        "WHERE id = :pid"
+                    ),
+                    {
+                        "cost": p.get("total_cost_usd", 0.0),
+                        "inp": p.get("total_input_tokens", 0),
+                        "out": p.get("total_output_tokens", 0),
+                        "pid": p["id"],
+                    },
+                )
+                await session.commit()
+
+            for task in p.get("tasks", []):
+                await db.create_task(
+                    id=task["id"],
+                    title=task.get("title", task["id"]),
+                    description=task.get("description", ""),
+                    files=task.get("files", []),
+                    depends_on=task.get("depends_on", []),
+                    complexity=task.get("complexity", "medium"),
+                    pipeline_id=p["id"],
+                )
+                if task.get("state"):
+                    async with db._session_factory() as session:
+                        await session.execute(
+                            text("UPDATE tasks SET state = :state WHERE id = :tid"),
+                            {"state": task["state"], "tid": task["id"]},
+                        )
+                        await session.commit()
+    finally:
+        await db.close()
 
 # ── build_health_dag tests ───────────────────────────────────────────
 
@@ -290,6 +375,35 @@ def test_build_context_panel_multiple_entries_uses_latest():
     assert "60%" in result
 
 
+def test_build_context_panel_multiple_agents():
+    """Multiple active tasks with different pressure levels all appear."""
+    tasks = [
+        {
+            "id": "t-1",
+            "state": "in_progress",
+            "assigned_agent": "agent-a",
+            "model_history": [
+                {"context_pressure": "normal", "context_utilization_pct": 0.30},
+            ],
+        },
+        {
+            "id": "t-2",
+            "state": "in_progress",
+            "assigned_agent": "agent-b",
+            "model_history": [
+                {"context_pressure": "critical", "context_utilization_pct": 0.95},
+            ],
+        },
+    ]
+    result = build_context_panel(tasks)
+    assert "agent-a" in result
+    assert "agent-b" in result
+    assert "normal" in result
+    assert "critical" in result
+    assert "30%" in result
+    assert "95%" in result
+
+
 # ── build_scheduler_panel tests ──────────────────────────────────────
 
 
@@ -407,11 +521,24 @@ def test_fmt_tokens():
     assert _fmt_tokens(0) == "0"
 
 
-# ── CLI registration test ───────────────────────────────────────────
+def test_fmt_pressure_color():
+    """Each pressure level maps to expected color."""
+    assert _CONTEXT_PRESSURE_COLORS["normal"] == "green"
+    assert _CONTEXT_PRESSURE_COLORS["elevated"] == "yellow"
+    assert _CONTEXT_PRESSURE_COLORS["high"] == "#ff8800"
+    assert _CONTEXT_PRESSURE_COLORS["critical"] == "red"
 
 
-def test_health_registered_in_cli():
-    """health command is registered as a lazy subcommand."""
+# ── CLI integration tests ───────────────────────────────────────────
+
+
+def test_health_command_registered():
+    """health command is registered on the CLI group."""
+    assert "health" in cli.commands
+
+
+def test_health_registered_in_lazy_subcommands():
+    """health command is in the lazy subcommands list."""
     from forge.cli.main import _LAZY_SUBCOMMANDS
 
     names = [name for name, _, _ in _LAZY_SUBCOMMANDS]
@@ -419,11 +546,7 @@ def test_health_registered_in_cli():
 
 
 def test_health_help():
-    """Health command appears in --help output."""
-    from click.testing import CliRunner
-
-    from forge.cli.main import cli
-
+    """Health --help exits 0 and shows options."""
     runner = CliRunner()
     result = runner.invoke(cli, ["health", "--help"])
     assert result.exit_code == 0
@@ -431,3 +554,75 @@ def test_health_help():
     assert "--project-dir" in result.output
     assert "--pipeline" in result.output
     assert "--interval" in result.output
+
+
+def test_health_no_pipeline_found(central_db):
+    """With empty DB, forge health shows 'No pipelines found' or exits non-zero."""
+    _db_url(central_db)
+    runner = CliRunner()
+    cwd = os.getcwd()
+    result = runner.invoke(cli, ["health", "--project-dir", cwd])
+    # Command does SystemExit(1) when no pipeline is found
+    assert result.exit_code != 0 or "No pipeline" in result.output
+
+
+def test_health_with_pipeline_data(central_db):
+    """Seed a pipeline and test _fetch_health_data directly."""
+    db_url = _db_url(central_db)
+    cwd = os.getcwd()
+    _run_async(
+        _seed_pipelines(
+            db_url,
+            [
+                {
+                    "id": "pipe-health-1",
+                    "description": "Health test pipeline",
+                    "status": "executing",
+                    "project_path": cwd,
+                    "project_name": "test",
+                    "total_cost_usd": 0.50,
+                    "total_input_tokens": 10000,
+                    "total_output_tokens": 5000,
+                    "tasks": [
+                        {
+                            "id": "ht-1",
+                            "title": "Task A",
+                            "description": "First task",
+                            "state": "done",
+                        },
+                        {
+                            "id": "ht-2",
+                            "title": "Task B",
+                            "description": "Second task",
+                            "depends_on": ["ht-1"],
+                            "state": "in_progress",
+                        },
+                    ],
+                },
+            ],
+        )
+    )
+
+    from forge.cli.health import _fetch_health_data
+
+    db = Database(db_url)
+    data = _run_async(_fetch_health_data(db, "pipe-health-1"))
+    assert data["pipeline"] is not None
+    assert data["pipeline"]["id"] == "pipe-health-1"
+    assert len(data["tasks"]) == 2
+    task_ids = {t["id"] for t in data["tasks"]}
+    assert "ht-1" in task_ids
+    assert "ht-2" in task_ids
+
+
+def test_health_fetch_pipeline_not_found(central_db):
+    """_fetch_health_data returns None pipeline for unknown ID."""
+    db_url = _db_url(central_db)
+    _run_async(_seed_pipelines(db_url, []))
+
+    from forge.cli.health import _fetch_health_data
+
+    db = Database(db_url)
+    data = _run_async(_fetch_health_data(db, "nonexistent"))
+    assert data["pipeline"] is None
+    assert data["tasks"] == []
