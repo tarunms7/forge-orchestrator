@@ -2880,9 +2880,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                                 "burn_rate": velocity_tracker.burn_rate_per_min,
                                 "current_spent": velocity_tracker.current_spent,
                                 "budget_limit": budget_limit,
-                                "projected_final_cost": velocity_tracker.projected_final_cost(
-                                    5.0
-                                ),
+                                "projected_final_cost": velocity_tracker.projected_final_cost(5.0),
                             },
                             db=db,
                             pipeline_id=pipeline_id,
@@ -2903,9 +2901,7 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                                 "burn_rate": velocity_tracker.burn_rate_per_min,
                                 "current_spent": velocity_tracker.current_spent,
                                 "budget_limit": budget_limit,
-                                "projected_final_cost": velocity_tracker.projected_final_cost(
-                                    5.0
-                                ),
+                                "projected_final_cost": velocity_tracker.projected_final_cost(5.0),
                             },
                             db=db,
                             pipeline_id=pipeline_id,

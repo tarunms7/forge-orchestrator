@@ -224,8 +224,7 @@ async def gate2_llm_review(
             "prefer_deep_review": prefer_deep_review,
             # Top-5 file scores for debugging strategy selection
             "top_file_scores": [
-                {"file": fs.path, "score": fs.score}
-                for fs in (file_scores or [])[:5]
+                {"file": fs.path, "score": fs.score} for fs in (file_scores or [])[:5]
             ],
             "snapshot_version": 2,  # Increment when payload schema changes
         }
