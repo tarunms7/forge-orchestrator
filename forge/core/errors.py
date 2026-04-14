@@ -70,9 +70,7 @@ class StateTransitionError(ForgeError):
         self.task_id = task_id
         self.current_state = current
         self.target_state = target
-        super().__init__(
-            f"Invalid state transition for task {task_id}: {current} -> {target}"
-        )
+        super().__init__(f"Invalid state transition for task {task_id}: {current} -> {target}")
 
 
 class ProviderError(ForgeError):
@@ -82,7 +80,9 @@ class ProviderError(ForgeError):
 class ProviderTransientError(ProviderError):
     """Transient provider failure (429, 529, timeout). Safe to retry with backoff."""
 
-    def __init__(self, message: str, *, status_code: int | None = None, retry_after: float | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, retry_after: float | None = None
+    ) -> None:
         self.status_code = status_code
         self.retry_after = retry_after
         super().__init__(message)

@@ -871,7 +871,9 @@ class TestRunReviewPassesOnMessage:
         )
 
         with (
-            patch("forge.core.daemon_review._get_changed_files_vs_main", return_value=["feature.py"]),
+            patch(
+                "forge.core.daemon_review._get_changed_files_vs_main", return_value=["feature.py"]
+            ),
             patch("forge.core.daemon_helpers._get_diff_vs_main", return_value="diff content"),
             patch.object(
                 mixin,
@@ -897,7 +899,10 @@ class TestRunReviewPassesOnMessage:
             )
 
         assert passed is True
-        assert mixin._gate_test.await_args.kwargs["allowed_files"] == ["feature.py", "feature_test.py"]
+        assert mixin._gate_test.await_args.kwargs["allowed_files"] == [
+            "feature.py",
+            "feature_test.py",
+        ]
         assert mock_gate2.await_args.kwargs["allowed_files"] == ["feature.py", "feature_test.py"]
 
 

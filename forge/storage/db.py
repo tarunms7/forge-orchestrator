@@ -98,7 +98,9 @@ class TaskRow(Base):
     depends_on: Mapped[list] = mapped_column(JSON)
     complexity: Mapped[str] = mapped_column(String)
     state: Mapped[str] = mapped_column(String, default="todo", index=True)
-    assigned_agent: Mapped[str | None] = mapped_column(String, nullable=True, default=None, index=True)
+    assigned_agent: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None, index=True
+    )
     retry_count: Mapped[int] = mapped_column(default=0)
     branch_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
@@ -665,9 +667,7 @@ class Database:
             result = await session.execute(select(TaskRow).where(TaskRow.id.in_(unique_ids)))
             return list(result.scalars().all())
 
-    async def update_task_state(
-        self, task_id: str, state: str, *, force: bool = False
-    ) -> None:
+    async def update_task_state(self, task_id: str, state: str, *, force: bool = False) -> None:
         """Update a task's state with strict state-machine validation.
 
         Args:
@@ -938,7 +938,9 @@ class Database:
             if task:
                 logger.info(
                     "reset_task_for_resume: %s: %s -> %s (force)",
-                    task_id, task.state, target_state,
+                    task_id,
+                    task.state,
+                    target_state,
                 )
                 task.state = target_state
                 task.assigned_agent = None

@@ -40,28 +40,56 @@ DEFAULT_MAX_CONCURRENT = 10
 # ── Tool Classification ──────────────────────────────────────────────
 
 # Tools that only read state — safe to run in parallel
-_READ_ONLY_TOOLS = frozenset({
-    # Claude SDK tools
-    "Read", "FileRead", "file_read",
-    "Glob", "glob",
-    "Grep", "grep",
-    "Search", "search",
-    "ListFiles", "list_files",
-    "WebFetch", "WebSearch",
-    # Git read operations
-    "git_log", "git_diff", "git_status", "git_show", "git_blame",
-    # Generic
-    "cat", "head", "tail", "ls", "find", "wc", "du",
-})
+_READ_ONLY_TOOLS = frozenset(
+    {
+        # Claude SDK tools
+        "Read",
+        "FileRead",
+        "file_read",
+        "Glob",
+        "glob",
+        "Grep",
+        "grep",
+        "Search",
+        "search",
+        "ListFiles",
+        "list_files",
+        "WebFetch",
+        "WebSearch",
+        # Git read operations
+        "git_log",
+        "git_diff",
+        "git_status",
+        "git_show",
+        "git_blame",
+        # Generic
+        "cat",
+        "head",
+        "tail",
+        "ls",
+        "find",
+        "wc",
+        "du",
+    }
+)
 
 # Tools that modify state — must have exclusive access
-_WRITE_TOOLS = frozenset({
-    "Edit", "FileEdit", "file_edit",
-    "Write", "FileWrite", "file_write",
-    "NotebookEdit",
-    # Git write operations
-    "git_add", "git_commit", "git_checkout", "git_merge",
-})
+_WRITE_TOOLS = frozenset(
+    {
+        "Edit",
+        "FileEdit",
+        "file_edit",
+        "Write",
+        "FileWrite",
+        "file_write",
+        "NotebookEdit",
+        # Git write operations
+        "git_add",
+        "git_commit",
+        "git_checkout",
+        "git_merge",
+    }
+)
 
 # Bash commands that are read-only (grep on command string)
 _BASH_READ_PATTERNS = [
@@ -127,6 +155,7 @@ def _is_single_bash_read_only(cmd: str) -> bool:
 
 
 # ── Batch Partitioning ────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -198,6 +227,7 @@ def partition_tool_calls(
 
 
 # ── Execution Stats ───────────────────────────────────────────────────
+
 
 @dataclass
 class ToolExecutionStats:

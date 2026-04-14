@@ -216,8 +216,7 @@ def build_context_panel(tasks: list[dict]) -> str:
         color = _CONTEXT_PRESSURE_COLORS.get(pressure, "green")
         pct = int(utilization_pct * 100)
         lines.append(
-            f"{_escape(str(agent))} ({_escape(task_id)}): "
-            f"[{color}]{pressure}[/{color}] {pct}%"
+            f"{_escape(str(agent))} ({_escape(task_id)}): [{color}]{pressure}[/{color}] {pct}%"
         )
     return "\n".join(lines)
 
@@ -304,8 +303,7 @@ def build_scheduler_panel(tasks: list[dict]) -> str:
             retries = t.get("retry_count", 0)
             penalty = retries * _RETRY_PENALTY_PER_ATTEMPT
             lines.append(
-                f"  [yellow]{_escape(t['id'])}[/yellow]: "
-                f"{retries} retries (penalty: -{penalty})"
+                f"  [yellow]{_escape(t['id'])}[/yellow]: {retries} retries (penalty: -{penalty})"
             )
 
     return "\n".join(lines)
@@ -314,9 +312,7 @@ def build_scheduler_panel(tasks: list[dict]) -> str:
 # ── Async data fetching ─────────────────────────────────────────────
 
 
-async def _fetch_health_data(
-    db, pipeline_id: str
-) -> dict:
+async def _fetch_health_data(db, pipeline_id: str) -> dict:
     """Fetch all health data for a pipeline in one call."""
 
     await db.initialize()
@@ -356,21 +352,23 @@ async def _fetch_health_data(
                 except (json.JSONDecodeError, TypeError):
                     mh = []
 
-            task_dicts.append({
-                "id": t.id,
-                "title": t.title,
-                "state": t.state,
-                "depends_on": t.depends_on or [],
-                "assigned_agent": t.assigned_agent,
-                "complexity": t.complexity,
-                "cost_usd": t.cost_usd,
-                "input_tokens": t.input_tokens,
-                "output_tokens": t.output_tokens,
-                "retry_count": t.retry_count,
-                "model_history": mh,
-                "description": t.description,
-                "files": t.files or [],
-            })
+            task_dicts.append(
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "state": t.state,
+                    "depends_on": t.depends_on or [],
+                    "assigned_agent": t.assigned_agent,
+                    "complexity": t.complexity,
+                    "cost_usd": t.cost_usd,
+                    "input_tokens": t.input_tokens,
+                    "output_tokens": t.output_tokens,
+                    "retry_count": t.retry_count,
+                    "model_history": mh,
+                    "description": t.description,
+                    "files": t.files or [],
+                }
+            )
 
         return {
             "pipeline": pipeline_dict,

@@ -173,7 +173,9 @@ async def gate2_llm_review(
 
     if not diff.strip():
         return (
-            GateResult(passed=True, gate="gate2_llm_review", details="No changes to review (passed)"),
+            GateResult(
+                passed=True, gate="gate2_llm_review", details="No changes to review (passed)"
+            ),
             cost_info,
         )
 

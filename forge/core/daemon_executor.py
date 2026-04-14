@@ -1954,7 +1954,9 @@ class ExecutorMixin:
             check=False,
             description="list base tree files",
         )
-        base_files = set(base_tree.stdout.strip().split("\n")) if base_tree.stdout.strip() else set()
+        base_files = (
+            set(base_tree.stdout.strip().split("\n")) if base_tree.stdout.strip() else set()
+        )
 
         for file in out_of_scope:
             if file in base_files:
@@ -1968,6 +1970,7 @@ class ExecutorMixin:
             else:
                 # File was newly created by agent (doesn't exist in base) — remove it
                 import os as _os
+
                 file_path = _os.path.join(worktree_path, file)
                 if _os.path.exists(file_path):
                     await _run_git(
