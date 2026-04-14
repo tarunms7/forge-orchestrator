@@ -268,6 +268,15 @@ class AgentRuntime:
         spec = model if isinstance(model, ModelSpec) else ModelSpec.parse(model)
         provider = self._registry.get_for_model(spec)
         catalog_entry = self._registry.get_catalog_entry(spec)
+        # Adaptive prompt compaction: if resuming a session, the agent has
+        # already seen the full prompt for N turns. Pass the turn count so
+        # build_agent_system_prompt can compress redundant sections.
+        estimated_turn = 0
+        if resume:
+            # Agent is resuming — it's already been running.  Use a
+            # conservative estimate to trigger mid-session compaction.
+            estimated_turn = 15  # Enough to trigger compact question protocol
+
         system_prompt = build_agent_system_prompt(
             worktree_path=worktree_path,
             allowed_dirs=allowed_dirs or [],
@@ -282,6 +291,7 @@ class AgentRuntime:
             agent_max_turns=agent_max_turns,
             lessons_block=lessons_block,
             project_commands=project_commands,
+            current_turn=estimated_turn,
         )
 
         resume_state = None
@@ -380,10 +390,7 @@ async def run_with_retry(
         agent_id=f"provider-{catalog_entry.provider}",
         task_id="run_with_retry",
     )
-    safety_abort_reason: str | None = None
-
     for attempt in range(max_retries + 1):
-        safety_abort_reason = None
         handle = None
         attempt_t0 = time.monotonic()
 
@@ -409,11 +416,16 @@ async def run_with_retry(
                 # Context pressure tracking — record usage events
                 if event.kind == EventKind.USAGE and event.input_tokens and event.output_tokens:
                     pressure = ctx_mgr.record_usage(event.input_tokens, event.output_tokens)
-                    if pressure in (ContextPressure.CRITICAL, ContextPressure.EXCEEDED):
+                    if pressure == ContextPressure.EXCEEDED:
+                        snapshot = ctx_mgr.snapshot()
+                        abort_holder.append(
+                            f"Context window exceeded: {snapshot.input_tokens:,}/{snapshot.max_context_tokens:,} tokens "
+                            f"({snapshot.utilization_pct:.0%}). Aborting for context compaction restart."
+                        )
+                    elif pressure == ContextPressure.CRITICAL:
                         snapshot = ctx_mgr.snapshot()
                         logger.warning(
-                            "Context pressure %s: %d/%d tokens (%.0f%%), ~%d turns remaining",
-                            pressure.value,
+                            "Context pressure CRITICAL: %d/%d tokens (%.0f%%), ~%d turns remaining",
                             snapshot.input_tokens,
                             snapshot.max_context_tokens,
                             snapshot.utilization_pct * 100,
@@ -467,14 +479,47 @@ async def run_with_retry(
                 timeout=timeout_seconds,
             )
 
-            # Check if safety auditor triggered abort during execution
+            # Check if safety/context auditor triggered abort during execution
             if abort_reasons:
-                safety_abort_reason = abort_reasons[0]
+                abort_reason = abort_reasons[0]
+
+                # Context pressure abort → try to restart with compacted context.
+                # This is the key token-saving mechanism: instead of failing the
+                # whole task, we abort the session, build a summary of work done
+                # so far, and resume with a fresh context window.  The agent
+                # picks up where it left off, but with ~80-90% less context.
+                if (
+                    "Context window exceeded" in abort_reason
+                    and result.resume_state is not None
+                    and attempt < max_retries
+                ):
+                    summary_so_far = result.text if not result.is_error else ""
+                    compacted_prompt = context_mgr.build_compaction_summary(summary_so_far)
+                    logger.info(
+                        "Context compaction restart: aborting session and resuming with "
+                        "compacted prompt (%d chars). Original prompt was %d chars.",
+                        len(compacted_prompt),
+                        len(prompt),
+                    )
+                    # Replace the prompt with the compacted version for the retry.
+                    # The resume_state lets the provider continue the same session
+                    # but the compacted prompt gives the agent a fresh orientation.
+                    prompt = compacted_prompt
+                    resume_state = result.resume_state
+                    # Reset the context manager for the fresh window
+                    context_mgr = AgentContextManager(
+                        max_context_tokens=catalog_entry.max_context_tokens,
+                        agent_id=f"provider-{catalog_entry.provider}",
+                        task_id="run_with_retry-compacted",
+                    )
+                    velocity_monitor = TokenVelocityMonitor()
+                    continue  # Retry with compacted context
+
                 return _build_result(
                     result,
                     catalog_entry,
                     success=False,
-                    error=safety_abort_reason,
+                    error=abort_reason,
                     attempt=attempt,
                     cost_registry=cost_registry,
                     context_mgr=context_mgr,
