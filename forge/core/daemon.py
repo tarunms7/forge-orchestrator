@@ -1991,6 +1991,31 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
                 )
                 await db.update_pipeline_status(self._pipeline_id, "error")
                 raise
+
+            # Supplementary velocity-based budget check before execution
+            from forge.core.cost_velocity import CostVelocityTracker
+
+            _pre_exec_tracker = CostVelocityTracker(db, self._pipeline_id)
+            await _pre_exec_tracker.update()
+            _pre_exec_budget = await asyncio.wait_for(
+                db.get_pipeline_budget(self._pipeline_id), timeout=5
+            )
+            if _pre_exec_budget <= 0:
+                _pre_exec_budget = self._settings.budget_limit_usd
+            if _pre_exec_budget > 0 and _pre_exec_tracker.should_warn(_pre_exec_budget):
+                await self._emit(
+                    "pipeline:budget_warning",
+                    {
+                        "level": "warn",
+                        "burn_rate": _pre_exec_tracker.burn_rate_per_min,
+                        "current_spent": _pre_exec_tracker.current_spent,
+                        "budget_limit": _pre_exec_budget,
+                        "projected_final_cost": _pre_exec_tracker.projected_final_cost(5.0),
+                    },
+                    db=db,
+                    pipeline_id=self._pipeline_id,
+                )
+
             await self.execute(graph, db, pipeline_id=self._pipeline_id)
         except Exception:
             # Clean up pipeline branches on error to avoid orphaned branches
@@ -2415,6 +2440,11 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
         prefix = pipeline_id[:8] if pipeline_id else None
         start_time = asyncio.get_running_loop().time()
         timeout = self._settings.pipeline_timeout_seconds
+
+        # Cost velocity tracking for mid-execution budget enforcement
+        from forge.core.cost_velocity import CostVelocityTracker
+
+        velocity_tracker = CostVelocityTracker(db, pipeline_id) if pipeline_id else None
         # Pipeline pause tracking: timestamp (loop time) when all tasks went into awaiting_input
         _all_paused_since: float | None = None
         # Throttle question-timeout checks: only run every 30 seconds
@@ -2832,6 +2862,50 @@ class ForgeDaemon(ExecutorMixin, ReviewMixin, MergeMixin):
             # Cap to actual free slots (pool is authoritative)
             available_slots = max(0, self._effective_max_agents - len(self._active_tasks))
             dispatch_plan = dispatch_plan[:available_slots]
+
+            # Mid-execution budget enforcement via cost velocity
+            if velocity_tracker and pipeline_id:
+                await velocity_tracker.update()
+                budget_limit = await asyncio.wait_for(
+                    db.get_pipeline_budget(pipeline_id), timeout=5
+                )
+                if budget_limit <= 0:
+                    budget_limit = self._settings.budget_limit_usd
+                if budget_limit > 0:  # 0 means unlimited
+                    if velocity_tracker.should_pause(budget_limit):
+                        await self._emit(
+                            "pipeline:budget_warning",
+                            {
+                                "level": "pause",
+                                "burn_rate": velocity_tracker.burn_rate_per_min,
+                                "current_spent": velocity_tracker.current_spent,
+                                "budget_limit": budget_limit,
+                                "projected_final_cost": velocity_tracker.projected_final_cost(5.0),
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id,
+                        )
+                        await db.set_pipeline_paused(pipeline_id, True)
+                        logger.warning(
+                            "Pipeline %s paused: approaching budget limit (%.1f%% spent)",
+                            pipeline_id,
+                            (velocity_tracker.current_spent / budget_limit) * 100,
+                        )
+                        # Don't dispatch — let running agents finish
+                        dispatch_plan = []
+                    elif velocity_tracker.should_warn(budget_limit):
+                        await self._emit(
+                            "pipeline:budget_warning",
+                            {
+                                "level": "warn",
+                                "burn_rate": velocity_tracker.burn_rate_per_min,
+                                "current_spent": velocity_tracker.current_spent,
+                                "budget_limit": budget_limit,
+                                "projected_final_cost": velocity_tracker.projected_final_cost(5.0),
+                            },
+                            db=db,
+                            pipeline_id=pipeline_id,
+                        )
 
             # Launch into pool — normal TODO tasks
             for task_id, agent_id in dispatch_plan:
