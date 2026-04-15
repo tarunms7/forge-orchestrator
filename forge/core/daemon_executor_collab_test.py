@@ -11,6 +11,7 @@ from forge.core.daemon_executor import ExecutorMixin
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_executor(*, with_broker: bool = True) -> ExecutorMixin:
     """Create an ExecutorMixin with optional broker attached."""
     mixin = ExecutorMixin.__new__(ExecutorMixin)
@@ -48,6 +49,7 @@ def _make_task(
 # _emit_merge_success — broker registration
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 class TestEmitMergeSuccessBrokerRegistration:
     """Broker.register_completion is called inside _emit_merge_success."""
@@ -66,17 +68,23 @@ class TestEmitMergeSuccessBrokerRegistration:
         executor._emit = AsyncMock()
         executor._record_health_activity = MagicMock()
 
-        with patch(
-            "forge.core.daemon_executor._extract_implementation_summary",
-            new_callable=AsyncMock,
-            return_value="Added auth",
-        ), patch(
-            "forge.core.daemon_executor._get_diff_stats",
-            new_callable=AsyncMock,
-            return_value={"files": 1, "insertions": 10, "deletions": 2},
+        with (
+            patch(
+                "forge.core.daemon_executor._extract_implementation_summary",
+                new_callable=AsyncMock,
+                return_value="Added auth",
+            ),
+            patch(
+                "forge.core.daemon_executor._get_diff_stats",
+                new_callable=AsyncMock,
+                return_value={"files": 1, "insertions": 10, "deletions": 2},
+            ),
         ):
             await executor._emit_merge_success(
-                db, "task-1", "pipeline-1", "/wt/task-1",
+                db,
+                "task-1",
+                "pipeline-1",
+                "/wt/task-1",
                 diff="diff --git a/auth.py b/auth.py\n+new code",
             )
 
@@ -101,21 +109,28 @@ class TestEmitMergeSuccessBrokerRegistration:
         executor._emit = AsyncMock()
         executor._record_health_activity = MagicMock()
 
-        with patch(
-            "forge.core.daemon_executor._extract_implementation_summary",
-            new_callable=AsyncMock,
-            return_value="Built API",
-        ), patch(
-            "forge.core.daemon_executor._get_diff_stats",
-            new_callable=AsyncMock,
-            return_value={},
-        ), patch(
-            "forge.core.daemon_executor._get_diff_vs_main",
-            new_callable=AsyncMock,
-            return_value="diff --git a/api.py b/api.py\n+api code",
+        with (
+            patch(
+                "forge.core.daemon_executor._extract_implementation_summary",
+                new_callable=AsyncMock,
+                return_value="Built API",
+            ),
+            patch(
+                "forge.core.daemon_executor._get_diff_stats",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "forge.core.daemon_executor._get_diff_vs_main",
+                new_callable=AsyncMock,
+                return_value="diff --git a/api.py b/api.py\n+api code",
+            ),
         ):
             await executor._emit_merge_success(
-                db, "task-2", "pipeline-1", "/wt/task-2",
+                db,
+                "task-2",
+                "pipeline-1",
+                "/wt/task-2",
             )
 
         record = broker.get_completion("pipeline-1", "task-2")
@@ -139,17 +154,23 @@ class TestEmitMergeSuccessBrokerRegistration:
         executor._emit = AsyncMock()
         executor._record_health_activity = MagicMock()
 
-        with patch(
-            "forge.core.daemon_executor._extract_implementation_summary",
-            new_callable=AsyncMock,
-            return_value="summary",
-        ), patch(
-            "forge.core.daemon_executor._get_diff_stats",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch(
+                "forge.core.daemon_executor._extract_implementation_summary",
+                new_callable=AsyncMock,
+                return_value="summary",
+            ),
+            patch(
+                "forge.core.daemon_executor._get_diff_stats",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
         ):
             await executor._emit_merge_success(
-                db, "task-3", "pipeline-1", "/wt/task-3",
+                db,
+                "task-3",
+                "pipeline-1",
+                "/wt/task-3",
                 diff="some diff",
             )
 
@@ -172,18 +193,24 @@ class TestEmitMergeSuccessBrokerRegistration:
         executor._emit = AsyncMock()
         executor._record_health_activity = MagicMock()
 
-        with patch(
-            "forge.core.daemon_executor._extract_implementation_summary",
-            new_callable=AsyncMock,
-            return_value="summary",
-        ), patch(
-            "forge.core.daemon_executor._get_diff_stats",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch(
+                "forge.core.daemon_executor._extract_implementation_summary",
+                new_callable=AsyncMock,
+                return_value="summary",
+            ),
+            patch(
+                "forge.core.daemon_executor._get_diff_stats",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
         ):
             # Should not raise
             await executor._emit_merge_success(
-                db, "task-1", "pipeline-1", "/wt/task-1",
+                db,
+                "task-1",
+                "pipeline-1",
+                "/wt/task-1",
                 diff="diff content",
             )
 
@@ -207,18 +234,24 @@ class TestEmitMergeSuccessBrokerRegistration:
         executor._emit = AsyncMock()
         executor._record_health_activity = MagicMock()
 
-        with patch(
-            "forge.core.daemon_executor._extract_implementation_summary",
-            new_callable=AsyncMock,
-            return_value="summary",
-        ), patch(
-            "forge.core.daemon_executor._get_diff_stats",
-            new_callable=AsyncMock,
-            return_value={},
+        with (
+            patch(
+                "forge.core.daemon_executor._extract_implementation_summary",
+                new_callable=AsyncMock,
+                return_value="summary",
+            ),
+            patch(
+                "forge.core.daemon_executor._get_diff_stats",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
         ):
             # Should not raise despite broker error
             await executor._emit_merge_success(
-                db, "task-1", "pipeline-1", "/wt/task-1",
+                db,
+                "task-1",
+                "pipeline-1",
+                "/wt/task-1",
                 diff="diff content",
             )
 
@@ -228,6 +261,7 @@ class TestEmitMergeSuccessBrokerRegistration:
 # ---------------------------------------------------------------------------
 # _run_agent — completed_deps enrichment
 # ---------------------------------------------------------------------------
+
 
 class TestCompletedDepsEnrichment:
     """Broker enriches completed_deps with diff and key_decisions."""
@@ -312,6 +346,7 @@ class TestCompletedDepsEnrichment:
 # ---------------------------------------------------------------------------
 # Broker cleanup
 # ---------------------------------------------------------------------------
+
 
 class TestBrokerCleanup:
     """Broker.cleanup removes all data for a pipeline."""
