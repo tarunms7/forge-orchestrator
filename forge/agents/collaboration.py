@@ -80,9 +80,7 @@ class AgentCollaborationBroker:
             return None
         return pipeline.get(task_id)
 
-    def get_diff_for_file(
-        self, pipeline_id: str, task_id: str, file_path: str
-    ) -> str | None:
+    def get_diff_for_file(self, pipeline_id: str, task_id: str, file_path: str) -> str | None:
         """Parse the stored diff and return only the section for file_path.
 
         Splits on 'diff --git a/...' header pattern and returns the section

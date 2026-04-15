@@ -70,9 +70,7 @@ def test_unknown_pipeline_returns_not_found():
 
 def test_question_with_file_path_returns_targeted_diff():
     broker = _make_broker()
-    result = ask_prior_agent(
-        broker, "pipe-1", "task-1", "What changed in forge/core/engine.py?"
-    )
+    result = ask_prior_agent(broker, "pipe-1", "task-1", "What changed in forge/core/engine.py?")
     assert "## Context from task-1" in result
     assert "forge/core/engine.py" in result
     assert "+import asyncio" in result
@@ -90,9 +88,7 @@ def test_question_with_simple_filename_returns_diff():
 
 def test_question_with_missing_file_shows_no_diff():
     broker = _make_broker()
-    result = ask_prior_agent(
-        broker, "pipe-1", "task-1", "What changed in nonexistent.py?"
-    )
+    result = ask_prior_agent(broker, "pipe-1", "task-1", "What changed in nonexistent.py?")
     assert "No diff found for this file" in result
 
 

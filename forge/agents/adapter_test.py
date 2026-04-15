@@ -734,9 +734,7 @@ class TestDependencyContextRanking:
                 ["forge/agents/runtime.py"],
             ),
         ]
-        result = _build_dependency_context(
-            deps, current_task_files=["forge/agents/adapter.py"]
-        )
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
         # task-2 shares forge/agents/ dir → high relevance
         # task-1 is web/ → low relevance
         agent_pos = result.find("Agent runtime")
@@ -753,9 +751,7 @@ class TestDependencyContextRanking:
                 ["forge/agents/helpers.py"],
             ),
         ]
-        result = _build_dependency_context(
-            deps, current_task_files=["forge/agents/adapter.py"]
-        )
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
         assert "### Task: Agent helpers (task-1)" in result
         assert "**What was done:** Added helper functions" in result
         assert "- forge/agents/helpers.py" in result
@@ -776,9 +772,7 @@ class TestDependencyContextRanking:
                 ["db/migrations/001.sql"],
             ),
         ]
-        result = _build_dependency_context(
-            deps, current_task_files=["forge/agents/adapter.py"]
-        )
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
         # task-2 is low relevance — should be one-line
         assert "- **DB migrations** (task-2):" in result
         # Should NOT have file list for low-relevance dep
@@ -790,9 +784,7 @@ class TestDependencyContextRanking:
             self._make_dep("task-1", "High", "Relevant", ["forge/agents/foo.py"]),
             self._make_dep("task-2", "Low", "Unrelated", ["web/ui/bar.tsx"]),
         ]
-        result = _build_dependency_context(
-            deps, current_task_files=["forge/agents/adapter.py"]
-        )
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
         assert "### High-Relevance Dependencies" in result
         assert "### Other Dependencies" in result
 
@@ -802,9 +794,7 @@ class TestDependencyContextRanking:
             self._make_dep("task-1", "A", "Summary A", ["forge/agents/a.py"]),
             self._make_dep("task-2", "B", "Summary B", ["forge/agents/b.py"]),
         ]
-        result = _build_dependency_context(
-            deps, current_task_files=["forge/agents/adapter.py"]
-        )
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
         assert "### High-Relevance Dependencies" not in result
         assert "### Other Dependencies" not in result
         assert "### Task: A (task-1)" in result
