@@ -2404,12 +2404,18 @@ class ExecutorMixin:
             logger.debug("Failed to record merge_duration_s for %s", task_id, exc_info=True)
         if merge_result.success:
             await self._emit_merge_success(
-                db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref
+                db, task_id, pid, worktree_path, pipeline_branch=pre_merge_ref, diff=diff
             )
             return True
         if retry_result.success:
             await self._emit_merge_success(
-                db, task_id, pid, worktree_path, label="on retry", pipeline_branch=pre_merge_ref
+                db,
+                task_id,
+                pid,
+                worktree_path,
+                label="on retry",
+                pipeline_branch=pre_merge_ref,
+                diff=diff,
             )
             return True
         console.print(f"[red]{task_id} merge retry also failed: {retry_result.error}[/red]")
@@ -2656,6 +2662,15 @@ class ExecutorMixin:
                         }
                     )
 
+        # Enrich completed deps with broker data (diffs + key decisions)
+        broker = getattr(self, "_collaboration_broker", None)
+        if broker is not None:
+            for dep in completed_deps:
+                completion = broker.get_completion(pid, dep["task_id"])
+                if completion:
+                    dep["broker_diff"] = completion.diff
+                    dep["key_decisions"] = completion.key_decisions
+
         # Load contracts for this task
         contracts_block = ""
         contract_set = getattr(self, "_contracts", None)
@@ -2855,6 +2870,7 @@ class ExecutorMixin:
         *,
         label: str = "",
         pipeline_branch: str | None = None,
+        diff: str = "",
     ) -> None:
         """Mark task done and emit merge-success events.
 
@@ -2996,6 +3012,26 @@ class ExecutorMixin:
             worktree_path, agent_summary, pipeline_branch
         )
         await db.update_task_implementation_summary(task_id, summary)
+
+        # Register completion with collaboration broker for cross-agent context
+        broker = getattr(self, "_collaboration_broker", None)
+        if broker is not None:
+            if not diff:
+                try:
+                    diff = await _get_diff_vs_main(worktree_path, base_ref=pipeline_branch)
+                except Exception:
+                    diff = ""
+            try:
+                broker.register_completion(
+                    pipeline_id=pid,
+                    task_id=task_id,
+                    files_changed=task.files if task else [],
+                    implementation_summary=summary,
+                    agent_summary=agent_summary,
+                    diff=diff,
+                )
+            except Exception:
+                logger.debug("Failed to register completion for %s", task_id, exc_info=True)
 
         stats = await _get_diff_stats(worktree_path, pipeline_branch=pipeline_branch)
         await self._emit(

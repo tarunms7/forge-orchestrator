@@ -9,6 +9,7 @@ from forge.agents.adapter import (
     _build_conventions_block,
     _build_dependency_context,
     _build_question_protocol,
+    _jaccard_file_similarity,
     build_agent_system_prompt,
 )
 
@@ -653,3 +654,196 @@ def test_agent_result_defaults_provider_fields():
     assert result.backend is None
     assert result.canonical_model_id is None
     assert result.model_history_entry is None
+
+
+# --- _jaccard_file_similarity tests ---
+
+
+class TestJaccardFileSimilarity:
+    def test_overlapping_files(self):
+        a = ["forge/agents/adapter.py", "forge/agents/runtime.py", "forge/core/sdk.py"]
+        b = ["forge/agents/adapter.py", "forge/agents/planner.py"]
+        score = _jaccard_file_similarity(a, b)
+        # Exact: intersection={adapter.py}, union=4 → 0.25
+        # Dirs: a={forge/agents/, forge/core/}, b={forge/agents/} → intersection=1, union=2 → 0.5
+        assert score > 0.0
+        assert score == 0.5  # dir jaccard wins
+
+    def test_no_overlap(self):
+        a = ["frontend/src/App.tsx"]
+        b = ["backend/models/user.py"]
+        score = _jaccard_file_similarity(a, b)
+        assert score == 0.0
+
+    def test_directory_level_overlap(self):
+        """Files differ but share a parent directory."""
+        a = ["forge/agents/adapter.py"]
+        b = ["forge/agents/runtime.py"]
+        score = _jaccard_file_similarity(a, b)
+        # Exact file: 0.0, Dir: forge/agents/ in both → 1.0
+        assert score == 1.0
+
+    def test_empty_lists(self):
+        assert _jaccard_file_similarity([], []) == 0.0
+
+    def test_one_empty(self):
+        assert _jaccard_file_similarity(["a.py"], []) == 0.0
+        assert _jaccard_file_similarity([], ["b.py"]) == 0.0
+
+    def test_path_normalization(self):
+        """Leading ./ and backslashes are normalized."""
+        a = ["./forge/agents/adapter.py"]
+        b = ["forge\\agents\\adapter.py"]
+        assert _jaccard_file_similarity(a, b) == 1.0
+
+    def test_identical_lists(self):
+        files = ["forge/a.py", "forge/b.py"]
+        assert _jaccard_file_similarity(files, files) == 1.0
+
+    def test_root_level_files(self):
+        """Files with no directory get empty parent, which is excluded."""
+        a = ["setup.py"]
+        b = ["README.md"]
+        score = _jaccard_file_similarity(a, b)
+        # No exact match, no dirs → 0.0
+        assert score == 0.0
+
+
+# --- _build_dependency_context with Jaccard ranking tests ---
+
+
+class TestDependencyContextRanking:
+    """Tests for Jaccard-based ranking in _build_dependency_context."""
+
+    def _make_dep(self, task_id, title, summary, files):
+        return {
+            "task_id": task_id,
+            "title": title,
+            "implementation_summary": summary,
+            "files_changed": files,
+        }
+
+    def test_ranking_sorts_by_relevance(self):
+        """High-relevance deps appear before low-relevance deps."""
+        deps = [
+            self._make_dep("task-1", "Unrelated UI", "Built React UI", ["web/src/App.tsx"]),
+            self._make_dep(
+                "task-2",
+                "Agent runtime",
+                "Updated runtime",
+                ["forge/agents/runtime.py"],
+            ),
+        ]
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
+        # task-2 shares forge/agents/ dir → high relevance
+        # task-1 is web/ → low relevance
+        agent_pos = result.find("Agent runtime")
+        ui_pos = result.find("Unrelated UI")
+        assert agent_pos < ui_pos
+
+    def test_high_relevance_gets_full_summary(self):
+        """High-relevance deps include file lists and full summary."""
+        deps = [
+            self._make_dep(
+                "task-1",
+                "Agent helpers",
+                "Added helper functions",
+                ["forge/agents/helpers.py"],
+            ),
+        ]
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
+        assert "### Task: Agent helpers (task-1)" in result
+        assert "**What was done:** Added helper functions" in result
+        assert "- forge/agents/helpers.py" in result
+
+    def test_low_relevance_gets_one_line(self):
+        """Low-relevance deps get a one-line summary without file list."""
+        deps = [
+            self._make_dep(
+                "task-1",
+                "Agent helpers",
+                "Added helper functions for agents",
+                ["forge/agents/helpers.py"],
+            ),
+            self._make_dep(
+                "task-2",
+                "DB migrations",
+                "Added migration scripts for user table",
+                ["db/migrations/001.sql"],
+            ),
+        ]
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
+        # task-2 is low relevance — should be one-line
+        assert "- **DB migrations** (task-2):" in result
+        # Should NOT have file list for low-relevance dep
+        assert "- db/migrations/001.sql" not in result
+
+    def test_section_headers_when_both_exist(self):
+        """Section headers appear when there are both high and low relevance deps."""
+        deps = [
+            self._make_dep("task-1", "High", "Relevant", ["forge/agents/foo.py"]),
+            self._make_dep("task-2", "Low", "Unrelated", ["web/ui/bar.tsx"]),
+        ]
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
+        assert "### High-Relevance Dependencies" in result
+        assert "### Other Dependencies" in result
+
+    def test_no_section_headers_when_all_high(self):
+        """No section headers when all deps are high-relevance."""
+        deps = [
+            self._make_dep("task-1", "A", "Summary A", ["forge/agents/a.py"]),
+            self._make_dep("task-2", "B", "Summary B", ["forge/agents/b.py"]),
+        ]
+        result = _build_dependency_context(deps, current_task_files=["forge/agents/adapter.py"])
+        assert "### High-Relevance Dependencies" not in result
+        assert "### Other Dependencies" not in result
+        assert "### Task: A (task-1)" in result
+        assert "### Task: B (task-2)" in result
+
+    def test_backward_compat_none_files(self):
+        """current_task_files=None produces same output as before (no ranking)."""
+        deps = [
+            self._make_dep("task-1", "Add user model", "Created User model", ["models/user.py"]),
+            self._make_dep(
+                "task-2",
+                "Add auth",
+                "Created auth routes",
+                ["routes/auth.py"],
+            ),
+        ]
+        result_ranked = _build_dependency_context(deps, current_task_files=None)
+        result_original = _build_dependency_context(deps)
+        assert result_ranked == result_original
+        # Both should have full summaries
+        assert "### Task: Add user model (task-1)" in result_ranked
+        assert "### Task: Add auth (task-2)" in result_ranked
+        assert "- models/user.py" in result_ranked
+        assert "- routes/auth.py" in result_ranked
+
+    def test_backward_compat_empty_files(self):
+        """current_task_files=[] falls back to unranked behavior."""
+        deps = [
+            self._make_dep("task-1", "Setup", "Init project", ["setup.py"]),
+        ]
+        result = _build_dependency_context(deps, current_task_files=[])
+        # Empty list is falsy — should behave like None
+        assert "### Task: Setup (task-1)" in result
+        assert "- setup.py" in result
+
+    def test_compact_mode_with_ranking(self):
+        """compact=True still truncates summaries and caps files when ranking."""
+        long_summary = "A" * 300
+        many_files = [f"forge/agents/file{i}.py" for i in range(15)]
+        deps = [
+            self._make_dep("task-1", "Big dep", long_summary, many_files),
+        ]
+        result = _build_dependency_context(
+            deps, compact=True, current_task_files=["forge/agents/adapter.py"]
+        )
+        # Summary truncated to 200 chars + ellipsis
+        assert "A" * 200 in result
+        assert "A" * 201 not in result
+        # File list capped at 10
+        assert "file9.py" in result
+        assert "file10.py" not in result
+        assert "… and 5 more" in result

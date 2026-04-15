@@ -78,6 +78,20 @@ CONTRACT_TOOL_POLICY = ToolPolicy(
     denied_operations=[],
 )
 
+# ---------------------------------------------------------------------------
+# Collaboration tools (injected via system prompt, NOT as Claude SDK tools)
+# ---------------------------------------------------------------------------
+# The following tools are made available to agents through the system prompt's
+# dependency context section rather than through the Claude SDK tool mechanism:
+#
+#   - ask_prior_agent: Queries the AgentCollaborationBroker for upstream task
+#     context (implementation summaries, key decisions, targeted diffs).
+#     See forge/agents/tools/ask_agent.py for implementation.
+#
+# Because AGENT_TOOL_POLICY uses denylist mode, these prompt-injected tools
+# do not need to be explicitly allowed here.
+# ---------------------------------------------------------------------------
+
 AGENT_TOOL_POLICY = ToolPolicy(
     mode="denylist",
     allowed_tools=[],
